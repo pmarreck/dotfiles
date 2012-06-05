@@ -124,7 +124,7 @@ decrypt() {
 }
 
 # which hack, so it also shows defined aliases and functions that match
-which() {
+function which() {
   which_out=`/usr/bin/which $@`;
   if [ ! -z "$which_out" ]; then
     echo "$which_out";
