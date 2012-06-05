@@ -286,7 +286,7 @@ export EDITOR='subl -w'
 
 # set the default ruby for ALL consoles
 # rvm use ruby-1.9.2-p290@assistly-rails3
-rvm use ruby-1.9.2-p318
+rvm use ruby-1.9.3-head
 
 # silliness
 fortune -a
