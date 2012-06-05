@@ -1,0 +1,13 @@
+Welcome to my OS X dotfiles. Truly exciting stuff. Enjoy.
+
+I got tired of manually syncing my commandline config across machines and losing old versions of things.
+
+I took some tips from https://github.com/rtomayko/dotfiles as well as https://github.com/ryanb/dotfiles .
+
+This is a work in progress and (hopefully) all sensitive information has been removed.
+
+To apply this to a new computer:
+
+git clone URL subdir; mv subdir/.git .; git reset --hard
+
+Then add a "*" line to the ~/.git/info/exclude file which forces you to add files with the -f option.

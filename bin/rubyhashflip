@@ -1,0 +1,12 @@
+#!/usr/bin/env ruby
+
+require 'hash_syntax'
+
+include HashSyntax::Transformer
+
+input = ARGF.readlines.join # this should take stdin OR a filename on params list
+
+# determine which direction you want to go by matching on old rocket in input
+direction_19 = input.match /\=>/
+
+print transform(input,{:"to-1#{direction_19 ? '9' : '8'}" => true})

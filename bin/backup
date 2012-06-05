@@ -1,0 +1,47 @@
+#!/bin/sh
+
+date=`date "+%Y-%m-%dT%H_%M_%S"`
+
+if [ "$1" = "--help" ]; then
+   echo USAGE:
+   echo "backup /path/to/source /path/to/backups"
+   echo "Do not end with slashes."
+   exit
+fi
+
+if [ "$1" = "" ]
+then
+  if [ -e ./backup.default_params ]
+  then
+    . ./backup.default_params
+  else
+    echo "No backup.default_params file exists. See '$0 --help'."
+    exit
+  fi
+else
+  HOME=$1
+  DESTINATION=$2
+fi
+
+if [ -e "$DESTINATION/current" ]
+then
+	rsync -azqPE \
+	  --delete-during \
+	  --exclude='*.log' \
+	  --delete-excluded \
+	  --link-dest=../current/ \
+	  $HOME/ $DESTINATION/incomplete_backup-$date
+else
+	rsync -azqPE \
+	  --delete-during \
+	 	--exclude='*.log' \
+	  --delete-excluded \
+	  $HOME/ $DESTINATION/incomplete_backup-$date
+fi
+
+# use lion hfs compression to keep the usage small. this better obey hard links
+# (doesn't work yet, errors)
+# ditto --hfsCompression $DESTINATION/incomplete_backup-$date $DESTINATION/backup-$date &&
+# rm -r $DESTINATION/incomplete_backup-$date &&
+mv $DESTINATION/incomplete_backup-$date $DESTINATION/backup-$date &&
+ln -hfs $DESTINATION/backup-$date $DESTINATION/current

@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>English</string>
+	<key>CFBundleExecutable</key>
+	<string>BSOD</string>
+	<key>CFBundleIdentifier</key>
+	<string>org.jwz.xscreensaver.BSOD</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>BSOD</string>
+	<key>CFBundlePackageType</key>
+	<string>BNDL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>5.10</string>
+	<key>CFBundleSignature</key>
+	<string>????</string>
+	<key>CFBundleVersion</key>
+	<string>5.10</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>10.4</string>
+	<key>NSMainNibFile</key>
+	<string>SaverTester</string>
+	<key>NSPrincipalClass</key>
+	<string>XScreenSaverBSODView</string>
+	<key>NSHumanReadableCopyright</key>
+	<string>BSOD 5.10, © 2009 Jamie Zawinski.</string>
+	<key>CFBundleLongVersionString</key>
+	<string>BSOD 5.10, © 2009 Jamie Zawinski.</string>
+	<key>CFBundleGetInfoString</key>
+	<string>BSOD 5.10, © 1998-2009 Jamie Zawinski.
+From the XScreenSaver collection:
+http://www.jwz.org/xscreensaver/
+
+BSOD stands for "Blue Screen of Death".  The finest in personal computer emulation, BSOD simulates popular screen savers from a number of less robust operating systems.</string>
+</dict>
+</plist>
