@@ -52,3 +52,5 @@ export TXTRST='\e[0m'    # Text Reset
 export BRIGHT_RED="\[\033[1;31m\]"
 export DULL_WHITE="\[\033[0;37m\]"
 export BRIGHT_WHITE="\[\033[1;37m\]"
+
+PATH=$PATH:$HOME/.rvm/bin # Add RVM to PATH for scripting
