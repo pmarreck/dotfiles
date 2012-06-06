@@ -79,6 +79,9 @@ alias rc='rails console'
 alias pps='passenger start'
 alias dbm='rake db:migrate; rake db:test:prepare'
 
+# free amazon EC2 usage tier box
+alias ec2box='ssh -i ~/.ssh/pmamazonkey.pem ec2-user@ec2-184-72-178-19.compute-1.amazonaws.com'
+
 ### Different ways to print a "beep" sound. I settled on the last one. It's shell-agnostic.
 # From http://stackoverflow.com/questions/3127977/how-to-make-the-hardware-beep-sound-in-mac-os-x-10-6
 # alias beep='echo -en "\007"'
