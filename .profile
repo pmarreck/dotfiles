@@ -108,7 +108,7 @@ alias rst='touch tmp/restart.txt'
 # export ASSISTLY_DEBUG=true
 # export DEBUG=true
 export REPORTER=spec
-alias desktest='work; rake db:test:prepare; REPORTER=progress,failtest,slowtest bundle exec time rake assistly:test:all'
+alias desktest='work; rake db:migrate; rake db:test:prepare; REPORTER=progress,failtest,slowtest bundle exec time rake assistly:test:all'
 alias deskjobs='work; script/jobs start; tail -f log/development-backend.log'
 alias deskstart='work; foreman start'
 alias deskkill='killall ruby; killall nginx'
