@@ -4,6 +4,11 @@ source ~/.bashrc
 # add my user bin to PATH
 export PATH=$PATH:~/bin
 
+# Default editor
+# export EDITOR=mate
+export EDITOR='subl -w'
+# Specifying -w will cause the subl command to not exit until the file is closed
+export EDITOR_NO_WAIT=${EDITOR/\-w/}
 
 # change the title of the terminal window
 # See http://hints.macworld.com/article.php?story=20031015173932306
@@ -138,7 +143,7 @@ function which() {
 
 # gem opener
 open_gem() {
-  mate `bundle show $1`
+  $EDITOR_NO_WAIT `bundle show $1`
 }
 
 # thar be dragons
@@ -199,7 +204,7 @@ alias passenger-restart='work; touch tmp/restart.txt'
 alias gb='git branch'
 alias gba='git branch -a'
 alias gc='git commit -a -v'
-alias gd='git diff | mate'
+alias gd="git diff | $EDITOR_NO_WAIT"
 alias gl='git pull'
 alias gp='git push'
 alias gpp='git pull;git push'
@@ -250,10 +255,10 @@ function gpom {
 
 function open_all_files_changed_from_master {
   if [ -d .git ]; then
-    mate .
+    $EDITOR_NO_WAIT .
     for file in `git diff --name-only master`
     do
-      mate $file
+      $EDITOR_NO_WAIT $file
     done
   else
     echo "Hey man. You're not in a directory with a git repo."
@@ -278,11 +283,6 @@ export IRCNICK="lectrick"
 export IRCUSER="Any"
 export IRCNAME="Peter"
 export IRCSERVER="irc.freenode.net"
-
-# Default editor
-# export EDITOR=mate
-export EDITOR='subl -w'
-# Specifying -w will cause the subl command to not exit until the file is closed
 
 # RVM integration
 [[ -s "$HOME/.rvm/scripts/rvm" ]] && source "$HOME/.rvm/scripts/rvm" # Load RVM into a shell session *as a function*
