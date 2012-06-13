@@ -1,0 +1,12 @@
+---
+:update_sources: true
+:backtrace: false
+:verbose: true
+:bulk_threshold: 1000
+:benchmark: false
+:sources:
+- http://gems.rubyforge.org
+- http://gems.github.com
+- http://gemcutter.org
+gem:  --gen-rdoc --run-tests
+rdoc: --inline-source --line-numbers --all --template html
