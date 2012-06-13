@@ -5,8 +5,8 @@
 :bulk_threshold: 1000
 :benchmark: false
 :sources:
-- http://gems.rubyforge.org
+- http://gems.rubyforge.org/
 - http://gems.github.com
-- http://gemcutter.org
+- http://rubygems.org
 gem:  --gen-rdoc --run-tests
-rdoc: --inline-source --line-numbers --all --template html
+rdoc: --inline-source --line-numbers --all
