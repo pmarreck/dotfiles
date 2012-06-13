@@ -6,7 +6,7 @@ export PATH=/usr/local/bin:${PATH/\/usr\/local\/bin:/}
 unset MAILCHECK
 
 # tweak to get gcc to not use the LLVM version (because ruby gems hate it for now)
-# export CC=/usr/bin/gcc-4.2
+export CC=/usr/bin/gcc-4.2
 
 # assistly/desk specific
 export DESK_ROOT=/Users/pmarreck/Sites/assistly

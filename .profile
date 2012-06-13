@@ -287,9 +287,5 @@ export IRCSERVER="irc.freenode.net"
 # RVM integration
 [[ -s "$HOME/.rvm/scripts/rvm" ]] && source "$HOME/.rvm/scripts/rvm" # Load RVM into a shell session *as a function*
 
-# set the default ruby for ALL consoles
-# rvm use ruby-1.9.2-p290@assistly-rails3
-rvm use ruby-1.9.3-head
-
 # silliness
 fortune
