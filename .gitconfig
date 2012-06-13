@@ -1,0 +1,49 @@
+[user]
+  name = Peter Marreck
+  email = lumbergh@gmail.com
+[color]
+  branch = auto
+  status = auto
+  diff = auto
+[color "branch"]
+  current = yellow reverse
+  local = yellow
+  remote = green
+[color "diff"]
+  meta = yellow bold
+  frag = magenta bold
+  old = red bold
+  new = green bold
+[color "status"]
+  added = yellow
+  changed = green
+  untracked = cyan
+[alias]
+  st = status
+  ci = commit
+  br = branch
+  co = checkout
+  r = rebase
+  ri = rebase -i
+  df = diff
+  p = pull
+  p-log = log -p
+  q-log = log --no-merges --graph --pretty=format:'%Cred%h%Creset - %C(green)%aN%Creset -%C(yellow)%d%Creset %s %Cgreen(%cr)%Creset' --abbrev-commit --date=relative
+  lol = log --pretty=oneline --abbrev-commit --graph --decorate
+  amend = commit --amend -C HEAD
+[push]
+  default = current
+[apply]
+  whitespace = nowarn
+[core]
+  editor = subl -w
+[merge]
+  summary = true
+#  keepBackup = false
+#  tool = p4merge
+#[mergetool "p4merge"]
+#  cmd = ~/Applications/p4merge.app/Contents/Resources/launchp4merge $PWD/$BASE $PWD/$REMOTE $PWD/$LOCAL $PWD/$MERGED
+#  keepTemporaries = false
+#  trustExitCode = false
+#  keepBackup = false
+[diff]
