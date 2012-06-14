@@ -141,6 +141,11 @@ function which() {
   fi
 }
 
+# universal edit command, points back to your defined $EDITOR
+function edit() {
+  $EDITOR_NO_WAIT $@
+}
+
 # gem opener
 open_gem() {
   $EDITOR_NO_WAIT `bundle show $1`
