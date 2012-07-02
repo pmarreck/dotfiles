@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+
+# Fail if return code isn't 0.
+# Parameter 1 is the return code
+# Para. 2 is text to display on failure.
+check_errs() {
+  if [ "${1}" -ne "0" ]; then
+  echo "ERROR # ${1} : ${2}"
+  exit ${1}
+  fi
+}
+
+normalize() {
+  dir=$1
+  dir=$(dirname "$dir")
+  pushd "$dir" > /dev/null
+  dir=`pwd`
+  popd > /dev/null 2>&1
+  fname=$(basename "$1")
+  echo "$dir/$fname"
+}
+
+#Show help and quit.
+myhelp() {
+  echo "USAGE: zipto7z wonderland.zip [middle-earth.tar.bzip2]" >&2
+  exit 0
+}
+
+while getopts :h OPTION
+do
+  case $OPTION in
+    h) myhelp
+      ;;
+    \?) echo "Illegal option -- $OPTARG" >&2
+      exit -1
+      ;;
+  esac
+done
+
+if [ "$1" == "" ]
+then
+  myhelp
+fi
+
+will_compress=false
+
+for infile in "$@"
+do
+  # assume someone can run this script multiple times to ramp up CPU usage :)
+  if [ -e "$infile" ] ; then
+    unpackdir=$(mktemp -d -t to7z"$$")
+    trap "rm -rf '$unpackdir'" EXIT INT HUP TERM
+
+    will_compress=false
+    case "$infile" in
+      *.zip)
+        mv "$infile" "$infile.to7z"
+        if [ $? -eq 0 ]; then
+          will_compress=true
+          # unzip -q "$infile.to7z.$$" -d "$unpackdir" >/dev/null
+          ditto -xk "$infile.to7z"  "$unpackdir" # this one works properly on OS X
+          check_errs $?
+          outfile=${infile%.zip}
+        fi
+        ;;
+      *.tgz)
+        mv "$infile" "$infile.to7z"
+        if [ $? -eq 0 ]; then
+          will_compress=true
+          tar -C "$unpackdir" -xzf "$infile.to7z" >/dev/null
+          check_errs $?
+          outfile=${infile%.tgz}
+        fi
+        ;;
+      *.tar.gz)
+        mv "$infile" "$infile.to7z"
+        if [ $? -eq 0 ]; then
+          will_compress=true
+          tar -C "$unpackdir" -xzf "$infile.to7z" >/dev/null
+          check_errs $?
+          outfile=${infile%.tar.gz}
+        fi
+        ;;
+      *.tar)
+        mv "$infile" "$infile.to7z"
+        if [ $? -eq 0 ]; then
+          will_compress=true
+          tar -C "$unpackdir" -xf "$infile.to7z" >/dev/null
+          check_errs $?
+          outfile=${infile%.tar}
+        fi
+        ;;
+      *.tar.bzip2)
+        mv "$infile" "$infile.to7z"
+        if [ $? -eq 0 ]; then
+          will_compress=true
+          tar -C "$unpackdir" -xjf "$infile.to7z" >/dev/null
+          check_errs $?
+          outfile=${infile%.tar.bzip2}
+        fi
+        ;;
+      *)
+        echo "Unrecognized archive format for file $infile" >&2
+        will_compress=false
+        # exit -1
+        ;;
+    esac
+    if [ "$will_compress" == "true" ]
+    then
+      outfile=$(normalize "$outfile")
+
+      outfile="${outfile}.7z"
+      echo "Going to write file: $outfile"
+      if [ -e "$outfile" ] ; then
+        echo "Overwriting $outfile" >&2
+        rm "$outfile"
+        check_errs $?
+      fi
+
+      pushd "$unpackdir" >/dev/null
+      7za a -t7z "$outfile" . -bd -mx=9 -mmt=on >/dev/null
+      # zip -r "$outfile" . >/dev/null
+      check_errs $?
+      popd > /dev/null
+      if [ -e "$infile.to7z" ] ; then
+        rm "$infile.to7z"
+        check_errs $?
+      fi
+    fi
+    rm -rf "$unpackdir"
+  fi
+done
