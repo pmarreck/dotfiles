@@ -61,6 +61,13 @@ checkForResourceFork() {
   fi
 }
 
+checkTools() {
+  if [ -n "$(which ditto)" ]; then has_ditto=true; else has_ditto=false; fi
+  if [ -n "$(which unzip)" ]; then has_unzip=true; else has_unzip=false; fi
+  if [ -n "$(which unrar)" ]; then has_unrar=true; else has_unrar=false; fi
+
+}
+
 while getopts :h OPTION
 do
   case $OPTION in
