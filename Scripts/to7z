@@ -62,10 +62,9 @@ checkForResourceFork() {
 }
 
 checkTools() {
-  if [ -n "$(which ditto)" ]; then has_ditto=true; else has_ditto=false; fi
-  if [ -n "$(which unzip)" ]; then has_unzip=true; else has_unzip=false; fi
-  if [ -n "$(which unrar)" ]; then has_unrar=true; else has_unrar=false; fi
-
+  if [ -n "$(/usr/bin/env which ditto)" ]; then has_ditto=true; else has_ditto=false; fi
+  if [ -n "$(/usr/bin/env which unzip)" ]; then has_unzip=true; else has_unzip=false; fi
+  if [ -n "$(/usr/bin/env which unrar)" ]; then has_unrar=true; else has_unrar=false; fi
 }
 
 while getopts :h OPTION
@@ -85,6 +84,8 @@ fi
 
 will_compress=false
 
+checkTools
+
 for infile in "$@"
 do
   # assume someone can run this script multiple times to ramp up CPU usage :)
@@ -97,8 +98,18 @@ do
         mv "$infile" "$infile.to7z"
         if [ $? -eq 0 ]; then
           will_compress=true
-          # unzip -q "$infile.to7z" -d "$unpackdir" >/dev/null
-          ditto -xk "$infile.to7z" "$unpackdir" >/dev/null # this one works properly on OS X
+          # try to use the Mac unzipper on Macs
+          if [ "$has_ditto" == "true" ]; then
+            ditto -xk "$infile.to7z" "$unpackdir" >/dev/null # this one works properly on OS X
+          else
+            if [ "$has_unzip" == "true" ]; then
+              unzip -q "$infile.to7z" -d "$unpackdir" >/dev/null
+            else
+              echo "You seem to have neither ditto (OS X) nor unzip available in your PATH, so I cannot process $infile."
+              mv "$infile.to7z" "$infile"
+              will_compress=false
+            fi
+          fi
           check_errs $?
           outfile=${infile%.zip}
         fi
@@ -110,8 +121,13 @@ do
         mkdir $tmp
         mv "${infile%.rar}".r?? $tmp/
         if [ $? -eq 0 ]; then
-          will_compress=true
-          unrar x "$tmp/$infile" "$unpackdir/" >/dev/null
+          if [ "$has_unrar" == "true" ]; then
+            will_compress=true
+            unrar x "$tmp/$infile" "$unpackdir/" >/dev/null
+          else
+            echo "You don't seem to have 'unrar' available in your PATH, so I cannot process $infile. On OS X, try installing it with Homebrew."
+            will_compress=false
+          fi
           check_errs $?
           outfile=${infile%.rar}
         fi
@@ -160,7 +176,7 @@ do
           outfile=${infile%.tar.bz*2}
         fi
         ;;
-      *.exe|*.bmp|*.pdf|*.key|*.doc|*.xls?|*.iso|*.sparsebundle)
+      *.exe|*.bmp|*.pdf|*.key|*.doc|*.xls?|*.iso|*.sparsebundle|*.log|*.pkg)
         make_unpackdir
         echo "Processing $infile"
         tmp="tmp7z.$$"
@@ -173,7 +189,7 @@ do
           outfile="$infile"
         else
           mv "$tmp/$infile" .
-          rm -r $tmp
+          rm -r "$tmp"
         fi
         ;;
       *)
@@ -190,14 +206,15 @@ do
       pushd "$unpackdir" >/dev/null
       checkForResourceFork
       outfile="${outfile}.7z"
-      echo "Going to write file: $outfile"
       if [ -e "$outfile" ]; then
-        echo "Overwriting $outfile" >&2
+        echo "Overwriting: $outfile" >&2
         rm "$outfile"
         check_errs $?
+      else
+        echo "Creating: $outfile"
       fi
-      7za a -t7z "$outfile" . -bd -mx=9 -mmt=on >/dev/null
       # zip -r "$outfile" . >/dev/null
+      7za a -t7z "$outfile" . -bd -mx=9 -m0=lzma2 -mmt=on >/dev/null
       check_errs $?
       popd > /dev/null
       # check for temp pre-convert archives
