@@ -62,9 +62,36 @@ checkForResourceFork() {
 }
 
 checkTools() {
+  if [ -n "$(/usr/bin/env which brew)" ]; then has_brew=true; else has_brew=false; fi
   if [ -n "$(/usr/bin/env which ditto)" ]; then has_ditto=true; else has_ditto=false; fi
   if [ -n "$(/usr/bin/env which unzip)" ]; then has_unzip=true; else has_unzip=false; fi
   if [ -n "$(/usr/bin/env which unrar)" ]; then has_unrar=true; else has_unrar=false; fi
+  if [ -n "$(/usr/bin/env which pv)" ]; then has_pv=true; else has_pv=false; fi
+  if [ -n "$(/usr/bin/env which dialog)" ]; then has_dialog=true; else has_dialog=false; fi
+
+  if [ "$has_unrar" = "false" ]; then
+    echo "You don't have the 'unrar' tool installed."
+    if [ "$has_brew" = "true" ]; then
+      brew install unrar
+    else
+      echo "On OS X, try installing Homebrew from http://mxcl.github.com/homebrew/ to get it."
+    fi
+  fi
+  if [ "$has_ditto" = "false" -a "$has_unzip" = "false" ]; then
+    echo "You have neither the 'unzip' nor 'ditto' tools installed."
+    echo "One of these is necessary to unzip files. Try your package manager. Exiting..."
+    exit -1
+  fi
+  if [ "$has_pv" = "false" ]; then
+    echo "You don't have the 'pv' pipe viewer tool installed."
+    if [ "$has_brew" = "true" ]; then
+      brew install pv
+    else
+      echo "On OS X, try installing Homebrew from http://mxcl.github.com/homebrew/ to get it."
+      echo "I don't yet support output that is not pipe-viewed to show progress. Exiting..."
+      exit -1
+    fi
+  fi
 }
 
 while getopts :h OPTION
@@ -78,7 +105,7 @@ do
   esac
 done
 
-if [ "$1" == "" ]; then
+if [ "$1" = "" ]; then
   myhelp
 fi
 
@@ -99,10 +126,11 @@ do
         if [ $? -eq 0 ]; then
           will_compress=true
           # try to use the Mac unzipper on Macs
-          if [ "$has_ditto" == "true" ]; then
-            ditto -xk "$infile.to7z" "$unpackdir" >/dev/null # this one works properly on OS X
+          if [ "$has_ditto" = "true" ]; then
+            pv -petaN unzipping "$infile.to7z" | ditto -xk - "$unpackdir" >/dev/null # this one works properly on OS X
           else
-            if [ "$has_unzip" == "true" ]; then
+            if [ "$has_unzip" = "true" ]; then
+              echo "('unzip' does not support progress indication, unfortunately.)"
               unzip -q "$infile.to7z" -d "$unpackdir" >/dev/null
             else
               echo "You seem to have neither ditto (OS X) nor unzip available in your PATH, so I cannot process $infile."
@@ -121,8 +149,9 @@ do
         mkdir $tmp
         mv "${infile%.rar}".r?? $tmp/
         if [ $? -eq 0 ]; then
-          if [ "$has_unrar" == "true" ]; then
+          if [ "$has_unrar" = "true" ]; then
             will_compress=true
+            echo "('unrar' does not support progress indication, unfortunately.)"
             unrar x "$tmp/$infile" "$unpackdir/" >/dev/null
           else
             echo "You don't seem to have 'unrar' available in your PATH, so I cannot process $infile. On OS X, try installing it with Homebrew."
@@ -138,7 +167,7 @@ do
         mv "$infile" "$infile.to7z"
         if [ $? -eq 0 ]; then
           will_compress=true
-          tar -C "$unpackdir" -xzf "$infile.to7z" >/dev/null
+          pv -petaN untargzipping "$infile.to7z" | tar -xzf - -C "$unpackdir" >/dev/null
           check_errs $?
           outfile=${infile%.tgz}
         fi
@@ -149,7 +178,7 @@ do
         mv "$infile" "$infile.to7z"
         if [ $? -eq 0 ]; then
           will_compress=true
-          tar -C "$unpackdir" -xzf "$infile.to7z" >/dev/null
+          pv -petaN untargzipping "$infile.to7z" | tar -xzf - -C "$unpackdir" >/dev/null
           check_errs $?
           outfile=${infile%.tar.gz}
         fi
@@ -160,7 +189,7 @@ do
         mv "$infile" "$infile.to7z"
         if [ $? -eq 0 ]; then
           will_compress=true
-          tar -C "$unpackdir" -xf "$infile.to7z" >/dev/null
+          pv -petaN untarring "$infile.to7z" | tar -xf - -C "$unpackdir" >/dev/null
           check_errs $?
           outfile=${infile%.tar}
         fi
@@ -171,12 +200,23 @@ do
         mv "$infile" "$infile.to7z"
         if [ $? -eq 0 ]; then
           will_compress=true
-          tar -C "$unpackdir" -xjf "$infile.to7z" >/dev/null
+          pv -petaN untarbzipping "$infile.to7z" | tar -xjf - -C "$unpackdir" >/dev/null
           check_errs $?
           outfile=${infile%.tar.bz*2}
         fi
         ;;
-      *.exe|*.bmp|*.pdf|*.key|*.doc|*.xls?|*.iso|*.sparsebundle|*.log|*.pkg)
+      *.gz)
+        make_unpackdir
+        echo "Processing $infile"
+        mv "$infile" "$infile.to7z"
+        if [ $? -eq 0 ]; then
+          will_compress=true
+          pv -petaN ungzipping "$infile.to7z" | gunzip --stdout > "$unpackdir/${infile%.gz}"
+          check_errs $?
+          outfile=${infile%.gz}
+        fi
+        ;;
+      *.exe|*.bmp|*.pdf|*.key|*.doc|*.xls?|*.iso|*.sparsebundle|*.log|*.pkg|*.sql)
         make_unpackdir
         echo "Processing $infile"
         tmp="tmp7z.$$"
@@ -201,7 +241,7 @@ do
         # exit -1
         ;;
     esac
-    if [ "$will_compress" == "true" ]; then
+    if [ "$will_compress" = "true" ]; then
       outfile=$(normalize "$outfile")
       pushd "$unpackdir" >/dev/null
       checkForResourceFork
@@ -210,11 +250,11 @@ do
         echo "Overwriting: $outfile" >&2
         rm "$outfile"
         check_errs $?
-      else
-        echo "Creating: $outfile"
+      # else
+      #   echo "Creating: $outfile"
       fi
       # zip -r "$outfile" . >/dev/null
-      7za a -t7z "$outfile" . -bd -mx=9 -m0=lzma2 -mmt=on >/dev/null
+      7za a -t7z "$outfile" . -mx=9 -m0=lzma2 -mmt=on
       check_errs $?
       popd > /dev/null
       # check for temp pre-convert archives
