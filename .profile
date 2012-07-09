@@ -11,9 +11,9 @@ export PATH=${PATH/~\/Scripts:/}:~/Scripts
 
 # Default editor
 # export EDITOR=mate
-export EDITOR='subl -w'
+export EDITOR='subl'
 # Specifying -w will cause the subl command to not exit until the file is closed
-export EDITOR_NO_WAIT=${EDITOR/\-w/}
+# export EDITOR=${EDITOR/\-w/}
 
 # change the title of the terminal window
 # See http://hints.macworld.com/article.php?story=20031015173932306
@@ -148,12 +148,12 @@ function which() {
 
 # universal edit command, points back to your defined $EDITOR
 function edit() {
-  $EDITOR_NO_WAIT $@
+  $EDITOR $@
 }
 
 # gem opener
 open_gem() {
-  $EDITOR_NO_WAIT `bundle show $1`
+  $EDITOR `bundle show $1`
 }
 
 # thar be dragons
@@ -214,7 +214,7 @@ alias passenger-restart='work; touch tmp/restart.txt'
 alias gb='git branch'
 alias gba='git branch -a'
 alias gc='git commit -a -v'
-alias gd="git diff | $EDITOR_NO_WAIT"
+alias gd="git diff | $EDITOR"
 alias gl='git pull'
 alias gp='git push'
 alias gpp='git pull;git push'
@@ -265,10 +265,10 @@ function gpom {
 
 function open_all_files_changed_from_master {
   if [ -d .git ]; then
-    $EDITOR_NO_WAIT .
+    $EDITOR .
     for file in `git diff --name-only master`
     do
-      $EDITOR_NO_WAIT $file
+      $EDITOR $file
     done
   else
     echo "Hey man. You're not in a directory with a git repo."

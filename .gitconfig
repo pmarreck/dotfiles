@@ -23,21 +23,44 @@
   ci = commit
   br = branch
   co = checkout
+  cp = cherry-pick
+  dt = difftool
   r = rebase
   ri = rebase -i
   df = diff
+  dm = diff master...
   p = pull
+  puff = pull --ff-only
+  ll = log --pretty=format:'%Cred%h %Cblue%an %Cgreen%s%Creset %ar' --abbrev-commit -n15
   p-log = log -p
   q-log = log --no-merges --graph --pretty=format:'%Cred%h%Creset - %C(green)%aN%Creset -%C(yellow)%d%Creset %s %Cgreen(%cr)%Creset' --abbrev-commit --date=relative
   lol = log --pretty=oneline --abbrev-commit --graph --decorate
   amend = commit --amend -C HEAD
+	unadd = reset HEAD
+  bugfix-startpoint = "!f() { if [ $# -lt 2 ]; then echo 'usage: git bugfix-startpoint <branch> <branch> ...' >&2; exit 1; fi; git merge-base --octopus --all $@;  }; f"
+
+  publish = "!f() { if [ $# -ne 1 ]; then echo 'usage: git publish <local-branch-name>' >&2; exit 1; fi; git push --set-upstream origin $1:$1; }; f"
+
+  unpublish = "!f() { if [ $# -ne 1 ]; then echo 'usage: git unpublish <remote-branch-name>' >&2; exit 1; fi; git push origin :$1; }; f"
+
+  edit-unmerged = "!f() { git ls-files --unmerged | cut -f2 | sort -u ; }; gvim `f`"
+  add-unmerged = "!f() { git ls-files --unmerged | cut -f2 | sort -u ; }; git add `f`"
 [push]
   default = current
 [apply]
   whitespace = nowarn
 [core]
-  editor = subl -w
+  editor = $EDITOR -w
+[diff]
+  tool = diffmerge
+[difftool "diffmerge"]
+  cmd = diffmerge $LOCAL $REMOTE
+[mergetool "diffmerge"]
+  cmd = diffmerge --merge --result=$MERGED $LOCAL $BASE $REMOTE
+[mergetool]
+  keepBackup = false
 [merge]
+  tool = diffmerge
   summary = true
 #  keepBackup = false
 #  tool = p4merge
@@ -47,3 +70,6 @@
 #  trustExitCode = false
 #  keepBackup = false
 [diff]
+
+[remote "origin"]
+  push = HEAD
