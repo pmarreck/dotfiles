@@ -1,6 +1,10 @@
 #!/usr/bin/env ruby
-
-require 'hash_syntax'
+begin
+  require 'hash_syntax'
+rescue
+  raise "You need to install the hash_syntax gem!"
+  exit -1
+end
 
 include HashSyntax::Transformer
 
