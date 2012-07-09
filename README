@@ -8,6 +8,6 @@ This is a work in progress and (hopefully) all sensitive information has been re
 
 To apply this to a new computer:
 
-git clone URL subdir; mv subdir/.git .; git reset --hard
+cd ~; git clone git@github.com:pmarreck/dotfiles.git; cp -R dotfiles/.git .; git reset --hard; rm -rf dotfiles; echo "*" >> .git/info/exclude
 
-Then add a "*" line to the ~/.git/info/exclude file which forces you to add files with the -f option.
+This will move the contents up one into your home directory and "recenter" the repo on that. (The expected caveats apply.) Then it adds a "*" line to the ~/.git/info/exclude file which forces you to add files with the -f option (otherwise you might accidentally add everything in your home directory).
