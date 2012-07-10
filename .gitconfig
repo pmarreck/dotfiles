@@ -27,10 +27,13 @@
   dt = difftool
   r = rebase
   ri = rebase -i
+  rebase-cleanup = !git fetch origin && git rebase -i -p $(git merge-base HEAD master)
+  reset-combine = !git reset $(git merge-base HEAD master)
   df = diff
   dm = diff master...
   p = pull
   puff = pull --ff-only
+  purr = pull --rebase
   ll = log --pretty=format:'%Cred%h %Cblue%an %Cgreen%s%Creset %ar' --abbrev-commit -n15
   p-log = log -p
   q-log = log --no-merges --graph --pretty=format:'%Cred%h%Creset - %C(green)%aN%Creset -%C(yellow)%d%Creset %s %Cgreen(%cr)%Creset' --abbrev-commit --date=relative
