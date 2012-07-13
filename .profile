@@ -125,7 +125,7 @@ alias deskkill='killall ruby; killall nginx'
 alias deskcleares='work; rake assistly:es:index:remove_all; rake assistly:es:index:build; rake assistly:es:index:prune_versions'
 alias deskguard='work; bundle exec guard'
 deskonetest() {
-  REPORTER=spec bundle exec time rake assistly:test:${2:-units} TEST=${1} ${3}
+  REPORTER=spec,slowtest,failtest bundle exec time rake assistly:test:${2:-units} TEST=${1} ${3}
 }
 
 # encryption. assumes you have "gpg" installed via Homebrew
@@ -214,7 +214,6 @@ alias passenger-restart='work; touch tmp/restart.txt'
 alias gb='git branch'
 alias gba='git branch -a'
 alias gc='git commit -a -v'
-alias gd="git diff | $EDITOR"
 alias gl='git pull'
 alias gp='git push'
 alias gpp='git pull;git push'
@@ -228,6 +227,23 @@ alias gitrollback='git reset --hard; git clean -f'
 alias gunadd='git reset HEAD'
 
 # git functions
+function gd {
+  git diff $1 | $EDITOR;
+}
+
+function push {
+  git push $1;
+}
+
+function pull {
+  git pull $1;
+}
+
+# pull --ff-only
+function puff {
+  git puff $1;
+}
+
 function rbr {
  git checkout $1;
  git pull origin $1;

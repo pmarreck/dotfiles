@@ -25,7 +25,7 @@
 	],
 	"cmd":
 	[
-		"$HOME/.rvm/bin/rvm-auto-ruby",
+		"$HOME/.rvm/bin/rvm-auto-ruby bundle exec",
 		"$file"
 	],
 	"extensions":
