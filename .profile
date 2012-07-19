@@ -194,7 +194,6 @@ function resetData {
 # export CC=/opt/local/bin/clang
 # export CXX=/opt/local/bin/clang++
 
-
 # Sexy man pages. Opens a postscript version in Preview.app
 pman() { man -t "$@" | open -f -a Preview; }
 
@@ -283,7 +282,6 @@ source ~/bin/git-completion.bash
 PS1="\[\033[G\]\[$TXTWHT\]\u@\H\[$TXTWHT\]:\[$TXTYLW\]\w \[$NO_COLOR\]\D{%F %T} ${BRIGHT_RED}\$(parse_git_branch)\n\[$TXTPUR\]\# \[$TXTYLW\]${SHELL##*/}>>\[$NO_COLOR\] "
 # PS1="${DULL_WHITE}\w${BRIGHT_RED} \$(parse_git_branch)${BRIGHT_WHITE}\$ "
 
-
 #supercolor
 # PS1="\[$(tput rev)\]$PS1\[$(tput sgr0)\]"
 # PS1="\[$(tput setaf 1)\]$PS1\[$(tput sgr0)\]"
@@ -295,7 +293,6 @@ export IRCNAME="Peter"
 export IRCSERVER="irc.freenode.net"
 
 # RVM integration
-[[ -s "$HOME/.rvm/scripts/rvm" ]] && source "$HOME/.rvm/scripts/rvm" # Load RVM into a shell session *as a function*
 
 # silliness
 fortune
