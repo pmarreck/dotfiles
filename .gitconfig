@@ -48,6 +48,8 @@
 
   edit-unmerged = "!f() { git ls-files --unmerged | cut -f2 | sort -u ; }; gvim `f`"
   add-unmerged = "!f() { git ls-files --unmerged | cut -f2 | sort -u ; }; git add `f`"
+  ignore = update-index --assume-unchanged
+  unignore = update-index --no-assume-unchanged
 [branch]
   autosetuprebase = never
 [push]
