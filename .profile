@@ -90,7 +90,16 @@ alias pps='passenger start'
 alias dbm='rake db:migrate; rake db:test:prepare'
 
 # free amazon EC2 usage tier box
-alias ec2box='ssh -i ~/.ssh/pmamazonkey.pem ec2-user@ec2-184-72-178-19.compute-1.amazonaws.com'
+EC2USER='ec2-user'
+EC2BOX='ec2-184-72-178-19.compute-1.amazonaws.com'
+SSHEC2IDFILE="/Users/pmarreck/.ssh/pmamazonkey.pem"
+alias ec2box="ssh -i $SSHEC2IDFILE $EC2USER@$EC2BOX"
+ec2_dropbox_push() {
+  scp -i $SSHEC2IDFILE "$1" $EC2USER@$EC2BOX:${2:-\~/Dropbox/}
+}
+ec2_dropbox_pull() {
+  scp -i $SSHEC2IDFILE $EC2USER@$EC2BOX:${1:-\~/Dropbox/\*} "${2:-.}"
+}
 
 ### Different ways to print a "beep" sound. I settled on the last one. It's shell-agnostic.
 # From http://stackoverflow.com/questions/3127977/how-to-make-the-hardware-beep-sound-in-mac-os-x-10-6
@@ -193,7 +202,6 @@ function resetData {
 # CC='/Developer/usr/bin/clang'
 # export CC=/opt/local/bin/clang
 # export CXX=/opt/local/bin/clang++
-
 
 # Sexy man pages. Opens a postscript version in Preview.app
 pman() { man -t "$@" | open -f -a Preview; }
@@ -298,7 +306,6 @@ source ~/bin/git-completion.bash
 # Command prompt config
 PS1="\[\033[G\]\[$TXTWHT\]\u@\H\[$TXTWHT\]:\[$TXTYLW\]\w \[$NO_COLOR\]\D{%F %T} ${BRIGHT_RED}\$(parse_git_branch)\n\[$TXTPUR\]\# \[$TXTYLW\]${SHELL##*/}>>\[$NO_COLOR\] "
 # PS1="${DULL_WHITE}\w${BRIGHT_RED} \$(parse_git_branch)${BRIGHT_WHITE}\$ "
-
 
 #supercolor
 # PS1="\[$(tput rev)\]$PS1\[$(tput sgr0)\]"
