@@ -63,8 +63,9 @@
   cmd = diffmerge $LOCAL $REMOTE
 [mergetool "diffmerge"]
   cmd = diffmerge --merge --result=$MERGED $LOCAL $BASE $REMOTE
+	trustExitCode = true
 [mergetool]
-  keepBackup = false
+	keepBackup = false
 [merge]
   tool = diffmerge
   summary = true
