@@ -1,6 +1,6 @@
 [user]
-  name = Peter Marreck
-  email = lumbergh@gmail.com
+	name = Peter Marreck
+	email = lumbergh@gmail.com
 [color]
   branch = auto
   status = auto
@@ -48,12 +48,15 @@
 
   edit-unmerged = "!f() { git ls-files --unmerged | cut -f2 | sort -u ; }; gvim `f`"
   add-unmerged = "!f() { git ls-files --unmerged | cut -f2 | sort -u ; }; git add `f`"
+[branch]
+  autosetuprebase = never
 [push]
   default = current
 [apply]
   whitespace = nowarn
 [core]
   editor = $EDITOR -w
+	excludesfile = /Users/pmarreck/.gitignore_global
 [diff]
   tool = diffmerge
 [difftool "diffmerge"]
@@ -72,7 +75,11 @@
 #  keepTemporaries = false
 #  trustExitCode = false
 #  keepBackup = false
-[diff]
-
 [remote "origin"]
   push = HEAD
+[difftool "sourcetree"]
+	cmd = opendiff \"$LOCAL\" \"$REMOTE\"
+	path =
+[mergetool "sourcetree"]
+	cmd = /Applications/SourceTree.app/Contents/Resources/opendiff-w.sh \"$LOCAL\" \"$REMOTE\" -ancestor \"$BASE\" -merge \"$MERGED\"
+	trustExitCode = true

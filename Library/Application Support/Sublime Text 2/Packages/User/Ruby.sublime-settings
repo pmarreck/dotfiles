@@ -1,47 +1,47 @@
 {
-	"align_indent": true,
-	"alignment_chars":
-	[
-		"="
-	],
-	"alignment_prefix_chars":
-	[
-		"+",
-		"-",
-		"&",
-		"|",
-		"<",
-		">",
-		"!",
-		"~",
-		"%",
-		"/",
-		"*",
-		"."
-	],
-	"alignment_space_chars":
-	[
-		"="
-	],
-	"cmd":
-	[
-		"$HOME/.rvm/bin/rvm-auto-ruby",
-		"$file"
-	],
-	"extensions":
-	[
-		".rb",
-		"guard_billing",
-		".irbrc",
-		".railsrc",
-		".rvmrc",
-		"Guardfile"
-	],
-	// The number of spaces a tab is considered equal to
+  "align_indent": true,
+  "alignment_chars":
+  [
+    "="
+  ],
+  "alignment_prefix_chars":
+  [
+    "+",
+    "-",
+    "&",
+    "|",
+    "<",
+    ">",
+    "!",
+    "~",
+    "%",
+    "/",
+    "*",
+    "."
+  ],
+  "alignment_space_chars":
+  [
+    "="
+  ],
+  "cmd":
+  [
+    "/Users/pmarreck/.rvm/bin/rvm-auto-ruby",
+    "$file"
+  ],
+  "extensions":
+  [
+    ".rb",
+    "guard_billing",
+    ".irbrc",
+    ".railsrc",
+    ".rvmrc",
+    "Guardfile"
+  ],
+  // The number of spaces a tab is considered equal to
     "tab_size": 2,
-	// Set to true to insert spaces when tab is pressed
+  // Set to true to insert spaces when tab is pressed
     "translate_tabs_to_spaces": true,
-	"file_regex": "^(...*?):([0-9]*):?([0-9]*)",
-	"mid_line_tabs": false,
-	"selector": "source.ruby"
+  "file_regex": "^(...*?):([0-9]*):?([0-9]*)",
+  "mid_line_tabs": false,
+  "selector": "source.ruby"
 }
