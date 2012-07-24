@@ -40,6 +40,7 @@ python
 qt
 readline
 redis
+siege
 sloccount
 sqlite
 swig
