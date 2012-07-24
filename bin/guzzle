@@ -17,7 +17,9 @@ new_taps.each do |tap|
   print "Tap #{tap}? [Y/y] "
   y = gets[0,1].capitalize
   unless y=='N'
-    puts `#{brew_bin} tap #{tap}`
+    cmd = "#{brew_bin} tap #{tap}"
+    puts cmd
+    puts `#{cmd}`
   end
 end
 
@@ -26,7 +28,9 @@ removed_taps.each do |tap|
   print "Untap #{tap}? [Y/y] "
   y = gets[0,1].capitalize
   unless y=='N'
-    puts `#{brew_bin} untap #{tap}`
+    cmd = "#{brew_bin} untap #{tap}"
+    puts cmd
+    puts `#{cmd}`
   end
 end
 
@@ -45,7 +49,9 @@ new_brews.each do |brew|
   print "Install #{brew}? [Y/y] "
   y = gets[0,1].capitalize
   unless y=='N'
-    puts `#{brew_bin} install #{brew}`
+    cmd = "#{brew_bin} install #{brew}"
+    puts cmd
+    puts `#{cmd}`
   end
 end
 
@@ -54,14 +60,24 @@ removed_brews.each do |brew|
   print "Remove #{brew}? [Y/y] "
   y = gets[0,1].capitalize
   unless y=='N'
-    puts `#{brew_bin} remove #{brew}`
+    cmd = "#{brew_bin} remove #{brew}"
+    puts cmd
+    puts `#{cmd}`
   end
 end
 
 print "Update Homebrew? [Y/y] "
 u = gets[0,1].capitalize
-puts `#{brew_bin} update` unless u=='N'
+unless u=='N'
+  cmd = "#{brew_bin} update"
+  puts cmd
+  puts `#{cmd}`
+end
 
 print "Upgrade brews? [Y/y] "
 u = gets[0,1].capitalize
-puts `#{brew_bin} upgrade` unless u=='N'
+unless u=='N'
+  cmd = "#{brew_bin} upgrade"
+  puts cmd
+  puts `#{cmd}`
+end
