@@ -1,6 +1,16 @@
 #!/usr/bin/env ruby
 
+# initialization
 brew_bin = '/usr/local/bin/brew'
+
+command_instructions = ''
+command_instructions_array = []
+install_taps = []
+remove_taps = []
+install_brews = []
+remove_brews = []
+update_homebrew = false
+upgrade_brews = false
 
 # compare live taps to file
 
@@ -16,22 +26,14 @@ puts "** Possibly new taps **" unless new_taps.empty?
 new_taps.each do |tap|
   print "Tap #{tap}? [Y/y] "
   y = gets[0,1].capitalize
-  unless y=='N'
-    cmd = "#{brew_bin} tap #{tap}"
-    puts cmd
-    puts `#{cmd}`
-  end
+  install_taps << tap unless y=='N'
 end
 
 puts "** Possibly removed taps **" unless removed_taps.empty?
 removed_taps.each do |tap|
   print "Untap #{tap}? [Y/y] "
   y = gets[0,1].capitalize
-  unless y=='N'
-    cmd = "#{brew_bin} untap #{tap}"
-    puts cmd
-    puts `#{cmd}`
-  end
+  remove_taps << tap unless y=='N'
 end
 
 # compare live brews to file
@@ -42,42 +44,55 @@ current_brews = `#{brew_bin} list`.split
 
 new_brews = expected_brews - current_brews
 
-removed_brews = current_brews - expected_brews
+missing_brews = current_brews - expected_brews
 
 puts "** Possibly new brews **" unless new_brews.empty?
 new_brews.each do |brew|
   print "Install #{brew}? [Y/y] "
   y = gets[0,1].capitalize
-  unless y=='N'
-    cmd = "#{brew_bin} install #{brew}"
-    puts cmd
-    puts `#{cmd}`
-  end
+  install_brews << brew unless y=='N'
 end
 
-puts "** Possibly removed brews **" unless removed_brews.empty?
-removed_brews.each do |brew|
-  print "Remove #{brew}? [Y/y] "
+puts "** Possibly removed brews **" unless missing_brews.empty?
+missing_brews.each do |brew|
+  print "Remove #{brew}? [N/n] "
   y = gets[0,1].capitalize
-  unless y=='N'
-    cmd = "#{brew_bin} remove #{brew}"
-    puts cmd
-    puts `#{cmd}`
-  end
+  remove_brews << brew if y=='Y'
 end
 
 print "Update Homebrew? [Y/y] "
 u = gets[0,1].capitalize
-unless u=='N'
-  cmd = "#{brew_bin} update"
-  puts cmd
-  puts `#{cmd}`
-end
+update_homebrew = (u != 'N')
 
-print "Upgrade brews? [Y/y] "
+print "Upgrade brews? [N/n] "
 u = gets[0,1].capitalize
-unless u=='N'
-  cmd = "#{brew_bin} upgrade"
-  puts cmd
-  puts `#{cmd}`
+upgrade_brews = (u == 'Y')
+
+# build the command instructions
+# tap
+install_taps.each do |tap|
+  command_instructions_array << "#{brew_bin} tap #{tap}"
+end
+# untap
+remove_taps.each do |tap|
+  command_instructions_array << "#{brew_bin} untap #{tap}"
+end
+# new brews
+command_instructions_array << "#{brew_bin} install #{install_brews.join(' ')}" unless install_brews.empty?
+# remove brews
+command_instructions_array << "#{brew_bin} remove #{remove_brews.join(' ')}" unless remove_brews.empty?
+# brew update
+command_instructions_array << "#{brew_bin} update" if update_homebrew
+# brew upgrade
+command_instructions_array << "#{brew_bin} upgrade" if upgrade_brews
+
+if command_instructions_array.empty?
+  puts "Nothing to do."
+else
+  # ready...
+  command_instructions = command_instructions_array.join('; ')
+  # aim...
+  puts "Running command: #{command_instructions}"
+  # FIRE!
+  exec(command_instructions)
 end
