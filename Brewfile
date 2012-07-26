@@ -1,7 +1,6 @@
 angband
 atk
 autoconf
-berkeley-db
 brew-pip
 cairo
 cmake
@@ -23,7 +22,6 @@ jpeg
 libevent
 libffi
 libgpg-error
-libiconv
 libksba
 libtiff
 libyaml
@@ -31,6 +29,7 @@ little-cms
 md5sha1sum
 memcached
 mtr
+mysql
 node
 p7zip
 pango
