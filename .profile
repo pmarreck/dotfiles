@@ -222,14 +222,16 @@ alias passenger-restart='work; touch tmp/restart.txt'
 alias gb='git branch'
 alias gba='git branch -a'
 alias gc='git commit -a -v'
-alias gl='git pull'
-alias gp='git push'
+alias push='git push'
+alias pull='git pull'
+alias puff='git puff' # pull --ff-only
+alias co='git checkout' # NOTE: overwrites a builtin for RCS (wtf? really? RCS?)
+alias checkout='git checkout'
+alias gco='git checkout'
 alias gpp='git pull;git push'
-alias gppd='git pull origin dev;git push origin dev'
 alias gst='git status'
 alias ga='git add . -v'
 alias gs='git status'
-alias gco='git checkout'
 alias gcb='git checkout -b'
 alias gitrollback='git reset --hard; git clean -f'
 alias gunadd='git reset HEAD'
@@ -239,18 +241,6 @@ function gd {
   git diff $1 | $EDITOR;
 }
 
-function push {
-  git push $1;
-}
-
-function pull {
-  git pull $1;
-}
-
-# pull --ff-only
-function puff {
-  git puff $1;
-}
 
 function rbr {
  git checkout $1;
