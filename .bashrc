@@ -13,6 +13,7 @@ export CC=/usr/bin/gcc-4.2
 
 # assistly/desk specific
 export DESK_ROOT=/Users/pmarreck/Sites/assistly
+export TEST_ROOT=/Users/pmarreck/Sites/test
 
 # Node.js
 export NODE_PATH=/usr/local/lib/node

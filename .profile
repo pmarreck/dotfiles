@@ -82,6 +82,8 @@ alias bye='logout'
 
 # The current thing I'm working on
 alias work="cd $DESK_ROOT"
+# The directory running a test on a branch
+alias tst="cd $TEST_ROOT"
 
 alias ss='script/server'
 alias sc='script/console'
@@ -127,14 +129,14 @@ alias rst='touch tmp/restart.txt'
 # export ASSISTLY_DEBUG=true
 # export DEBUG=true
 # export REPORTER=spec
-alias desktest='work; rake db:migrate; rake db:test:prepare; REPORTER=progress,failtest,slowtest bundle exec time rake assistly:test:all'
+alias desktest='rake ci:setup:db; REPORTER=progress,failtest,slowtest bundle exec time rake assistly:test:all'
 alias deskjobs='work; script/jobs start; tail -f log/development-backend.log'
 alias deskstart='work; foreman start'
 alias deskkill='killall ruby; killall nginx'
 alias deskcleares='work; rake assistly:es:index:remove_all; rake assistly:es:index:build; rake assistly:es:index:prune_versions'
 alias deskguard='work; bundle exec guard'
 deskonetest() {
-  REPORTER=spec,slowtest,failtest bundle exec time rake assistly:test:${2:-units} TEST=${1} ${3}
+  REPORTER=spec,failtest bundle exec time rake assistly:test:${2:-units} TEST=${1} ${3}
 }
 
 # encryption. assumes you have "gpg" installed via Homebrew
@@ -183,16 +185,16 @@ dragon() {
   echo ''
 }
 
-function resetData {
-  cd ~/Sites/Rails/thredUP3/
-  mysql -u root --execute="DROP DATABASE ${1:-thredup3_development};"
-  mysql -u root --execute="CREATE DATABASE ${1:-thredup3_development};"
-  gunzip -c ${2:-./db/thredup.sql.gz} > ${3:-./tmp/thredup.sql}
-  mysql -u root ${1:-thredup3_development} < ${3:-./tmp/thredup.sql}
-  mysql -u root ${1:-thredup3_development} < ${4:-./db/clean_test_data.sql}
-  rm ${3:-./tmp/thredup.sql}
-  rake db:migrate
-}
+# function resetData {
+#   cd ~/Sites/Rails/thredUP3/
+#   mysql -u root --execute="DROP DATABASE ${1:-thredup3_development};"
+#   mysql -u root --execute="CREATE DATABASE ${1:-thredup3_development};"
+#   gunzip -c ${2:-./db/thredup.sql.gz} > ${3:-./tmp/thredup.sql}
+#   mysql -u root ${1:-thredup3_development} < ${3:-./tmp/thredup.sql}
+#   mysql -u root ${1:-thredup3_development} < ${4:-./db/clean_test_data.sql}
+#   rm ${3:-./tmp/thredup.sql}
+#   rake db:migrate
+# }
 # Usage:   resetData [thredup3_development ./db/thredup.sql.gz ./tmp/thredup.sql]
 
 # Use LLVM-GCC4.2 as the c compiler
@@ -213,6 +215,18 @@ function portopen {
 }
 function fileopen {
 	sudo lsof "${1}"
+}
+
+# Print a string num times. Comes from Perl apparently.
+# usage: x string num
+x() {
+  for i in $(seq 1 $2); do printf "%s" "$1"; done
+}
+# x with a newline after it
+xn() {
+  x $1 $2
+  # print a newline only if the string does not end in a newline
+  [[ "$1" == "${1%$'\n'}" ]] && echo ""
 }
 
 # Passenger shortcuts
@@ -287,6 +301,15 @@ function open_all_files_changed_from_master {
   else
     echo "Hey man. You're not in a directory with a git repo."
   fi
+}
+
+# automated git bisecting. because I hate remembering how to use this.
+# ex. usage: git_wtf_happened <ruby testfile> <how many commits back, default 10>
+function git_wtf_happened {
+  git bisect start HEAD HEAD~${2:-10};
+  git bisect run ruby $1;
+  git bisect view;
+  git bisect reset;
 }
 
 # git functions and extra config
