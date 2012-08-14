@@ -239,6 +239,7 @@ alias gc='git commit -a -v'
 alias push='git push'
 alias pull='git pull'
 alias puff='git puff' # pull --ff-only
+alias fetch='git fetch'
 alias co='git checkout' # NOTE: overwrites a builtin for RCS (wtf? really? RCS?)
 alias checkout='git checkout'
 alias gco='git checkout'
