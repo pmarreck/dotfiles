@@ -48,6 +48,8 @@
 
   edit-unmerged = "!f() { git ls-files --unmerged | cut -f2 | sort -u ; }; gvim `f`"
   add-unmerged = "!f() { git ls-files --unmerged | cut -f2 | sort -u ; }; git add `f`"
+  down = !sh -c 'CURRENT=$(git symbolic-ref HEAD | sed -e s@.*/@@) \
+      && (git pull --ff-only || (git fetch origin && git rebase --preserve-merges origin/$CURRENT))'
   ignore = update-index --assume-unchanged
   unignore = update-index --no-assume-unchanged
 [branch]
@@ -82,7 +84,7 @@
   push = HEAD
 [difftool "sourcetree"]
 	cmd = opendiff \"$LOCAL\" \"$REMOTE\"
-	path = 
+	path =
 [mergetool "sourcetree"]
 	cmd = /Applications/SourceTree.app/Contents/Resources/opendiff-w.sh \"$LOCAL\" \"$REMOTE\" -ancestor \"$BASE\" -merge \"$MERGED\"
 	trustExitCode = true

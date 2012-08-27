@@ -40,16 +40,16 @@ if ENV['RAILS_ENV']
   load "#{ENV['HOME']}/.railsrc"
 end
 
-# preloads
-%w[ ansi ].each do |lib|
-	begin
-		require lib
-	rescue LoadError
-		`gem install #{lib.gsub('/','_')}`
-		require lib
-	end
-end
-# usage: "string".ansi(:red)
-def _asa
-  require 'active_support/all'
-end
+# # preloads
+# %w[ ansi ].each do |lib|
+# 	begin
+# 		require lib
+# 	rescue LoadError
+# 		`gem install #{lib.gsub('/','_')}`
+# 		require lib
+# 	end
+# end
+# # usage: "string".ansi(:red)
+# def _asa
+#   require 'active_support/all'
+# end
