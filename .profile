@@ -1,6 +1,5 @@
-# load global env config
+echo "Running .profile"
 source ~/.bashrc
-
 # add my user bin to PATH
 # export PATH=$PATH:~/bin
 export PATH=${PATH/~\/bin:/}:~/bin
@@ -236,7 +235,7 @@ alias passenger-restart='work; touch tmp/restart.txt'
 alias gb='git branch'
 alias gba='git branch -a'
 alias gc='git commit -a -v'
-alias push='git push'
+alias push='git push -f'
 alias pull='git pull'
 alias puff='git puff' # pull --ff-only
 alias fetch='git fetch'
@@ -255,7 +254,6 @@ alias gunadd='git reset HEAD'
 function gd {
   git diff $1 | $EDITOR;
 }
-
 
 function rbr {
  git checkout $1;
@@ -305,12 +303,12 @@ function open_all_files_changed_from_master {
 }
 
 # automated git bisecting. because I hate remembering how to use this.
-# ex. usage: git_wtf_happened <ruby testfile> <how many commits back, default 10>
+# ex. usage: git_wtf_happened <ruby testfile> <how many commits back, default 8>
 function git_wtf_happened {
-  git bisect start HEAD HEAD~${2:-10};
-  git bisect run ruby $1;
-  git bisect view;
-  git bisect reset;
+  bundle exec git bisect start HEAD HEAD~${2:-8};
+  bundle exec git bisect run ruby $1;
+  bundle exec git bisect view;
+  bundle exec git bisect reset;
 }
 
 # git functions and extra config
