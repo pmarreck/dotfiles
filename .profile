@@ -128,12 +128,16 @@ alias rst='touch tmp/restart.txt'
 # export ASSISTLY_DEBUG=true
 # export DEBUG=true
 # export REPORTER=spec
-alias desktest='rake ci:setup:db; REPORTER=progress,failtest,slowtest bundle exec time rake assistly:test:all'
+alias desktest='export REPORTER=progress,failtest,slowtest; rake ci:setup:db; RAILS_ENV=test bundle exec time rake assistly:test:all'
 alias deskjobs='work; script/jobs start; tail -f log/development-backend.log'
 alias deskstart='work; foreman start'
 alias deskkill='killall ruby; killall nginx'
 alias deskcleares='work; rake assistly:es:index:remove_all; rake assistly:es:index:build; rake assistly:es:index:prune_versions'
 alias deskguard='work; bundle exec guard'
+rubytest() {
+  export REPORTER=spec,failtest
+  RAILS_ENV=test bundle exec ruby ${1}
+}
 deskonetest() {
   REPORTER=spec,failtest bundle exec time rake assistly:test:${2:-units} TEST=${1} ${3}
 }
@@ -235,7 +239,8 @@ alias passenger-restart='work; touch tmp/restart.txt'
 alias gb='git branch'
 alias gba='git branch -a'
 alias gc='git commit -a -v'
-alias push='git push -f'
+alias push='git push'
+alias pushforce='git push -f'
 alias pull='git pull'
 alias puff='git puff' # pull --ff-only
 alias fetch='git fetch'
