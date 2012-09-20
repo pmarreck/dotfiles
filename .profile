@@ -238,7 +238,7 @@ alias passenger-restart='work; touch tmp/restart.txt'
 # GIT shortcuts
 alias gb='git branch'
 alias gba='git branch -a'
-alias gc='git commit -a -v'
+alias gc='git commit -v'
 alias push='git push'
 alias pushforce='git push -f'
 alias pull='git pull'
