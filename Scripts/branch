@@ -1,0 +1,41 @@
+#!/usr/bin/env ruby
+
+# Output a git branch listing with descriptions and pretty ansi colors.
+# Edit with gbedit (an alias to 'git branch --edit-description')
+
+ANSI_CODES = {
+  yellow: 33, y: 33,
+  cyan: 36, c: 36,
+  red: 31, r: 31,
+  green: 32, g: 32,
+  bold: 1, b: 1,
+  invert: 7, i: 7,
+  reset: 0, r: 0
+}
+def ansi(color)
+  raise "NoColorDefinedError" unless ANSI_CODES[color]
+  out = "\e[#{ANSI_CODES[color]}m"
+  if block_given?
+    out << yield
+    out << ansi(:r)
+  end
+  out
+end
+
+branchlist = `git branch`.split(/\n/)
+descriptions = `git config -l | egrep "^branch\..*\.description"`.split(/\n/)
+descriptions.map!{|d| d.gsub(/^branch\./,'').split(/\.description=/)}
+desc_hash = Hash[*(descriptions.flatten)]
+
+output = branchlist.map do |b|
+  pure_branch_name = b.gsub(/^\*?\s+/,'')
+  colored_branch_listing = ansi(:y){b}
+  listing_with_highlight = colored_branch_listing.gsub("#{ansi(:y)}* ","* #{ansi(:y)}#{ansi(:b)}#{ansi(:i)}")
+  if desc_hash[pure_branch_name]
+    listing_with_highlight << ' - ' << ansi(:r) << desc_hash[pure_branch_name]
+  else
+    listing_with_highlight
+  end
+end
+
+puts output

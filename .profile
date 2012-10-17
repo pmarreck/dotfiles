@@ -93,6 +93,9 @@ alias dbm='rake db:migrate; rake db:test:prepare'
 # network crap
 alias killdns='sudo killall -HUP mDNSResponder'
 
+# why is grep dumb?
+alias grep='egrep'
+
 # free amazon EC2 usage tier box
 EC2USER='ec2-user'
 EC2BOX='ec2-184-72-178-19.compute-1.amazonaws.com'
@@ -245,6 +248,7 @@ alias passenger-restart='work; touch tmp/restart.txt'
 
 # GIT shortcuts
 alias gb='git branch'
+alias gbnotes='git branch --edit-description'
 alias gba='git branch -a'
 alias gc='git commit -v'
 alias push='git push'
