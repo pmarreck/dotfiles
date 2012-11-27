@@ -149,7 +149,7 @@ deskonetest() {
 }
 desktest() {
   export REPORTER=progress,failtest,slowtest;
-  rake ci:setup:db;
+  bundle exec rake ci:setup:db;
   RAILS_ENV=test bundle exec time rake assistly:test:all
 }
 
@@ -322,10 +322,11 @@ function open_all_files_changed_from_master {
 # automated git bisecting. because I hate remembering how to use this.
 # ex. usage: git_wtf_happened <ruby testfile> <how many commits back, default 8>
 function git_wtf_happened {
-  bundle exec git bisect start HEAD HEAD~${2:-8};
-  bundle exec git bisect run ruby $1;
-  bundle exec git bisect view;
-  bundle exec git bisect reset;
+  git bisect start HEAD HEAD~${1:-8};
+  shift;
+  git bisect run $*;
+  git bisect view;
+  git bisect reset;
 }
 
 # git functions and extra config

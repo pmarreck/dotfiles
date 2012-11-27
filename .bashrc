@@ -13,8 +13,14 @@ export PATH=$PATH:$PLAN9/bin
 # stop checking for unix mail, OS X!
 unset MAILCHECK
 
-# tweak to get gcc to not use the LLVM version (because ruby gems hate it for now)
-export CC=/usr/bin/gcc-4.2
+# make sure this points to the correct gcc!
+# export CC=gcc-4.7
+# export CFLAGS="-march=native"
+# the following is per "brew install libtool" instructions
+# export LDFLAGS=-L/usr/local/opt/libtool/lib
+# export CPPFLAGS=-I/usr/local/opt/libtool/include
+# per https://trac.macports.org/ticket/27237
+# export CXXFLAGS="-U_GLIBCXX_DEBUG -U_GLIBCXX_DEBUG_PEDANTIC"
 
 # assistly/desk specific
 export DESK_ROOT=/Users/pmarreck/Sites/assistly
