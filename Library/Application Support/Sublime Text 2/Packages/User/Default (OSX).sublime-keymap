@@ -2,5 +2,6 @@
 	{ "keys": ["ctrl+super+r"], "command": "reveal_in_side_bar" },
 	{ "keys": ["home"], 		"command": "toggle_side_bar" },
 	{ "keys": ["shift+home"], 	"command": "toggle_distraction_free" },
-	{ "keys": ["ctrl+super+h"],  "command": "filter_through_command", "args": { "cmdline": "$HOME/.rvm/bin/rvm-auto-ruby /Users/pmarreck/bin/rubyhashflip" } }
+	{ "keys": ["ctrl+super+h"], "command": "filter_through_command", "args": { "cmdline": "$HOME/.rvm/bin/rvm-auto-ruby /Users/pmarreck/bin/rubyhashflip" } },
+	{ "keys": ["ctrl+shift+t"], "command": "open_mac_terminal" }
 ]
