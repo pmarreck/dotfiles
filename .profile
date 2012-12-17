@@ -139,15 +139,15 @@ alias deskstart='work; foreman start'
 alias deskkill='killall ruby; killall nginx'
 alias deskcleares='work; rake assistly:es:index:remove_all; rake assistly:es:index:build; rake assistly:es:index:prune_versions'
 alias deskguard='work; bundle exec guard'
-rubytest() {
+function rubytest() {
   export REPORTER=spec,failtest;
   RAILS_ENV=test bundle exec time ruby ${1}
 }
-deskonetest() {
+function deskonetest() {
   export REPORTER=spec,failtest;
   RAILS_ENV=test bundle exec time rake assistly:test:${2:-units} TEST=${1} ${3}
 }
-desktest() {
+function desktest() {
   export REPORTER=progress,failtest,slowtest;
   bundle exec rake ci:setup:db;
   RAILS_ENV=test bundle exec time rake assistly:test:all
