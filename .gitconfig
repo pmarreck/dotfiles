@@ -53,7 +53,7 @@
   ignore = update-index --assume-unchanged
   unignore = update-index --no-assume-unchanged
 [branch]
-  autosetuprebase = never
+	autosetuprebase = always
 [push]
   default = current
 [apply]
@@ -61,6 +61,7 @@
 [core]
   editor = $EDITOR -w
 	excludesfile = /Users/pmarreck/.gitignore_global
+	whitespace = space-before-tab,tabwidth=2,trailing-space
 [diff]
   tool = diffmerge
 [difftool "diffmerge"]
@@ -90,3 +91,5 @@
 	trustExitCode = true
 [rerere]
 	enabled = 1
+[rebase]
+	stat = true

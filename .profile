@@ -214,6 +214,11 @@ dragon() {
 # Use LLVM-GCC4.2 as the c compiler
 # CC='`xcode-select -print-path`/usr/bin/llvm-gcc-4.2 make'
 
+# requires homebrew's apple-gcc42 installed
+export CC=/usr/local/bin/gcc-4.2
+export GCC=/usr/local/bin/gcc-4.2
+export CXX=/usr/local/bin/gcc-4.2
+
 # Use clang as the c compiler
 # CC='/Developer/usr/bin/clang'
 # export CC=/opt/local/bin/clang

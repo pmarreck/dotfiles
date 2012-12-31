@@ -7,8 +7,8 @@ export PATH=/usr/local/sbin:${PATH/\/usr\/local\/sbin:/}
 export PATH=/usr/local/bin:${PATH/\/usr\/local\/bin:/}
 
 # Experimental "Plan 9 from User Space" PATH config
-export PLAN9=/usr/local/plan9
-export PATH=$PATH:$PLAN9/bin
+# export PLAN9=/usr/local/plan9
+# export PATH=$PATH:$PLAN9/bin
 
 # stop checking for unix mail, OS X!
 unset MAILCHECK
