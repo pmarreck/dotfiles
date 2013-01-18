@@ -150,7 +150,14 @@ function deskonetest() {
 function desktest() {
   export REPORTER=progress,failtest,slowtest;
   bundle exec rake ci:setup:db;
-  RAILS_ENV=test bundle exec time rake assistly:test:all
+  xitstatus=-1;
+  RAILS_ENV=test bundle exec time rake assistly:test:all && xitstatus=$?
+  if [ $xitstatus -ne 0 ]; then
+    osascript -e 'tell application "Terminal" to display alert "Test Failed" buttons "Shucks."'
+  else
+    osascript -e 'tell application "Terminal" to display alert "Test Passed" buttons "Right on!"'
+  fi
+  return $xitstatus
 }
 
 # encryption. assumes you have "gpg" installed via Homebrew
@@ -271,6 +278,7 @@ alias gs='git status'
 alias gcb='git checkout -b'
 alias gitrollback='git reset --hard; git clean -f'
 alias gunadd='git reset HEAD'
+alias grc='git rebase --continue'
 
 # git functions
 function gd {
