@@ -147,9 +147,12 @@ function deskonetest() {
   export REPORTER=spec,failtest;
   RAILS_ENV=test bundle exec time rake assistly:test:${2:-units} TEST=${1} ${3}
 }
+function unit() {
+  ${2} time bundle exec ruby -Itest ${1}
+}
 function desktest() {
   export REPORTER=progress,failtest,slowtest;
-  bundle exec rake ci:setup:db;
+  RAILS_ENV=test bundle exec rake ci:setup:db;
   xitstatus=-1;
   RAILS_ENV=test bundle exec time rake assistly:test:all && xitstatus=$?
   if [ $xitstatus -ne 0 ]; then
@@ -252,7 +255,7 @@ x() {
 xn() {
   x $1 $2
   # print a newline only if the string does not end in a newline
-  [[ "$1" == "${1%$'\n'}" ]] && echo ""
+  [[ "$1" == "${1%$'\n'}" ]] && echo
 }
 
 # Passenger shortcuts
@@ -282,7 +285,7 @@ alias grc='git rebase --continue'
 
 # git functions
 function gd {
-  git diff $1 | $EDITOR;
+  git diff ${1} | $EDITOR;
 }
 
 function rbr {
