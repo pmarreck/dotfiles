@@ -148,7 +148,8 @@ function deskonetest() {
   RAILS_ENV=test bundle exec time rake assistly:test:${2:-units} TEST=${1} ${3}
 }
 function unit() {
-  ${2} time bundle exec ruby -Itest ${1}
+  export REPORTER=spec,failtest;
+  ${2:RAILS_ENV=test} time bundle exec ruby -Ilib:test ${1}
 }
 function desktest() {
   export REPORTER=progress,failtest,slowtest;
