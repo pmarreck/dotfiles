@@ -8,6 +8,10 @@ export PATH=${PATH/~\/bin:/}:~/bin
 # export PATH=$PATH:~/Scripts
 export PATH=${PATH/~\/Scripts:/}:~/Scripts
 
+# BINSTUBS
+# add binstub to front of PATH
+export PATH=./bin:${PATH/\.\/bin:/}
+
 # Default editor
 # export EDITOR=mate
 export EDITOR='subl'
@@ -138,14 +142,14 @@ alias deskjobs='work; script/jobs start; tail -f log/development-backend.log'
 alias deskstart='work; foreman start'
 alias deskkill='killall ruby; killall nginx'
 alias deskcleares='work; rake assistly:es:index:remove_all; rake assistly:es:index:build; rake assistly:es:index:prune_versions'
-alias deskguard='work; bundle exec guard'
+alias deskguard='work; guard'
 function rubytest() {
   export REPORTER=spec,failtest;
-  RAILS_ENV=test bundle exec time ruby ${1}
+  RAILS_ENV=test time bundle exec ruby ${1}
 }
 function deskonetest() {
   export REPORTER=spec,failtest;
-  RAILS_ENV=test bundle exec time rake assistly:test:${2:-units} TEST=${1} ${3}
+  RAILS_ENV=test time rake assistly:test:${2:-units} TEST=${1} ${3}
 }
 function unit() {
   export REPORTER=spec,failtest;
@@ -153,15 +157,18 @@ function unit() {
 }
 function desktest() {
   export REPORTER=progress,failtest,slowtest;
-  RAILS_ENV=test bundle exec rake ci:setup:db;
+  RAILS_ENV=test rake ci:setup:db;
   xitstatus=-1;
-  RAILS_ENV=test bundle exec time rake assistly:test:all && xitstatus=$?
+  RAILS_ENV=test time rake assistly:test:all && xitstatus=$?
   if [ $xitstatus -ne 0 ]; then
     osascript -e 'tell application "Terminal" to display alert "Test Failed" buttons "Shucks."'
   else
     osascript -e 'tell application "Terminal" to display alert "Test Passed" buttons "Right on!"'
   fi
   return $xitstatus
+}
+function set_database() {
+  export SPECIFIC_DB="$1"
 }
 
 # encryption. assumes you have "gpg" installed via Homebrew
@@ -347,11 +354,11 @@ function git_wtf_happened {
 }
 
 # git functions and extra config
-source ~/bin/git-branch.bash # defines parse_git_branch
+source ~/bin/git-branch.bash # defines parse_git_branch and parse_git_branch_with_dirty
 source ~/bin/git-completion.bash
 
 # Command prompt config
-PS1="\[\033[G\]\[$TXTWHT\]\u@\H\[$TXTWHT\]:\[$TXTYLW\]\w \[$NO_COLOR\]\D{%F %T} ${BRIGHT_RED}\$(parse_git_branch)\n\[$TXTPUR\]\# \[$TXTYLW\]${SHELL##*/}>>\[$NO_COLOR\] "
+PS1="\[\033[G\]\[$TXTWHT\]\u@\H\[$TXTWHT\]:\[$TXTYLW\]\w \[$NO_COLOR\]\D{%F %T} ${BRIGHT_RED}\$(parse_git_branch_with_dirty)\n\[$TXTPUR\]\# \[$TXTYLW\]${SHELL##*/}>>\[$NO_COLOR\] "
 # PS1="${DULL_WHITE}\w${BRIGHT_RED} \$(parse_git_branch)${BRIGHT_WHITE}\$ "
 
 #supercolor
