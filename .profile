@@ -153,11 +153,53 @@ function deskonetest() {
 }
 function unit() {
   export REPORTER=spec,failtest;
-  ${2:RAILS_ENV=test} time bundle exec ruby -Ilib:test ${1}
+  count=1
+  xitstatus=-1
+  test_failures=0
+  if [ $# -ne 1 ]
+  then
+    echo "Running $# tests..."
+  fi
+  for tst #in "$@" # the latter is actually assumed! awesome.
+  do
+    echo "Running test ($count/$#) $tst ..."
+    RAILS_ENV=test time bundle exec ruby -Ilib:test $tst && xitstatus=$?
+    if [ $xitstatus -ne 0 ]; then
+      test_failures=$[test_failures+1]
+    fi
+    count=$[count+1]
+  done
+  if [ $test_failures -ne 0 ]; then
+    if [ $# -ne 1 ]
+    then
+      echo -e "There were ${ANSI}${BLDRED}$test_failures TEST FAILS!!${ANSI}${TXTRST}"
+    else
+      echo -e "There was ${ANSI}${BLDRED}$test_failures TEST FAIL!!${ANSI}${TXTRST}"
+    fi
+    return -1
+  else
+    echo -e "${ANSI}${TXTGRN}ALL GREEN! SHIP IT!${ANSI}${TXTRST}"
+    return 0
+  fi
 }
-function desktest() {
-  export REPORTER=progress,failtest,slowtest;
+function unitnow() {
+  export REPORTER=spec,failtest;
+  xitstatus=-1
+  test_failures=0
+  ruby_args='-Ilib:test'
+  for tst #in "$@" # the latter is actually assumed! awesome.
+  do
+    ruby_args="$ruby_args -r $tst"
+  done
+  RAILS_ENV=test time bundle exec ruby $ruby_args && xitstatus=$?
+}
+
+function desktestsetup() {
   RAILS_ENV=test rake ci:setup:db;
+}
+
+function desktest() {
+  # export REPORTER=progress,failtest,slowtest;
   xitstatus=-1;
   RAILS_ENV=test time rake assistly:test:all && xitstatus=$?
   if [ $xitstatus -ne 0 ]; then
@@ -167,6 +209,7 @@ function desktest() {
   fi
   return $xitstatus
 }
+
 function set_database() {
   export SPECIFIC_DB="$1"
 }
@@ -229,13 +272,40 @@ dragon() {
 # }
 # Usage:   resetData [thredup3_development ./db/thredup.sql.gz ./tmp/thredup.sql]
 
+function mysql_clone_develop_db {
+  cur=${1:-$(parse_git_branch)}
+  db_name=${cur//[\.\/]/_}
+  testsuffix='_test'
+  test_db_name=$db_name$testsuffix
+  if [[ $db_name =~ _test[0-9]{0,2}$ ]] ; then # if you specifically name a test db, only do it
+    echo Dropping database $db_name
+    mysql -u root --execute="DROP DATABASE \`${db_name}\`;"
+    echo Recreating database $db_name
+    mysql -u root --execute="CREATE DATABASE \`${db_name}\`;"
+  else
+    echo Dropping databases $db_name and $test_db_name
+    mysql -u root --execute="DROP DATABASE \`${db_name}\`; DROP DATABASE \`${test_db_name}\`;"
+    echo Recreating databases $db_name and $test_db_name
+    mysql -u root --execute="CREATE DATABASE \`${db_name}\`; CREATE DATABASE \`${test_db_name}\`;"
+  fi
+  if [[ $db_name =~ _test[0-9]{0,2}$ ]] ; then
+    echo Cloning develop_test to $db_name
+    mysqldump -u root develop_test | pv - -p -r | mysql -u root -h localhost $db_name
+  else
+    echo Cloning develop to $db_name
+    mysqldump -u root develop | pv - -p -r | mysql -u root -h localhost $db_name
+    echo Cloning develop_test to $test_db_name
+    mysqldump -u root develop | pv - -p -r | mysql -u root -h localhost $test_db_name
+  fi
+}
+
 # Use LLVM-GCC4.2 as the c compiler
 # CC='`xcode-select -print-path`/usr/bin/llvm-gcc-4.2 make'
 
 # requires homebrew's apple-gcc42 installed
-export CC=/usr/local/bin/gcc-4.2
-export GCC=/usr/local/bin/gcc-4.2
-export CXX=/usr/local/bin/gcc-4.2
+# export CC=/usr/local/bin/gcc-4.2
+# export GCC=/usr/local/bin/gcc-4.2
+# export CXX=/usr/local/bin/gcc-4.2
 
 # Use clang as the c compiler
 # CC='/Developer/usr/bin/clang'
@@ -358,8 +428,9 @@ source ~/bin/git-branch.bash # defines parse_git_branch and parse_git_branch_wit
 source ~/bin/git-completion.bash
 
 # Command prompt config
-PS1="\[\033[G\]\[$TXTWHT\]\u@\H\[$TXTWHT\]:\[$TXTYLW\]\w \[$NO_COLOR\]\D{%F %T} ${BRIGHT_RED}\$(parse_git_branch_with_dirty)\n\[$TXTPUR\]\# \[$TXTYLW\]${SHELL##*/}>>\[$NO_COLOR\] "
-# PS1="${DULL_WHITE}\w${BRIGHT_RED} \$(parse_git_branch)${BRIGHT_WHITE}\$ "
+# PS1="$ANSI$TXTWHT\u@\H$ANSI$TXTWHT:$ANSI$TXTYLW\w $ANSI$TXTRST\D{%F %T} $ANSI$BLDRED\$(parse_git_branch_with_dirty)\n$ANSI$TXTPUR\# $ANSI$TXTYLW${SHELL##*/}>>$ANSI$TXTRST "
+PS1="\[${ANSI}G\]\[$ANSI$TXTWHT\]\u@\H\[$ANSI$TXTWHT\]:\[$ANSI$TXTYLW\]\w \[$ANSI$TXTRST\]\D{%F %T} $ANSI$BLDRED\$(parse_git_branch_with_dirty)\n\[$ANSI$TXTPUR\]\# \[$ANSI$TXTYLW\]${SHELL##*/}>>\[$ANSI$TXTRST\] "
+# PS1="${TXTWHT}\w${BLDRED} \$(parse_git_branch)${BLDWHT}\$ "
 
 #supercolor
 # PS1="\[$(tput rev)\]$PS1\[$(tput sgr0)\]"

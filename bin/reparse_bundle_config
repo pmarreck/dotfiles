@@ -5,7 +5,7 @@ def nil.empty?; true; end
 
 if rails_version=ENV['rails_version'] && !rails_version.empty?
 elsif File.exists?('Gemfile')
-  rvl = File.readlines('Gemfile').detect{ |line| line =~ /"rails"/ }
+  rvl = File.readlines('Gemfile').detect{ |line| line =~ /["']rails["']/ }
   rails_version = $1 if rvl =~ /([2-9]\.[0-9]+)\.?/
   unless rails_version
     puts "Couldn't figure out Rails version from Gemfile!"
@@ -27,7 +27,7 @@ errors = []
 if File.exists?('.bundle/config.erb')
   if ruby_version.empty?
     errors << "ruby_version is blank"
-  elsif rails_version.empty?
+  elsif rails_version==false || rails_version.empty?
     errors << "rails_version is blank"
   else
     puts "parsing .bundle/config.erb given #{ruby_version} and rails #{rails_version}"
