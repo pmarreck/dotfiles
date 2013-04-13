@@ -25,7 +25,7 @@
 	],
 	"cmd":
 	[
-		"bundle exec ruby", "$file"
+		"bundle", "exec", "/Users/pmarreck/.rvm/bin/rvm-auto-ruby", "$file"
 	],
 	"working_dir": "${project_path:${folder}}",
 	"shell": true,

@@ -133,6 +133,13 @@ sublime() { open -a "Sublime Text 2.app" "${1:-.}"; }
 # alias pass='rvmsudo passenger start -p 80 -a peter.local --user=pmarreck'
 alias rst='touch tmp/restart.txt'
 
+# Ruby environment tweaking
+export RUBY_HEAP_MIN_SLOTS=1000000
+export RUBY_HEAP_SLOTS_INCREMENT=1000000
+export RUBY_HEAP_SLOTS_GROWTH_FACTOR=1
+export RUBY_GC_MALLOC_LIMIT=100000000
+export RUBY_HEAP_FREE_MIN=500000
+
 ####### assistly/desk specific ########
 # export ASSISTLY_LOG_LEVEL=debug
 # export ASSISTLY_DEBUG=true
@@ -143,16 +150,19 @@ alias deskstart='work; foreman start'
 alias deskkill='killall ruby; killall nginx'
 alias deskcleares='work; rake assistly:es:index:remove_all; rake assistly:es:index:build; rake assistly:es:index:prune_versions'
 alias deskguard='work; guard'
-function rubytest() {
-  export REPORTER=spec,failtest;
-  RAILS_ENV=test time bundle exec ruby ${1}
-}
+
+# test reporter config
+export REPORTER=progress,failtest,slowtest,sound
+
+# function rubytest() {
+#   RAILS_ENV=test time bundle exec ruby -Ilib:test:. -e "ARGV.each{|f| require f}" $@
+# }
 function deskonetest() {
-  export REPORTER=spec,failtest;
+  export REPORTER=${REPORTER/,?spec/},spec
   RAILS_ENV=test time rake assistly:test:${2:-units} TEST=${1} ${3}
 }
 function unit() {
-  export REPORTER=spec,failtest;
+  export REPORTER=${REPORTER/,?spec/},spec
   count=1
   xitstatus=-1
   test_failures=0
@@ -183,7 +193,6 @@ function unit() {
   fi
 }
 function unitnow() {
-  export REPORTER=spec,failtest;
   xitstatus=-1
   test_failures=0
   ruby_args='-Ilib:test'
@@ -199,7 +208,6 @@ function desktestsetup() {
 }
 
 function desktest() {
-  # export REPORTER=progress,failtest,slowtest;
   xitstatus=-1;
   RAILS_ENV=test time rake assistly:test:all && xitstatus=$?
   if [ $xitstatus -ne 0 ]; then
@@ -219,7 +227,7 @@ encrypt() {
   gpg -c -z 9 --cipher-algo AES256 --compress-algo BZIP2 $@
 }
 decrypt() {
-  gpg $@
+  gpg -d $@
 }
 
 # which hack, so it also shows defined aliases and functions that match
@@ -274,7 +282,8 @@ dragon() {
 
 function mysql_clone_develop_db {
   cur=${1:-$(parse_git_branch)}
-  db_name=${cur//[\.\/]/_}
+  db_name=${cur//[\.\/\-]/_}
+  db_name=${db_name//tickets_AA/aa}
   testsuffix='_test'
   test_db_name=$db_name$testsuffix
   if [[ $db_name =~ _test[0-9]{0,2}$ ]] ; then # if you specifically name a test db, only do it
@@ -297,6 +306,17 @@ function mysql_clone_develop_db {
     echo Cloning develop_test to $test_db_name
     mysqldump -u root develop | pv - -p -r | mysql -u root -h localhost $test_db_name
   fi
+}
+
+function mysql_clone_db {
+  from=${1}
+  db_name=${2}
+  echo Dropping database $db_name
+  mysql -u root --execute="DROP DATABASE \`${db_name}\`;"
+  echo Recreating database $db_name
+  mysql -u root --execute="CREATE DATABASE \`${db_name}\`;"
+  echo Cloning $from to $db_name
+  mysqldump -u root $from | pv - -p -r | mysql -u root -h localhost $db_name
 }
 
 # Use LLVM-GCC4.2 as the c compiler
