@@ -1,7 +1,12 @@
 {
 	"bold_folder_labels": true,
 	"caret_style": "phase",
-	"color_scheme": "Packages/Color Scheme - Default/Cobalt.tmTheme",
+	// "color_scheme": "Packages/Color Scheme - Default/Cobalt.tmTheme",
+	"theme": "Phoenix Dark.sublime-theme",
+	"phoenix_color_blue": true,
+	"phoenix_highlight_current_tab": true,
+	"phoenix_color_expanded_folder": true,
+	// "theme": "Cobalt2.sublime-theme",
 	"draw_minimap_border": true,
 	"font_face": "Anonymous",
 	"font_size": 12.0,

@@ -1,16 +1,5 @@
 echo "Running .profile"
 source ~/.bashrc
-# add my user bin to PATH
-# export PATH=$PATH:~/bin
-export PATH=${PATH/~\/bin:/}:~/bin
-
-# add my Scripts bin to PATH
-# export PATH=$PATH:~/Scripts
-export PATH=${PATH/~\/Scripts:/}:~/Scripts
-
-# BINSTUBS
-# add binstub to front of PATH
-export PATH=./bin:${PATH/\.\/bin:/}
 
 # Default editor
 # export EDITOR=mate
@@ -231,7 +220,7 @@ decrypt() {
 }
 
 # which hack, so it also shows defined aliases and functions that match
-function which() {
+function where() {
   type_out=`type "$@"`;
   if [ ! -z "$type_out" ]; then
     echo "$type_out";

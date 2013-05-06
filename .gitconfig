@@ -52,6 +52,7 @@
       && (git pull --ff-only || (git fetch origin && git rebase --preserve-merges origin/$CURRENT))'
   ignore = update-index --assume-unchanged
   unignore = update-index --no-assume-unchanged
+  hist = log --no-merges --pretty=format:\"%h %ad | %s%d [%an]\" --graph --date=short
 [branch]
 	autosetuprebase = always
 [push]
@@ -64,6 +65,7 @@
 	whitespace = space-before-tab,tabwidth=2,trailing-space
 [diff]
   tool = diffmerge
+	algorithm = patience
 [difftool "diffmerge"]
   cmd = diffmerge $LOCAL $REMOTE
 [mergetool "diffmerge"]

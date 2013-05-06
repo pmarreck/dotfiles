@@ -1,10 +1,6 @@
 echo "Running .bashrc"
-# HOMEBREW CONFIG
-# Add Python installed scripts to front of PATH
-export PATH=/usr/local/share/python:${PATH/\/usr\/local\/share\/python:/}
-# Move /usr/local/bin and /usr/local/sbin to the front of PATH by subbing it out and prepending
-export PATH=/usr/local/sbin:${PATH/\/usr\/local\/sbin:/}
-export PATH=/usr/local/bin:${PATH/\/usr\/local\/bin:/}
+
+source ~/.pathrc
 
 # Experimental "Plan 9 from User Space" PATH config
 # export PLAN9=/usr/local/plan9
