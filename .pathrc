@@ -9,6 +9,9 @@ export PATH=/usr/local/share/python:${PATH/\/usr\/local\/share\/python:/}
 export PATH=/usr/local/sbin:${PATH/\/usr\/local\/sbin:/}
 export PATH=/usr/local/bin:${PATH/\/usr\/local\/bin:/}
 
+# Add RVM to PATH for scripting
+export PATH=$PATH:$HOME/.rvm/bin
+
 # add my user bin to PATH
 # export PATH=$PATH:~/bin
 export PATH=${PATH/~\/bin:/}:~/bin

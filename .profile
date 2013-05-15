@@ -74,6 +74,7 @@ alias bye='logout'
 
 # The current thing I'm working on
 alias work="cd $DESK_ROOT"
+alias work2="cd $SECRET_PROJECT"
 # The directory running a test on a branch
 alias tst="cd $TEST_ROOT"
 
@@ -451,8 +452,8 @@ export IRCUSER="Any"
 export IRCNAME="Peter"
 export IRCSERVER="irc.freenode.net"
 
-# RVM integration
-[[ -s "$HOME/.rvm/scripts/rvm" ]] && source "$HOME/.rvm/scripts/rvm" # Load RVM into a shell session *as a function*
+# RVM integration - moved to .bash_login
+# [[ -s "$HOME/.rvm/scripts/rvm" ]] && source "$HOME/.rvm/scripts/rvm" # Load RVM into a shell session *as a function*
 
 # silliness
 fortune

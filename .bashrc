@@ -20,6 +20,7 @@ unset MAILCHECK
 
 # assistly/desk specific
 export DESK_ROOT=/Users/pmarreck/Sites/assistly
+export SECRET_PROJECT=/Users/pmarreck/Sites/projectX
 export TEST_ROOT=/Users/pmarreck/Sites/test
 
 # Node.js
@@ -61,4 +62,3 @@ export BAKCYN='46m'   # Cyan
 export BAKWHT='47m'   # White
 export TXTRST='0m'    # Text Reset, disable coloring
 
-PATH=$PATH:$HOME/.rvm/bin # Add RVM to PATH for scripting
