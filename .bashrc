@@ -1,6 +1,6 @@
 echo "Running .bashrc"
 
-source ~/.pathrc
+source ~/.pathconfig
 
 # Experimental "Plan 9 from User Space" PATH config
 # export PLAN9=/usr/local/plan9

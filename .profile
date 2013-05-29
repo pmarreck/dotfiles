@@ -457,7 +457,6 @@ export IRCNAME="Peter"
 export IRCSERVER="irc.freenode.net"
 
 # RVM integration - moved to .bash_login
-# [[ -s "$HOME/.rvm/scripts/rvm" ]] && source "$HOME/.rvm/scripts/rvm" # Load RVM into a shell session *as a function*
 
 # silliness
 fortune
