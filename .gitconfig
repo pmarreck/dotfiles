@@ -35,6 +35,8 @@
   puff = pull --ff-only
   purr = pull --rebase
   ll = log --pretty=format:'%Cred%h %Cblue%an %Cgreen%s%Creset %ar' --abbrev-commit -n15
+  llong = log --pretty=format:'%Cred%h %Cblue%an %Cgreen%s%Creset %ar' --abbrev-commit
+  mine = "!f() { git llong | grep Peter; }; f"
   p-log = log -p
   q-log = log --no-merges --graph --pretty=format:'%Cred%h%Creset - %C(green)%aN%Creset -%C(yellow)%d%Creset %s %Cgreen(%cr)%Creset' --abbrev-commit --date=relative
   lol = log --pretty=oneline --abbrev-commit --graph --decorate

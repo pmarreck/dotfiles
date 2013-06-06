@@ -1,6 +1,6 @@
 echo "Running .bashrc"
 
-source ~/.pathrc
+source ~/.pathconfig
 
 # Experimental "Plan 9 from User Space" PATH config
 # export PLAN9=/usr/local/plan9
@@ -62,3 +62,15 @@ export BAKCYN='46m'   # Cyan
 export BAKWHT='47m'   # White
 export TXTRST='0m'    # Text Reset, disable coloring
 
+# Add the following to your ~/.bashrc or ~/.zshrc
+#
+# Alternatively, copy/symlink this file and source in your shell.  See `hitch --setup-path`.
+
+hitch() {
+  command hitch "$@"
+  if [[ -s "$HOME/.hitch_export_authors" ]] ; then source "$HOME/.hitch_export_authors" ; fi
+}
+alias unhitch='hitch -u'
+
+# Uncomment to persist pair info between terminal instances
+# hitch

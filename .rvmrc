@@ -1,3 +1,0 @@
-rvm_archflags="-arch x86_64"
-# rvm_configure_env=(CFLAGS="-march=native") # not supported in GCC <= 4.2
-# rvm_configure_env=(CFLAGS="-O3")

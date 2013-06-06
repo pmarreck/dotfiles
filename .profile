@@ -42,6 +42,10 @@ export PROMPT_COMMAND="history -a; history -c; history -r; $PROMPT_COMMAND"
 #X=no termcap init
 export LESS="-EQRX"
 
+# ulimit. I still don't know entirely what the fuck a ulimit is, but this helps things.
+# (and yes, I tried "man ulimit", go ahead and try it yourself)
+ulimit -n 8196
+
 ####### Aliases
 #what most people want from od (hexdump)
 alias hd='od -Ax -tx1z -v'
@@ -453,7 +457,6 @@ export IRCNAME="Peter"
 export IRCSERVER="irc.freenode.net"
 
 # RVM integration - moved to .bash_login
-# [[ -s "$HOME/.rvm/scripts/rvm" ]] && source "$HOME/.rvm/scripts/rvm" # Load RVM into a shell session *as a function*
 
 # silliness
 fortune

@@ -1,4 +1,4 @@
-echo "Running .pathrc"
+echo "Running .pathconfig"
 
 # All path configs here should replace any existing version of themselves in the PATH before appending
 # (idempotent)
