@@ -1,4 +1,5 @@
 echo "Running .pathconfig"
+# echo "Current PATH is $PATH"
 
 # All path configs here should replace any existing version of themselves in the PATH before appending
 # (idempotent)
@@ -23,3 +24,5 @@ export PATH=${PATH/~\/Scripts:/}:~/Scripts
 # BINSTUBS
 # add binstub to front of PATH
 export PATH=./bin:${PATH/\.\/bin:/}
+
+# echo "PATH after config is $PATH"
