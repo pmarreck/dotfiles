@@ -152,6 +152,8 @@ alias deskguard='work; guard'
 alias estest='bundle exec rake desk:es:start[test]'
 alias esdev='bundle exec rake desk:es:start'
 alias esdevz='zeus rake desk:es:start'
+alias b='bundle | grep -v "Using"'
+alias be='bundle exec'
 
 # test reporter config
 export REPORTER=progress,failtest,slowtest,sound
