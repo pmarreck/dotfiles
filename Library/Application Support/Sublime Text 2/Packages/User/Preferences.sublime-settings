@@ -10,8 +10,14 @@
 	"highlight_modified_tabs": true,
 	"ignored_packages":
 	[
+		"sublimetext.github.com",
 		"Vintage",
-		"SFTP"
+		"SublimeExternalCommand",
+		"SFTP",
+		"Terminal",
+		"Tag",
+		"SublimeREPL",
+		"SubliminalCollaborator"
 	],
 	"phoenix_color_blue": true,
 	"phoenix_color_expanded_folder": true,
