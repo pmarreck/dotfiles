@@ -1,5 +1,8 @@
 echo "Running .profile"
+
 source ~/.bashrc
+
+source ~/.pathconfig
 
 # Default editor
 # export EDITOR=mate
@@ -98,6 +101,9 @@ alias grep='egrep'
 # log all terminal output to a file
 alias log='/usr/bin/script -a ~/Terminal.log; source ~/.bash_profile'
 
+# This was inevitable.
+alias btc='curl -s https://www.bitstamp.net/api/ticker/ | jq ".last | tonumber"'
+
 # free amazon EC2 usage tier box
 EC2USER='ec2-user'
 EC2BOX='ec2-184-72-178-19.compute-1.amazonaws.com'
@@ -154,9 +160,12 @@ alias esdev='bundle exec rake desk:es:start'
 alias esdevz='zeus rake desk:es:start'
 alias b='bundle | grep -v "Using"'
 alias be='bundle exec'
+alias zs='rm .zeus.sock; zeus start'
+alias z='zeus'
+alias dfr='desk-flow ticket review'
 
 # test reporter config
-export REPORTER=progress,failtest,slowtest,sound
+# export REPORTER=progress,failtest,slowtest,sound
 
 # function rubytest() {
 #   RAILS_ENV=test time bundle exec ruby -Ilib:test:. -e "ARGV.each{|f| require f}" $@
@@ -476,7 +485,8 @@ export IRCUSER="Any"
 export IRCNAME="Peter"
 export IRCSERVER="irc.freenode.net"
 
-# RVM integration - moved to .bash_login
+# RVM integration
+[[ -s "$HOME/.rvm/scripts/rvm" ]] && source "$HOME/.rvm/scripts/rvm" # Load RVM into a shell session *as a function*
 
 # silliness
 fortune
