@@ -11,7 +11,7 @@ export PATH=/usr/local/sbin:${PATH/\/usr\/local\/sbin:/}
 export PATH=/usr/local/bin:${PATH/\/usr\/local\/bin:/}
 
 # Add RVM to PATH for scripting
-export PATH=$PATH:$HOME/.rvm/bin
+export PATH=$HOME/.rvm/bin:$PATH
 
 # add my user bin to PATH
 # export PATH=$PATH:~/bin
