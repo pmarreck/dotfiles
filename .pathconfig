@@ -10,9 +10,6 @@ export PATH=/usr/local/share/python:${PATH/\/usr\/local\/share\/python:/}
 export PATH=/usr/local/sbin:${PATH/\/usr\/local\/sbin:/}
 export PATH=/usr/local/bin:${PATH/\/usr\/local\/bin:/}
 
-# Add RVM to PATH for scripting
-export PATH=$HOME/.rvm/bin:$PATH
-
 # add my user bin to PATH
 # export PATH=$PATH:~/bin
 export PATH=${PATH/~\/bin:/}:~/bin
@@ -20,6 +17,12 @@ export PATH=${PATH/~\/bin:/}:~/bin
 # add my Scripts bin to PATH
 # export PATH=$PATH:~/Scripts
 export PATH=${PATH/~\/Scripts:/}:~/Scripts
+
+# Add RVM to PATH for scripting
+export PATH=~/.rvm/bin:${PATH/~\/.rvm\/bin:/}
+
+# add bundler binstubs
+export PATH=~/.bundler_binstubs:${PATH/~\/.bundler_binstubs:/}
 
 # BINSTUBS
 # add binstub to front of PATH

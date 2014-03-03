@@ -490,3 +490,5 @@ export IRCSERVER="irc.freenode.net"
 
 # silliness
 fortune
+
+PATH=$PATH:$HOME/.rvm/bin # Add RVM to PATH for scripting
