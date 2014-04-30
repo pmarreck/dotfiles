@@ -1,4 +1,4 @@
-echo "Configuring PATH via .pathconfig"
+[[ $- == *i* ]] && echo "Configuring PATH via .pathconfig"
 # echo "Current PATH is $PATH"
 
 # All path configs here should replace any existing version of themselves in the PATH before appending

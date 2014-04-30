@@ -1,3 +1,3 @@
-echo "Running .bashrc"
+[[ $- == *i* ]] && echo "Running .bashrc"
 
 [[ -s "$HOME/.bash_profile" ]] && source ~/.bash_profile

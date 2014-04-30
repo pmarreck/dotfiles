@@ -1,4 +1,4 @@
-echo "Running .profile"
+[[ $- == *i* ]] && echo "Running .profile"
 
 if [ "$(uname)" == "Darwin" ]; then
   export PLATFORM='osx'      
@@ -7,7 +7,7 @@ elif [ "$(expr substr $(uname -s) 1 5)" == "Linux" ]; then
 elif [ "$(expr substr $(uname -s) 1 10)" == "MINGW32_NT" ]; then
   export PLATFORM='windows'
 fi
-echo "Platform: $PLATFORM"
+[[ $- == *i* ]] && echo "Platform: $PLATFORM"
 
 # Experimental "Plan 9 from User Space" PATH config
 # export PLAN9=/usr/local/plan9
@@ -547,7 +547,7 @@ source ~/bin/git-branch.bash # defines parse_git_branch and parse_git_branch_wit
 source ~/bin/git-completion.bash
 
 # command prompt
-source ~/.commandpromptconfig
+[[ $- == *i* ]] && source ~/.commandpromptconfig
 
 #supercolor
 # PS1="\[$(tput rev)\]$PS1\[$(tput sgr0)\]"
@@ -563,5 +563,7 @@ source ~/.commandpromptconfig
 [[ -s "$HOME/.rvm/scripts/rvm" ]] && source "$HOME/.rvm/scripts/rvm" # Load RVM into a shell session *as a function*
 
 # silliness
-echo
-fortune
+if [[ $- == *i* ]]; then
+  echo
+  fortune
+fi
