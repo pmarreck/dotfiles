@@ -1,0 +1,7 @@
+echo "Configuring command prompt via .commandpromptconfig"
+# Command prompt config
+# Depends on colors being defined as well as parse_git_branch functions
+
+# PS1="$ANSI$TXTWHT\u@\H$ANSI$TXTWHT:$ANSI$TXTYLW\w $ANSI$TXTRST\D{%F %T} $ANSI$BLDRED\$(parse_git_branch_with_dirty)\n$ANSI$TXTPUR\# $ANSI$TXTYLW${SHELL##*/}>>$ANSI$TXTRST "
+PS1="\[${ANSI}G\]\[$ANSI$TXTWHT\]\u@\H\[$ANSI$TXTWHT\]:\[$ANSI$TXTYLW\]\w \[$ANSI$TXTRST\]\D{%F %T} $ANSI$BLDRED\$(parse_git_branch_with_dirty)\n\[$ANSI$TXTPUR\]\# \[$ANSI$TXTYLW\]${SHELL##*/}>>\[$ANSI$TXTRST\] "
+# PS1="${TXTWHT}\w${BLDRED} \$(parse_git_branch)${BLDWHT}\$ "

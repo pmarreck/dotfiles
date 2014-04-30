@@ -1,4 +1,4 @@
-echo "Running .pathconfig"
+echo "Configuring PATH via .pathconfig"
 # echo "Current PATH is $PATH"
 
 # All path configs here should replace any existing version of themselves in the PATH before appending
@@ -29,7 +29,7 @@ export PATH=~/.bundler_binstubs:${PATH/~\/.bundler_binstubs:/}
 export PATH=./bin:${PATH/\.\/bin:/}
 
 # just for linuxbrew, see: https://github.com/Homebrew/linuxbrew
-if [ "$(expr substr $(uname -s) 1 5)" == "Linux" ]; then
+if [ "$(uname -s)" == "Linux" ]; then
   export PATH="$HOME/.linuxbrew/bin:$PATH"
   export LD_LIBRARY_PATH="$HOME/.linuxbrew/lib:$LD_LIBRARY_PATH"
 fi
