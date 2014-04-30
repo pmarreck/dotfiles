@@ -1,6 +1,13 @@
 echo "Running .profile"
 
-source ~/.bashrc
+if [ "$(uname)" == "Darwin" ]; then
+  export PLATFORM='osx'      
+elif [ "$(expr substr $(uname -s) 1 5)" == "Linux" ]; then
+  export PLATFORM='linux'
+elif [ "$(expr substr $(uname -s) 1 10)" == "MINGW32_NT" ]; then
+  export PLATFORM='windows'
+fi
+echo "Platform: $PLATFORM"
 
 source ~/.pathconfig
 
@@ -10,18 +17,18 @@ export EDITOR='subl'
 # Specifying -w will cause the subl command to not exit until the file is closed
 # export EDITOR=${EDITOR/\-w/}
 
-# change the title of the terminal window
+# change the title of the terminal window (only in OS X?)
 # See http://hints.macworld.com/article.php?story=20031015173932306
 # Note that this has to run before the command history PROMPT_COMMAND tweak below
-export PROMPT_COMMAND='echo -ne "\033]0;$@\007"'
+# export PROMPT_COMMAND='echo -ne "\033]0;$@\007"'
 
 ### Command history tweaks
-shopt -s histappend
+# shopt -s histappend
 # shopt -s cmdhist
-export HISTCONTROL=ignoredups:erasedups  # no duplicate entries
-export HISTSIZE=100000                   # big big history
-export HISTFILESIZE=100000               # big big history
-export HISTIGNORE="&:[bf]g:exit"
+# export HISTCONTROL=ignoredups:erasedups  # no duplicate entries
+# export HISTSIZE=100000                   # big big history
+# export HISTFILESIZE=100000               # big big history
+# export HISTIGNORE="&:[bf]g:exit"
 # Shared command history among all terminal windows
 # Please see http://ptspts.blogspot.com/2011/03/how-to-automatically-synchronize-shell.html
 # Damn it. Only works with bash > v4.0
@@ -29,7 +36,7 @@ export HISTIGNORE="&:[bf]g:exit"
 # Fall back to an alternate method. The problem with this method is that it
 # only propagates the command after it finishes.
 # Save and reload the history after each command finishes
-export PROMPT_COMMAND="history -a; history -c; history -r; $PROMPT_COMMAND"
+# export PROMPT_COMMAND="history -a; history -c; history -r; $PROMPT_COMMAND"
 
 # color TERM support... possibly no longer necessary
 # export TERM=dtterm
@@ -47,31 +54,31 @@ export LESS="-EQRX"
 
 # ulimit. I still don't know entirely what the fuck a ulimit is, but this helps things.
 # (and yes, I tried "man ulimit", go ahead and try it yourself)
-ulimit -n 10000
+# ulimit -n 10000
 
 ####### Aliases
 #what most people want from od (hexdump)
 alias hd='od -Ax -tx1z -v'
 #just list directories
-alias lld='ls -lUd */'
+# alias lld='ls -lUd */'
 alias .='pwd'
 alias ..='cd ..'
 alias cd..='cd ..'
 alias cdwd='cd `pwd`'
 alias cwd='echo $cwd'
-# alias files='find \!:1 -type f -print'      # files x => list files in x
-# alias ff='find . -name \!:1 -print'      # ff x => find file named x
+alias files='find \!:1 -type f -print'      # files x => list files in x
+alias ff='find . -name \!:1 -print'      # ff x => find file named x
 alias line='sed -n '\''\!:1 p'\'' \!:2'    # line 5 file => show line 5 of file
 alias l='ls -lGaph'
 alias ll='ls -lagG \!* | more'
 # alias term='set noglob; unset TERMCAP; eval `tset -s -I -Q - \!*`'
-# alias rehash='hash -r'
-alias rehash='source ~/.profile'
-alias word='grep \!* /usr/share/dict/web2' # Grep thru dictionary
-#alias tophog='top -ocpu -s 3'
+alias rehash='hash -r'
+# alias rehash='source ~/.profile'
+# alias word='grep \!* /usr/share/dict/web2' # Grep thru dictionary
+alias tophog='top -ocpu -s 3'
 #alias wordcount=(cat \!* | tr -s '\''  .,;:?\!()[]"'\'' '\''\012'\'' |' \
 #                'cat -n | tail -1 | awk '\''{print $1}'\'')' # Histogram words
-alias js='java org.mozilla.javascript.tools.shell.Main'
+# alias js='java org.mozilla.javascript.tools.shell.Main'
 alias scr='screen -r'
 alias p='ping www.yahoo.com'
 alias pp='ping -A -i 5 8.8.4.4' #Ping the root google nameserver every 5 seconds and beep if no route
@@ -80,23 +87,19 @@ alias t='top'
 alias bye='logout'
 
 # The current thing I'm working on
-alias work="cd $DESK_ROOT"
-alias work2="cd $SECRET_PROJECT"
-alias devdocs="cd $DESK_ROOT/../devdocs"
-# The directory running a test on a branch
-alias tst="cd $TEST_ROOT"
+alias work='cd ~/Documents/fortythreebytes-ui'
 
 alias ss='script/server'
 alias sc='script/console'
 alias rc='rails console'
-alias pps='passenger start'
-alias dbm='rake db:migrate; rake db:test:prepare'
+
+alias fortythreestaging='ssh -i .ssh/staging_rsa sparkadmin@208.184.108.230'
 
 # network crap
 alias killdns='sudo killall -HUP mDNSResponder'
 
 # why is grep dumb?
-alias grep='egrep'
+# alias grep='egrep'
 
 # log all terminal output to a file
 alias log='/usr/bin/script -a ~/Terminal.log; source ~/.bash_profile'
@@ -107,7 +110,7 @@ alias btc='curl -s https://www.bitstamp.net/api/ticker/ | jq ".last | tonumber"'
 # free amazon EC2 usage tier box
 EC2USER='ec2-user'
 EC2BOX='ec2-184-72-178-19.compute-1.amazonaws.com'
-SSHEC2IDFILE="/Users/pmarreck/.ssh/pmamazonkey.pem"
+SSHEC2IDFILE='~/.ssh/pmamazonkey.pem'
 alias ec2box="ssh -i $SSHEC2IDFILE $EC2USER@$EC2BOX"
 ec2_dropbox_push() {
   scp -i $SSHEC2IDFILE "$1" $EC2USER@$EC2BOX:${2:-\~/Dropbox/}
@@ -122,8 +125,10 @@ ec2_dropbox_pull() {
 # alias beep='printf "\a"'
 alias beep='tput bel'
 
-# sublime command to open stuff
-sublime() { open -a "Sublime Text 2.app" "${1:-.}"; }
+# sublime command to open stuff in OS X
+if [ "$PLATFORM" == "osx" ]; then
+  sublime() { open -a "Sublime Text 2.app" "${1:-.}"; }
+fi
 
 # thredup specific
 # alias tu='cd ~/Sites/Rails/thredUP/'
@@ -135,7 +140,7 @@ sublime() { open -a "Sublime Text 2.app" "${1:-.}"; }
 # alias go_ec2='ssh -p 35987 thredup@ec2.thredup.com'
 # alias get_new_prod_db='scp -P 35987 thredup@thredup.com:/tmp/thredup.sql.gz ~/Desktop/'
 # alias pass='rvmsudo passenger start -p 80 -a peter.local --user=pmarreck'
-alias rst='touch tmp/restart.txt'
+# alias rst='touch tmp/restart.txt'
 
 # Ruby environment tweaking
 export RUBY_HEAP_MIN_SLOTS=1000000
@@ -150,19 +155,19 @@ export RUBY_FREE_MIN=200000
 # export ASSISTLY_DEBUG=true
 # export DEBUG=true
 # export REPORTER=spec
-alias deskjobs='work; script/jobs start; tail -f log/development-backend.log'
-alias deskstart='work; foreman start'
-alias deskkill='killall ruby; killall nginx'
-alias deskcleares='work; rake assistly:es:index:remove_all; rake assistly:es:index:build; rake assistly:es:index:prune_versions'
-alias deskguard='work; guard'
-alias estest='bundle exec rake desk:es:start[test]'
-alias esdev='bundle exec rake desk:es:start'
-alias esdevz='zeus rake desk:es:start'
+# alias deskjobs='work; script/jobs start; tail -f log/development-backend.log'
+# alias deskstart='work; foreman start'
+# alias deskkill='killall ruby; killall nginx'
+# alias deskcleares='work; rake assistly:es:index:remove_all; rake assistly:es:index:build; rake assistly:es:index:prune_versions'
+# alias deskguard='work; guard'
+# alias estest='bundle exec rake desk:es:start[test]'
+# alias esdev='bundle exec rake desk:es:start'
+# alias esdevz='zeus rake desk:es:start'
 alias b='bundle | grep -v "Using"'
 alias be='bundle exec'
-alias zs='rm .zeus.sock; zeus start'
-alias z='zeus'
-alias dfr='desk-flow ticket review'
+# alias zs='rm .zeus.sock; zeus start'
+# alias z='zeus'
+# alias dfr='desk-flow ticket review'
 
 # test reporter config
 # export REPORTER=progress,failtest,slowtest,sound
@@ -170,70 +175,70 @@ alias dfr='desk-flow ticket review'
 # function rubytest() {
 #   RAILS_ENV=test time bundle exec ruby -Ilib:test:. -e "ARGV.each{|f| require f}" $@
 # }
-function deskonetest() {
-  export REPORTER=${REPORTER/,?spec/},spec
-  RAILS_ENV=test time rake assistly:test:${2:-units} TEST=${1} ${3}
-}
-function unit() {
-  export REPORTER=${REPORTER/,?spec/},spec
-  count=1
-  xitstatus=-1
-  test_failures=0
-  if [ $# -ne 1 ]
-  then
-    echo "Running $# tests..."
-  fi
-  for tst #in "$@" # the latter is actually assumed! awesome.
-  do
-    echo "Running test ($count/$#) $tst ..."
-    RAILS_ENV=test time bundle exec ruby -Ilib:test $tst && xitstatus=$?
-    if [ $xitstatus -ne 0 ]; then
-      test_failures=$[test_failures+1]
-    fi
-    count=$[count+1]
-  done
-  if [ $test_failures -ne 0 ]; then
-    if [ $# -ne 1 ]
-    then
-      echo -e "There were ${ANSI}${BLDRED}$test_failures TEST FAILS!!${ANSI}${TXTRST}"
-    else
-      echo -e "There was ${ANSI}${BLDRED}$test_failures TEST FAIL!!${ANSI}${TXTRST}"
-    fi
-    return -1
-  else
-    echo -e "${ANSI}${TXTGRN}ALL GREEN! SHIP IT!${ANSI}${TXTRST}"
-    return 0
-  fi
-}
-function unitnow() {
-  xitstatus=-1
-  test_failures=0
-  ruby_args='-Ilib:test'
-  for tst #in "$@" # the latter is actually assumed! awesome.
-  do
-    ruby_args="$ruby_args -r $tst"
-  done
-  RAILS_ENV=test time bundle exec ruby $ruby_args && xitstatus=$?
-}
+# function deskonetest() {
+#   export REPORTER=${REPORTER/,?spec/},spec
+#   RAILS_ENV=test time rake assistly:test:${2:-units} TEST=${1} ${3}
+# }
+# function unit() {
+#   export REPORTER=${REPORTER/,?spec/},spec
+#   count=1
+#   xitstatus=-1
+#   test_failures=0
+#   if [ $# -ne 1 ]
+#   then
+#     echo "Running $# tests..."
+#   fi
+#   for tst #in "$@" # the latter is actually assumed! awesome.
+#   do
+#     echo "Running test ($count/$#) $tst ..."
+#     RAILS_ENV=test time bundle exec ruby -Ilib:test $tst && xitstatus=$?
+#     if [ $xitstatus -ne 0 ]; then
+#       test_failures=$[test_failures+1]
+#     fi
+#     count=$[count+1]
+#   done
+#   if [ $test_failures -ne 0 ]; then
+#     if [ $# -ne 1 ]
+#     then
+#       echo -e "There were ${ANSI}${BLDRED}$test_failures TEST FAILS!!${ANSI}${TXTRST}"
+#     else
+#       echo -e "There was ${ANSI}${BLDRED}$test_failures TEST FAIL!!${ANSI}${TXTRST}"
+#     fi
+#     return -1
+#   else
+#     echo -e "${ANSI}${TXTGRN}ALL GREEN! SHIP IT!${ANSI}${TXTRST}"
+#     return 0
+#   fi
+# }
+# function unitnow() {
+#   xitstatus=-1
+#   test_failures=0
+#   ruby_args='-Ilib:test'
+#   for tst #in "$@" # the latter is actually assumed! awesome.
+#   do
+#     ruby_args="$ruby_args -r $tst"
+#   done
+#   RAILS_ENV=test time bundle exec ruby $ruby_args && xitstatus=$?
+# }
 
-function desktestsetup() {
-  RAILS_ENV=test rake ci:setup:db;
-}
+# function desktestsetup() {
+#   RAILS_ENV=test rake ci:setup:db;
+# }
 
-function desktest() {
-  xitstatus=-1;
-  RAILS_ENV=test time rake assistly:test:all && xitstatus=$?
-  if [ $xitstatus -ne 0 ]; then
-    osascript -e 'tell application "Terminal" to display alert "Test Failed" buttons "Shucks."'
-  else
-    osascript -e 'tell application "Terminal" to display alert "Test Passed" buttons "Right on!"'
-  fi
-  return $xitstatus
-}
+# function desktest() {
+#   xitstatus=-1;
+#   RAILS_ENV=test time rake assistly:test:all && xitstatus=$?
+#   if [ $xitstatus -ne 0 ]; then
+#     osascript -e 'tell application "Terminal" to display alert "Test Failed" buttons "Shucks."'
+#   else
+#     osascript -e 'tell application "Terminal" to display alert "Test Passed" buttons "Right on!"'
+#   fi
+#   return $xitstatus
+# }
 
-function set_database() {
-  export SPECIFIC_DB="$1"
-}
+# function set_database() {
+#   export SPECIFIC_DB="$1"
+# }
 
 # Encryption functions. Requires the GNUpg "gpg" commandline tool. On OS X, "brew install gnupg"
 # Explanation of options here:
@@ -254,7 +259,7 @@ decrypt() {
 }
 
 # which hack, so it also shows defined aliases and functions that match
-function where() {
+where() {
   type_out=`type "$@"`;
   if [ ! -z "$type_out" ]; then
     echo "$type_out";
@@ -264,7 +269,8 @@ function where() {
 }
 
 # universal edit command, points back to your defined $EDITOR
-function edit() {
+# note that there is an "edit" command in Ubuntu that I told to fuck off basically
+edit() {
   $EDITOR $@
 }
 
@@ -303,44 +309,44 @@ dragon() {
 # }
 # Usage:   resetData [thredup3_development ./db/thredup.sql.gz ./tmp/thredup.sql]
 
-function mysql_clone_develop_db {
-  cur=${1:-$(parse_git_branch)}
-  db_name=${cur//[\.\/\-]/_}
-  db_name=${db_name//tickets_AA/aa}
-  testsuffix='_test'
-  test_db_name=$db_name$testsuffix
-  if [[ $db_name =~ _test[0-9]{0,2}$ ]] ; then # if you specifically name a test db, only do it
-    echo Dropping database $db_name
-    mysql -u root --execute="DROP DATABASE \`${db_name}\`;"
-    echo Recreating database $db_name
-    mysql -u root --execute="CREATE DATABASE \`${db_name}\`;"
-  else
-    echo Dropping databases $db_name and $test_db_name
-    mysql -u root --execute="DROP DATABASE \`${db_name}\`; DROP DATABASE \`${test_db_name}\`;"
-    echo Recreating databases $db_name and $test_db_name
-    mysql -u root --execute="CREATE DATABASE \`${db_name}\`; CREATE DATABASE \`${test_db_name}\`;"
-  fi
-  if [[ $db_name =~ _test[0-9]{0,2}$ ]] ; then
-    echo Cloning develop_test to $db_name
-    mysqldump -u root develop_test | pv - -p -r | mysql -u root -h localhost $db_name
-  else
-    echo Cloning develop to $db_name
-    mysqldump -u root develop | pv - -p -r | mysql -u root -h localhost $db_name
-    echo Cloning develop_test to $test_db_name
-    mysqldump -u root develop | pv - -p -r | mysql -u root -h localhost $test_db_name
-  fi
-}
+# function mysql_clone_develop_db {
+#   cur=${1:-$(parse_git_branch)}
+#   db_name=${cur//[\.\/\-]/_}
+#   db_name=${db_name//tickets_AA/aa}
+#   testsuffix='_test'
+#   test_db_name=$db_name$testsuffix
+#   if [[ $db_name =~ _test[0-9]{0,2}$ ]] ; then # if you specifically name a test db, only do it
+#     echo Dropping database $db_name
+#     mysql -u root --execute="DROP DATABASE \`${db_name}\`;"
+#     echo Recreating database $db_name
+#     mysql -u root --execute="CREATE DATABASE \`${db_name}\`;"
+#   else
+#     echo Dropping databases $db_name and $test_db_name
+#     mysql -u root --execute="DROP DATABASE \`${db_name}\`; DROP DATABASE \`${test_db_name}\`;"
+#     echo Recreating databases $db_name and $test_db_name
+#     mysql -u root --execute="CREATE DATABASE \`${db_name}\`; CREATE DATABASE \`${test_db_name}\`;"
+#   fi
+#   if [[ $db_name =~ _test[0-9]{0,2}$ ]] ; then
+#     echo Cloning develop_test to $db_name
+#     mysqldump -u root develop_test | pv - -p -r | mysql -u root -h localhost $db_name
+#   else
+#     echo Cloning develop to $db_name
+#     mysqldump -u root develop | pv - -p -r | mysql -u root -h localhost $db_name
+#     echo Cloning develop_test to $test_db_name
+#     mysqldump -u root develop | pv - -p -r | mysql -u root -h localhost $test_db_name
+#   fi
+# }
 
-function mysql_clone_db {
-  from=${1}
-  db_name=${2}
-  echo Dropping database $db_name
-  mysql -u root --execute="DROP DATABASE \`${db_name}\`;"
-  echo Recreating database $db_name
-  mysql -u root --execute="CREATE DATABASE \`${db_name}\`;"
-  echo Cloning $from to $db_name
-  mysqldump -u root $from | pv - -p -r | mysql -u root -h localhost $db_name
-}
+# function mysql_clone_db {
+#   from=${1}
+#   db_name=${2}
+#   echo Dropping database $db_name
+#   mysql -u root --execute="DROP DATABASE \`${db_name}\`;"
+#   echo Recreating database $db_name
+#   mysql -u root --execute="CREATE DATABASE \`${db_name}\`;"
+#   echo Cloning $from to $db_name
+#   mysqldump -u root $from | pv - -p -r | mysql -u root -h localhost $db_name
+# }
 
 # Use LLVM-GCC4.2 as the c compiler
 # CC='`xcode-select -print-path`/usr/bin/llvm-gcc-4.2 make'
@@ -355,15 +361,17 @@ function mysql_clone_db {
 # export CC=/opt/local/bin/clang
 # export CXX=/opt/local/bin/clang++
 
-# Sexy man pages. Opens a postscript version in Preview.app
-pman() { man -t "$@" | open -f -a Preview; }
+# Sexy man pages. Opens a postscript version in Preview.app on OS X
+if [ "$PLATFORM" == "osx" ]; then
+  pman() { man -t "$@" | open -f -a Preview; }
+fi
 
 # Who is holding open this damn port or file??
 # usage: portopen 3000
-function portopen {
+portopen() {
 	sudo lsof -P -i ":${1}"
 }
-function fileopen {
+fileopen() {
 	sudo lsof "${1}"
 }
 
@@ -380,23 +388,23 @@ xn() {
 }
 
 # Passenger shortcuts
-alias passenger-restart='work; touch tmp/restart.txt'
+# alias passenger-restart='work; touch tmp/restart.txt'
 
 # GIT shortcuts
 alias gb='git branch'
-alias gbnotes='git branch --edit-description'
-alias gba='git branch -a'
+# alias gbnotes='git branch --edit-description'
+# alias gba='git branch -a'
 alias gc='git commit -v'
 alias push='git push'
-alias pushforce='git push -f'
+# alias pushforce='git push -f'
 alias pull='git pull'
 alias puff='git puff' # pull --ff-only
 alias fetch='git fetch'
-alias co='git checkout' # NOTE: overwrites a builtin for RCS (wtf? really? RCS?)
-alias checkout='git checkout'
+# alias co='git checkout' # NOTE: overwrites a builtin for RCS (wtf? really? RCS?)
+# alias checkout='git checkout'
 alias gco='git checkout'
-alias gpp='git pull;git push'
-alias gst='git status'
+# alias gpp='git pull;git push'
+# alias gst='git status'
 alias ga='git add -v'
 alias gs='git status'
 alias gcb='git checkout -b'
@@ -405,66 +413,66 @@ alias gunadd='git reset HEAD'
 alias grc='git rebase --continue'
 
 # git functions
-function gd {
+gd() {
   git diff ${1} | $EDITOR;
 }
 
-function rbr {
- git checkout $1;
- git pull origin $1;
- git checkout $2;
- git rebase $1;
-}
+# function rbr {
+#  git checkout $1;
+#  git pull origin $1;
+#  git checkout $2;
+#  git rebase $1;
+# }
 
-function mbr {
- git checkout $1;
- git merge $2
- git push origin $1;
- git checkout $2;
-}
+# function mbr {
+#  git checkout $1;
+#  git merge $2
+#  git push origin $1;
+#  git checkout $2;
+# }
 
 # the following depend on the parse_git_branch function defined elsewhere
-function rebase_to_latest_master {
-  cur=$(parse_git_branch);
-  git stash;
-  git checkout master;
-  git pull origin master;
-  git checkout $cur;
-  git rebase master;
-  git stash pop;
-}
+# function rebase_to_latest_master {
+#   cur=$(parse_git_branch);
+#   git stash;
+#   git checkout master;
+#   git pull origin master;
+#   git checkout $cur;
+#   git rebase master;
+#   git stash pop;
+# }
 
 # 'git pull origin master' shortcut, but make sure you're on master first!
-function gpom {
-  cur=$(parse_git_branch);
-  if [ $cur = 'master' ]; then
-    git pull origin master;
-  else
-    echo "DUDE! You aren't on master branch!"
-  fi
-}
+# function gpom {
+#   cur=$(parse_git_branch);
+#   if [ $cur = 'master' ]; then
+#     git pull origin master;
+#   else
+#     echo "DUDE! You aren't on master branch!"
+#   fi
+# }
 
-function open_all_files_changed_from_master {
-  if [ -d .git ]; then
-    $EDITOR .
-    for file in `git diff --name-only master`
-    do
-      $EDITOR $file
-    done
-  else
-    echo "Hey man. You're not in a directory with a git repo."
-  fi
-}
+# function open_all_files_changed_from_master {
+#   if [ -d .git ]; then
+#     $EDITOR .
+#     for file in `git diff --name-only master`
+#     do
+#       $EDITOR $file
+#     done
+#   else
+#     echo "Hey man. You're not in a directory with a git repo."
+#   fi
+# }
 
 # automated git bisecting. because I hate remembering how to use this.
 # ex. usage: git_wtf_happened <ruby testfile> <how many commits back, default 8>
-function git_wtf_happened {
-  git bisect start HEAD HEAD~${1:-8};
-  shift;
-  git bisect run $*;
-  git bisect view;
-  git bisect reset;
-}
+# function git_wtf_happened {
+#   git bisect start HEAD HEAD~${1:-8};
+#   shift;
+#   git bisect run $*;
+#   git bisect view;
+#   git bisect reset;
+# }
 
 # git functions and extra config
 source ~/bin/git-branch.bash # defines parse_git_branch and parse_git_branch_with_dirty
@@ -480,15 +488,15 @@ PS1="\[${ANSI}G\]\[$ANSI$TXTWHT\]\u@\H\[$ANSI$TXTWHT\]:\[$ANSI$TXTYLW\]\w \[$ANS
 # PS1="\[$(tput setaf 1)\]$PS1\[$(tput sgr0)\]"
 
 # IRC hackery
-export IRCNICK="lectrick"
-export IRCUSER="Any"
-export IRCNAME="Peter"
-export IRCSERVER="irc.freenode.net"
+# export IRCNICK="lectrick"
+# export IRCUSER="Any"
+# export IRCNAME="Peter"
+# export IRCSERVER="irc.freenode.net"
 
-# RVM integration
-[[ -s "$HOME/.rvm/scripts/rvm" ]] && source "$HOME/.rvm/scripts/rvm" # Load RVM into a shell session *as a function*
+# RVM integration (now in .bash_profile)
+# [[ -s "$HOME/.rvm/scripts/rvm" ]] && source "$HOME/.rvm/scripts/rvm" # Load RVM into a shell session *as a function*
 
 # silliness
 fortune
 
-PATH=$PATH:$HOME/.rvm/bin # Add RVM to PATH for scripting
+# PATH=$PATH:$HOME/.rvm/bin # Add RVM to PATH for scripting
