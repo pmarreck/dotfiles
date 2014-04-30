@@ -211,12 +211,12 @@ fi
 # alias rst='touch tmp/restart.txt'
 
 # Ruby environment tweaking
-export RUBY_HEAP_MIN_SLOTS=1000000
+export RUBY_GC_HEAP_INIT_SLOTS=1000000
 export RUBY_HEAP_SLOTS_INCREMENT=1000000
 export RUBY_HEAP_SLOTS_GROWTH_FACTOR=1
 export RUBY_GC_MALLOC_LIMIT=100000000
 export RUBY_HEAP_FREE_MIN=500000
-export RUBY_FREE_MIN=200000
+export RUBY_GC_HEAP_FREE_SLOTS=200000
 
 ####### assistly/desk specific ########
 # export ASSISTLY_LOG_LEVEL=debug
