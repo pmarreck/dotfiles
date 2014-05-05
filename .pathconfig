@@ -29,9 +29,9 @@ export PATH=~/.bundler_binstubs:${PATH/~\/.bundler_binstubs:/}
 export PATH=./bin:${PATH/\.\/bin:/}
 
 # just for linuxbrew, see: https://github.com/Homebrew/linuxbrew
-if [ "$(uname -s)" == "Linux" ]; then
-  export PATH="$HOME/.linuxbrew/bin:$PATH"
-  export LD_LIBRARY_PATH="$HOME/.linuxbrew/lib:$LD_LIBRARY_PATH"
-fi
+# if [ "$(uname -s)" == "Linux" ]; then
+#   export PATH="$HOME/.linuxbrew/bin:$PATH"
+#   export LD_LIBRARY_PATH="$HOME/.linuxbrew/lib:$LD_LIBRARY_PATH"
+# fi
 
 # echo "PATH after config is $PATH"
