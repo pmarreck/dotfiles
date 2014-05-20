@@ -161,7 +161,8 @@ alias ss='script/server'
 alias sc='script/console'
 alias rc='rails console'
 
-alias fortythreestaging='ssh -i .ssh/staging_rsa sparkadmin@208.184.108.230'
+alias fortythreestaging='ssh -i ~/.ssh/staging_rsa sparkadmin@staging.43bytes.com'
+alias fortythreeproduction='ssh -i ~/.ssh/prod_rsa sparkadmin@43bytes.com'
 
 # network crap
 alias killdns='sudo killall -HUP mDNSResponder'
