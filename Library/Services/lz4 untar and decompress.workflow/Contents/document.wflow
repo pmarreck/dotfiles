@@ -3,9 +3,9 @@
 <plist version="1.0">
 <dict>
 	<key>AMApplicationBuild</key>
-	<string>346</string>
+	<string>381</string>
 	<key>AMApplicationVersion</key>
-	<string>2.3</string>
+	<string>2.4</string>
 	<key>AMDocumentVersion</key>
 	<string>2</string>
 	<key>actions</key>
@@ -59,7 +59,7 @@
 				<key>ActionParameters</key>
 				<dict>
 					<key>COMMAND_STRING</key>
-					<string>pbz=/usr/local/bin/pbzip2
+					<string>compressor=/usr/local/bin/lz4
 
 for f in "$@"
 do
@@ -67,13 +67,7 @@ do
 	path=${fout%/*} # strip everything after the last slash which includes the filename
 	cd "$path/"
 	filename=${fout##/*/}  # deletes entire path before last filename, hopefully
-	if [ -f "$f" -a ! -e "$f/..namedfork/rsrc" ]; then # if it's a file and has no resource fork, treat it like a file
-		$pbz -k "./$filename"
-		echo "$f &gt; $filename.bz2" &gt;&gt; /Users/pmarreck/pbzip2compressedfiles.log
-	else  # assume it's a directory or app package or wonky old mac resource forked file or whatever
-		tar cf "$filename.tar.bz2" --use-compress-prog=$pbz "./$filename/"
-		echo "$f/ &gt; $filename.tar.bz2" &gt;&gt; /Users/pmarreck/pbzip2compressedfiles.log
-	fi
+	$compressor -d "$filename" |tar -xp
 done
 </string>
 					<key>CheckedForUserDefaultShell</key>
@@ -188,7 +182,7 @@ done
 				<key>isViewVisible</key>
 				<true/>
 				<key>location</key>
-				<string>309.500000:554.000000</string>
+				<string>523.500000:554.000000</string>
 				<key>nibPath</key>
 				<string>/System/Library/Automator/Run Shell Script.action/Contents/Resources/English.lproj/main.nib</string>
 			</dict>

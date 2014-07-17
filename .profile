@@ -561,10 +561,11 @@ source ~/bin/git-completion.bash
 # export IRCSERVER="irc.freenode.net"
 
 # RVM integration
-[[ -s "$HOME/.rvm/scripts/rvm" ]] && source "$HOME/.rvm/scripts/rvm" # Load RVM into a shell session *as a function*
 
 # silliness
 if [[ $- == *i* ]]; then
   echo
   fortune
 fi
+
+export PATH="$PATH:$HOME/.rvm/bin" # Add RVM to PATH for scripting
