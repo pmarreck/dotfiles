@@ -340,7 +340,7 @@ where() {
 # universal edit command, points back to your defined $EDITOR
 # note that there is an "edit" command in Ubuntu that I told to fuck off basically
 edit() {
-  $EDITOR $@
+  $EDITOR "$@"
 }
 
 # gem opener
