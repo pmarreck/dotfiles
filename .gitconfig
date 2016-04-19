@@ -65,6 +65,7 @@
   editor = $EDITOR -w
 	excludesfile = /Users/pmarreck/.gitignore_global
 	whitespace = space-before-tab,tabwidth=2,trailing-space
+	autocrlf = input
 [diff]
   tool = diffmerge
 	algorithm = patience

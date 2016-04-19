@@ -1,7 +1,7 @@
 [[ $- == *i* ]] && echo "Running .profile"
 
 if [ "$(uname)" == "Darwin" ]; then
-  export PLATFORM='osx'      
+  export PLATFORM='osx'
 elif [ "$(expr substr $(uname -s) 1 5)" == "Linux" ]; then
   export PLATFORM='linux'
 elif [ "$(expr substr $(uname -s) 1 10)" == "MINGW32_NT" ]; then
@@ -365,6 +365,13 @@ dragon() {
   echo '      "   "  "      "   \ : :  : : /   "      "  "   "'
   echo ''
 }
+
+# weather
+weather() {
+  curl -s "http://api.openweathermap.org/data/2.5/weather?q=$*&units=imperial&APPID=85a4e3c55b73909f42c6a23ec35b7147" | jq .main.temp | figlet -kcf big
+}
+# ansiweather's is 85a4e3c55b73909f42c6a23ec35b7147
+# mine is 516c2c718e4cb6c921bf1eea495df7e9 but it did not work after I created it... time delay?
 
 # function resetData {
 #   cd ~/Sites/Rails/thredUP3/
