@@ -9,6 +9,9 @@
 # Move /usr/local/bin and /usr/local/sbin to the front of PATH by subbing it out and prepending
 export PATH=/usr/local/sbin:${PATH/\/usr\/local\/sbin:/}
 export PATH=/usr/local/bin:${PATH/\/usr\/local\/bin:/}
+## # Move /usr/local/Homebrew/bin and /usr/local/Homebrew/sbin to the front of PATH by subbing it out and prepending
+## export PATH=/usr/local/Homebrew/sbin:${PATH/\/usr\/local\/Homebrew\/sbin:/}
+## export PATH=/usr/local/Homebrew/bin:${PATH/\/usr\/local\/Homebrew\/bin:/}
 
 # add my user bin to PATH
 # export PATH=$PATH:~/bin
@@ -33,5 +36,14 @@ export PATH=./bin:${PATH/\.\/bin:/}
 #   export PATH="$HOME/.linuxbrew/bin:$PATH"
 #   export LD_LIBRARY_PATH="$HOME/.linuxbrew/lib:$LD_LIBRARY_PATH"
 # fi
+
+# add postgres app install dir to front of PATH
+export PATH=/Applications/Postgres.app/Contents/Versions/9.6/bin:${PATH/\/Applications\/Postgres\.app\/Contents\/Versions\/9\.6\/bin:/}
+
+# prefer homebrew-installed sqlite to native one
+export PATH="/usr/local/opt/sqlite/bin:$PATH"
+
+# get building of gem capybara-webkit to use qt@5.5's qmake
+export PATH="$(brew --prefix qt@5.5)/bin:$PATH"
 
 # echo "PATH after config is $PATH"

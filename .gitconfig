@@ -55,6 +55,7 @@
   ignore = update-index --assume-unchanged
   unignore = update-index --no-assume-unchanged
   hist = log --no-merges --pretty=format:\"%h %ad | %s%d [%an]\" --graph --date=short
+	sha = rev-parse HEAD
 [branch]
 	autosetuprebase = always
 [push]

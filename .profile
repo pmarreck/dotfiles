@@ -81,9 +81,15 @@ source ~/.pathconfig
 
 # Default editor
 # export EDITOR=mate
-export EDITOR='subl'
+# export EDITOR='subl'
 # Specifying -w will cause the subl command to not exit until the file is closed
 # export EDITOR=${EDITOR/\-w/}
+
+# config for Visual Studio Code
+code () { VSCODE_CWD="$PWD" open -n -b com.microsoft.VSCode --args $* ;}
+pipeable_code () { VSCODE_CWD="$PWD" open -n -b com.microsoft.VSCode -f ;}
+export EDITOR='code'
+export PIPEABLE_EDITOR='pipeable_code'
 
 # change the title of the terminal window (only in OS X?)
 # See http://hints.macworld.com/article.php?story=20031015173932306
@@ -140,7 +146,8 @@ alias line='sed -n '\''\!:1 p'\'' \!:2'    # line 5 file => show line 5 of file
 alias l='ls -lGaph'
 alias ll='ls -lagG \!* | more'
 # alias term='set noglob; unset TERMCAP; eval `tset -s -I -Q - \!*`'
-alias rehash='hash -r'
+# alias rehash='hash -r'
+alias rehash='source "$HOME/.bash_profile"'
 # alias rehash='source ~/.profile'
 # alias word='grep \!* /usr/share/dict/web2' # Grep thru dictionary
 alias tophog='top -ocpu -s 3'
@@ -154,15 +161,17 @@ alias t='top'
 # alias tu='top -ocpu -Otime'
 alias bye='logout'
 
-# The current thing I'm working on
-alias work='cd ~/Documents/fortythreebytes-ui'
+# The current thing(s) I'm working on
+alias mpnetwork='cd ~/Documents/mpnetwork'
+alias tmproxy='cd ~/Documents/tmproxy'
+alias work=tmproxy
 
 alias ss='script/server'
 alias sc='script/console'
 alias rc='rails console'
 
-alias fortythreestaging='ssh -i ~/.ssh/staging_rsa sparkadmin@staging.43bytes.com'
-alias fortythreeproduction='ssh -i ~/.ssh/prod_rsa sparkadmin@43bytes.com'
+# alias fortythreestaging='ssh -i ~/.ssh/staging_rsa sparkadmin@staging.43bytes.com'
+# alias fortythreeproduction='ssh -i ~/.ssh/prod_rsa sparkadmin@43bytes.com'
 
 # network crap
 alias killdns='sudo killall -HUP mDNSResponder'
@@ -170,11 +179,18 @@ alias killdns='sudo killall -HUP mDNSResponder'
 # why is grep dumb?
 # alias grep='egrep'
 
+# elixir/phoenix gigalixir prod deploy command
+alias deploy='git push gigalixir master'
+
 # log all terminal output to a file
 alias log='/usr/bin/script -a ~/Terminal.log; source ~/.bash_profile'
 
 # This was inevitable.
 alias btc='curl -s https://www.bitstamp.net/api/ticker/ | jq ".last | tonumber"'
+
+# from https://twitter.com/liamosaur/status/506975850596536320
+# this just runs the previously-entered command as sudo
+alias fuck='sudo $(history -p \!\!)'
 
 # free amazon EC2 usage tier box
 EC2USER='ec2-user'
@@ -327,6 +343,9 @@ decrypt() {
   gpg -d $@
 }
 
+# GPG configuration to set up in-terminal challenge-response
+export GPG_TTY=`tty`
+
 # which hack, so it also shows defined aliases and functions that match
 where() {
   type_out=`type "$@"`;
@@ -368,10 +387,18 @@ dragon() {
 
 # weather
 weather() {
-  curl -s "http://api.openweathermap.org/data/2.5/weather?q=$*&units=imperial&APPID=85a4e3c55b73909f42c6a23ec35b7147" | jq .main.temp | figlet -kcf big
+  curl -s "http://api.openweathermap.org/data/2.5/weather?id=5132029&APPID=516c2c718e4cb6c921bf1eea495df7e9" | jq .main.temp | figlet -kcf big
 }
 # ansiweather's is 85a4e3c55b73909f42c6a23ec35b7147
 # mine is 516c2c718e4cb6c921bf1eea495df7e9 but it did not work after I created it... time delay?
+# EDIT: Works now
+# But returns Kelvin. Don't have time to figure out F from K in Bash using formula F = K * 9/5 - 459.67
+
+# am I the only one who constantly forgets the correct order of arguments to `ln`?
+lnwtf() {
+  echo 'ln -s path_of_thing_to_link_to [name_of_link]'
+  echo '(If you omit the latter, it puts a same-named link in the current directory)'
+}
 
 # function resetData {
 #   cd ~/Sites/Rails/thredUP3/
@@ -470,7 +497,7 @@ xn() {
 alias gb='git branch'
 # alias gbnotes='git branch --edit-description'
 # alias gba='git branch -a'
-alias gc='git commit -v'
+alias gc='EDITOR="subl" git commit -v'
 alias push='git push'
 # alias pushforce='git push -f'
 alias pull='git pull'
@@ -489,8 +516,9 @@ alias gunadd='git reset HEAD'
 alias grc='git rebase --continue'
 
 # git functions
+#$PIPEABLE_EDITOR;
 gd() {
-  git diff ${1} | $EDITOR;
+  git diff ${1} | subl;
 }
 
 # function rbr {
@@ -550,6 +578,14 @@ gd() {
 #   git bisect reset;
 # }
 
+# Postgres stuff
+export PGDATA='/usr/local/var/postgres'
+export PGHOST=localhost
+alias start-pg='pg_ctl -l $PGDATA/server.log start'
+alias stop-pg='pg_ctl stop -m fast'
+alias show-pg-status='pg_ctl status'
+alias restart-pg='pg_ctl reload'
+
 # git functions and extra config
 source ~/bin/git-branch.bash # defines parse_git_branch and parse_git_branch_with_dirty
 source ~/bin/git-completion.bash
@@ -575,4 +611,8 @@ if [[ $- == *i* ]]; then
   fortune
 fi
 
-export PATH="$PATH:$HOME/.rvm/bin" # Add RVM to PATH for scripting
+# twitter integration with nerves
+export TWITTER_ACCESS_TOKEN="15996789-X60u43Q0vb203Wva5FwfAo3IMGk2DTV3Nzc6eSNkP"
+export TWITTER_ACCESS_TOKEN_SECRET="RsWyalXW2QZESyKI76AeB6WxAm1LHXzfyMZfSU05OhdOA"
+export NERVES_SYSTEM=~/Documents/nerves/nerves_system_linkit
+export NERVES_TOOLCHAIN=~/Documents/nerves/nerves-mipsel-unknown-linux-musl-darwin-x86_64-v0.6.3

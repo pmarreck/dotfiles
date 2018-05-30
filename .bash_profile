@@ -1,5 +1,6 @@
 [[ $- == *i* ]] && echo "Running .bash_profile"
 
-[[ -s "$HOME/.profile" ]] && source "$HOME/.profile" # Load the default .profile
+# This file should only source .bashrc,
+# and contain commands only applicable to interactive shells
 
-[[ -s "$HOME/.rvm/scripts/rvm" ]] && source "$HOME/.rvm/scripts/rvm" # Load RVM into a shell session *as a function*
+[[ -s "$HOME/.bashrc" ]] && source "$HOME/.bashrc" # Load the default .profile
