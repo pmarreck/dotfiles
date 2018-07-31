@@ -1,20 +1,8 @@
 [[ $- == *i* ]] && echo "Running .profile"
 
-if [ "$(uname)" == "Darwin" ]; then
-  export PLATFORM='osx'
-elif [ "$(expr substr $(uname -s) 1 5)" == "Linux" ]; then
-  export PLATFORM='linux'
-elif [ "$(expr substr $(uname -s) 1 10)" == "MINGW32_NT" ]; then
-  export PLATFORM='windows'
-fi
+source ~/.envconfig
+
 [[ $- == *i* ]] && echo "Platform: $PLATFORM"
-
-# Experimental "Plan 9 from User Space" PATH config
-# export PLAN9=/usr/local/plan9
-# export PATH=$PATH:$PLAN9/bin
-
-# stop checking for unix mail, OS X!
-unset MAILCHECK
 
 # make sure this points to the correct gcc!
 # export CC=gcc-4.7
@@ -24,45 +12,6 @@ unset MAILCHECK
 # export CPPFLAGS=-I/usr/local/opt/libtool/include
 # per https://trac.macports.org/ticket/27237
 # export CXXFLAGS="-U_GLIBCXX_DEBUG -U_GLIBCXX_DEBUG_PEDANTIC"
-
-# Node.js
-export NODE_PATH=/usr/local/lib/node
-
-# Color constants
-export ANSI="\033["
-export TXTBLK='0;30m' # Black - Regular
-export TXTRED='0;31m' # Red
-export TXTGRN='0;32m' # Green
-export TXTYLW='0;33m' # Yellow
-export TXTBLU='0;34m' # Blue
-export TXTPUR='0;35m' # Purple
-export TXTCYN='0;36m' # Cyan
-export TXTWHT='0;37m' # White
-export BLDBLK='1;30m' # Black - Bold
-export BLDRED='1;31m' # Red
-export BLDGRN='1;32m' # Green
-export BLDYLW='1;33m' # Yellow
-export BLDBLU='1;34m' # Blue
-export BLDPUR='1;35m' # Purple
-export BLDCYN='1;36m' # Cyan
-export BLDWHT='1;37m' # White
-export UNDBLK='4;30m' # Black - Underline
-export UNDRED='4;31m' # Red
-export UNDGRN='4;32m' # Green
-export UNDYLW='4;33m' # Yellow
-export UNDBLU='4;34m' # Blue
-export UNDPUR='4;35m' # Purple
-export UNDCYN='4;36m' # Cyan
-export UNDWHT='4;37m' # White
-export BAKBLK='40m'   # Black - Background
-export BAKRED='41m'   # Red
-export BAKGRN='42m'   # Green
-export BAKYLW='43m'   # Yellow
-export BAKBLU='44m'   # Blue
-export BAKPUR='45m'   # Purple
-export BAKCYN='46m'   # Cyan
-export BAKWHT='47m'   # White
-export TXTRST='0m'    # Text Reset, disable coloring
 
 # Add the following to your ~/.bashrc or ~/.zshrc
 #
@@ -77,7 +26,6 @@ alias unhitch='hitch -u'
 # Uncomment to persist pair info between terminal instances
 # hitch
 
-source ~/.pathconfig
 
 # Default editor
 # export EDITOR=mate
@@ -226,14 +174,6 @@ fi
 # alias get_new_prod_db='scp -P 35987 thredup@thredup.com:/tmp/thredup.sql.gz ~/Desktop/'
 # alias pass='rvmsudo passenger start -p 80 -a peter.local --user=pmarreck'
 # alias rst='touch tmp/restart.txt'
-
-# Ruby environment tweaking
-export RUBY_GC_HEAP_INIT_SLOTS=1000000
-export RUBY_HEAP_SLOTS_INCREMENT=1000000
-export RUBY_HEAP_SLOTS_GROWTH_FACTOR=1
-export RUBY_GC_MALLOC_LIMIT=100000000
-export RUBY_HEAP_FREE_MIN=500000
-export RUBY_GC_HEAP_FREE_SLOTS=200000
 
 ####### assistly/desk specific ########
 # export ASSISTLY_LOG_LEVEL=debug
@@ -579,8 +519,6 @@ gd() {
 # }
 
 # Postgres stuff
-export PGDATA='/usr/local/var/postgres'
-export PGHOST=localhost
 alias start-pg='pg_ctl -l $PGDATA/server.log start'
 alias stop-pg='pg_ctl stop -m fast'
 alias show-pg-status='pg_ctl status'
@@ -593,26 +531,8 @@ source ~/bin/git-completion.bash
 # command prompt
 [[ $- == *i* ]] && source ~/.commandpromptconfig
 
-#supercolor
-# PS1="\[$(tput rev)\]$PS1\[$(tput sgr0)\]"
-# PS1="\[$(tput setaf 1)\]$PS1\[$(tput sgr0)\]"
-
-# IRC hackery
-# export IRCNICK="lectrick"
-# export IRCUSER="Any"
-# export IRCNAME="Peter"
-# export IRCSERVER="irc.freenode.net"
-
-# RVM integration
-
 # silliness
 if [[ $- == *i* ]]; then
   echo
   fortune
 fi
-
-# twitter integration with nerves
-export TWITTER_ACCESS_TOKEN="15996789-X60u43Q0vb203Wva5FwfAo3IMGk2DTV3Nzc6eSNkP"
-export TWITTER_ACCESS_TOKEN_SECRET="RsWyalXW2QZESyKI76AeB6WxAm1LHXzfyMZfSU05OhdOA"
-export NERVES_SYSTEM=~/Documents/nerves/nerves_system_linkit
-export NERVES_TOOLCHAIN=~/Documents/nerves/nerves-mipsel-unknown-linux-musl-darwin-x86_64-v0.6.3
