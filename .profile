@@ -518,6 +518,9 @@ gd() {
 #   git bisect reset;
 # }
 
+# lines of code counter
+alias loc='tokei'
+
 # Postgres stuff
 alias start-pg='pg_ctl -l $PGDATA/server.log start'
 alias stop-pg='pg_ctl stop -m fast'

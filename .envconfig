@@ -83,8 +83,8 @@ export PGHOST=localhost
 # twitter integration with nerves
 export TWITTER_ACCESS_TOKEN="15996789-X60u43Q0vb203Wva5FwfAo3IMGk2DTV3Nzc6eSNkP"
 export TWITTER_ACCESS_TOKEN_SECRET="RsWyalXW2QZESyKI76AeB6WxAm1LHXzfyMZfSU05OhdOA"
-export NERVES_SYSTEM=~/Documents/nerves/nerves_system_linkit
-export NERVES_TOOLCHAIN=~/Documents/nerves/nerves-mipsel-unknown-linux-musl-darwin-x86_64-v0.6.3
+# export NERVES_SYSTEM=~/Documents/nerves/nerves_system_linkit
+# export NERVES_TOOLCHAIN=~/Documents/nerves/nerves-mipsel-unknown-linux-musl-darwin-x86_64-v0.6.3
 
 # Pull in path configuration
 source ~/.pathconfig
