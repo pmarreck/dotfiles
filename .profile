@@ -4,65 +4,11 @@ source ~/.envconfig
 
 [[ $- == *i* ]] && echo "Platform: $PLATFORM"
 
-# make sure this points to the correct gcc!
-# export CC=gcc-4.7
-# export CFLAGS="-march=native"
-# the following is per "brew install libtool" instructions
-# export LDFLAGS=-L/usr/local/opt/libtool/lib
-# export CPPFLAGS=-I/usr/local/opt/libtool/include
-# per https://trac.macports.org/ticket/27237
-# export CXXFLAGS="-U_GLIBCXX_DEBUG -U_GLIBCXX_DEBUG_PEDANTIC"
-
-# Add the following to your ~/.bashrc or ~/.zshrc
-#
-# Alternatively, copy/symlink this file and source in your shell.  See `hitch --setup-path`.
-
-hitch() {
-  command hitch "$@"
-  if [[ -s "$HOME/.hitch_export_authors" ]] ; then source "$HOME/.hitch_export_authors" ; fi
-}
-alias unhitch='hitch -u'
-
-# Uncomment to persist pair info between terminal instances
-# hitch
-
-
-# Default editor
-# export EDITOR=mate
-# export EDITOR='subl'
-# Specifying -w will cause the subl command to not exit until the file is closed
-# export EDITOR=${EDITOR/\-w/}
-
 # config for Visual Studio Code
 code () { VSCODE_CWD="$PWD" open -n -b com.microsoft.VSCode --args $* ;}
 pipeable_code () { VSCODE_CWD="$PWD" open -n -b com.microsoft.VSCode -f ;}
 export EDITOR='code'
 export PIPEABLE_EDITOR='pipeable_code'
-
-# change the title of the terminal window (only in OS X?)
-# See http://hints.macworld.com/article.php?story=20031015173932306
-# Note that this has to run before the command history PROMPT_COMMAND tweak below
-# export PROMPT_COMMAND='echo -ne "\033]0;$@\007"'
-
-### Command history tweaks
-# shopt -s histappend
-# shopt -s cmdhist
-# export HISTCONTROL=ignoredups:erasedups  # no duplicate entries
-# export HISTSIZE=100000                   # big big history
-# export HISTFILESIZE=100000               # big big history
-# export HISTIGNORE="&:[bf]g:exit"
-# Shared command history among all terminal windows
-# Please see http://ptspts.blogspot.com/2011/03/how-to-automatically-synchronize-shell.html
-# Damn it. Only works with bash > v4.0
-# source "$HOME"/bin/merge_history.bash
-# Fall back to an alternate method. The problem with this method is that it
-# only propagates the command after it finishes.
-# Save and reload the history after each command finishes
-# export PROMPT_COMMAND="history -a; history -c; history -r; $PROMPT_COMMAND"
-
-# color TERM support... possibly no longer necessary
-# export TERM=dtterm
-# export TERM=xterm-color
 
 # If you hate noise
 # set bell-style visible
@@ -74,8 +20,7 @@ export PIPEABLE_EDITOR='pipeable_code'
 #X=no termcap init
 export LESS="-EQRX"
 
-# ulimit. I still don't know entirely what the fuck a ulimit is, but this helps things.
-# (and yes, I tried "man ulimit", go ahead and try it yourself)
+# ulimit. to see all configs, run `ulimit -a`
 # ulimit -n 10000
 
 ####### Aliases
@@ -111,15 +56,12 @@ alias bye='logout'
 
 # The current thing(s) I'm working on
 alias mpnetwork='cd ~/Documents/mpnetwork'
-alias tmproxy='cd ~/Documents/tmproxy'
-alias work=tmproxy
+alias simpaticio='cd ~/Documents/simpaticio'
+alias work=simpaticio
 
 alias ss='script/server'
 alias sc='script/console'
 alias rc='rails console'
-
-# alias fortythreestaging='ssh -i ~/.ssh/staging_rsa sparkadmin@staging.43bytes.com'
-# alias fortythreeproduction='ssh -i ~/.ssh/prod_rsa sparkadmin@43bytes.com'
 
 # network crap
 alias killdns='sudo killall -HUP mDNSResponder'
@@ -134,23 +76,11 @@ alias deploy='git push gigalixir master'
 alias log='/usr/bin/script -a ~/Terminal.log; source ~/.bash_profile'
 
 # This was inevitable.
-alias btc='curl -s https://www.bitstamp.net/api/ticker/ | jq ".last | tonumber"'
+alias btc='curl -s https://www.bitstamp.net/api/ticker/ | jq ".last | tonumber" | figlet -kcf big'
 
 # from https://twitter.com/liamosaur/status/506975850596536320
 # this just runs the previously-entered command as sudo
 alias fuck='sudo $(history -p \!\!)'
-
-# free amazon EC2 usage tier box
-EC2USER='ec2-user'
-EC2BOX='ec2-184-72-178-19.compute-1.amazonaws.com'
-SSHEC2IDFILE='~/.ssh/pmamazonkey.pem'
-alias ec2box="ssh -i $SSHEC2IDFILE $EC2USER@$EC2BOX"
-ec2_dropbox_push() {
-  scp -i $SSHEC2IDFILE "$1" $EC2USER@$EC2BOX:${2:-\~/Dropbox/}
-}
-ec2_dropbox_pull() {
-  scp -i $SSHEC2IDFILE $EC2USER@$EC2BOX:${1:-\~/Dropbox/\*} "${2:-.}"
-}
 
 ### Different ways to print a "beep" sound. I settled on the last one. It's shell-agnostic.
 # From http://stackoverflow.com/questions/3127977/how-to-make-the-hardware-beep-sound-in-mac-os-x-10-6
@@ -163,36 +93,10 @@ if [ "$PLATFORM" == "osx" ]; then
   sublime() { open -a "Sublime Text 2.app" "${1:-.}"; }
 fi
 
-# thredup specific
-# alias tu='cd ~/Sites/Rails/thredUP/'
-# alias tu2='cd ~/Sites/Rails/thredUP2/'
-# alias tu3='cd ~/Sites/Rails/thredUP3/'
-# alias convo='cd ~/Sites/Rails/convozine/'
-# alias go_pro='ssh -p 35987 thredup@thredup.com'
-# alias go_util='ssh -p 35987 thredup@utility.thredup.com'
-# alias go_ec2='ssh -p 35987 thredup@ec2.thredup.com'
-# alias get_new_prod_db='scp -P 35987 thredup@thredup.com:/tmp/thredup.sql.gz ~/Desktop/'
-# alias pass='rvmsudo passenger start -p 80 -a peter.local --user=pmarreck'
-# alias rst='touch tmp/restart.txt'
-
-####### assistly/desk specific ########
-# export ASSISTLY_LOG_LEVEL=debug
-# export ASSISTLY_DEBUG=true
-# export DEBUG=true
-# export REPORTER=spec
-# alias deskjobs='work; script/jobs start; tail -f log/development-backend.log'
-# alias deskstart='work; foreman start'
-# alias deskkill='killall ruby; killall nginx'
-# alias deskcleares='work; rake assistly:es:index:remove_all; rake assistly:es:index:build; rake assistly:es:index:prune_versions'
-# alias deskguard='work; guard'
-# alias estest='bundle exec rake desk:es:start[test]'
-# alias esdev='bundle exec rake desk:es:start'
-# alias esdevz='zeus rake desk:es:start'
 alias b='bundle | grep -v "Using"'
 alias be='bundle exec'
 # alias zs='rm .zeus.sock; zeus start'
 # alias z='zeus'
-# alias dfr='desk-flow ticket review'
 
 # test reporter config
 # export REPORTER=progress,failtest,slowtest,sound
@@ -246,10 +150,6 @@ alias be='bundle exec'
 #   RAILS_ENV=test time bundle exec ruby $ruby_args && xitstatus=$?
 # }
 
-# function desktestsetup() {
-#   RAILS_ENV=test rake ci:setup:db;
-# }
-
 # function desktest() {
 #   xitstatus=-1;
 #   RAILS_ENV=test time rake assistly:test:all && xitstatus=$?
@@ -259,10 +159,6 @@ alias be='bundle exec'
 #     osascript -e 'tell application "Terminal" to display alert "Test Passed" buttons "Right on!"'
 #   fi
 #   return $xitstatus
-# }
-
-# function set_database() {
-#   export SPECIFIC_DB="$1"
 # }
 
 # Encryption functions. Requires the GNUpg "gpg" commandline tool. On OS X, "brew install gnupg"
@@ -327,69 +223,21 @@ dragon() {
 
 # weather
 weather() {
-  curl -s "http://api.openweathermap.org/data/2.5/weather?id=5132029&APPID=516c2c718e4cb6c921bf1eea495df7e9" | jq .main.temp | figlet -kcf big
+  temp=`curl -s "http://api.openweathermap.org/data/2.5/weather?id=5132029&APPID=516c2c718e4cb6c921bf1eea495df7e9" | jq .main.temp`
+  temp=$(bc <<< "$temp*9/5-459.67") # convert from kelvin to F
+  echo "$temp F" | figlet -kcf big
 }
 # ansiweather's is 85a4e3c55b73909f42c6a23ec35b7147
 # mine is 516c2c718e4cb6c921bf1eea495df7e9 but it did not work after I created it... time delay?
 # EDIT: Works now
 # But returns Kelvin. Don't have time to figure out F from K in Bash using formula F = K * 9/5 - 459.67
+# EDIT 2: Figured that out
 
 # am I the only one who constantly forgets the correct order of arguments to `ln`?
 lnwtf() {
   echo 'ln -s path_of_thing_to_link_to [name_of_link]'
   echo '(If you omit the latter, it puts a same-named link in the current directory)'
 }
-
-# function resetData {
-#   cd ~/Sites/Rails/thredUP3/
-#   mysql -u root --execute="DROP DATABASE ${1:-thredup3_development};"
-#   mysql -u root --execute="CREATE DATABASE ${1:-thredup3_development};"
-#   gunzip -c ${2:-./db/thredup.sql.gz} > ${3:-./tmp/thredup.sql}
-#   mysql -u root ${1:-thredup3_development} < ${3:-./tmp/thredup.sql}
-#   mysql -u root ${1:-thredup3_development} < ${4:-./db/clean_test_data.sql}
-#   rm ${3:-./tmp/thredup.sql}
-#   rake db:migrate
-# }
-# Usage:   resetData [thredup3_development ./db/thredup.sql.gz ./tmp/thredup.sql]
-
-# function mysql_clone_develop_db {
-#   cur=${1:-$(parse_git_branch)}
-#   db_name=${cur//[\.\/\-]/_}
-#   db_name=${db_name//tickets_AA/aa}
-#   testsuffix='_test'
-#   test_db_name=$db_name$testsuffix
-#   if [[ $db_name =~ _test[0-9]{0,2}$ ]] ; then # if you specifically name a test db, only do it
-#     echo Dropping database $db_name
-#     mysql -u root --execute="DROP DATABASE \`${db_name}\`;"
-#     echo Recreating database $db_name
-#     mysql -u root --execute="CREATE DATABASE \`${db_name}\`;"
-#   else
-#     echo Dropping databases $db_name and $test_db_name
-#     mysql -u root --execute="DROP DATABASE \`${db_name}\`; DROP DATABASE \`${test_db_name}\`;"
-#     echo Recreating databases $db_name and $test_db_name
-#     mysql -u root --execute="CREATE DATABASE \`${db_name}\`; CREATE DATABASE \`${test_db_name}\`;"
-#   fi
-#   if [[ $db_name =~ _test[0-9]{0,2}$ ]] ; then
-#     echo Cloning develop_test to $db_name
-#     mysqldump -u root develop_test | pv - -p -r | mysql -u root -h localhost $db_name
-#   else
-#     echo Cloning develop to $db_name
-#     mysqldump -u root develop | pv - -p -r | mysql -u root -h localhost $db_name
-#     echo Cloning develop_test to $test_db_name
-#     mysqldump -u root develop | pv - -p -r | mysql -u root -h localhost $test_db_name
-#   fi
-# }
-
-# function mysql_clone_db {
-#   from=${1}
-#   db_name=${2}
-#   echo Dropping database $db_name
-#   mysql -u root --execute="DROP DATABASE \`${db_name}\`;"
-#   echo Recreating database $db_name
-#   mysql -u root --execute="CREATE DATABASE \`${db_name}\`;"
-#   echo Cloning $from to $db_name
-#   mysqldump -u root $from | pv - -p -r | mysql -u root -h localhost $db_name
-# }
 
 # Use LLVM-GCC4.2 as the c compiler
 # CC='`xcode-select -print-path`/usr/bin/llvm-gcc-4.2 make'
@@ -429,9 +277,6 @@ xn() {
   # print a newline only if the string does not end in a newline
   [[ "$1" == "${1%$'\n'}" ]] && echo
 }
-
-# Passenger shortcuts
-# alias passenger-restart='work; touch tmp/restart.txt'
 
 # GIT shortcuts
 alias gb='git branch'
@@ -520,6 +365,9 @@ gd() {
 
 # lines of code counter
 alias loc='tokei'
+
+# homebrew utils
+bubu () { brew update; brew upgrade ;}
 
 # Postgres stuff
 alias start-pg='pg_ctl -l $PGDATA/server.log start'
