@@ -379,6 +379,18 @@ alias restart-pg='pg_ctl reload'
 source ~/bin/git-branch.bash # defines parse_git_branch and parse_git_branch_with_dirty
 source ~/bin/git-completion.bash
 
+# personal push notifications
+# example usage:
+# notify 'It works!'
+# (Use single quotes to avoid having to escape all punctuation but single quote)
+
+notify() {
+  curl -s -F "token=awg3fvs3vjnamuqof99r2246j8q3eh" \
+  -F "user=uxrxropwvwyx72dheuhmgf8fti96me" \
+  -F "message=$1" https://api.pushover.net/1/messages.json
+  # -F "title=YOUR_TITLE_HERE" \
+}
+
 # command prompt
 [[ $- == *i* ]] && source ~/.commandpromptconfig
 

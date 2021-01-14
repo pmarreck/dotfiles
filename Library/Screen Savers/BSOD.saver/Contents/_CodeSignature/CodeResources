@@ -4,14 +4,84 @@
 <dict>
 	<key>files</key>
 	<dict>
+		<key>Resources/PxPlus_IBM_VGA8.ttf</key>
+		<data>
+		i0TEmipLTdZLZHx0vxenzDDTbnE=
+		</data>
 		<key>Resources/bsod.xml</key>
 		<data>
-		WxJtesfdzTnk83gF/QPgIyMBvlE=
+		y+ne2i5NVWxdPdOwVXTJiVyckwE=
+		</data>
+		<key>Resources/luximr.ttf</key>
+		<data>
+		FKu5iTUHdCg3CUrSYubNeO3x5Co=
+		</data>
+		<key>Resources/thumbnail.png</key>
+		<data>
+		9ZqLmE53jR3+k5b82l7lVxBbGMU=
 		</data>
 		<key>Resources/xscreensaver-getimage-file</key>
 		<data>
-		otNrqNwq3NVojpDii2u1rlI1v/8=
+		fN7r7aNkbKsZeTl9ChJWU1+Wd3A=
 		</data>
+	</dict>
+	<key>files2</key>
+	<dict>
+		<key>Resources/PxPlus_IBM_VGA8.ttf</key>
+		<dict>
+			<key>hash</key>
+			<data>
+			i0TEmipLTdZLZHx0vxenzDDTbnE=
+			</data>
+			<key>hash2</key>
+			<data>
+			RJjv9QBVKwkr8I/DFjP75f6S1pDInNEoR+z/7h3Hkwc=
+			</data>
+		</dict>
+		<key>Resources/bsod.xml</key>
+		<dict>
+			<key>hash</key>
+			<data>
+			y+ne2i5NVWxdPdOwVXTJiVyckwE=
+			</data>
+			<key>hash2</key>
+			<data>
+			Fvm5bX6edPKNAcINF3LH9ijGXDRsURsAKrlyQibj9Yk=
+			</data>
+		</dict>
+		<key>Resources/luximr.ttf</key>
+		<dict>
+			<key>hash</key>
+			<data>
+			FKu5iTUHdCg3CUrSYubNeO3x5Co=
+			</data>
+			<key>hash2</key>
+			<data>
+			wBvrV0wgppfP9ghZcIOzx3cNcKCHFN7pE/LClKunDYA=
+			</data>
+		</dict>
+		<key>Resources/thumbnail.png</key>
+		<dict>
+			<key>hash</key>
+			<data>
+			9ZqLmE53jR3+k5b82l7lVxBbGMU=
+			</data>
+			<key>hash2</key>
+			<data>
+			pOZoB1eEiQ1xMw6+VQTonfRTHQaulRbZA2GDLXfCw3Q=
+			</data>
+		</dict>
+		<key>Resources/xscreensaver-getimage-file</key>
+		<dict>
+			<key>hash</key>
+			<data>
+			fN7r7aNkbKsZeTl9ChJWU1+Wd3A=
+			</data>
+			<key>hash2</key>
+			<data>
+			WWqNzGKssYJBnDdfR04As8Z4S0AXNPiDe6s6g0OdppE=
+			</data>
+		</dict>
 	</dict>
 	<key>rules</key>
 	<dict>
@@ -31,8 +101,92 @@
 			<key>weight</key>
 			<real>1100</real>
 		</dict>
+		<key>^Resources/Base\.lproj/</key>
+		<dict>
+			<key>weight</key>
+			<real>1010</real>
+		</dict>
 		<key>^version.plist$</key>
 		<true/>
+	</dict>
+	<key>rules2</key>
+	<dict>
+		<key>.*\.dSYM($|/)</key>
+		<dict>
+			<key>weight</key>
+			<real>11</real>
+		</dict>
+		<key>^(.*/)?\.DS_Store$</key>
+		<dict>
+			<key>omit</key>
+			<true/>
+			<key>weight</key>
+			<real>2000</real>
+		</dict>
+		<key>^(Frameworks|SharedFrameworks|PlugIns|Plug-ins|XPCServices|Helpers|MacOS|Library/(Automator|Spotlight|LoginItems))/</key>
+		<dict>
+			<key>nested</key>
+			<true/>
+			<key>weight</key>
+			<real>10</real>
+		</dict>
+		<key>^.*</key>
+		<true/>
+		<key>^Info\.plist$</key>
+		<dict>
+			<key>omit</key>
+			<true/>
+			<key>weight</key>
+			<real>20</real>
+		</dict>
+		<key>^PkgInfo$</key>
+		<dict>
+			<key>omit</key>
+			<true/>
+			<key>weight</key>
+			<real>20</real>
+		</dict>
+		<key>^Resources/</key>
+		<dict>
+			<key>weight</key>
+			<real>20</real>
+		</dict>
+		<key>^Resources/.*\.lproj/</key>
+		<dict>
+			<key>optional</key>
+			<true/>
+			<key>weight</key>
+			<real>1000</real>
+		</dict>
+		<key>^Resources/.*\.lproj/locversion.plist$</key>
+		<dict>
+			<key>omit</key>
+			<true/>
+			<key>weight</key>
+			<real>1100</real>
+		</dict>
+		<key>^Resources/Base\.lproj/</key>
+		<dict>
+			<key>weight</key>
+			<real>1010</real>
+		</dict>
+		<key>^[^/]+$</key>
+		<dict>
+			<key>nested</key>
+			<true/>
+			<key>weight</key>
+			<real>10</real>
+		</dict>
+		<key>^embedded\.provisionprofile$</key>
+		<dict>
+			<key>weight</key>
+			<real>20</real>
+		</dict>
+		<key>^version\.plist$</key>
+		<dict>
+			<key>weight</key>
+			<real>20</real>
+		</dict>
 	</dict>
 </dict>
 </plist>
