@@ -70,7 +70,6 @@ aliases=(
 plugins=(
   git
   bashmarks
-  osx
 )
 
 source $OSH/oh-my-bash.sh
