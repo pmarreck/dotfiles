@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+
+# Declare an array of strings
+declare -a dotfiles=(
+    .ansiweatherrc
+    .bash_profile
+    .bashrc
+    .commandpromptconfig
+    .envconfig
+    .envrc
+    .esrc
+    .gemrc
+    .gitconfig
+    .gitconfig.old-possibly-useful
+    .gitignore
+    .inputrc
+    .netrc.gpg
+    .pathconfig
+    .pre-oh-my-bash.bashrc
+    .profile
+    .tool-versions
+    Brewfile
+    Tapfile
+    manual_configuration_changelog.txt
+)
+echo "List of dotfiles to install:"
+echo "${dotfiles[@]}"
+
+curdir=$(pwd)
+
+# Get the directory of this script and cd to it
+DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+cd $DIR
+
+declare -a binfiles=$(ls -d bin/*)
+echo "List of bin files to install:"
+echo "${binfiles[@]}"
+
+declare -a scriptfiles=$(ls -d Scripts/*)
+echo "List of script files to install:"
+echo "${scriptfiles[@]}"
+
+cd ~
+
+# make a bin directory if it doesn't exist
+if [ ! -d bin ]; then
+    mkdir bin
+fi
+# make a Scripts directory if it doesn't exist
+if [ ! -d Scripts ]; then
+    mkdir Scripts
+fi
+
+for dotfile in ${dotfiles[@]}; do
+    if [[ ! -L $dotfile ]]; then
+        if [ -f "$dotfile" ]; then
+            echo "$dotfile already exists; renaming to $dotfile.old"
+            mv -v "$dotfile" "$dotfile.old"
+        fi
+    fi
+    ln -sfv "dotfiles/$dotfile"
+done
+
+for binfile in ${binfiles[@]}; do
+    if [[ ! -L $binfile ]]; then
+        if [ -f "$binfile" ]; then
+            echo "$binfile already exists; renaming to $binfile.old"
+            mv -v "$binfile" "$binfile.old"
+        fi
+    fi
+    echo "Linking $binfile"
+    ln -sfv ../dotfiles/$binfile $binfile
+done
+
+for scriptfile in ${scriptfiles[@]}; do
+    if [[ ! -L $scriptfile ]]; then
+        if [ -f "$scriptfile" ]; then
+            echo "$scriptfile already exists; renaming to $scriptfile.old"
+            mv -v "$scriptfile" "$scriptfile.old"
+        fi
+    fi
+    echo "Linking $scriptfile"
+    ln -sfv ../dotfiles/$scriptfile $scriptfile
+done
+
+cd $curdir
+
+echo
+echo "note: Library/Application Support and Library/Services are not installed by default"
+echo "since they are macOS-only, please install manually"

@@ -6,8 +6,16 @@ I took some tips from https://github.com/rtomayko/dotfiles as well as https://gi
 
 This is a work in progress and (hopefully) all sensitive information has been removed.
 
-To apply this to a new computer:
+Note: Bash is assumed. (I decided to skip the zsh bandwagon once oh-my-bash showed up.) I may eventually try to transition to my fork of es-shell: https://github.com/pmarreck/es-shell
 
-cd ~; git clone git@github.com:pmarreck/dotfiles.git; cp -R dotfiles/.git .; git reset --hard; rm -rf dotfiles; echo "*" >> .git/info/exclude
+To apply this to a new computer or dev environment:
 
-This will move the contents up one into your home directory and "recenter" the repo on that. (The expected caveats apply.) Then it adds a "*" line to the ~/.git/info/exclude file which forces you to add files with the -f option (otherwise you might accidentally add everything in your home directory).
+Install https://direnv.net/
+
+Install https://github.com/ohmybash/oh-my-bash
+
+Clone this repo right inside your home directory (so, at ~/dotfiles).
+
+Run ./dotfiles/install_dotfiles . This will symlink all the relevant files into ~, ~/bin and ~/Scripts, making those dirs if they don't exist yet.
+
+Open a new Terminal to make sure you're golden.
