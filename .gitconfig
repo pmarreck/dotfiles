@@ -1,101 +1,19 @@
+# This is Git's per-user configuration file.
 [user]
+# Please adapt and uncomment the following lines:
 	name = Peter Marreck
 	email = lumbergh@gmail.com
-[color]
-  branch = auto
-  status = auto
-  diff = auto
-[color "branch"]
-  current = yellow reverse
-  local = yellow
-  remote = green
-[color "diff"]
-  meta = yellow bold
-  frag = magenta bold
-  old = red bold
-  new = green bold
-[color "status"]
-  added = yellow
-  changed = green
-  untracked = cyan
-[alias]
-  st = status
-  ci = commit
-  br = branch
-  co = checkout
-  cp = cherry-pick
-  dt = difftool
-  r = rebase
-  ri = rebase -i
-  rebase-cleanup = !git fetch origin && git rebase -i -p $(git merge-base HEAD master)
-  reset-combine = !git reset $(git merge-base HEAD master)
-  df = diff
-  dm = diff master...
-  p = pull
-  puff = pull --ff-only
-  purr = pull --rebase
-  ll = log --pretty=format:'%Cred%h %Cblue%an %Cgreen%s%Creset %ar' --abbrev-commit -n50
-  llong = log --pretty=format:'%Cred%h %Cblue%an %Cgreen%s%Creset %ar' --abbrev-commit
-  mine = "!f() { git llong | grep Peter; }; f"
-  p-log = log -p
-  q-log = log --no-merges --graph --pretty=format:'%Cred%h%Creset - %C(green)%aN%Creset -%C(yellow)%d%Creset %s %Cgreen(%cr)%Creset' --abbrev-commit --date=relative
-  lol = log --pretty=oneline --abbrev-commit --graph --decorate
-  amend = commit --amend -C HEAD
-	unadd = reset HEAD
-  bugfix-startpoint = "!f() { if [ $# -lt 2 ]; then echo 'usage: git bugfix-startpoint <branch> <branch> ...' >&2; exit 1; fi; git merge-base --octopus --all $@;  }; f"
-
-  publish = "!f() { if [ $# -ne 1 ]; then echo 'usage: git publish <local-branch-name>' >&2; exit 1; fi; git push --set-upstream origin $1:$1; }; f"
-
-  unpublish = "!f() { if [ $# -ne 1 ]; then echo 'usage: git unpublish <remote-branch-name>' >&2; exit 1; fi; git push origin :$1; }; f"
-
-  edit-unmerged = "!f() { git ls-files --unmerged | cut -f2 | sort -u ; }; gvim `f`"
-  add-unmerged = "!f() { git ls-files --unmerged | cut -f2 | sort -u ; }; git add `f`"
-  down = !sh -c 'CURRENT=$(git symbolic-ref HEAD | sed -e s@.*/@@) \
-      && (git pull --ff-only || (git fetch origin && git rebase --preserve-merges origin/$CURRENT))'
-  ignore = update-index --assume-unchanged
-  unignore = update-index --no-assume-unchanged
-  hist = log --no-merges --pretty=format:\"%h %ad | %s%d [%an]\" --graph --date=short
-	sha = rev-parse HEAD
-[branch]
-	autosetuprebase = always
-[push]
-	default = nothing
-[apply]
-  whitespace = nowarn
 [core]
-  editor = $EDITOR -w
-	excludesfile = /Users/pmarreck/.gitignore_global
-	whitespace = space-before-tab,tabwidth=2,trailing-space
-	autocrlf = input
-[diff]
-  tool = diffmerge
-	algorithm = patience
-[difftool "diffmerge"]
-  cmd = diffmerge $LOCAL $REMOTE
-[mergetool "diffmerge"]
-  cmd = diffmerge --merge --result=$MERGED $LOCAL $BASE $REMOTE
-	trustExitCode = true
-[mergetool]
-	keepBackup = false
+	precomposeUnicode = true
+	pager = delta
+[interactive]
+	diffFilter = delta --color-only
+[delta]
+	navigate = true
+	side-by-side = true
+	line-numbers = true
+
 [merge]
-  tool = diffmerge
-  summary = true
-#  keepBackup = false
-#  tool = p4merge
-#[mergetool "p4merge"]
-#  cmd = ~/Applications/p4merge.app/Contents/Resources/launchp4merge $PWD/$BASE $PWD/$REMOTE $PWD/$LOCAL $PWD/$MERGED
-#  keepTemporaries = false
-#  trustExitCode = false
-#  keepBackup = false
-[remote "origin"]
-  push = HEAD
-[difftool "sourcetree"]
-	cmd = opendiff \"$LOCAL\" \"$REMOTE\"
-	path =
-[mergetool "sourcetree"]
-	cmd = /Applications/SourceTree.app/Contents/Resources/opendiff-w.sh \"$LOCAL\" \"$REMOTE\" -ancestor \"$BASE\" -merge \"$MERGED\"
-	trustExitCode = true
-[rerere]
-	enabled = 1
-[rebase]
-	stat = true
+	conflictstyle = diff3
+[diff]
+	colorMoved = default

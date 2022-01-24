@@ -1,7 +1,5 @@
 [[ $- == *i* ]] && echo "Running .profile"
 
-source ~/.envconfig
-
 [[ $- == *i* ]] && echo "Platform: $PLATFORM"
 
 # config for Visual Studio Code
@@ -34,10 +32,17 @@ alias cd..='cd ..'
 alias cdwd='cd `pwd`'
 alias cwd='echo $cwd'
 alias files='find \!:1 -type f -print'      # files x => list files in x
-alias ff='find . -name \!:1 -print'      # ff x => find file named x
+# the following is already included in oh-my-bash
+# alias ff='find . -name \!:1 -print'      # ff x => find file named x
 alias line='sed -n '\''\!:1 p'\'' \!:2'    # line 5 file => show line 5 of file
-alias l='ls -lGaph'
-alias ll='ls -lagG \!* | more'
+# alias l='ls -lGaph'
+# brew install exa
+alias l='exa --long --header --sort=mod --all'
+alias l1='l --git --icons'
+alias l2='l1 --tree --level=2'
+alias l3='l1 --tree --level=3' #--extended 
+alias l4='l1 --tree --level=4'
+# alias ll='ls -lagG \!* | more'
 # alias term='set noglob; unset TERMCAP; eval `tset -s -I -Q - \!*`'
 # alias rehash='hash -r'
 alias rehash='source "$HOME/.bash_profile"'
@@ -55,13 +60,13 @@ alias t='top'
 alias bye='logout'
 
 # The current thing(s) I'm working on
-alias mpnetwork='cd ~/Documents/mpnetwork'
+alias mpnetwork='cd ~/Documents/mpnetwork*'
 alias simpaticio='cd ~/Documents/simpaticio'
-alias work=simpaticio
+alias work=mpnetwork
 
-alias ss='script/server'
-alias sc='script/console'
-alias rc='rails console'
+# alias ss='script/server'
+# alias sc='script/console'
+# alias rc='rails console'
 
 # network crap
 alias killdns='sudo killall -HUP mDNSResponder'
@@ -88,13 +93,16 @@ alias fuck='sudo $(history -p \!\!)'
 # alias beep='printf "\a"'
 alias beep='tput bel'
 
-# sublime command to open stuff in OS X
-if [ "$PLATFORM" == "osx" ]; then
-  sublime() { open -a "Sublime Text 2.app" "${1:-.}"; }
-fi
+# forkbomb!
+# alias forkbomb=':(){ :|:& };:'
 
-alias b='bundle | grep -v "Using"'
-alias be='bundle exec'
+# sublime command to open stuff in OS X
+# if [ "$PLATFORM" == "osx" ]; then
+#   sublime() { open -a "Sublime Text 2.app" "${1:-.}"; }
+# fi
+
+# alias b='bundle | grep -v "Using"'
+# alias be='bundle exec'
 # alias zs='rm .zeus.sock; zeus start'
 # alias z='zeus'
 
@@ -179,6 +187,69 @@ decrypt() {
   gpg -d $@
 }
 
+# get a random-character password
+# First argument is password length
+# Can override the default character set by passing in PWCHARSET=<charset> as env
+randompass() {
+  # globbing & history expansion here is a pain, so we store its state, temp turn it off & restore it later
+  local maybeglob="$(shopt -po noglob histexpand)"
+  set -o noglob # turn off globbing
+  set +o histexpand # turn off history expansion
+  if [ $# -eq 0 ]; then
+    echo "Usage: randompass <length>"
+    return 1
+  fi
+  # allow overriding the password character set with env var PWCHARSET
+  # NOTE that we DELETE THE CAPITAL O, CAPITAL I AND LOWERCASE L CHARACTERS
+  # DUE TO SIMILARITY TO 1 AND 0
+  # (but only if you use the default alnum set)
+  # BECAUSE WHO THE FUCK EVER THOUGHT THAT WOULD BE A GOOD IDEA? 😂
+  if [ -z "$PWCHARSET" ]; then
+    local lower=$(echo -n {a..z} | tr -d ' ')
+    local upper=$(echo -n {A..Z} | tr -d ' ')
+    local num=$(echo -n {0..9} | tr -d ' ')
+    local alcharacterset="$lower$upper"
+    local alnumcharacterset=$(printf "%s" "$alcharacterset$num" | tr -d 'OlI')
+    local punc='!@#$%^&*-_=+[]{}|;:,.<>/?~'
+    local PWCHARSET="$alnumcharacterset$punc"
+  fi
+  # ...but also intersperse it with spaces so that the -e option to shuf works.
+  # Using awk to split the character set into a space-separated string of characters.
+  # Saw some noise that empty field separator will cause awk problems,
+  # but it's concise and fast and works, so... &shrug;
+  # printf is necessary due to some of the punctuation characters being interpreted when using echo
+  local characterset=$(printf "%s" "$PWCHARSET" | awk NF=NF FS="")
+  { shuf --random-source=/dev/urandom -n $1 -er $characterset; } | tr -d '\n'
+  echo
+  # restore any globbing state
+  eval "$maybeglob"
+  # cat /dev/urandom | LC_ALL=C tr -dc 'a-zA-Z0-9\!\@\#\$\%\&\*\?' | fold -w $1 | head -n 1
+}
+
+# get a random-dictionary-word password
+# First argument is minimum word length
+# Second argument is number of words to generate
+randompassdict() {
+  if [ $# -eq 0 ]; then
+    echo "Usage: randompassdict <num-words> [<min-word-length> [<max-word-length>]]"
+    return 1
+  fi
+  local numwords=$1
+  local minlen=${2:-8}
+  local maxlen=${3:-99}
+  # take the dict, filter out anything not within the min/max length or that has apostrophes, and shuffle
+  local pool=$(cat /usr/share/dict/words | awk 'length($0) >= '$minlen' && length($0) <= '$maxlen' && $0 ~ /^[^'\'']+$/')
+  local poolsize=$(printf "%s" "$pool" | wc -l)
+  # why is poolsize getting spaces in front? No idea. Removing them.
+  poolsize=${poolsize##* }
+  local words=$(echo -n "$pool" | shuf -n "$numwords" | tr '\n' ' ')
+  echo "$words"
+  echo "(out of a possible $poolsize available words in the dictionary that suit the requested length range [$minlen-$maxlen])" 1>&2
+  # a former attempt that worked but was less flexible:
+  #cat /dev/urandom | LC_ALL=C tr -dc 'a-zA-Z0-9\!\@\#\$\%\&\*\?' | fold -w $1 | head -n $2 | tr '\n' ' '
+}
+
+
 # GPG configuration to set up in-terminal challenge-response
 export GPG_TTY=`tty`
 
@@ -190,6 +261,12 @@ where() {
   else
     /usr/bin/env which $@;
   fi
+}
+
+# elixir and js lines of code count
+# removes blank lines and commented-out lines
+elixir_js_loc() {
+  git ls-files | egrep '\.erl|\.exs?|\.js$' | xargs cat | sed '/^$/d' | sed '/^ *#/d' | sed '/^ *\/\//d' | wc -l
 }
 
 # universal edit command, points back to your defined $EDITOR
@@ -237,6 +314,36 @@ weather() {
 lnwtf() {
   echo 'ln -s path_of_thing_to_link_to [name_of_link]'
   echo '(If you omit the latter, it puts a same-named link in the current directory)'
+}
+
+# add otp --version command
+otp() {
+  case $1 in
+    "--version")
+      erl -eval '{ok, Version} = file:read_file(filename:join([code:root_dir(), "releases", erlang:system_info(otp_release), "OTP_VERSION"])), io:fwrite(Version), halt().' -noshell
+      ;;
+    *)
+      echo "Usage: otp [--version]"
+      ;;
+  esac
+}
+
+# add hex command to dump hex from stdin or args (note that hexdump also exists)
+hex() {
+  if [ -z "$1" ]; then # if no arguments
+    # The following exits code 0 if stdin not empty; 1 if empty; does not consume any bytes.
+    # This may only be a Bash-ism, FYI. Not sure if it's shell-portable.
+    read -t 0
+    retval=${?##1} # replace 1 with blank so it falses correctly if stdin is empty
+    if [ "$retval" ]; then
+      xxd -pu  # receive piped input from stdin
+    else # if stdin is empty AND no arguments
+      echo "Usage: hex <string>"
+      echo "       (or pipe something to hex)"
+    fi
+  else # if arguments
+    echo -ne "$@" | xxd -pu # pipe all arguments to xxd
+  fi
 }
 
 # Use LLVM-GCC4.2 as the c compiler
@@ -287,7 +394,7 @@ alias push='git push'
 # alias pushforce='git push -f'
 alias pull='git pull'
 alias puff='git puff' # pull --ff-only
-alias fetch='git fetch'
+# alias fetch='git fetch'
 # alias co='git checkout' # NOTE: overwrites a builtin for RCS (wtf? really? RCS?)
 # alias checkout='git checkout'
 alias gco='git checkout'
@@ -302,9 +409,9 @@ alias grc='git rebase --continue'
 
 # git functions
 #$PIPEABLE_EDITOR;
-gd() {
-  git diff ${1} | subl;
-}
+# gd() {
+#   git diff ${1} | subl ;
+# }
 
 # function rbr {
 #  git checkout $1;
@@ -364,6 +471,7 @@ gd() {
 # }
 
 # lines of code counter
+# brew install tokei
 alias loc='tokei'
 
 # homebrew utils
@@ -392,10 +500,12 @@ notify() {
 }
 
 # command prompt
-[[ $- == *i* ]] && source ~/.commandpromptconfig
+# using oh-my-bash for now
+# [[ $- == *i* ]] && source ~/.commandpromptconfig
 
 # silliness
 if [[ $- == *i* ]]; then
   echo
   fortune
+  echo
 fi

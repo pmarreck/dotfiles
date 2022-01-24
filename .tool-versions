@@ -1,0 +1,12 @@
+# "system" means use whatever system-installed version there is
+# (mine are usually the most current)
+erlang 24.1.5
+# elixir 1.12.2-otp-24
+elixir 1.13.0-rc.0-otp-24
+# elixir master
+# Sadly we have to comment out postgres due to using asdf in docker build;
+# just annotating expected version here:
+# postgres 13.1
+# nodejs 14.14.0
+nodejs 16.9.1
+yarn 1.22.17

@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+
+PGBINOLD="/Applications/Postgres.app/Contents/Versions/9.6/bin"
+PGBINNEW="/Applications/Postgres.app/Contents/Versions/13/bin"
+
+# must use the newer pg_upgrade bin
+PG_UPGRADEBIN="$PGBINNEW/pg_upgrade"
+
+PGDATAOLD="$HOME/Library/Application Support/Postgres/var-9.6"
+PGDATANEW="$HOME/Library/Application Support/Postgres/var-13"
+
+PGPORTOLD="5432"
+PGPORTNEW="5433"
+
+PGSOCKETDIR="$(pwd)"
+
+PGUSER="postgres"
+
+CHECK="" #"--check"
+
+RETAIN="-r"
+
+CLONE="" # --clone #on macos and certain filesystems
+
+JOBS="-j 4"
+
+$PG_UPGRADEBIN -b "$PGBINOLD" -B "$PGBINNEW" -d "${PGDATAOLD}" -D "${PGDATANEW}" -p $PGPORTOLD -P $PGPORTNEW -U $PGUSER -s $PGSOCKETDIR $CHECK $RETAIN $CLONE $JOBS

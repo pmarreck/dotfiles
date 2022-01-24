@@ -13,5 +13,5 @@ do
 	tar cp -f "$filename.tar" "./$filename"
   $compressor -9 "$filename.tar" "$filename.tar.lz4"
 	rm "$filename.tar"
-	echo "$f > $filename.tar.lz4" >> /Users/pmarreck/lz4compressedfiles.log
+	echo "$f > $filename.tar.lz4" >> $HOME/lz4compressedfiles.log
 done

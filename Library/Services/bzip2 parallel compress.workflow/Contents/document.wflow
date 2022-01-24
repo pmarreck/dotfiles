@@ -69,10 +69,10 @@ do
 	filename=${fout##/*/}  # deletes entire path before last filename, hopefully
 	if [ -f "$f" -a ! -e "$f/..namedfork/rsrc" ]; then # if it's a file and has no resource fork, treat it like a file
 		$pbz -k "./$filename"
-		echo "$f &gt; $filename.bz2" &gt;&gt; /Users/pmarreck/pbzip2compressedfiles.log
+		echo "$f &gt; $filename.bz2" &gt;&gt; $HOME/pbzip2compressedfiles.log
 	else  # assume it's a directory or app package or wonky old mac resource forked file or whatever
 		tar cfp --use-compress-prog=$pbz "$filename.tar.bz2" "./$filename/"
-		echo "$f/ &gt; $filename.tar.bz2" &gt;&gt; /Users/pmarreck/pbzip2compressedfiles.log
+		echo "$f/ &gt; $filename.tar.bz2" &gt;&gt; $HOME/pbzip2compressedfiles.log
 	fi
 done
 </string>

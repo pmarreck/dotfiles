@@ -1,35 +1,62 @@
-[[ $- == *i* ]] && echo "Configuring PATH via .pathconfig"
+[[ $- == *i* ]] && echo "Running .pathconfig"
 # echo "Current PATH is $PATH"
 
 # All path configs here should replace any existing version of themselves in the PATH before appending
 # (idempotent)
 
+# function to prepend paths in an idempotent way
+prepend_path() {
+    # $1: path variable name
+    # $2: path to prepend
+    # ensure both arguments are set
+    if [ -z "$1" ] || [ -z "$2" ]; then
+        echo "usage: prepend_path <name_of_path_var> <path_to_prepend>" >&2
+        return 1
+    fi
+    # ${1} is, for example, "PATH"
+    # ${!1} is the value of PATH (dereferenced)
+    local temp_path=${!1}
+    # remove any duplicate entries
+    temp_path="${temp_path//$2/}"
+    # replace any double colons with single ones
+    temp_path="${temp_path//::/:}"
+    # prepend the new entry
+    temp_path="$2:$temp_path"
+    # strip any trailing colons
+    temp_path="${temp_path%:}"
+    # export the final result
+    export ${1}="$temp_path"
+}
+
 # Add Python installed scripts to front of PATH
 # export PATH=/usr/local/share/python:${PATH/\/usr\/local\/share\/python:/}
 # Move /usr/local/bin and /usr/local/sbin to the front of PATH by subbing it out and prepending
-export PATH=/usr/local/sbin:${PATH/\/usr\/local\/sbin:/}
-export PATH=/usr/local/bin:${PATH/\/usr\/local\/bin:/}
+# export PATH=/usr/local/sbin:${PATH/\/usr\/local\/sbin:/}
+# export PATH=/usr/local/bin:${PATH/\/usr\/local\/bin:/}
 ## # Move /usr/local/Homebrew/bin and /usr/local/Homebrew/sbin to the front of PATH by subbing it out and prepending
 ## export PATH=/usr/local/Homebrew/sbin:${PATH/\/usr\/local\/Homebrew\/sbin:/}
 ## export PATH=/usr/local/Homebrew/bin:${PATH/\/usr\/local\/Homebrew\/bin:/}
 
 # add my user bin to PATH
 # export PATH=$PATH:~/bin
-export PATH=${PATH/~\/bin:/}:~/bin
+prepend_path PATH ~/bin
+
+# add homebrew llvm in front of apple llvm
+prepend_path PATH /opt/homebrew/opt/llvm/bin
 
 # add my Scripts bin to PATH
 # export PATH=$PATH:~/Scripts
-export PATH=${PATH/~\/Scripts:/}:~/Scripts
+prepend_path PATH ~/Scripts
 
 # Add RVM to PATH for scripting
-export PATH=~/.rvm/bin:${PATH/~\/.rvm\/bin:/}
+# export PATH=~/.rvm/bin:${PATH/~\/.rvm\/bin:/}
 
 # add bundler binstubs
-export PATH=~/.bundler_binstubs:${PATH/~\/.bundler_binstubs:/}
+# export PATH=~/.bundler_binstubs:${PATH/~\/.bundler_binstubs:/}
 
 # BINSTUBS
 # add binstub to front of PATH
-export PATH=./bin:${PATH/\.\/bin:/}
+prepend_path PATH ./bin
 
 # just for linuxbrew, see: https://github.com/Homebrew/linuxbrew
 # if [ "$(uname -s)" == "Linux" ]; then
@@ -38,12 +65,19 @@ export PATH=./bin:${PATH/\.\/bin:/}
 # fi
 
 # add postgres app install dir to front of PATH
-export PATH=/Applications/Postgres.app/Contents/Versions/9.6/bin:${PATH/\/Applications\/Postgres\.app\/Contents\/Versions\/9\.6\/bin:/}
+# export PATH=/Applications/Postgres.app/Contents/Versions/9.6/bin:${PATH/\/Applications\/Postgres\.app\/Contents\/Versions\/9\.6\/bin:/}
 
 # prefer homebrew-installed sqlite to native one
-export PATH="/usr/local/opt/sqlite/bin:$PATH"
+# export PATH="/usr/local/opt/sqlite/bin:$PATH"
 
 # get building of gem capybara-webkit to use qt@5.5's qmake
-export PATH="$(brew --prefix qt@5.5)/bin:$PATH"
+# export PATH="$(brew --prefix qt@5.5)/bin:$PATH"
 
 # echo "PATH after config is $PATH"
+
+# python utils from homebrew
+prepend_path PATH /opt/homebrew/opt/python@3.9/libexec/bin
+
+# homebrew
+prepend_path PATH /opt/homebrew/bin
+prepend_path PATH /opt/homebrew/sbin

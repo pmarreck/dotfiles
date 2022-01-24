@@ -63,7 +63,7 @@ do
 	filename=${fout##/*/}  # deletes entire path before last filename, hopefully
 	authenticatedASaction="do shell script \"ditto --hfsCompression --zlibCompressionLevel=9 '$filename' '$filename.tmp'; rm -rf '$filename'; mv '$filename.tmp' '$filename'\" with administrator privileges"
 	osascript -e "$authenticatedASaction"
-	echo "$f &gt; $filename (internallycompressed)" &gt;&gt; /Users/pmarreck/snowleopardcompressedfiles.log
+	echo "$f &gt; $filename (internallycompressed)" &gt;&gt; $HOME/snowleopardcompressedfiles.log
 done
 </string>
 					<key>CheckedForUserDefaultShell</key>

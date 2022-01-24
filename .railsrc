@@ -1,8 +1,0 @@
-# encoding: utf-8
-
-#Enable ActiveRecord logging
-def loud_logger(enable = true)
-  logger = (enable == true ? Logger.new(STDOUT) : nil)
-  ActiveRecord::Base.logger = logger
-  ActiveRecord::Base.clear_active_connections!
-end

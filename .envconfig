@@ -1,11 +1,29 @@
 [[ $- == *i* ]] && echo "Running .envconfig"
 
-# LLVM setup
-export LDFLAGS="-L/usr/local/opt/llvm/lib -Wl,-rpath,/usr/local/opt/llvm/lib"
-
+# Homebrew LLVM and compiler toolchain config
+export LDFLAGS="-L/opt/homebrew/opt/llvm/lib -Wl,-rpath,/opt/homebrew/opt/llvm/lib"
+export CPPFLAGS="-I/opt/homebrew/opt/llvm/include"
 # Experimental "Plan 9 from User Space" PATH config
 # export PLAN9=/usr/local/plan9
 # export PATH=$PATH:$PLAN9/bin
+gcc_ver="11"
+brew_prefix=$(brew --prefix)/bin
+export CC=$brew_prefix/gcc-$gcc_ver
+export GCC=$CC
+export CXX=$brew_prefix/g++-$gcc_ver
+export CPP=$brew_prefix/cpp-$gcc_ver
+export LD=$brew_prefix/gcc-$gcc_ver
+alias c++=$brew_prefix/c++-$gcc_ver
+alias g++=$brew_prefix/g++-$gcc_ver
+alias gcc=$brew_prefix/gcc-$gcc_ver
+alias cpp=$brew_prefix/cpp-$gcc_ver
+alias ld=$brew_prefix/gcc-$gcc_ver
+alias cc=$brew_prefix/gcc-$gcc_ver
+# alias clang=$brew_prefix/clang-$gcc_ver
+# alias clang++=$brew_prefix/clang++-$gcc_ver
+alias gcov=$brew_prefix/gcov-$gcc_ver
+alias gcov-dump=$brew_prefix/gcov-dump-$gcc_ver
+alias gcov-tool=$brew_prefix/gcov-tool-$gcc_ver
 
 # stop checking for unix mail, OS X!
 unset MAILCHECK
@@ -86,5 +104,8 @@ export TWITTER_ACCESS_TOKEN_SECRET="RsWyalXW2QZESyKI76AeB6WxAm1LHXzfyMZfSU05OhdO
 # export NERVES_SYSTEM=~/Documents/nerves/nerves_system_linkit
 # export NERVES_TOOLCHAIN=~/Documents/nerves/nerves-mipsel-unknown-linux-musl-darwin-x86_64-v0.6.3
 
-# Pull in path configuration
-source ~/.pathconfig
+# prompt for set -x output
+export PS4='$0:$LINENO+ '
+
+# shut up, macos
+export BASH_SILENCE_DEPRECATION_WARNING=1

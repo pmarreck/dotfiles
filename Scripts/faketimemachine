@@ -107,8 +107,8 @@ osx_boot_file_excludes="/.DocumentRevisions-V100
 /System/Library/Caches
 /System/Library/Extensions/Caches
 /tmp
-/Users/admin/Library/Calendars/Calendar Cache
-/Users/admin/Library/Safari/WebpageIcons.db
+/Users/pmarreck/Library/Calendars/Calendar Cache
+/Users/pmarreck/Library/Safari/WebpageIcons.db
 /Users/Guest
 /Users/Shared/SC Info
 /Volumes

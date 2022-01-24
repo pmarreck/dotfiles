@@ -1,0 +1,8 @@
+A list of config changes I've made to my Macbook Pro M1 Max:
+-----------------------------------------------------------
+
+Installed oh-my-bash.
+Installed o-m-b compatible fonts such as Anonymice Powerline.
+Installed commandline MAME (sdl lib) and a couple of helper scripts in ~/bin.
+Downloaded many of the Mac OS voices that are no longer built-in (such as Zarvox).
+Edited /etc/fstab to force macOS not to fsck the exFAT karaoke flash drive, per https://apple.stackexchange.com/questions/230698/disable-the-disk-check-when-reconnecting-an-improperly-disconnected-disk-to-os-x
