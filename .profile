@@ -329,12 +329,11 @@ weather() {
   needs jq
   needs bc
   needs figlet
-  temp=`curl -s "http://api.openweathermap.org/data/2.5/weather?id=5132029&APPID=516c2c718e4cb6c921bf1eea495df7e9" | jq .main.temp`
+  temp=`curl -s "http://api.openweathermap.org/data/2.5/weather?id=$OPENWEATHERMAP_ID&APPID=$OPENWEATHERMAP_APPID" | jq .main.temp`
   temp=$(bc <<< "$temp*9/5-459.67") # convert from kelvin to F
   echo "$temp F" | figlet -kcf big
 }
-# ansiweather's is 85a4e3c55b73909f42c6a23ec35b7147
-# mine is 516c2c718e4cb6c921bf1eea495df7e9 but it did not work after I created it... time delay?
+# my openweathermap key did not work after I created it... time delay?
 # EDIT: Works now
 # But returns Kelvin. Don't have time to figure out F from K in Bash using formula F = K * 9/5 - 459.67
 # EDIT 2: Figured that out
