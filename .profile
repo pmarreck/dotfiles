@@ -3,10 +3,12 @@
 [[ $- == *i* ]] && echo "Platform: $PLATFORM"
 
 # config for Visual Studio Code
-code () { VSCODE_CWD="$PWD" open -n -b com.microsoft.VSCode --args $* ;}
-pipeable_code () { VSCODE_CWD="$PWD" open -n -b com.microsoft.VSCode -f ;}
+if [ "$PLATFORM" = "osx" ]; then
+  code () { VSCODE_CWD="$PWD" open -n -b com.microsoft.VSCode --args $* ;}
+  pipeable_code () { VSCODE_CWD="$PWD" open -n -b com.microsoft.VSCode -f ;}
+  export PIPEABLE_EDITOR='pipeable_code'
+fi
 export EDITOR='code'
-export PIPEABLE_EDITOR='pipeable_code'
 
 # If you hate noise
 # set bell-style visible
