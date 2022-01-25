@@ -2,13 +2,18 @@
 
 [[ $- == *i* ]] && echo "Platform: $PLATFORM"
 
+# graceful dependency enforcement
+needs() {
+  command -v $1 >/dev/null 2>&1 || { echo >&2 "I require $1 but it's not installed or in PATH."; return 1; }
+}
+
 # config for Visual Studio Code
 if [ "$PLATFORM" = "osx" ]; then
   code () { VSCODE_CWD="$PWD" open -n -b com.microsoft.VSCode --args $* ;}
   pipeable_code () { VSCODE_CWD="$PWD" open -n -b com.microsoft.VSCode -f ;}
   export PIPEABLE_EDITOR='pipeable_code'
 fi
-export EDITOR='code'
+# export EDITOR='code' # already set in .bashrc
 
 # If you hate noise
 # set bell-style visible
@@ -39,6 +44,7 @@ alias files='find \!:1 -type f -print'      # files x => list files in x
 alias line='sed -n '\''\!:1 p'\'' \!:2'    # line 5 file => show line 5 of file
 # alias l='ls -lGaph'
 # brew install exa
+needs exa
 alias l='exa --long --header --sort=mod --all'
 alias l1='l --git --icons'
 alias l2='l1 --tree --level=2'
@@ -54,7 +60,10 @@ alias tophog='top -ocpu -s 3'
 #alias wordcount=(cat \!* | tr -s '\''  .,;:?\!()[]"'\'' '\''\012'\'' |' \
 #                'cat -n | tail -1 | awk '\''{print $1}'\'')' # Histogram words
 # alias js='java org.mozilla.javascript.tools.shell.Main'
-alias scr='screen -r'
+scr() {
+  needs screen
+  screen -r
+}
 alias p='ping www.yahoo.com'
 alias pp='ping -A -i 5 8.8.4.4' #Ping the root google nameserver every 5 seconds and beep if no route
 alias t='top'
@@ -77,12 +86,16 @@ alias killdns='sudo killall -HUP mDNSResponder'
 # alias grep='egrep'
 
 # elixir/phoenix gigalixir prod deploy command
+needs git
 alias deploy='git push gigalixir master'
 
 # log all terminal output to a file
 alias log='/usr/bin/script -a ~/Terminal.log; source ~/.bash_profile'
 
 # This was inevitable.
+needs curl
+needs jq
+needs figlet
 alias btc='curl -s https://www.bitstamp.net/api/ticker/ | jq ".last | tonumber" | figlet -kcf big'
 
 # from https://twitter.com/liamosaur/status/506975850596536320
@@ -182,10 +195,12 @@ alias beep='tput bel'
 # s2k-count 65000000 - Mangles the passphrase this number of times. Takes over a second on modern hardware.
 # compress-algo BZIP2- Uses a high quality compression algorithm before encryption. BZIP2 is good but not compatible with PGP proper, FYI.
 encrypt() {
+  needs gpg
   gpg --symmetric -z 9 --require-secmem --cipher-algo AES256 --s2k-cipher-algo AES256 --s2k-digest-algo SHA512 --s2k-mode 3 --s2k-count 65000000 --compress-algo BZIP2 $@
 }
 # note: will decrypt to STDOUT by default, for security reasons. remove "-d" or pipe to file to write to disk
 decrypt() {
+  needs gpg
   gpg -d $@
 }
 
@@ -193,6 +208,7 @@ decrypt() {
 # First argument is password length
 # Can override the default character set by passing in PWCHARSET=<charset> as env
 randompass() {
+  needs shuf
   # globbing & history expansion here is a pain, so we store its state, temp turn it off & restore it later
   local maybeglob="$(shopt -po noglob histexpand)"
   set -o noglob # turn off globbing
@@ -221,7 +237,8 @@ randompass() {
   # but it's concise and fast and works, so... &shrug;
   # printf is necessary due to some of the punctuation characters being interpreted when using echo
   local characterset=$(printf "%s" "$PWCHARSET" | awk NF=NF FS="")
-  { shuf --random-source=/dev/urandom -n $1 -er $characterset; } | tr -d '\n'
+  # using /dev/random to enforce entropy, but use urandom if you want speed
+  { shuf --random-source=/dev/random -n $1 -er $characterset; } | tr -d '\n'
   echo
   # restore any globbing state
   eval "$maybeglob"
@@ -232,10 +249,16 @@ randompass() {
 # First argument is minimum word length
 # Second argument is number of words to generate
 randompassdict() {
+  needs shuf
   if [ $# -eq 0 ]; then
-    echo "Usage: randompassdict <num-words> [<min-word-length> [<max-word-length>]]"
+    echo "Usage: randompassdict <num-words> [<min-word-length default 8> [<max-word-length default 99>]]"
+    if [ "$PLATFORM" = "linux" ]; then
+      echo "Note that on linux, this may require installation of the 'words' package."
+    fi
     return 1
   fi
+  local dict_loc="/usr/share/dict/words"
+  # [ -f "$dict_loc" ] || { echo "$dict_loc missing. may need to install 'words' package. Exiting."; exit 1; }
   local numwords=$1
   local minlen=${2:-8}
   local maxlen=${3:-99}
@@ -244,7 +267,7 @@ randompassdict() {
   local poolsize=$(printf "%s" "$pool" | wc -l)
   # why is poolsize getting spaces in front? No idea. Removing them.
   poolsize=${poolsize##* }
-  local words=$(echo -n "$pool" | shuf -n "$numwords" | tr '\n' ' ')
+  local words=$(echo -n "$pool" | shuf --random-source=/dev/random -n "$numwords" | tr '\n' ' ')
   echo "$words"
   echo "(out of a possible $poolsize available words in the dictionary that suit the requested length range [$minlen-$maxlen])" 1>&2
   # a former attempt that worked but was less flexible:
@@ -302,6 +325,10 @@ dragon() {
 
 # weather
 weather() {
+  needs curl
+  needs jq
+  needs bc
+  needs figlet
   temp=`curl -s "http://api.openweathermap.org/data/2.5/weather?id=5132029&APPID=516c2c718e4cb6c921bf1eea495df7e9" | jq .main.temp`
   temp=$(bc <<< "$temp*9/5-459.67") # convert from kelvin to F
   echo "$temp F" | figlet -kcf big
@@ -320,6 +347,7 @@ lnwtf() {
 
 # add otp --version command
 otp() {
+  needs erl
   case $1 in
     "--version")
       erl -eval '{ok, Version} = file:read_file(filename:join([code:root_dir(), "releases", erlang:system_info(otp_release), "OTP_VERSION"])), io:fwrite(Version), halt().' -noshell
@@ -366,7 +394,7 @@ if [ "$PLATFORM" == "osx" ]; then
   pman() { man -t "$@" | open -f -a Preview; }
 fi
 
-# Who is holding open this damn port or file??
+# Who is holding open this damn port or file?? (note: may only work on OS X)
 # usage: portopen 3000
 portopen() {
 	sudo lsof -P -i ":${1}"
@@ -474,10 +502,11 @@ alias grc='git rebase --continue'
 
 # lines of code counter
 # brew install tokei
+needs tokei
 alias loc='tokei'
 
 # homebrew utils
-bubu () { brew update; brew upgrade ;}
+bubu () { brew update; brew upgrade; }
 
 # Postgres stuff
 alias start-pg='pg_ctl -l $PGDATA/server.log start'
@@ -495,8 +524,8 @@ source ~/bin/git-completion.bash
 # (Use single quotes to avoid having to escape all punctuation but single quote)
 
 notify() {
-  curl -s -F "token=awg3fvs3vjnamuqof99r2246j8q3eh" \
-  -F "user=uxrxropwvwyx72dheuhmgf8fti96me" \
+  curl -s -F "token=$PUSHOVER_NOTIFICATION_TOKEN" \
+  -F "user=$PUSHOVER_NOTIFICATION_USER" \
   -F "message=$1" https://api.pushover.net/1/messages.json
   # -F "title=YOUR_TITLE_HERE" \
 }
@@ -507,6 +536,7 @@ notify() {
 
 # silliness
 if [[ $- == *i* ]]; then
+  needs fortune
   echo
   fortune
   echo

@@ -28,15 +28,6 @@ alias gcov-tool=$brew_prefix/gcov-tool-$gcc_ver
 # stop checking for unix mail, OS X!
 unset MAILCHECK
 
-# platform info
-if [ "$(uname)" == "Darwin" ]; then
-  export PLATFORM='osx'
-elif [ "$(expr substr $(uname -s) 1 5)" == "Linux" ]; then
-  export PLATFORM='linux'
-elif [ "$(expr substr $(uname -s) 1 10)" == "MINGW32_NT" ]; then
-  export PLATFORM='windows'
-fi
-
 # Node.js
 export NODE_PATH=/usr/local/lib/node
 
@@ -99,8 +90,7 @@ export PGHOST=localhost
 # export IRCSERVER="irc.freenode.net"
 
 # twitter integration with nerves
-export TWITTER_ACCESS_TOKEN="15996789-X60u43Q0vb203Wva5FwfAo3IMGk2DTV3Nzc6eSNkP"
-export TWITTER_ACCESS_TOKEN_SECRET="RsWyalXW2QZESyKI76AeB6WxAm1LHXzfyMZfSU05OhdOA"
+
 # export NERVES_SYSTEM=~/Documents/nerves/nerves_system_linkit
 # export NERVES_TOOLCHAIN=~/Documents/nerves/nerves-mipsel-unknown-linux-musl-darwin-x86_64-v0.6.3
 

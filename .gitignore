@@ -1,4 +1,4 @@
 .DS_Store
 *.cache
-com.apple.Terminal.plist
-Library/Screen\ Savers/
+.secrets
+.netrc

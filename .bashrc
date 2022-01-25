@@ -88,7 +88,9 @@ else
 fi
 
 # Compilation flags
-export ARCHFLAGS="-arch arm64"
+# export ARCHFLAGS="-arch arm64"
+export ARCHFLAGS="-arch $(uname -a | rev | cut -d ' ' -f 2 | rev)"
+# note: "aarch64" may need to be mutated to "arm64" in some cases
 
 # ssh
 export SSH_KEY_PATH="~/.ssh/rsa_id"
@@ -101,9 +103,6 @@ export SSH_KEY_PATH="~/.ssh/rsa_id"
 # Example aliases
 # alias bashconfig="mate ~/.bashrc"
 # alias ohmybash="mate ~/.oh-my-bash"
-
-# Pull in path configuration
-source ~/.pathconfig
 
 # Pull in artifacts from before oh-my-bash
 source ~/.pre-oh-my-bash.bashrc

@@ -1,8 +1,18 @@
 [[ $- == *i* ]] && echo "Running .pre-oh-my-bash.bashrc"
 
-# [[ -s "$HOME/.rvm/scripts/rvm" ]] && source "$HOME/.rvm/scripts/rvm" # Load RVM into a shell session *as a function*
-
-# export PATH="$PATH:$HOME/.rvm/bin" # Add RVM to PATH for scripting
+# platform info
+pf="$(uname)"
+if [ "$pf" = "Darwin" ]; then
+  export PLATFORM="osx"
+elif [ "$(expr substr $pf 1 5)" = "Linux" ]; then
+  export PLATFORM="linux"
+elif [ "$(expr substr $pf 1 10)" = "MINGW32_NT" ]; then
+  export PLATFORM="windows"
+else
+  # this downcase requires bash 4+; you can pipe to tr '[:upper:]' '[:lower:]' instead
+  export PLATFORM="${pf,,}"
+fi
+unset pf
 
 # asdf config
 [[ -s "$HOME/.asdf/asdf.sh" ]] && source "$HOME/.asdf/asdf.sh"
@@ -22,7 +32,12 @@ fi
 
 # direnv hook
 eval "$(direnv hook bash)"
+
+# rust cargo hook
 source "$HOME/.cargo/env"
+
+# Pull in path configuration
+source ~/.pathconfig
 
 # environment vars config
 source ~/.envconfig

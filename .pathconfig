@@ -41,22 +41,12 @@ prepend_path() {
 # export PATH=$PATH:~/bin
 prepend_path PATH ~/bin
 
-# add homebrew llvm in front of apple llvm
-prepend_path PATH /opt/homebrew/opt/llvm/bin
-
 # add my Scripts bin to PATH
 # export PATH=$PATH:~/Scripts
 prepend_path PATH ~/Scripts
 
 # Add RVM to PATH for scripting
 # export PATH=~/.rvm/bin:${PATH/~\/.rvm\/bin:/}
-
-# add bundler binstubs
-# export PATH=~/.bundler_binstubs:${PATH/~\/.bundler_binstubs:/}
-
-# BINSTUBS
-# add binstub to front of PATH
-prepend_path PATH ./bin
 
 # just for linuxbrew, see: https://github.com/Homebrew/linuxbrew
 # if [ "$(uname -s)" == "Linux" ]; then
@@ -75,9 +65,21 @@ prepend_path PATH ./bin
 
 # echo "PATH after config is $PATH"
 
-# python utils from homebrew
-prepend_path PATH /opt/homebrew/opt/python@3.9/libexec/bin
-
 # homebrew
-prepend_path PATH /opt/homebrew/bin
-prepend_path PATH /opt/homebrew/sbin
+
+if [ "$PLATFORM" = "linux" ]; then
+    prepend_path PATH ~/.linuxbrew/bin
+    prepend_path PATH ~/.linuxbrew/sbin
+    prepend_path LD_LIBRARY_PATH ~/.linuxbrew/lib
+elif [ "$PLATFORM" = "osx" ]; then
+    prepend_path PATH /opt/homebrew/bin
+    prepend_path PATH /opt/homebrew/sbin
+    # add homebrew llvm in front of apple llvm
+    prepend_path PATH /opt/homebrew/opt/llvm/bin
+    # python utils from homebrew, may need to tweak version
+    prepend_path PATH /opt/homebrew/opt/python@3.9/libexec/bin
+fi
+
+# BINSTUBS
+# add binstub to front of PATH which overrides everything
+prepend_path PATH ./bin

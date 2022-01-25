@@ -18,6 +18,7 @@ declare -a dotfiles=(
     .pathconfig
     .pre-oh-my-bash.bashrc
     .profile
+    .secrets.gpg
     .tool-versions
     Brewfile
     Tapfile
@@ -87,4 +88,5 @@ cd $curdir
 
 echo
 echo "note: Library/Application Support and Library/Services are not installed by default"
-echo "since they are macOS-only, please install manually"
+echo "since they are macOS-only, please install manually."
+echo "Don't forget to decrypt the .gpg files using 'decrypt filename.gpg > filename'!"
