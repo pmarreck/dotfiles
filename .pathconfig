@@ -1,4 +1,4 @@
-$DEBUG_SHELLCONFIG && [[ $- == *i* ]] && echo "Running .pathconfig" || echo -n "#"
+$DEBUG_SHELLCONFIG && $INTERACTIVE_SHELL && echo "Running .pathconfig" || echo -n "#"
 # echo "Current PATH is $PATH"
 
 # All path configs here should replace any existing version of themselves in the PATH before appending

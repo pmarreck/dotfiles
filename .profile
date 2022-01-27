@@ -1,6 +1,6 @@
-$DEBUG_SHELLCONFIG && [[ $- == *i* ]] && echo "Running .profile" || echo "#" # last debug gets a crlf
+$DEBUG_SHELLCONFIG && $INTERACTIVE_SHELL && echo "Running .profile" || echo "#" # last debug gets a crlf
 
-[[ $- == *i* ]] && echo "Platform: $PLATFORM"
+$INTERACTIVE_SHELL && echo "Platform: $PLATFORM"
 
 # config for Visual Studio Code
 if [ "$PLATFORM" = "osx" ]; then
@@ -542,10 +542,10 @@ notify() {
 
 # command prompt
 # using oh-my-bash for now
-# [[ $- == *i* ]] && source ~/.commandpromptconfig
+# $INTERACTIVE_SHELL && source ~/.commandpromptconfig
 
 # silliness
-if [[ $- == *i* ]]; then
+if $INTERACTIVE_SHELL; then
   needs fortune
   echo
   fortune

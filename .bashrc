@@ -1,4 +1,26 @@
-$DEBUG_SHELLCONFIG && [[ $- == *i* ]] && echo "Running .bashrc" || echo -n "#"
+export DEBUG_SHELLCONFIG=false
+
+# mute direnv constantly telling me what it's loading
+export DIRENV_LOG_FORMAT=
+
+# determine shell characteristics
+# is this an interactive shell?
+case "$-" in
+  *i*)	export INTERACTIVE_SHELL=true ;;
+  *)	export INTERACTIVE_SHELL=false ;;
+esac
+# is this a login shell?
+# this is already set to false if .bash_profile ran (which implies it's a non-login shell)
+export LOGIN_SHELL=${LOGIN_SHELL:-true};
+
+if $INTERACTIVE_SHELL; then
+  echo -n "i"
+fi
+if $LOGIN_SHELL; then
+  echo -n "l"
+fi
+
+$DEBUG_SHELLCONFIG && $INTERACTIVE_SHELL && echo "Running .bashrc" || echo -n "#"
 
 # Path to your oh-my-bash installation.
 export OSH=$HOME/.oh-my-bash
@@ -105,5 +127,5 @@ export SSH_KEY_PATH="~/.ssh/rsa_id"
 # alias ohmybash="mate ~/.oh-my-bash"
 
 # Pull in artifacts from before oh-my-bash
-$DEBUG_SHELLCONFIG && [[ $- == *i* ]] && [[ -s "$HOME/.pre-oh-my-bash.bashrc" ]] && echo -n "from .bashrc: "
+$DEBUG_SHELLCONFIG && $INTERACTIVE_SHELL && [[ -s "$HOME/.pre-oh-my-bash.bashrc" ]] && echo -n "from .bashrc: "
 [[ -s "$HOME/.pre-oh-my-bash.bashrc" ]] && source ~/.pre-oh-my-bash.bashrc

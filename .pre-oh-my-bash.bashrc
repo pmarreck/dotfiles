@@ -1,4 +1,4 @@
-$DEBUG_SHELLCONFIG && [[ $- == *i* ]] && echo "Running .pre-oh-my-bash.bashrc" || echo -n "#"
+$DEBUG_SHELLCONFIG && $INTERACTIVE_SHELL && echo "Running .pre-oh-my-bash.bashrc" || echo -n "#"
 
 # platform info
 pf="$(uname)"
@@ -24,7 +24,7 @@ export MIX_HOME="$HOME/.mix"
 export MIX_ARCHIVES="$MIX_HOME/archives"
 
 # partial history search
-if [[ $- == *i* ]]
+if $INTERACTIVE_SHELL
 then
     bind '"\e[A": history-search-backward' # up-arrow
     bind '"\e[B": history-search-forward'  # down-arrow
@@ -41,20 +41,19 @@ needs() {
 # rust cargo hook
 source "$HOME/.cargo/env"
 
-# who am I?
-# OK, $(basename $0) didn't work, so...
-me=".pre-oh-my-bash.bashrc"
+# who am I? (should work even when sourced from elsewhere, but only in Bash)
+me=`basename ${BASH_SOURCE[0]}`
 
 # Pull in path configuration
-$DEBUG_SHELLCONFIG && [[ $- == *i* ]] && echo -n "from $me: "
+$DEBUG_SHELLCONFIG && $INTERACTIVE_SHELL && echo -n "from $me: "
 source ~/.pathconfig
 
 # direnv hook
 eval "$(direnv hook bash)"
 
 # environment vars config
-$DEBUG_SHELLCONFIG && [[ $- == *i* ]] && echo -n "from $me: "
+$DEBUG_SHELLCONFIG && $INTERACTIVE_SHELL && echo -n "from $me: "
 source ~/.envconfig
 
-$DEBUG_SHELLCONFIG && [[ -s "$HOME/.profile" ]] && [[ $- == *i* ]] && echo -n "from $me: "
+$DEBUG_SHELLCONFIG && [[ -s "$HOME/.profile" ]] && $INTERACTIVE_SHELL && echo -n "from $me: "
 [[ -s "$HOME/.profile" ]] && source "$HOME/.profile" # Load the default .profile
