@@ -105,4 +105,5 @@ export SSH_KEY_PATH="~/.ssh/rsa_id"
 # alias ohmybash="mate ~/.oh-my-bash"
 
 # Pull in artifacts from before oh-my-bash
-source ~/.pre-oh-my-bash.bashrc
+[[ $- == *i* ]] && [[ -s "$HOME/.pre-oh-my-bash.bashrc" ]] && echo -n "from .bashrc: "
+[[ -s "$HOME/.pre-oh-my-bash.bashrc" ]] && source ~/.pre-oh-my-bash.bashrc

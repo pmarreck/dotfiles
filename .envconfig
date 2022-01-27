@@ -1,29 +1,34 @@
 [[ $- == *i* ]] && echo "Running .envconfig"
 
-# Homebrew LLVM and compiler toolchain config
-export LDFLAGS="-L/opt/homebrew/opt/llvm/lib -Wl,-rpath,/opt/homebrew/opt/llvm/lib"
-export CPPFLAGS="-I/opt/homebrew/opt/llvm/include"
-# Experimental "Plan 9 from User Space" PATH config
-# export PLAN9=/usr/local/plan9
-# export PATH=$PATH:$PLAN9/bin
-gcc_ver="11"
-brew_prefix=$(brew --prefix)/bin
-export CC=$brew_prefix/gcc-$gcc_ver
-export GCC=$CC
-export CXX=$brew_prefix/g++-$gcc_ver
-export CPP=$brew_prefix/cpp-$gcc_ver
-export LD=$brew_prefix/gcc-$gcc_ver
-alias c++=$brew_prefix/c++-$gcc_ver
-alias g++=$brew_prefix/g++-$gcc_ver
-alias gcc=$brew_prefix/gcc-$gcc_ver
-alias cpp=$brew_prefix/cpp-$gcc_ver
-alias ld=$brew_prefix/gcc-$gcc_ver
-alias cc=$brew_prefix/gcc-$gcc_ver
-# alias clang=$brew_prefix/clang-$gcc_ver
-# alias clang++=$brew_prefix/clang++-$gcc_ver
-alias gcov=$brew_prefix/gcov-$gcc_ver
-alias gcov-dump=$brew_prefix/gcov-dump-$gcc_ver
-alias gcov-tool=$brew_prefix/gcov-tool-$gcc_ver
+# canonical gcc tweaks for OS X's homebrew gcc; Linux shouldn't need these
+if [ "$PLATFORM" = "osx" ]; then
+  needs brew
+  brew_prefix=$(brew --prefix)
+  # Homebrew LLVM and compiler toolchain config
+  export LDFLAGS="-L/opt/homebrew/opt/llvm/lib -Wl,-rpath,/opt/homebrew/opt/llvm/lib"
+  export CPPFLAGS="-I/opt/homebrew/opt/llvm/include"
+  # Experimental "Plan 9 from User Space" PATH config
+  # export PLAN9=/usr/local/plan9
+  # export PATH=$PATH:$PLAN9/bin
+  gcc_ver="11"
+  brew_prefix_bin=$brew_prefix/bin
+  export CC=$brew_prefix_bin/gcc-$gcc_ver
+  export GCC=$CC
+  export CXX=$brew_prefix_bin/g++-$gcc_ver
+  export CPP=$brew_prefix_bin/cpp-$gcc_ver
+  export LD=$brew_prefix_bin/gcc-$gcc_ver
+  alias c++=$brew_prefix_bin/c++-$gcc_ver
+  alias g++=$brew_prefix_bin/g++-$gcc_ver
+  alias gcc=$brew_prefix_bin/gcc-$gcc_ver
+  alias cpp=$brew_prefix_bin/cpp-$gcc_ver
+  alias ld=$brew_prefix_bin/gcc-$gcc_ver
+  alias cc=$brew_prefix_bin/gcc-$gcc_ver
+  # alias clang=$brew_prefix_bin/clang-$gcc_ver
+  # alias clang++=$brew_prefix_bin/clang++-$gcc_ver
+  alias gcov=$brew_prefix_bin/gcov-$gcc_ver
+  alias gcov-dump=$brew_prefix_bin/gcov-dump-$gcc_ver
+  alias gcov-tool=$brew_prefix_bin/gcov-tool-$gcc_ver
+fi
 
 # stop checking for unix mail, OS X!
 unset MAILCHECK
@@ -78,6 +83,10 @@ export RUBY_GC_HEAP_FREE_SLOTS=200000
 # Postgres stuff
 export PGDATA='/usr/local/var/postgres'
 export PGHOST=localhost
+
+# Locale. Setting it here if it's not set yet solves some issues.
+export LC_ALL=${LC_ALL:-C}
+
 
 #supercolor
 # PS1="\[$(tput rev)\]$PS1\[$(tput sgr0)\]"

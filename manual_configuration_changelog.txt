@@ -6,3 +6,10 @@ Installed o-m-b compatible fonts such as Anonymice Powerline.
 Installed commandline MAME (sdl lib) and a couple of helper scripts in ~/bin.
 Downloaded many of the Mac OS voices that are no longer built-in (such as Zarvox).
 Edited /etc/fstab to force macOS not to fsck the exFAT karaoke flash drive, per https://apple.stackexchange.com/questions/230698/disable-the-disk-check-when-reconnecting-an-improperly-disconnected-disk-to-os-x
+
+
+Arch-only
+---------
+https://wiki.archlinux.org/title/XScreenSaver#Usage
+Enabled this so XScreenSaver could autostart: https://wiki.archlinux.org/title/KDE#systemd_startup
+TO get "awesome/powerline/icons in terminal" fonts I ran: sudo pacman -Syu awesome-terminal-fonts

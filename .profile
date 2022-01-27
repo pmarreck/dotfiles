@@ -3,8 +3,11 @@
 [[ $- == *i* ]] && echo "Platform: $PLATFORM"
 
 # graceful dependency enforcement
+# Usage: needs <executable> provided by <packagename>
 needs() {
-  command -v $1 >/dev/null 2>&1 || { echo >&2 "I require $1 but it's not installed or in PATH."; return 1; }
+  local bin=$1
+  shift
+  command -v $bin >/dev/null 2>&1 || { echo >&2 "I require $bin but it's not installed or in PATH; $*"; return 1; }
 }
 
 # config for Visual Studio Code
@@ -388,12 +391,17 @@ hex() {
 # export CC=/opt/local/bin/clang
 # export CXX=/opt/local/bin/clang++
 
-# Sexy man pages. Opens a postscript version in Preview.app on OS X or Ghostview on Linux
+# Sexy man pages. Opens a postscript version in Preview.app on OS X or evince on Linux
 if [ "$PLATFORM" = "osx" ]; then
   pman() { man -t "$@" | open -f -a Preview; }
 elif [ "$PLATFORM" = "linux" ]; then
-  needs ghostview
-  pman() { man -t "$@" | ghostview; }
+  # unfortunately this is a little grosser on linux, requiring a tempfile
+  pman() {
+    needs evince provided by evince package
+    tmpfile=$(mktemp --suffix=.pdf /tmp/$1.XXXXXX)
+    man -Tpdf "$@" >> $tmpfile 2>/dev/null
+    evince $tmpfile
+  }
 fi
 
 # Who is holding open this damn port or file?? (note: may only work on OS X)
@@ -416,6 +424,8 @@ xn() {
   # print a newline only if the string does not end in a newline
   [[ "$1" == "${1%$'\n'}" ]] && echo
 }
+
+source ~/bin/pac
 
 # GIT shortcuts
 alias gb='git branch'

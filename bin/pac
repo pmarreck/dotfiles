@@ -1,0 +1,176 @@
+#!/usr/bin/env bash
+
+#######################
+# PAC: A Saner Pacman #
+#######################
+
+# graceful dependency enforcement
+# Usage: needs <executable> [provided by <packagename> or explain how to get it here]
+needs() {
+  local bin=$1
+  shift
+  command -v $bin >/dev/null 2>&1 || { echo >&2 "I require $bin but it's not installed or in PATH; $*"; return 1; }
+}
+
+# Arch's pacman has a terrible UI/UX, so...
+# Note: May need to run as sudo for some ops. See note below.
+# Note: The Arch docs strongly recommend against updating the package db (a "sync") without also upgrading the relevant local packages.
+# They also recommend against installing a new package without first updating the package db (sync).
+# Of course, pacman lets you EASILY violate these strong warnings with no warning whatsoever! Bad noob!
+# For this reason, any `pac install`` first updates the package db and also updates anything outdated, and THEN installs the named package;
+# and the "upgrade" option here is basically a placebo/no-op that just updates the db and all packages, regardless of args.
+# This is surely confusing for newcomers (it has to do with the whole "rolling release" thing), so I provided placebo options. ;)
+# NOTE ON SUDO: For the commands that require sudo, you have to put this file somewhere in your PATH, name it "pac", make sure it's
+# executable, and then sudo will work as in `sudo pac install whatever` because otherwise, sudo can't run functions (ARRGGHH)
+
+pac() {
+  needs pacman it comes as part of archlinux
+  case $1 in
+    install | i | upgrade | update | up | system_upgrade | su)
+      case $2 in
+        "--force-refresh" | "-f")
+          shift; shift;
+          pacman -Syyuu $*
+          ;;
+        *)
+          shift;
+          pacman -Syuu --needed $*
+          ;;
+      esac
+      ;;
+    uninstall | remove | u | r)
+      case $2 in
+        "--orphaned" | "--orphans" | "-o")
+          if [ $(pacman -Qdtq) ]; then
+            pacman -Qdtq | pacman -Rns -
+          else
+            echo "No orphaned packages found."
+          fi
+          ;;
+        "--gone") # packages that are in no known repositories
+          if [ $(pacman -Qmq) ]; then
+            pacman -Qmq | pacman -Rns -
+          else
+            echo "No installed packages found that are currently nonexistent in known repositories."
+          fi
+          ;;
+        *)
+          shift;
+          pacman -Russ $*
+          ;;
+      esac
+      ;;
+    orphaned | orphans | o)
+      pacman -Qdt || echo "No orphaned packages found."
+      ;;
+    gone)
+      pacman -Qmq || echo "No installed packages found that are currently nonexistent in known repositories."
+      ;;
+    list | l) # local explicitly installed packages
+      pacman -Qe
+      ;;
+    inspect | info)
+      shift;
+      pacman -Qii $*
+      ;;
+    files) # what files will this package install?
+      shift;
+      pacman -Ql $*
+      ;;
+    owns) # what package owns this file (given a path)?
+      shift;
+      pacman -Qo $*
+      ;;
+    search | s | query | q | find | f) # can be a regexp! Multiple clauses are AND'ed.
+      case $2 in
+        "--local" | "-l")
+          shift; shift;
+          pacman -Qs $*
+          ;;
+        "--remote" | "-r")
+          shift; shift;
+          pacman -Ss $*
+          ;;
+        *) # default to remote
+          shift;
+          pacman -Ss $*
+          ;;
+      esac
+      ;;
+    clean | c | purge)
+      needs paccache provided by pacman-contrib
+      echo "Cleaning all cached package data for uninstalled packages."
+      paccache -ruk0
+      echo "Cleaning all cached package data for installed packages except for the most recent old version."
+      paccache -rk1
+      echo "Removing any partially-downloaded packages."
+      find /var/cache/pacman/pkg/ -iname "*.part" -delete
+      echo "Cleaning unused sync db."
+      pacman -Sc
+      ;;
+    outdated | stale)
+      # note: this is SAFE in that it does NOT update the main local package db to get this information,
+      # thus avoiding the warnings mentioned above
+      needs checkupdates provided by pacman-contrib
+      checkupdates || echo "Up to date."
+      ;;
+    deptree)
+      needs pactree provided by pacman-contrib
+      shift;
+      echo "Packages that the named package depends on:"
+      pactree $*
+      echo
+      echo "Packages that depend on the named package:"
+      pactree -r $*
+      ;;
+    needed_by | deps)
+      needs pactree provided by pacman-contrib
+      case $2 in
+        "--flat" | "--unique")
+          shift; shift;
+          pactree -u $*
+          ;;
+        *) # default to tree
+          echo "Packages that the named package depends on:"
+          shift;
+          pactree $*
+          ;;
+      esac
+      ;;
+    needs | depends_on)
+      needs pactree provided by pacman-contrib
+      case $2 in
+        "--flat" | "--unique")
+          shift; shift;
+          pactree -ru $*
+          ;;
+        *) # default to tree
+          echo "Packages that depend on the named package:"
+          shift;
+          pactree -r $*
+          ;;
+      esac
+      ;;
+    validate | valid)
+      shift;
+      pacman -Qkk $*
+      ;;
+    unlock)
+      rm /var/lib/pacman/db.lck || echo "The package DB is NOT locked! (or you need to sudo)"
+      ;;
+    doctor | doc)
+      pacman -Dkk
+      pacman -Qkk
+      [ -f /var/lib/pacman/db.lck ] && echo "The package DB is locked. If you're not currently running pac/pacman, run 'sudo pac unlock'."
+      ;;
+    *)
+      echo "Usage: pac install|i|upgrade[ --force-refresh]|up|uninstall[ --orphaned|--gone]|u|remove|r|orphaned|o|list|l|inspect|files|info|owns|search|s|query|q|system_upgrade|su|clean|c|purge|outdated|deptree|needed_by|deps|needs|depends_on|valid[ate]|unlock|doctor [<args>]"
+      ;;
+  esac
+}
+
+# run the function, passing along any args, if this file was run directly (such as via sudo) instead of as an include
+me=$(basename $0)
+if [ "$me" = "pac" ]; then
+  pac $*
+fi

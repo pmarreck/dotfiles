@@ -36,10 +36,17 @@ eval "$(direnv hook bash)"
 # rust cargo hook
 source "$HOME/.cargo/env"
 
+# who am I?
+# OK, $(basename $0) didn't work, so...
+me=".pre-oh-my-bash.bashrc"
+
 # Pull in path configuration
+[[ $- == *i* ]] && echo -n "from $me: "
 source ~/.pathconfig
 
 # environment vars config
+[[ $- == *i* ]] && echo -n "from $me: "
 source ~/.envconfig
 
+[[ -s "$HOME/.profile" ]] && [[ $- == *i* ]] && echo -n "from $me: "
 [[ -s "$HOME/.profile" ]] && source "$HOME/.profile" # Load the default .profile
