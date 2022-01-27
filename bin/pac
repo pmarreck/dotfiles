@@ -170,7 +170,9 @@ pac() {
 }
 
 # run the function, passing along any args, if this file was run directly (such as via sudo) instead of as an include
-me=$(basename $0)
+# sometimes, $0 contains a leading dash to indicate an interactive shell,
+# which is apparently an old convention (which also broke the basename call on OS X)
+me=$(basename ${0##\-})
 if [ "$me" = "pac" ]; then
   pac $*
 fi
