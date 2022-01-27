@@ -388,9 +388,12 @@ hex() {
 # export CC=/opt/local/bin/clang
 # export CXX=/opt/local/bin/clang++
 
-# Sexy man pages. Opens a postscript version in Preview.app on OS X
-if [ "$PLATFORM" == "osx" ]; then
+# Sexy man pages. Opens a postscript version in Preview.app on OS X or Ghostview on Linux
+if [ "$PLATFORM" = "osx" ]; then
   pman() { man -t "$@" | open -f -a Preview; }
+elif [ "$PLATFORM" = "linux" ]; then
+  needs ghostview
+  pman() { man -t "$@" | ghostview; }
 fi
 
 # Who is holding open this damn port or file?? (note: may only work on OS X)
