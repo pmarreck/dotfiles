@@ -2,14 +2,6 @@
 
 [[ $- == *i* ]] && echo "Platform: $PLATFORM"
 
-# graceful dependency enforcement
-# Usage: needs <executable> provided by <packagename>
-needs() {
-  local bin=$1
-  shift
-  command -v $bin >/dev/null 2>&1 || { echo >&2 "I require $bin but it's not installed or in PATH; $*"; return 1; }
-}
-
 # config for Visual Studio Code
 if [ "$PLATFORM" = "osx" ]; then
   code () { VSCODE_CWD="$PWD" open -n -b com.microsoft.VSCode --args $* ;}
@@ -36,7 +28,7 @@ export LESS="-EQRX"
 alias hd='od -Ax -tx1z -v'
 #just list directories
 # alias lld='ls -lUd */'
-alias .='pwd'
+# alias .='pwd' # disabled because it breaks scripts that use '.' instead of 'source'
 alias ..='cd ..'
 alias cd..='cd ..'
 alias cdwd='cd `pwd`'

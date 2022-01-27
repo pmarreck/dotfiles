@@ -30,8 +30,13 @@ then
     bind '"\e[B": history-search-forward'  # down-arrow
 fi
 
-# direnv hook
-eval "$(direnv hook bash)"
+# graceful dependency enforcement
+# Usage: needs <executable> provided by <packagename>
+needs() {
+  local bin=$1
+  shift
+  command -v $bin >/dev/null 2>&1 || { echo >&2 "I require $bin but it's not installed or in PATH; $*"; return 1; }
+}
 
 # rust cargo hook
 source "$HOME/.cargo/env"
@@ -43,6 +48,9 @@ me=".pre-oh-my-bash.bashrc"
 # Pull in path configuration
 [[ $- == *i* ]] && echo -n "from $me: "
 source ~/.pathconfig
+
+# direnv hook
+eval "$(direnv hook bash)"
 
 # environment vars config
 [[ $- == *i* ]] && echo -n "from $me: "
