@@ -1,4 +1,4 @@
-[[ $- == *i* ]] && echo "Running .envconfig"
+$DEBUG_SHELLCONFIG && [[ $- == *i* ]] && echo "Running .envconfig" || echo -n "#"
 
 # canonical gcc tweaks for OS X's homebrew gcc; Linux shouldn't need these
 if [ "$PLATFORM" = "osx" ]; then

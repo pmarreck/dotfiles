@@ -1,4 +1,4 @@
-[[ $- == *i* ]] && echo "Running .pre-oh-my-bash.bashrc"
+$DEBUG_SHELLCONFIG && [[ $- == *i* ]] && echo "Running .pre-oh-my-bash.bashrc" || echo -n "#"
 
 # platform info
 pf="$(uname)"
@@ -46,15 +46,15 @@ source "$HOME/.cargo/env"
 me=".pre-oh-my-bash.bashrc"
 
 # Pull in path configuration
-[[ $- == *i* ]] && echo -n "from $me: "
+$DEBUG_SHELLCONFIG && [[ $- == *i* ]] && echo -n "from $me: "
 source ~/.pathconfig
 
 # direnv hook
 eval "$(direnv hook bash)"
 
 # environment vars config
-[[ $- == *i* ]] && echo -n "from $me: "
+$DEBUG_SHELLCONFIG && [[ $- == *i* ]] && echo -n "from $me: "
 source ~/.envconfig
 
-[[ -s "$HOME/.profile" ]] && [[ $- == *i* ]] && echo -n "from $me: "
+$DEBUG_SHELLCONFIG && [[ -s "$HOME/.profile" ]] && [[ $- == *i* ]] && echo -n "from $me: "
 [[ -s "$HOME/.profile" ]] && source "$HOME/.profile" # Load the default .profile

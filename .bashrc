@@ -1,4 +1,4 @@
-[[ $- == *i* ]] && echo "Running .bashrc"
+$DEBUG_SHELLCONFIG && [[ $- == *i* ]] && echo "Running .bashrc" || echo -n "#"
 
 # Path to your oh-my-bash installation.
 export OSH=$HOME/.oh-my-bash
@@ -105,5 +105,5 @@ export SSH_KEY_PATH="~/.ssh/rsa_id"
 # alias ohmybash="mate ~/.oh-my-bash"
 
 # Pull in artifacts from before oh-my-bash
-[[ $- == *i* ]] && [[ -s "$HOME/.pre-oh-my-bash.bashrc" ]] && echo -n "from .bashrc: "
+$DEBUG_SHELLCONFIG && [[ $- == *i* ]] && [[ -s "$HOME/.pre-oh-my-bash.bashrc" ]] && echo -n "from .bashrc: "
 [[ -s "$HOME/.pre-oh-my-bash.bashrc" ]] && source ~/.pre-oh-my-bash.bashrc

@@ -1,4 +1,4 @@
-[[ $- == *i* ]] && echo "Running .profile"
+$DEBUG_SHELLCONFIG && [[ $- == *i* ]] && echo "Running .profile" || echo "#" # last debug gets a crlf
 
 [[ $- == *i* ]] && echo "Platform: $PLATFORM"
 
@@ -318,7 +318,7 @@ dragon() {
   echo ''
 }
 
-# weather
+# get current weather, output as big ASCII art
 weather() {
   needs curl
   needs jq
@@ -332,6 +332,12 @@ weather() {
 # EDIT: Works now
 # But returns Kelvin. Don't have time to figure out F from K in Bash using formula F = K * 9/5 - 459.67
 # EDIT 2: Figured that out
+
+# get the current FANCY (not just ANSI🤣) weather. wttr.in has tons of URL options, check out their site:
+# https://github.com/chubin/wttr.in
+weatherfancy() {
+  curl wttr.in
+}
 
 # am I the only one who constantly forgets the correct order of arguments to `ln`?
 lnwtf() {
