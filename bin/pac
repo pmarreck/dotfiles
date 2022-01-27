@@ -160,7 +160,7 @@ pac() {
       ;;
     doctor | doc)
       pacman -Dkk
-      pacman -Qkk
+      pacman -Qkk | grep -v ' 0 altered files'
       [ -f /var/lib/pacman/db.lck ] && echo "The package DB is locked. If you're not currently running pac/pacman, run 'sudo pac unlock'."
       ;;
     *)
