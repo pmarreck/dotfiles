@@ -1,12 +1,15 @@
 # "system" means use whatever system-installed version there is
 # (mine are usually the most current)
-erlang 24.1.5
+# The following erlang line was for testing out the prerelease apple silicon JIT via `export OTP_GITHUB_URL="https://github.com/qdentity/otp"`
+# which is expected to be introduced in OTP 25
+# erlang ref:v24.1.3
+erlang 24.2.1
 # elixir 1.12.2-otp-24
-elixir 1.13.0-rc.0-otp-24
+elixir 1.13.2-otp-24
 # elixir master
 # Sadly we have to comment out postgres due to using asdf in docker build;
 # just annotating expected version here:
-# postgres 13.1
+postgres 13.1
 # nodejs 14.14.0
 nodejs 16.9.1
 yarn 1.22.17

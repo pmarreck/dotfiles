@@ -37,6 +37,9 @@ prepend_path() {
 ## export PATH=/usr/local/Homebrew/sbin:${PATH/\/usr\/local\/Homebrew\/sbin:/}
 ## export PATH=/usr/local/Homebrew/bin:${PATH/\/usr\/local\/Homebrew\/bin:/}
 
+# gigalixir and other pip3 --user installed tools:
+prepend_path PATH ~/.local/bin
+
 # add my user bin to PATH
 # export PATH=$PATH:~/bin
 prepend_path PATH ~/bin

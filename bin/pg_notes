@@ -1,0 +1,17 @@
+# need to be postgres user
+cat <<EOF
+So here's the current postgres-on-linux strategy for local dev:
+It's installed via asdf.
+It runs as the local (NOT postgres!) user.
+It should start with a simple `pg_ctl start` given whatever value PGDATA has.
+Logs go... I don't know. Probably inside PGDATA? Or the cwd. Or specify it:
+pg_ctl -l $HOME/pg.log start
+
+The data is saved under whatever version of postgres you specified so if you switch...
+Setting up a fresh db:
+Make sure `locale` returns the right result (en-US.utf8 most likely).
+Also, recommended to unset LC_ALL before doing so; too sledgehammer-y.
+pg_ctl initdb
+createuser -s postgres
+maybe fire up psql, may need to create the mpnetwork db manually etc
+EOF
