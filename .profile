@@ -339,6 +339,11 @@ weatherfancy() {
   curl wttr.in
 }
 
+# crypto market data. can pass a symbol in or just get the current overall market data
+crypto() {
+  curl rate.sx/$1
+}
+
 # am I the only one who constantly forgets the correct order of arguments to `ln`?
 lnwtf() {
   echo 'ln -s path_of_thing_to_link_to [name_of_link]'

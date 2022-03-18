@@ -129,3 +129,6 @@ export SSH_KEY_PATH="~/.ssh/rsa_id"
 # Pull in artifacts from before oh-my-bash
 $DEBUG_SHELLCONFIG && $INTERACTIVE_SHELL && [[ -s "$HOME/.pre-oh-my-bash.bashrc" ]] && echo -n "from .bashrc: "
 [[ -s "$HOME/.pre-oh-my-bash.bashrc" ]] && source ~/.pre-oh-my-bash.bashrc
+
+# mcfly integration (access via ctrl-r)
+needs mcfly "curl -LSfs https://raw.githubusercontent.com/cantino/mcfly/master/ci/install.sh | sh -s -- --git cantino/mcfly" && eval "$(mcfly init bash)"
