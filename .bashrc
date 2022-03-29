@@ -131,4 +131,4 @@ $DEBUG_SHELLCONFIG && $INTERACTIVE_SHELL && [[ -s "$HOME/.pre-oh-my-bash.bashrc"
 [[ -s "$HOME/.pre-oh-my-bash.bashrc" ]] && source ~/.pre-oh-my-bash.bashrc
 
 # mcfly integration (access via ctrl-r)
-needs mcfly "curl -LSfs https://raw.githubusercontent.com/cantino/mcfly/master/ci/install.sh | sh -s -- --git cantino/mcfly" && eval "$(mcfly init bash)"
+needs mcfly "curl -LSfs https://raw.githubusercontent.com/cantino/mcfly/master/ci/install.sh | sudo sh -s -- --git cantino/mcfly" && eval "$(mcfly init bash)"

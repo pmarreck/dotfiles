@@ -39,7 +39,7 @@ alias files='find \!:1 -type f -print'      # files x => list files in x
 alias line='sed -n '\''\!:1 p'\'' \!:2'    # line 5 file => show line 5 of file
 # alias l='ls -lGaph'
 # brew install exa
-needs exa
+needs exa "cargo install exa"
 alias l='exa --long --header --sort=mod --all'
 alias l1='l --git --icons'
 alias l2='l1 --tree --level=2'
@@ -428,7 +428,8 @@ xn() {
   [[ "$1" == "${1%$'\n'}" ]] && echo
 }
 
-source ~/bin/pac
+# only enable this on arch somehow
+# source ~/bin/pac
 
 # GIT shortcuts
 alias gb='git branch'
@@ -517,7 +518,7 @@ alias grc='git rebase --continue'
 
 # lines of code counter
 # brew install tokei
-needs tokei
+needs tokei "cargo install --git https://github.com/XAMPPRocky/tokei.git tokei"
 alias loc='tokei'
 
 # homebrew utils

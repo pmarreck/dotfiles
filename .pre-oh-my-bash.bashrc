@@ -39,6 +39,7 @@ needs() {
 }
 
 # rust cargo hook
+needs rustc "curl https://sh.rustup.rs -sSf | sh"
 source "$HOME/.cargo/env"
 
 # who am I? (should work even when sourced from elsewhere, but only in Bash)
