@@ -2,6 +2,14 @@ $DEBUG_SHELLCONFIG && $INTERACTIVE_SHELL && echo "Running .profile" || echo "#" 
 
 $INTERACTIVE_SHELL && echo "Platform: $PLATFORM"
 
+# graceful dependency enforcement
+# Usage: needs <executable> provided by <packagename>
+needs() {
+  local bin=$1
+  shift
+  command -v $bin >/dev/null 2>&1 || { echo >&2 "I require $bin but it's not installed or in PATH; $*"; return 1; }
+}
+
 # config for Visual Studio Code
 if [ "$PLATFORM" = "osx" ]; then
   code () { VSCODE_CWD="$PWD" open -n -b com.microsoft.VSCode --args $* ;}
@@ -39,7 +47,6 @@ alias files='find \!:1 -type f -print'      # files x => list files in x
 alias line='sed -n '\''\!:1 p'\'' \!:2'    # line 5 file => show line 5 of file
 # alias l='ls -lGaph'
 # brew install exa
-needs exa "cargo install exa"
 alias l='exa --long --header --sort=mod --all'
 alias l1='l --git --icons'
 alias l2='l1 --tree --level=2'
@@ -518,7 +525,6 @@ alias grc='git rebase --continue'
 
 # lines of code counter
 # brew install tokei
-needs tokei "cargo install --git https://github.com/XAMPPRocky/tokei.git tokei"
 alias loc='tokei'
 
 # homebrew utils
