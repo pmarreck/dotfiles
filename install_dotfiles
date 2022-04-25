@@ -20,6 +20,7 @@ declare -a dotfiles=(
     .profile
     .secrets.gpg
     .tool-versions
+    .wezterm.lua
     Brewfile
     Tapfile
     manual_configuration_changelog.txt
