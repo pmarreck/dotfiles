@@ -74,14 +74,14 @@ alias bye='logout'
 
 # The current thing(s) I'm working on
 alias mpnetwork='cd ~/Documents/mpnetwork*'
-alias simpaticio='cd ~/Documents/simpaticio'
+# alias simpaticio='cd ~/Documents/simpaticio'
 alias work=mpnetwork
 
 # alias ss='script/server'
 # alias sc='script/console'
 # alias rc='rails console'
 
-# network crap
+# network crap (OS X only)
 alias killdns='sudo killall -HUP mDNSResponder'
 
 # why is grep dumb?
@@ -198,12 +198,38 @@ alias beep='tput bel'
 # compress-algo BZIP2- Uses a high quality compression algorithm before encryption. BZIP2 is good but not compatible with PGP proper, FYI.
 encrypt() {
   needs gpg
-  gpg --symmetric -z 9 --require-secmem --cipher-algo AES256 --s2k-cipher-algo AES256 --s2k-digest-algo SHA512 --s2k-mode 3 --s2k-count 65000000 --compress-algo BZIP2 $@
+  case $1 in
+  -h | --help)
+    echo 'Usage: encrypt <filepath>'
+    echo "This function is defined in $BASH_SOURCE"
+    echo 'Will ask for password and write <filepath>.gpg to same directory.'
+    ;;
+  *)
+    >&2 echo -e "${ANSI}${TXTYLW}gpg --symmetric -z 9 --require-secmem --cipher-algo AES256 --s2k-cipher-algo AES256 --s2k-digest-algo SHA512 --s2k-mode 3 --s2k-count 65000000 --compress-algo BZIP2 $@ ${ANSI}${TXTRST}"
+    gpg --symmetric -z 9 --require-secmem --cipher-algo AES256 --s2k-cipher-algo AES256 --s2k-digest-algo SHA512 --s2k-mode 3 --s2k-count 65000000 --compress-algo BZIP2 $@
+    ;;
+  esac
 }
 # note: will decrypt to STDOUT by default, for security reasons. remove "-d" or pipe to file to write to disk
 decrypt() {
   needs gpg
-  gpg -d $@
+  case $1 in
+  -h | --help)
+    echo 'Usage: decrypt [-o] <filepath.gpg>'
+    echo "This function is defined in $BASH_SOURCE"
+    echo 'Will ask for password and *output cleartext to stdout* for security reasons; redirect to file with > to write to disk,'
+    echo 'or pass -o option which will write to the filename stored in the file.'
+    ;;
+  -o)
+    shift
+    >&2 echo -e "${ANSI}${TXTYLW}gpg ${@}${ANSI}${TXTRST}"
+    gpg $@
+    ;;
+  *)
+    >&2 echo -e "${ANSI}${TXTYLW}gpg -d ${@}${ANSI}${TXTRST}"
+    gpg -d $@
+    ;;
+  esac
 }
 
 # get a random-character password
@@ -217,6 +243,7 @@ randompass() {
   set +o histexpand # turn off history expansion
   if [ $# -eq 0 ]; then
     echo "Usage: randompass <length>"
+    echo "This function is defined in $BASH_SOURCE"
     return 1
   fi
   # allow overriding the password character set with env var PWCHARSET
@@ -254,6 +281,7 @@ randompassdict() {
   needs shuf
   if [ $# -eq 0 ]; then
     echo "Usage: randompassdict <num-words> [<min-word-length default 8> [<max-word-length default 99>]]"
+    echo "This function is defined in $BASH_SOURCE"
     if [ "$PLATFORM" = "linux" ]; then
       echo "Note that on linux, this may require installation of the 'words' package."
     fi
@@ -302,7 +330,7 @@ edit() {
   $EDITOR "$@"
 }
 
-# gem opener
+# gem opener, if you have not yet moved on from Ruby to Elixir :)
 open_gem() {
   $EDITOR `bundle show $1`
 }
@@ -330,8 +358,9 @@ weather() {
   needs curl
   needs jq
   needs bc
-  needs figlet
+  needs figlet # note that on ubuntu derivatives, this is shortcutted by default to "toilet"? Um, no. So check that.
   temp=`curl -s "http://api.openweathermap.org/data/2.5/weather?id=$OPENWEATHERMAP_ID&APPID=$OPENWEATHERMAP_APPID" | jq .main.temp`
+  # echo "temp in kelvin is: $temp"
   temp=$(bc <<< "$temp*9/5-459.67") # convert from kelvin to F
   echo "$temp F" | figlet -kcf big
 }
@@ -354,7 +383,8 @@ crypto() {
 # am I the only one who constantly forgets the correct order of arguments to `ln`?
 lnwtf() {
   echo 'ln -s path_of_thing_to_link_to [name_of_link]'
-  echo '(If you omit the latter, it puts a same-named link in the current directory)'
+  echo '(If you omit the latter, it puts a basename-named link in the current directory)'
+  echo "This function is defined in $BASH_SOURCE"
 }
 
 # add otp --version command
@@ -365,7 +395,8 @@ otp() {
       erl -eval '{ok, Version} = file:read_file(filename:join([code:root_dir(), "releases", erlang:system_info(otp_release), "OTP_VERSION"])), io:fwrite(Version), halt().' -noshell
       ;;
     *)
-      echo "Usage: otp [--version]"
+      echo "Usage: otp --version"
+      echo "This function is defined in $BASH_SOURCE"
       ;;
   esac
 }
@@ -382,6 +413,7 @@ hex() {
     else # if stdin is empty AND no arguments
       echo "Usage: hex <string>"
       echo "       (or pipe something to hex)"
+      echo "This function is defined in $BASH_SOURCE"
     fi
   else # if arguments
     echo -ne "$@" | xxd -pu # pipe all arguments to xxd
@@ -516,9 +548,9 @@ alias grc='git rebase --continue'
 # automated git bisecting. because I hate remembering how to use this.
 # ex. usage: git_wtf_happened <ruby testfile> <how many commits back, default 8>
 # function git_wtf_happened {
-#   git bisect start HEAD HEAD~${1:-8};
+#   git bisect start HEAD HEAD~${2:-8};
 #   shift;
-#   git bisect run $*;
+#   git bisect run $1;
 #   git bisect view;
 #   git bisect reset;
 # }
@@ -530,11 +562,28 @@ alias loc='tokei'
 # homebrew utils
 bubu () { brew update; brew upgrade; }
 
-# Postgres stuff
-alias start-pg='pg_ctl -l $PGDATA/server.log start'
-alias stop-pg='pg_ctl stop -m fast'
-alias show-pg-status='pg_ctl status'
-alias restart-pg='pg_ctl reload'
+# Postgres wrapper stuff
+pg() {
+  case $1 in
+  start)
+    >&2 echo -e "${ANSI}${TXTYLW}pg_ctl -l $PGDATA/server.log start${ANSI}${TXTRST}"
+    pg_ctl -l $PGDATA/server.log start
+    ;;
+  stop)
+    >&2 echo -e "${ANSI}${TXTYLW}pg_ctl stop -m fast${ANSI}${TXTRST}"
+    ;;
+  status)
+    >&2 echo -e "${ANSI}${TXTYLW}pg_ctl status${ANSI}${TXTRST}"
+    ;;
+  restart)
+    >&2 echo -e "${ANSI}${TXTYLW}pg_ctl reload${ANSI}${TXTRST}"
+    ;;
+  *)
+    echo "Usage: pg start|stop|status|restart"
+    echo "This function is defined in $BASH_SOURCE"
+    ;;
+  esac
+}
 
 # git functions and extra config
 source ~/bin/git-branch.bash # defines parse_git_branch and parse_git_branch_with_dirty
@@ -550,6 +599,25 @@ notify() {
   -F "user=$PUSHOVER_NOTIFICATION_USER" \
   -F "message=$1" https://api.pushover.net/1/messages.json
   # -F "title=YOUR_TITLE_HERE" \
+}
+
+# my version of find file
+# ff [[<start path, defaults to .>] <searchterm>] (ff with no arguments lists all files recursively from $PWD)
+ff() {
+  needs fd cargo install fd-find
+  case $1 in
+  -h | --help)
+    echo "Find File (pmarreck wrapper function defined in $BASH_SOURCE)"
+    echo 'Usage: ff [[<start path, defaults to .>] <searchterm>]'
+    echo "This function is defined in $BASH_SOURCE"
+    echo '(ff with no arguments lists all files recursively from $PWD)'
+    ;;
+  *)
+    # search all hidden and gitignore'd files
+    >&2 echo -e "${ANSI}${TXTYLW}fd -HI ${2} ${1}${ANSI}${TXTRST}"
+    fd -HI $2 $1
+    ;;
+  esac
 }
 
 # command prompt
