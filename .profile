@@ -89,6 +89,9 @@ alias killdns='sudo killall -HUP mDNSResponder'
 
 # elixir/phoenix gigalixir prod deploy command
 needs git
+# for git paging:
+needs delta cargo install git-delta
+
 alias deploy='git push gigalixir master'
 
 # log all terminal output to a file
