@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
 
-pushd ~/Documents/mame0236-arm64
+pushd ~/Documents/Documents\ -\ PeterMacbookProMax/mame0236-arm64
 ./mame "$@"
 popd
