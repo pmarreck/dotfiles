@@ -40,10 +40,6 @@ prepend_path() {
 # gigalixir and other pip3 --user installed tools:
 prepend_path PATH ~/.local/bin
 
-# add my user bin to PATH
-# export PATH=$PATH:~/bin
-prepend_path PATH ~/bin
-
 # add my Scripts bin to PATH
 # export PATH=$PATH:~/Scripts
 prepend_path PATH ~/Scripts
@@ -66,8 +62,6 @@ prepend_path PATH ~/Scripts
 # get building of gem capybara-webkit to use qt@5.5's qmake
 # export PATH="$(brew --prefix qt@5.5)/bin:$PATH"
 
-# echo "PATH after config is $PATH"
-
 # homebrew
 
 if [ "$PLATFORM" = "linux" ]; then
@@ -85,4 +79,12 @@ fi
 
 # BINSTUBS
 # add binstub to front of PATH which overrides everything
-prepend_path PATH ./bin
+# aaaand disabled for security and buggy reasons
+# prepend_path PATH ./bin
+
+# add my user bin to PATH
+# export PATH=$PATH:~/bin
+prepend_path PATH ~/bin
+
+# echo "PATH after config is $PATH"
+
