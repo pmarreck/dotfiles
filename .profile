@@ -606,8 +606,12 @@ notify() {
 
 # my version of find file
 # ff [[<start path, defaults to .>] <searchterm>] (ff with no arguments lists all files recursively from $PWD)
+# so fd on linux when installed via apt has the name fdfind, complicating matters
+fdbin=fd
+command -v $fdbin >/dev/null 2>&1 || fdbin=fdfind
+command -v $fdbin >/dev/null 2>&1 || fdbin=fd
 ff() {
-  needs fd cargo install fd-find
+  needs $fdbin cargo install fd-find or apt install fd-find \(binary is named fdfind then\)
   case $1 in
   -h | --help)
     echo "Find File (pmarreck wrapper function defined in $BASH_SOURCE)"
@@ -617,8 +621,8 @@ ff() {
     ;;
   *)
     # search all hidden and gitignore'd files
-    >&2 echo -e "${ANSI}${TXTYLW}fd -HI ${2} ${1}${ANSI}${TXTRST}"
-    fd -HI $2 $1
+    >&2 echo -e "${ANSI}${TXTYLW}${fdbin} -HI ${2} ${1}${ANSI}${TXTRST}"
+    $fdbin -HI $2 $1
     ;;
   esac
 }
