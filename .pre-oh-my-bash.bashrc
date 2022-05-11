@@ -31,7 +31,7 @@ then
 fi
 
 # graceful dependency enforcement
-# Usage: needs <executable> provided by <packagename>
+# Usage: needs <executable> ["provided by <packagename>"]
 needs() {
   local bin=$1
   shift
@@ -43,8 +43,6 @@ source "$HOME/.cargo/env"
 needs rustc "curl https://sh.rustup.rs -sSf | sh"
 needs exa "cargo install exa"
 needs tokei "cargo install --git https://github.com/XAMPPRocky/tokei.git tokei"
-# for git paging:
-needs delta cargo install git-delta
 
 # who am I? (should work even when sourced from elsewhere, but only in Bash)
 me=`basename ${BASH_SOURCE[0]}`
@@ -55,6 +53,9 @@ source ~/.pathconfig
 
 # direnv hook
 eval "$(direnv hook bash)"
+
+# for git paging:
+needs delta cargo install git-delta
 
 # environment vars config
 $DEBUG_SHELLCONFIG && $INTERACTIVE_SHELL && echo -n "from $me: "

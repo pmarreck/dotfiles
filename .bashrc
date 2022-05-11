@@ -115,7 +115,10 @@ export ARCHFLAGS="-arch $(uname -a | rev | cut -d ' ' -f 2 | rev)"
 # note: "aarch64" may need to be mutated to "arm64" in some cases
 
 # ssh
-export SSH_KEY_PATH="~/.ssh/rsa_id"
+export SSH_KEY_PATH="~/.ssh/id_ed25519"
+
+# Guix integration
+[[ -s "$HOME/.guix-profile/etc/profile" ]] && source $HOME/.guix-profile/etc/profile
 
 # Set personal aliases, overriding those provided by oh-my-bash libs,
 # plugins, and themes. Aliases can be placed here, though oh-my-bash

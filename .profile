@@ -89,7 +89,6 @@ alias killdns='sudo killall -HUP mDNSResponder'
 
 # elixir/phoenix gigalixir prod deploy command
 needs git
-
 alias deploy='git push gigalixir master'
 
 # log all terminal output to a file
@@ -110,6 +109,9 @@ alias fuck='sudo $(history -p \!\!)'
 # alias beep='echo -en "\007"'
 # alias beep='printf "\a"'
 alias beep='tput bel'
+
+# forget curl vs wget; just get a URL, follow any redirects, and output it to stdout, reliably
+alias get='wget -q -O - --'
 
 # forkbomb!
 # alias forkbomb=':(){ :|:& };:'
