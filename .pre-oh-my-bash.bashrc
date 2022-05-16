@@ -38,18 +38,18 @@ needs() {
   command -v $bin >/dev/null 2>&1 || { echo >&2 "I require $bin but it's not installed or in PATH; $*"; return 1; }
 }
 
-# rust cargo hook and related environment dependencies
-source "$HOME/.cargo/env"
-needs rustc "curl https://sh.rustup.rs -sSf | sh"
-needs exa "cargo install exa"
-needs tokei "cargo install --git https://github.com/XAMPPRocky/tokei.git tokei"
-
 # who am I? (should work even when sourced from elsewhere, but only in Bash)
 me=`basename ${BASH_SOURCE[0]}`
 
 # Pull in path configuration
 $DEBUG_SHELLCONFIG && $INTERACTIVE_SHELL && echo -n "from $me: "
 source ~/.pathconfig
+
+# rust cargo hook and related environment dependencies
+source "$HOME/.cargo/env"
+needs rustc "curl https://sh.rustup.rs -sSf | sh"
+needs exa "cargo install exa"
+needs tokei "cargo install --git https://github.com/XAMPPRocky/tokei.git tokei"
 
 # direnv hook
 eval "$(direnv hook bash)"
