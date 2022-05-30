@@ -36,7 +36,7 @@ unset MAILCHECK
 # Node.js
 export NODE_PATH=/usr/local/lib/node
 
-# Color constants
+# ANSI color escape-code constants
 export ANSI="\033["
 export TXTBLK='0;30m' # Black - Regular
 export TXTRED='0;31m' # Red

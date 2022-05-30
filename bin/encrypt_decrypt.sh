@@ -9,10 +9,37 @@
 # s2k-count 65000000 - Mangles the passphrase this number of times. Takes over a second on modern hardware.
 # compress-algo BZIP2- Uses a high quality compression algorithm before encryption. BZIP2 is good but not compatible with PGP proper, FYI.
 encrypt() {
-  gpg --symmetric -z 9 --require-secmem --cipher-algo AES256 --s2k-cipher-algo AES256 --s2k-digest-algo SHA512 --s2k-mode 3 --s2k-count 65000000 --compress-algo BZIP2 $@
+  needs gpg
+  case "$1" in
+  -h | --help | "")
+    echo 'Usage: encrypt <filepath>'
+    echo "This function is defined in $BASH_SOURCE"
+    echo 'Will ask for password and write <filepath>.gpg to same directory.'
+    ;;
+  *)
+    >&2 echo -e "${ANSI}${TXTYLW}gpg --symmetric -z 9 --require-secmem --cipher-algo AES256 --s2k-cipher-algo AES256 --s2k-digest-algo SHA512 --s2k-mode 3 --s2k-count 65000000 --compress-algo BZIP2 $@ ${ANSI}${TXTRST}"
+    gpg --symmetric -z 9 --require-secmem --cipher-algo AES256 --s2k-cipher-algo AES256 --s2k-digest-algo SHA512 --s2k-mode 3 --s2k-count 65000000 --compress-algo BZIP2 $@
+    ;;
+  esac
 }
-
-# note: will decrypt to STDOUT by default, for security reasons. remove "-d" or pipe to file to write to disk
+# note: will decrypt to STDOUT by default, for security reasons.
 decrypt() {
-  gpg -d $@
+  needs gpg
+  case "$1" in
+  -h | --help | "")
+    echo 'Usage: decrypt [-o] <filepath.gpg>'
+    echo "This function is defined in $BASH_SOURCE"
+    echo 'Will ask for password and *output cleartext to stdout* for security reasons; redirect to file with > to write to disk,'
+    echo 'or pass -o option which will write to the original filename stored inside the file.'
+    ;;
+  -o)
+    shift
+    >&2 echo -e "${ANSI}${TXTYLW}gpg ${@}${ANSI}${TXTRST}"
+    gpg $@
+    ;;
+  *)
+    >&2 echo -e "${ANSI}${TXTYLW}gpg -d ${@}${ANSI}${TXTRST}"
+    gpg -d $@
+    ;;
+  esac
 }
