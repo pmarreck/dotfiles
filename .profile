@@ -570,7 +570,7 @@ ff() {
   needs $fdbin cargo install fd-find or apt install fd-find \(binary is named fdfind then\)
   case $1 in
   -h | --help)
-    echo "Find File (pmarreck wrapper function defined in $BASH_SOURCE)"
+    echo "Find File (pmarreck wrapper function)"
     echo 'Usage: ff [[<start path, defaults to .>] <searchterm>]'
     echo "This function is defined in $BASH_SOURCE"
     echo '(ff with no arguments lists all files recursively from $PWD)'
