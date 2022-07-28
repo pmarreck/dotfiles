@@ -46,7 +46,7 @@ $DEBUG_SHELLCONFIG && $INTERACTIVE_SHELL && echo -n "from $me: "
 source ~/.pathconfig
 
 # rust cargo hook and related environment dependencies
-source "$HOME/.cargo/env"
+[[ -s "$HOME/.cargo/env" ]] && source "$HOME/.cargo/env"
 needs rustc "curl https://sh.rustup.rs -sSf | sh"
 needs exa "cargo install exa"
 needs tokei "cargo install --git https://github.com/XAMPPRocky/tokei.git tokei"
