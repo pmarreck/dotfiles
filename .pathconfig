@@ -64,11 +64,13 @@ prepend_path PATH $HOME/Scripts
 
 # homebrew
 
-if [ "$PLATFORM" = "linux" ]; then
-    prepend_path PATH $HOME/.linuxbrew/bin
-    prepend_path PATH $HOME/.linuxbrew/sbin
-    prepend_path LD_LIBRARY_PATH $HOME/.linuxbrew/lib
-elif [ "$PLATFORM" = "osx" ]; then
+# if [ "$PLATFORM" = "linux" ]; then
+# disabled because nixos doesn't need this shite
+    # prepend_path PATH $HOME/.linuxbrew/bin
+    # prepend_path PATH $HOME/.linuxbrew/sbin
+    # prepend_path LD_LIBRARY_PATH $HOME/.linuxbrew/lib
+# elif
+if [ "$PLATFORM" = "osx" ]; then
     prepend_path PATH /opt/homebrew/bin
     prepend_path PATH /opt/homebrew/sbin
     # add homebrew llvm in front of apple llvm

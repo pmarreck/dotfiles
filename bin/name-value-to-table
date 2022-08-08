@@ -1,0 +1,71 @@
+#!/usr/bin/env elixir
+
+# example usage: env | name-value-to-table
+
+defmodule FormatTabular do
+  def get_stdin_data do
+    :stdio
+    |> IO.read(:all)
+  end
+
+  def name_value_pairs_to_keyword_list(str) do
+    str
+    |> String.split("\n", trim: true)
+    |> Enum.map(fn line ->
+      # IO.inspect line
+      [key, value] = String.split(line, "=", parts: 2)
+      {key, value}
+    end)
+  end
+
+  def max_length_key_value(keyword_list) do
+    max_length_key = keyword_list
+    |> Enum.max_by(fn {k, _v} -> String.length(k) end)
+    |> elem(0)
+    |> String.length
+    max_length_value = keyword_list
+    |> Enum.max_by(fn {_k, v} -> String.length(v) end)
+    |> elem(1)
+    |> String.length
+    IO.inspect {max_length_key, max_length_value}
+  end
+
+  def truncate_with_ellipsis(str, max_len \\ 40) do
+    if String.length(str) > max_len do
+      String.slice(str, 0..(max_len - 1)) <> "…"
+    else
+      str
+    end
+  end
+
+  def keyword_list_to_table(keyword_list, max_len \\ 40) do
+    {max_key, max_val} = max_length_key_value(keyword_list)
+    # IO.inspect {max_key, max_val}
+    key_col_width = if max_key > max_len do
+      max_len
+    else
+      max_key
+    end
+    val_col_width = if max_val > max_len do
+      max_len
+    else
+      max_val
+    end
+    keyword_list
+    |> Enum.each(fn {k,v} ->
+      IO.puts "#{(String.pad_trailing(truncate_with_ellipsis(k, max_len), key_col_width))} | #{String.pad_trailing(truncate_with_ellipsis(v, max_len), val_col_width)}"
+    end)
+  end
+
+end
+
+max_col_width = case OptionParser.parse(System.argv(), strict: [max_col_width: :integer]) do
+  {[max_col_width: max_col_width], _, _} -> max_col_width
+  _ -> 40
+end
+
+FormatTabular.get_stdin_data()
+|> FormatTabular.name_value_pairs_to_keyword_list()
+|> FormatTabular.keyword_list_to_table(max_col_width)
+
+#TODO: add tests
