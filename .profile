@@ -189,7 +189,7 @@ alias get='wget -q -O - --'
 #   return $xitstatus
 # }
 
-source bin/encrypt_decrypt.sh
+source $HOME/bin/encrypt_decrypt.sh
 
 # get a random-character password
 # First argument is password length

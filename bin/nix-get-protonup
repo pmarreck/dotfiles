@@ -1,0 +1,7 @@
+#!/usr/bin/env nix-shell
+#! nix-shell -i bash -p git python39Full python39Packages.bootstrapped-pip python39Packages.setuptools
+git clone https://github.com/cloudishBenne/protonup && pushd protonup
+python3 setup.py install --user
+popd
+rm -rf protonup
+protonup
