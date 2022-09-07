@@ -1,7 +1,14 @@
 #!/usr/bin/env nix-shell
-#! nix-shell -i bash -p git python39Full python39Packages.bootstrapped-pip python39Packages.setuptools
-git clone https://github.com/cloudishBenne/protonup && pushd protonup
-python3 setup.py install --user
-popd
-rm -rf protonup
+#! nix-shell -i bash -p python311
+# set this to wherever you want your virtualenv
+venv="$HOME/.pythonsucks-venv"
+# set up the venv
+python -m venv "$venv"
+# activate the venv
+source "$venv/bin/activate"
+# upgrade pip if necessary
+python -m pip install --upgrade pip
+# now install whatever you need
+pip install protonup-ng
+# optionally, run it
 protonup
