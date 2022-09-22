@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # lsix: like ls, but for images.
 # Shows thumbnails of images with titles directly in terminal.
@@ -18,7 +18,7 @@ foreground=black # Default text color.
 width=800	 # Default width of screen in pixels.
 
 # Feel free to edit these defaults to your liking.
-tilesize=120	       # Width and height of each tile in the montage.
+tilesize=240	       # Width and height of each tile in the montage.
 tilewidth=$tilesize    # (or specify separately, if you prefer)
 tileheight=$tilesize
 
