@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-split() {
+String.split() {
   # peek at stdin to see if it's not empty
   if read -r -t0; then # fyi: -t0 trick to not consume but peek is not POSIX
     # echo "There is stdin"
@@ -22,6 +22,6 @@ split() {
 # sometimes, $0 contains a leading dash to indicate an interactive (or is it login?) shell,
 # which is apparently an old convention (which also broke the basename call on OS X)
 me=$(basename ${0##\-})
-if [ "$me" = "split" ]; then
-  split $*
+if [ "$me" = "String.split" ]; then
+  String.split "$1" "$2"
 fi
