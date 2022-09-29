@@ -58,7 +58,12 @@ alias l4='l1 --tree --level=4'
 alias rehash='source "$HOME/.bash_profile"'
 # alias rehash='source ~/.profile'
 # alias word='grep \!* /usr/share/dict/web2' # Grep thru dictionary
-alias tophog='top -ocpu -s 3'
+if [ "$PLATFORM" = "osx" ]; then
+  alias tophog='top -ocpu -s 3'
+else # linux
+  alias tophog='top -o %CPU -d 3'
+fi
+
 #alias wordcount=(cat \!* | tr -s '\''  .,;:?\!()[]"'\'' '\''\012'\'' |' \
 #                'cat -n | tail -1 | awk '\''{print $1}'\'')' # Histogram words
 # alias js='java org.mozilla.javascript.tools.shell.Main'
@@ -116,153 +121,9 @@ alias get='wget -q -O - --'
 # forkbomb!
 # alias forkbomb=':(){ :|:& };:'
 
-# sublime command to open stuff in OS X
-# if [ "$PLATFORM" == "osx" ]; then
-#   sublime() { open -a "Sublime Text 2.app" "${1:-.}"; }
-# fi
-
-# alias b='bundle | grep -v "Using"'
-# alias be='bundle exec'
-# alias zs='rm .zeus.sock; zeus start'
-# alias z='zeus'
-
-# test reporter config
-# export REPORTER=progress,failtest,slowtest,sound
-
-# function rubytest() {
-#   RAILS_ENV=test time bundle exec ruby -Ilib:test:. -e "ARGV.each{|f| require f}" $@
-# }
-# function deskonetest() {
-#   export REPORTER=${REPORTER/,?spec/},spec
-#   RAILS_ENV=test time rake assistly:test:${2:-units} TEST=${1} ${3}
-# }
-# function unit() {
-#   export REPORTER=${REPORTER/,?spec/},spec
-#   count=1
-#   xitstatus=-1
-#   test_failures=0
-#   if [ $# -ne 1 ]
-#   then
-#     echo "Running $# tests..."
-#   fi
-#   for tst #in "$@" # the latter is actually assumed! awesome.
-#   do
-#     echo "Running test ($count/$#) $tst ..."
-#     RAILS_ENV=test time bundle exec ruby -Ilib:test $tst && xitstatus=$?
-#     if [ $xitstatus -ne 0 ]; then
-#       test_failures=$[test_failures+1]
-#     fi
-#     count=$[count+1]
-#   done
-#   if [ $test_failures -ne 0 ]; then
-#     if [ $# -ne 1 ]
-#     then
-#       echo -e "There were ${ANSI}${BLDRED}$test_failures TEST FAILS!!${ANSI}${TXTRST}"
-#     else
-#       echo -e "There was ${ANSI}${BLDRED}$test_failures TEST FAIL!!${ANSI}${TXTRST}"
-#     fi
-#     return -1
-#   else
-#     echo -e "${ANSI}${TXTGRN}ALL GREEN! SHIP IT!${ANSI}${TXTRST}"
-#     return 0
-#   fi
-# }
-# function unitnow() {
-#   xitstatus=-1
-#   test_failures=0
-#   ruby_args='-Ilib:test'
-#   for tst #in "$@" # the latter is actually assumed! awesome.
-#   do
-#     ruby_args="$ruby_args -r $tst"
-#   done
-#   RAILS_ENV=test time bundle exec ruby $ruby_args && xitstatus=$?
-# }
-
-# function desktest() {
-#   xitstatus=-1;
-#   RAILS_ENV=test time rake assistly:test:all && xitstatus=$?
-#   if [ $xitstatus -ne 0 ]; then
-#     osascript -e 'tell application "Terminal" to display alert "Test Failed" buttons "Shucks."'
-#   else
-#     osascript -e 'tell application "Terminal" to display alert "Test Passed" buttons "Right on!"'
-#   fi
-#   return $xitstatus
-# }
-
 source $HOME/bin/encrypt_decrypt.sh
 
-# get a random-character password
-# First argument is password length
-# Can override the default character set by passing in PWCHARSET=<charset> as env
-randompass() {
-  needs shuf
-  # globbing & history expansion here is a pain, so we store its state, temp turn it off & restore it later
-  local maybeglob="$(shopt -po noglob histexpand)"
-  set -o noglob # turn off globbing
-  set +o histexpand # turn off history expansion
-  if [ $# -eq 0 ]; then
-    echo "Usage: randompass <length>"
-    echo "This function is defined in $BASH_SOURCE"
-    return 1
-  fi
-  # allow overriding the password character set with env var PWCHARSET
-  # NOTE that we DELETE THE CAPITAL O, CAPITAL I AND LOWERCASE L CHARACTERS
-  # DUE TO SIMILARITY TO 1 AND 0
-  # (but only if you use the default alnum set)
-  # BECAUSE WHO THE FUCK EVER THOUGHT THAT WOULD BE A GOOD IDEA? 😂
-  if [ -z "$PWCHARSET" ]; then
-    local lower=$(echo -n {a..z} | tr -d ' ')
-    local upper=$(echo -n {A..Z} | tr -d ' ')
-    local num=$(echo -n {0..9} | tr -d ' ')
-    local alcharacterset="$lower$upper"
-    local alnumcharacterset=$(printf "%s" "$alcharacterset$num" | tr -d 'OlI')
-    local punc='!@#$%^&*-_=+[]{}|;:,.<>/?~'
-    local PWCHARSET="$alnumcharacterset$punc"
-  fi
-  # ...but also intersperse it with spaces so that the -e option to shuf works.
-  # Using awk to split the character set into a space-separated string of characters.
-  # Saw some noise that empty field separator will cause awk problems,
-  # but it's concise and fast and works, so... &shrug;
-  # printf is necessary due to some of the punctuation characters being interpreted when using echo
-  local characterset=$(printf "%s" "$PWCHARSET" | awk NF=NF FS="")
-  # using /dev/random to enforce entropy, but use urandom if you want speed
-  { shuf --random-source=/dev/random -n $1 -er $characterset; } | tr -d '\n'
-  echo
-  # restore any globbing state
-  eval "$maybeglob"
-  # cat /dev/urandom | LC_ALL=C tr -dc 'a-zA-Z0-9\!\@\#\$\%\&\*\?' | fold -w $1 | head -n 1
-}
-
-# get a random-dictionary-word password
-# First argument is minimum word length
-# Second argument is number of words to generate
-randompassdict() {
-  needs shuf
-  if [ $# -eq 0 ]; then
-    echo "Usage: randompassdict <num-words> [<min-word-length default 8> [<max-word-length default 99>]]"
-    echo "This function is defined in $BASH_SOURCE"
-    if [ "$PLATFORM" = "linux" ]; then
-      echo "Note that on linux, this may require installation of the 'words' package."
-    fi
-    return 1
-  fi
-  local dict_loc="/usr/share/dict/words"
-  # [ -f "$dict_loc" ] || { echo "$dict_loc missing. may need to install 'words' package. Exiting."; exit 1; }
-  local numwords=$1
-  local minlen=${2:-8}
-  local maxlen=${3:-99}
-  # take the dict, filter out anything not within the min/max length or that has apostrophes, and shuffle
-  local pool=$(cat /usr/share/dict/words | awk 'length($0) >= '$minlen' && length($0) <= '$maxlen' && $0 ~ /^[^'\'']+$/')
-  local poolsize=$(printf "%s" "$pool" | wc -l)
-  # why is poolsize getting spaces in front? No idea. Removing them.
-  poolsize=${poolsize##* }
-  local words=$(echo -n "$pool" | shuf --random-source=/dev/random -n "$numwords" | tr '\n' ' ')
-  echo "$words"
-  echo "(out of a possible $poolsize available words in the dictionary that suit the requested length range [$minlen-$maxlen])" 1>&2
-  # a former attempt that worked but was less flexible:
-  #cat /dev/urandom | LC_ALL=C tr -dc 'a-zA-Z0-9\!\@\#\$\%\&\*\?' | fold -w $1 | head -n $2 | tr '\n' ' '
-}
-
+source $HOME/bin/randompass.sh
 
 # GPG configuration to set up in-terminal challenge-response
 export GPG_TTY=`tty`
