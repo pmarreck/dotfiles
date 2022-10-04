@@ -6,6 +6,7 @@ if [ "$pf" = "Darwin" ]; then
   export PLATFORM="osx"
 elif [ "$(expr substr $pf 1 5)" = "Linux" ]; then
   export PLATFORM="linux"
+  export DISTRO="$(cat /etc/os-release | rg -r '$1' -o --color never '^NAME=(.+)$')"
 elif [ "$(expr substr $pf 1 10)" = "MINGW32_NT" ]; then
   export PLATFORM="windows"
 else

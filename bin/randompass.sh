@@ -61,17 +61,17 @@ randompassdict() {
     if [ "$PLATFORM" = "linux" ]; then
       echo "Note that on linux, this may require installation of the 'words' package"
       echo "or on NixOS, setting 'environment.wordlist.enable = true;' in your configuration.nix"
-      echo "(which adds the 'scowl' package to your system)"
+      echo "(which adds the 'scowl' package to your system and sets the WORDLIST env var)"
     fi
     return 1
   fi
-  local dict_loc="/usr/share/dict/words"
-  [ -f "$dict_loc" ] || { echo "$dict_loc missing. May need to install 'words' package. Exiting."; return 1; }
+  local dict_loc="${WORDLIST:-"/usr/share/dict/words"}"
+  [ -f "$dict_loc" ] || { echo "$dict_loc missing. May need to install 'words' package (or just pass in a WORDLIST env var that paths to a file of words). Exiting."; return 1; }
   local numwords=$1
   local minlen=${2:-8}
   local maxlen=${3:-99}
   # take the dict, filter out anything not within the min/max length or that has apostrophes, and shuffle
-  local pool=$(cat /usr/share/dict/words | awk 'length($0) >= '$minlen' && length($0) <= '$maxlen' && $0 ~ /^[^'\'']+$/')
+  local pool=$(LC_ALL=C awk 'length($0) >= '$minlen' && length($0) <= '$maxlen' && $0 ~ /^[^'\'']+$/' "$dict_loc")
   local poolsize=$(printf "%s" "$pool" | wc -l)
   # why is poolsize getting spaces in front? No idea. Removing them.
   poolsize=${poolsize##* }
