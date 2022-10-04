@@ -121,6 +121,29 @@ alias get='wget -q -O - --'
 # forkbomb!
 # alias forkbomb=':(){ :|:& };:'
 
+# get nvidia driver version on linux
+nvidia() {
+  needs nvidia-smi # from nvidia-cuda-toolkit
+  needs rg # ripgrep
+  nv_version=$(nvidia-smi | rg -r '$1' -o --color never 'Driver Version: ([0-9]{3}\.[0-9]{1,3}\.[0-9]{1,3})')
+  case $1 in
+    "--version")
+      echo $nv_version
+      ;;
+    "")
+      echo -ne "Driver: "
+      echo $nv_version
+      echo "Devices: "
+      lspci | rg -r '$1' -o --color never 'VGA compatible controller: NVIDIA Corporation [^ ]+ (.+)$'
+      ;;
+    *)
+      echo "Usage: nvidia [--version]"
+      echo "The --version flag prints the driver version only."
+      echo "This function is defined in ${BASH_SOURCE} ."
+      ;;
+  esac
+}
+
 source $HOME/bin/encrypt_decrypt.sh
 
 source $HOME/bin/randompass.sh
@@ -179,7 +202,13 @@ weather() {
   needs jq
   needs bc
   needs figlet # note that on ubuntu derivatives, this is shortcutted by default to "toilet"? Um, no. So check that.
-  temp=`curl -s "http://api.openweathermap.org/data/2.5/weather?id=$OPENWEATHERMAP_ID&APPID=$OPENWEATHERMAP_APPID" | jq .main.temp`
+  if [ -z "$OPENWEATHERMAP_APPID" ]; then
+    echo "OPENWEATHERMAP_APPID is not set. Get an API key from http://openweathermap.org/appid and set it in your environment."
+    return 1
+  fi
+  # lat and lon are set for port washington, ny
+  # look them up at: http://www.latlong.net/
+  temp=`curl -s "http://api.openweathermap.org/data/2.5/weather?lat=40.82658&lon=-73.68312&appid=$OPENWEATHERMAP_APPID" | jq .main.temp`
   # echo "temp in kelvin is: $temp"
   temp=$(bc <<< "$temp*9/5-459.67") # convert from kelvin to F
   echo "$temp F" | figlet -kcf big

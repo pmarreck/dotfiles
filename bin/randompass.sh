@@ -1,3 +1,5 @@
+#!/usr/bin/env bash
+
 # get a random-character password
 # First argument is password length
 # Can override the default character set by passing in PWCHARSET=<charset> as env
