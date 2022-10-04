@@ -144,6 +144,25 @@ nvidia() {
   esac
 }
 
+# Get the zfs compression savings for every file or directory in this directory
+zfs_compsavings() {
+  echo "actual compressed savings  filename"
+  echo "------ ---------- -------- --------"
+  for i in `pwd`/* ; do
+    actualsize=`du -s --apparent-size "$i" | awk '{print $1}'`
+    # some files are 0 bytes, and we don't like dividing by zero
+    if [ $actualsize = "0" ]; then
+      actualsize="1"
+    fi
+    actualsize_h=`SIZE=1K du -sh --apparent-size "$i" | awk '{print $1}'`
+    compressedsize=`du -s "$i" | awk '{print $1}'`
+    compressedsize_h=`du -sh "$i" | awk '{print $1}'`
+    ratio=`echo "scale = 2; (1 - ($compressedsize / $actualsize)) * 100" | bc -l`
+    file=`basename "$i"`
+    printf "%6s %10s %8s %s\n" "${actualsize_h}" "${compressedsize_h}" "${ratio}%" "$file"
+  done
+}
+
 source $HOME/bin/encrypt_decrypt.sh
 
 source $HOME/bin/randompass.sh
