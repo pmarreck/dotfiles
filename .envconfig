@@ -37,40 +37,63 @@ unset MAILCHECK
 export NODE_PATH=/usr/local/lib/node
 
 # ANSI color escape-code constants
-export ANSI="\033["
-export TXTBLK='0;30m' # Black - Regular
-export TXTRED='0;31m' # Red
-export TXTGRN='0;32m' # Green
-export TXTYLW='0;33m' # Yellow
-export TXTBLU='0;34m' # Blue
-export TXTPUR='0;35m' # Purple
-export TXTCYN='0;36m' # Cyan
-export TXTWHT='0;37m' # White
-export BLDBLK='1;30m' # Black - Bold
-export BLDRED='1;31m' # Red
-export BLDGRN='1;32m' # Green
-export BLDYLW='1;33m' # Yellow
-export BLDBLU='1;34m' # Blue
-export BLDPUR='1;35m' # Purple
-export BLDCYN='1;36m' # Cyan
-export BLDWHT='1;37m' # White
-export UNDBLK='4;30m' # Black - Underline
-export UNDRED='4;31m' # Red
-export UNDGRN='4;32m' # Green
-export UNDYLW='4;33m' # Yellow
-export UNDBLU='4;34m' # Blue
-export UNDPUR='4;35m' # Purple
-export UNDCYN='4;36m' # Cyan
-export UNDWHT='4;37m' # White
-export BAKBLK='40m'   # Black - Background
-export BAKRED='41m'   # Red
-export BAKGRN='42m'   # Green
-export BAKYLW='43m'   # Yellow
-export BAKBLU='44m'   # Blue
-export BAKPUR='45m'   # Purple
-export BAKCYN='46m'   # Cyan
-export BAKWHT='47m'   # White
-export TXTRST='0m'    # Text Reset, disable coloring
+# On SGR: https://en.wikipedia.org/wiki/ANSI_escape_code#SGR
+export ANSI="\e["
+export TXT="0;"
+export BLD="1;"
+export UND="4;"
+export BLK=30
+export RED=31
+export GRN=32
+export YLW=33
+export BLU=34
+export MAG=35
+export CYN=36
+export WHT=37
+export SGR="m"
+export TXTBLK="$TXT$BLK$SGR" # Black - Regular
+export TXTRED="$TXT$RED$SGR" # Red
+export TXTGRN="$TXT$GRN$SGR" # Green
+export TXTYLW="$TXT$YLW$SGR" # Yellow
+export TXTBLU="$TXT$BLU$SGR" # Blue
+export TXTMAG="$TXT$MAG$SGR" # Magenta
+export TXTCYN="$TXT$CYN$SGR" # Cyan
+export TXTWHT="$TXT$WHT$SGR" # White
+export BLDBLK="$BLD$BLK$SGR" # Black - Bold
+export BLDRED="$BLD$RED$SGR" # Red
+export BLDGRN="$BLD$GRN$SGR" # Green
+export BLDYLW="$BLD$YLW$SGR" # Yellow
+export BLDBLU="$BLD$BLU$SGR" # Blue
+export BLDMAG="$BLD$MAG$SGR" # Magenta
+export BLDCYN="$BLD$CYN$SGR" # Cyan
+export BLDWHT="$BLD$WHT$SGR" # White
+export UNDBLK="$UND$BLK$SGR" # Black - Underline
+export UNDRED="$UND$RED$SGR" # Red
+export UNDGRN="$UND$GRN$SGR" # Green
+export UNDYLW="$UND$YLW$SGR" # Yellow
+export UNDBLU="$UND$BLU$SGR" # Blue
+export UNDMAG="$UND$MAG$SGR" # Magenta
+export UNDCYN="$UND$CYN$SGR" # Cyan
+export UNDWHT="$UND$WHT$SGR" # White
+export BAKBLK="$ANSI$(($BLK+10))$SGR" # Black - Background
+export BAKRED="$ANSI$(($RED+10))$SGR" # Red
+export BAKGRN="$ANSI$(($GRN+10))$SGR" # Green
+export BAKYLW="$ANSI$(($YLW+10))$SGR" # Yellow
+export BAKBLU="$ANSI$(($BLU+10))$SGR" # Blue
+export BAKMAG="$ANSI$(($MAG+10))$SGR" # Magenta
+export BAKCYN="$ANSI$(($CYN+10))$SGR" # Cyan
+export BAKWHT="$ANSI$(($WHT+10))$SGR" # White
+export TXTRST="$SGR"          # Text Reset, disable coloring
+
+# see: https://wezfurlong.org/wezterm/hyperlinks.html
+# example: hyperlink http://google.com "this is a test"
+hyperlink() {
+  printf '\e]8;;'
+  printf "$1"
+  printf '\e\\'
+  printf "$2"
+  printf '\e]8;;\e\\\n'
+}
 
 # Ruby environment tweaking
 # export RUBY_GC_HEAP_INIT_SLOTS=1000000

@@ -199,20 +199,49 @@ open_gem() {
 
 # thar be dragons
 dragon() {
-  echo '                    ___====-_  _-====___'
-  echo '              _--~~~#####//      \\#####~~~--_'
-  echo '           _-~##########// (    ) \\##########~-_'
-  echo '          -############//  :\^^/:  \\############-'
-  echo '        _~############//   (@::@)   \\############~_'
-  echo '       ~#############((     \\//     ))#############~'
-  echo '      -###############\\    (^^)    //###############-'
-  echo '     -#################\\  / "" \  //#################-'
-  echo '    -###################\\/      \//###################-'
-  echo '   _#/:##########/\######(   /\   )######/\##########:\#_'
-  echo '   :/ :#/\#/\#/\/  \#/\##\  :  :  /##/\#/  \/\#/\#/\#: \:'
-  echo '   "  :/  V  V  "   V  \#\: :  : :/#/  V   "  V  V  \:  "'
-  echo '      "   "  "      "   \ : :  : : /   "      "  "   "'
-  echo ''
+  # first store the escape code for the ANSI color
+  local esc=$(printf '\033')
+  # set foreground text color to green
+  echo -e "${esc}[0;32m"
+  # print the dragon, prefacing and suffixing runs of # with a background ansi mode of green
+  cat <<-'EOD' | sed -E "s/(#+)/${esc}[42m\1${esc}[49m/g"
+                    ___====-_  _-====___
+              _--~~~#####//      \\#####~~~--_
+           _-~##########// (    ) \\##########~-_
+          -############//  :\^^/:  \\############-
+        _~############//   (@::@)   \\############~_
+       ~#############((     \\//     ))#############~
+      -###############\\    (^^)    //###############-
+     -#################\\  / "" \  //#################-
+    -###################\\/      \//###################-
+   _#/:##########/\######(   /\   )######/\##########:\#_
+   :/ :#/\#/\#/\/  \#/\##\  :  :  /##/\#/  \/\#/\#/\#: \:
+   "  :/  V  V  "   V  \#\: :  : :/#/  V   "  V  V  \:  "
+      "   "  "      "   \ : :  : : /   "      "  "   "
+EOD
+  echo -e "${esc}[0m"
+}
+
+# mandelbrot set
+# from https://bruxy.regnet.cz/web/linux/EN/mandelbrot-set-in-bash/
+# (fixed point version for speed. also because fuck floating point math)
+mandelbrot() {
+  p=\>\>14 e=echo\ -ne\  S=(S H E L L) I=-16384 t=/tmp/m$$; for x in {1..13}; do \
+  R=-32768; for y in {1..80}; do B=0 r=0 s=0 j=0 i=0; while [ $((B++)) -lt 32 -a \
+  $(($s*$j)) -le 1073741824 ];do s=$(($r*$r$p)) j=$(($i*$i$p)) t=$(($s-$j+$R));
+  i=$(((($r*$i)$p-1)+$I)) r=$t;done;if [ $B -ge 32 ];then $e\ ;else #---::BruXy::-
+  $e"\E[01;$(((B+3)%8+30))m${S[$((C++%5))]}"; fi;R=$((R+512));done;#----:::(c):::-
+  $e "\E[m\E(\r\n";I=$((I+1311)); done|tee $t;head -n 12 $t| tac  #-----:2 O 1 O:-  
+}
+
+# digital clock
+clock() {
+  F=(`zcat $(fd -1 -HI drdos8x8.psfu.gz /) | hexdump -v -e'1/1 "%x\n"'`)
+  e=echo\ -e;$e "\033[2J\033[?25l"; while true; do A=''  T=`date +" "%H:%M:%S`
+  $e "\033[0;0H" ; for c in `eval $e {0..$[${#T}-1]}`; do a=`$e -n ${T:$c:1}|\
+  hexdump -v -e'1/1 "%u\n"' `; A=$A" "$[32+8*a]; done;for j in {0..7};do for \
+  i in $A; do d=0x${F[$[i+j]]} m=$((0x80)); while [ $m -gt 0 ] ; do bit=$[d&m]
+  $e -n $[bit/m]|sed -e 'y/01/ ▀/';: $[m>>=1];done;done;echo;done;done # BruXy
 }
 
 # get current weather, output as big ASCII art

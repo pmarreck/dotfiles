@@ -90,7 +90,7 @@ randompassdict() {
   local poolsize=$(printf "%s" "$dict" | wc -l)
   # why is poolsize getting spaces in front? No idea. Removing them.
   poolsize=${poolsize##* }
-  local words=$(echo -n "$dict" | shuf --random-source=/dev/random -n "$numwords" | tr '\n' ' ')
+  local words=$(echo -n "$dict" | shuf --random-source=/dev/random -r -n "$numwords" | tr '\n' ' ')
   echo "$words"
   echo "(out of a possible $poolsize available words in the dictionary that suit the requested length range [$minlen-$maxlen])" 1>&2
   # a former attempt that worked but was less flexible:
