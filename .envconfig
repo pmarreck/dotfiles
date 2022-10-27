@@ -42,6 +42,7 @@ export ANSI="\e["
 export TXT="0;"
 export BLD="1;"
 export UND="4;"
+export NOUND="24;"
 export BLK=30
 export RED=31
 export GRN=32
@@ -50,6 +51,7 @@ export BLU=34
 export MAG=35
 export CYN=36
 export WHT=37
+export DFT=39 # default foreground color
 export SGR="m"
 export TXTBLK="$TXT$BLK$SGR" # Black - Regular
 export TXTRED="$TXT$RED$SGR" # Red
@@ -59,6 +61,7 @@ export TXTBLU="$TXT$BLU$SGR" # Blue
 export TXTMAG="$TXT$MAG$SGR" # Magenta
 export TXTCYN="$TXT$CYN$SGR" # Cyan
 export TXTWHT="$TXT$WHT$SGR" # White
+export TXTDFT="$TXT$DFT$SGR" # Default
 export BLDBLK="$BLD$BLK$SGR" # Black - Bold
 export BLDRED="$BLD$RED$SGR" # Red
 export BLDGRN="$BLD$GRN$SGR" # Green
@@ -75,14 +78,15 @@ export UNDBLU="$UND$BLU$SGR" # Blue
 export UNDMAG="$UND$MAG$SGR" # Magenta
 export UNDCYN="$UND$CYN$SGR" # Cyan
 export UNDWHT="$UND$WHT$SGR" # White
-export BAKBLK="$ANSI$(($BLK+10))$SGR" # Black - Background
-export BAKRED="$ANSI$(($RED+10))$SGR" # Red
-export BAKGRN="$ANSI$(($GRN+10))$SGR" # Green
-export BAKYLW="$ANSI$(($YLW+10))$SGR" # Yellow
-export BAKBLU="$ANSI$(($BLU+10))$SGR" # Blue
-export BAKMAG="$ANSI$(($MAG+10))$SGR" # Magenta
-export BAKCYN="$ANSI$(($CYN+10))$SGR" # Cyan
-export BAKWHT="$ANSI$(($WHT+10))$SGR" # White
+export BAKBLK="$(($BLK+10))$SGR" # Black - Background
+export BAKRED="$(($RED+10))$SGR" # Red
+export BAKGRN="$(($GRN+10))$SGR" # Green
+export BAKYLW="$(($YLW+10))$SGR" # Yellow
+export BAKBLU="$(($BLU+10))$SGR" # Blue
+export BAKMAG="$(($MAG+10))$SGR" # Magenta
+export BAKCYN="$(($CYN+10))$SGR" # Cyan
+export BAKWHT="$(($WHT+10))$SGR" # White
+export BAKDFT="$(($DFT+10))$SGR" # Default
 export TXTRST="$SGR"          # Text Reset, disable coloring
 
 # see: https://wezfurlong.org/wezterm/hyperlinks.html
@@ -93,6 +97,16 @@ hyperlink() {
   printf '\e\\'
   printf "$2"
   printf '\e]8;;\e\\\n'
+}
+
+# alerting in yellow to stderr
+note() {
+  >&2 printf "$ANSI$TXTYLW%s$ANSI$TXTDFT\n" "$@"
+}
+
+# warning in red to stderr
+warn() {
+  >&2 printf "$ANSI$TXTRED%s$ANSI$TXTDFT\n" "$@"
 }
 
 # Ruby environment tweaking
