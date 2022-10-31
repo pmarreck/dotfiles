@@ -163,6 +163,11 @@ zfs_compsavings() {
   done
 }
 
+# because I always forget how to do this...
+dd_example() {
+  echo "sudo dd if=/home/pmarreck/Downloads/TrueNAS-SCALE-22.02.4.iso of=/dev/sdf bs=10M oflag=sync status=progress"
+}
+
 source $HOME/bin/encrypt_decrypt.sh
 
 source $HOME/bin/randompass.sh
