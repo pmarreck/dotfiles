@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 $DEBUG_SHELLCONFIG && $INTERACTIVE_SHELL && echo "Running .profile" || echo "#" # last debug gets a crlf
 
 $INTERACTIVE_SHELL && echo "Platform: $PLATFORM"
@@ -47,8 +48,8 @@ alias files='find \!:1 -type f -print'      # files x => list files in x
 alias line='sed -n '\''\!:1 p'\'' \!:2'    # line 5 file => show line 5 of file
 # alias l='ls -lGaph'
 # brew install exa
-alias l='exa --long --header --sort=mod --all'
-alias l1='l --git --icons'
+alias l='exa --long --header --sort=name --all'
+alias l1='l --git -@ --icons'
 alias l2='l1 --tree --level=2'
 alias l3='l1 --tree --level=3' #--extended 
 alias l4='l1 --tree --level=4'
@@ -166,6 +167,41 @@ zfs_compsavings() {
 # because I always forget how to do this...
 dd_example() {
   echo "sudo dd if=/home/pmarreck/Downloads/TrueNAS-SCALE-22.02.4.iso of=/dev/sdf bs=10M oflag=sync status=progress"
+}
+
+# copy an entire directory showing progress
+# example: cpv ~/Documents /mnt/Backup
+# This copies the entire ~/Documents directory to /mnt/Backup/Documents, showing progress
+cpv() {
+  local real_source_path="$(realpath "$1")"
+  # ensure real_source_path is a real directory or file
+  if [ ! -e "$real_source_path" ]; then
+    echo "Error: $1 does not exist" 1>&2
+    return 1
+  fi
+  local sourcedir="$(dirname "$real_source_path")"
+  local destdir="$(realpath "$2")"
+  # ensure destdir is a directory that exists
+  if [ ! -d "$destdir" ]; then
+    echo "Destination directory $destdir does not exist." 1>&2
+    return 1
+  fi
+  local size_bytes=$(du -sb "$real_source_path" | awk '{print $1}')
+  local size_metadata=$(du -s --inodes "$real_source_path" | awk '{print $1}')
+  local size_total=$(($size_bytes + $size_metadata))
+  local filename="$(basename "$real_source_path")"
+  pushd "$sourcedir" > /dev/null
+  tar cf - "$filename" | pv -c -s $size_total | tar xf - -C "$destdir"
+  popd > /dev/null
+}
+
+# do simple math in the shell
+# example: calc 2+2
+# calc define fac(x) { if (x == 0) return (1); return (fac(x-1) * x); }; fac(5)
+calc() {
+  local scale=${SCALE:-10}
+  # echo "$*"
+  echo "scale=${scale};$*" | bc -l
 }
 
 source $HOME/bin/encrypt_decrypt.sh

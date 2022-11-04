@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 __oldstate=$(set +o)
-set -o errexit -o nounset -o pipefail
+# set -o errexit -o nounset -o pipefail
 if [[ "${DEBUG-0}" != "0" ]]; then set -o xtrace; fi
 
 # alerting in yellow to stderr
@@ -10,6 +10,26 @@ $(declare -F note >/dev/null) || note() {
 # warning in red to stderr
 $(declare -F warn >/dev/null) || warn() {
   >&2 printf "\e[0;31m%s\e[0;39m\n" "$@"
+}
+
+function var_defined? {
+  declare -p "$1" >/dev/null 2>&1
+}
+
+function func_defined? {
+  declare -F "$1" >/dev/null
+}
+
+function defined? {
+  local word="$1"
+  shift
+  if [ -z "$word" ] && [ -z "$1" ]; then
+    echo "Usage: defined? <function or alias or variable or builtin or executable-in-PATH name> [...function|alias] ..."
+    echo "Returns 0 if all the arguments are defined as a function or alias or variable or builtin or executable-in-PATH name."
+    echo "This function is defined in $BASH_SOURCE"
+    return 0
+  fi
+  ( var_defined? "$word" || >/dev/null type -t "$word" ) && ( [ -z "$1" ] || defined? "$@" )
 }
 
 # "define": spit out the definition of any name
@@ -22,6 +42,7 @@ define() {
   shift
   if [ -z "$word" ] && [ -z "$1" ]; then
     echo "Usage: define <function or alias or variable or builtin or executable-in-PATH name> [...function|alias] ..."
+    echo "Returns the value or definition or location of those name(s)."
     echo "This function is defined in $BASH_SOURCE"
     return 0
   fi
