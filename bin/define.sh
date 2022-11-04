@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 __oldstate=$(set +o)
-# set -o errexit -o nounset -o pipefail
+set -o errexit -o nounset -o pipefail
 if [[ "${DEBUG-0}" != "0" ]]; then set -o xtrace; fi
 
 # alerting in yellow to stderr
