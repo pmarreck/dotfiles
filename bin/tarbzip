@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-pbz=/usr/local/bin/pbzip2
+pbz=$(which pbzip2)
 
 for f in "$@"
 do

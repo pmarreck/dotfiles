@@ -6,14 +6,14 @@ String.split() {
     # read from stdin and split on first argument
     IFS="$1" read -ra ADDR
     for i in "${ADDR[@]}"; do
-      printf "$i\n"
+      printf "%s" "$i\n"
     done
   else
     # echo "There is no stdin"
     # read input from 1st argument and split on 2nd argument
     IFS="$2" read -ra ADDR <<< "$1"
     for i in "${ADDR[@]}"; do
-      printf "$i\n"
+      printf "%s" "$i\n"
     done
   fi
 }
@@ -21,7 +21,7 @@ String.split() {
 # run the function, passing along any args, if this file was run directly (such as via sudo) instead of as an include
 # sometimes, $0 contains a leading dash to indicate an interactive (or is it login?) shell,
 # which is apparently an old convention (which also broke the basename call on OS X)
-me=$(basename ${0##\-})
+me=$(basename "${0##\-}")
 if [ "$me" = "String.split" ]; then
   String.split "$1" "$2"
 fi

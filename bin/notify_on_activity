@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 # Reads from stdin and beeps on each line.
+
+# Example usage:
+# journalctl -f | notify_on_activity
+
 shopt -s lastpipe
 while read input; do   # < <(cat -)
   echo $input

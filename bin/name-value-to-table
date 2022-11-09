@@ -27,7 +27,7 @@ defmodule FormatTabular do
     |> Enum.max_by(fn {_k, v} -> String.length(v) end)
     |> elem(1)
     |> String.length
-    IO.inspect {max_length_key, max_length_value}
+    {max_length_key, max_length_value}
   end
 
   def truncate_with_ellipsis(str, max_len \\ 40) do
@@ -66,6 +66,7 @@ end
 
 FormatTabular.get_stdin_data()
 |> FormatTabular.name_value_pairs_to_keyword_list()
+|> Enum.sort()
 |> FormatTabular.keyword_list_to_table(max_col_width)
 
 #TODO: add tests

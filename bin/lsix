@@ -18,18 +18,23 @@ foreground=black # Default text color.
 width=800	 # Default width of screen in pixels.
 
 # Feel free to edit these defaults to your liking.
-tilesize=240	       # Width and height of each tile in the montage.
+tilesize=480	       # Width and height of each tile in the montage.
 tilewidth=$tilesize    # (or specify separately, if you prefer)
-tileheight=$tilesize
+tileheight=$((tilesize * 2 / 3))
+[ -n "$DEBUG" ] && echo "tilesize: $tilesize"
+[ -n "$DEBUG" ] && echo "tilewidth: $tilewidth"
+[ -n "$DEBUG" ] && echo "tileheight: $tileheight"
 
 # If you get questionmarks for Unicode filenames, try using a different font.
 # You can list fonts available using `convert -list font`.
 #fontfamily=Droid-Sans-Fallback		# Great Asian font coverage
 #fontfamily=Dejavu-Sans			# Wide coverage, comes with GNU/Linux
 #fontfamily=Mincho			# Wide coverage, comes with MS Windows
-
+fontfamily="Helvetica-World"
+[ -n "$DEBUG" ] && echo "fontfamily: $fontfamily"
 # Default font size is based on width of each tile in montage.
-fontsize=$((tilewidth/10))
+fontsize=$((tilewidth/20))
+[ -n "$DEBUG" ] && echo "fontsize: $fontsize"
 #fontsize=16		     # (or set the point size directly, if you prefer)
 
 # Sanity check and compatibility
@@ -100,13 +105,17 @@ autodetect() {
 
     # BUG WORKAROUND: XTerm cannot show images wider than 1000px.
     # Remove this hack once XTerm gets fixed. Last checked: XTerm(327)
-    if [[ $TERM =~ xterm && $width -ge 1000 ]]; then  width=1000; fi
+    if [[ $TERM =~ xterm && $tilesize -ge 1000 ]]; then tilesize=1000; fi
 
+    [ -n "$DEBUG" ] && echo "width=$width"
     # Space on either side of each tile is less than 0.5% of total screen width
     tilexspace=$((width/201))
+    [ -n "$DEBUG" ] && echo "tilexspace=$tilexspace"
     tileyspace=$((tilexspace/2))
+    [ -n "$DEBUG" ] && echo "tileyspace=$tileyspace"
     # Figure out how many tiles we can fit per row. ("+ 1" is for -shadow).
     numtiles=$((width/(tilewidth + 2*tilexspace + 1)))
+    [ -n "$DEBUG" ] && echo "numtiles=$numtiles"
 }
 
 main() {
@@ -168,7 +177,7 @@ processlabel() {
     # 2. Replace control characters with question marks.
     # 3. If a filename is too long, remove extension (.jpg).
     # 4. Split long filenames with newlines (recursively)
-    span=15			# filenames longer than span will be split
+    span=45			# filenames longer than span will be split
     echo -n "$1" |
 	sed 's|\[0]$||;' | tr '[:cntrl:]' '?' |
 	awk -v span=$span -v ORS=""  '

@@ -5,7 +5,7 @@ $INTERACTIVE_SHELL && echo "Platform: $PLATFORM"
 
 # graceful dependency enforcement
 # Usage: needs <executable> provided by <packagename>
-needs() {
+>/dev/null declare -F needs || needs() {
   local bin=$1
   shift
   command -v $bin >/dev/null 2>&1 || { echo >&2 "I require $bin but it's not installed or in PATH; $*"; return 1; }
@@ -45,7 +45,8 @@ alias cwd='echo $cwd'
 alias files='find \!:1 -type f -print'      # files x => list files in x
 # the following is already included in oh-my-bash
 # alias ff='find . -name \!:1 -print'      # ff x => find file named x
-alias line='sed -n '\''\!:1 p'\'' \!:2'    # line 5 file => show line 5 of file
+# the following doesn't seem to work, and should be a function anyway, even if aliases can take arguments
+# alias line='sed -n '\''\!:1 p'\'' \!:2'    # line 5 file => show line 5 of file
 # alias l='ls -lGaph'
 # brew install exa
 alias l='exa --long --header --sort=name --all'
@@ -88,7 +89,9 @@ alias work=mpnetwork
 # alias rc='rails console'
 
 # network crap (OS X only)
-alias killdns='sudo killall -HUP mDNSResponder'
+if [ "$PLATFORM" = "osx" ]; then
+  alias killdns='sudo killall -HUP mDNSResponder'
+fi
 
 # why is grep dumb?
 # alias grep='egrep'
@@ -122,6 +125,14 @@ alias get='wget -q -O - --'
 # forkbomb!
 # alias forkbomb=':(){ :|:& };:'
 
+# provide a universal "open" on linux to open a path in the file manager
+if [ "$PLATFORM" = "linux" ]; then
+  open() {
+    # if no args, open current dir
+    xdg-open "${1:-.}"
+  }
+fi
+
 # get nvidia driver version on linux
 nvidia() {
   needs nvidia-smi # from nvidia-cuda-toolkit
@@ -150,14 +161,14 @@ zfs_compsavings() {
   echo "actual compressed savings  filename"
   echo "------ ---------- -------- --------"
   for i in `pwd`/* ; do
-    actualsize=`du -s --apparent-size "$i" | awk '{print $1}'`
+    actualsize=`du --block-size=1 -s "$i" | awk '{print $1}'`
     # some files are 0 bytes, and we don't like dividing by zero
     if [ $actualsize = "0" ]; then
       actualsize="1"
     fi
-    actualsize_h=`SIZE=1K du -sh --apparent-size "$i" | awk '{print $1}'`
-    compressedsize=`du -s "$i" | awk '{print $1}'`
-    compressedsize_h=`du -sh "$i" | awk '{print $1}'`
+    actualsize_h=`SIZE=1K du -sh "$i" | awk '{print $1}'`
+    compressedsize=`du --block-size=1 --apparent-size -s "$i" | awk '{print $1}'`
+    compressedsize_h=`du -h --apparent-size -s "$i" | awk '{print $1}'`
     ratio=`echo "scale = 2; (1 - ($compressedsize / $actualsize)) * 100" | bc -l`
     file=`basename "$i"`
     printf "%6s %10s %8s %s\n" "${actualsize_h}" "${compressedsize_h}" "${ratio}%" "$file"
@@ -166,7 +177,12 @@ zfs_compsavings() {
 
 # because I always forget how to do this...
 dd_example() {
-  echo "sudo dd if=/home/pmarreck/Downloads/TrueNAS-SCALE-22.02.4.iso of=/dev/sdf bs=10M oflag=sync status=progress"
+  echo "sudo dd if=/home/pmarreck/Downloads/TrueNAS-SCALE-22.02.4.iso of=/dev/sdf bs=1M oflag=sync status=progress"
+}
+
+# make it easier to write ISO's to a USB key:
+write_iso() {
+  sudo dd if="$1" of="$2" bs=1M oflag=sync status=progress
 }
 
 # copy an entire directory showing progress

@@ -1,4 +1,5 @@
-compressor=/opt/homebrew/bin/lz4
+#!/usr/bin/env bash
+compressor=$(which lz4)
 
 for f in "$@"
 do
