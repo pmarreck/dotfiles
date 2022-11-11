@@ -4,14 +4,18 @@ String.split() {
   if read -r -t0; then # fyi: -t0 trick to not consume but peek is not POSIX
     # echo "There is stdin"
     # read from stdin and split on first argument
-    IFS="$1" read -ra ADDR
+    # default to splitting on default IFS which is space, tab, newline
+    local sep=${1:-$IFS}
+    IFS="$sep" read -ra ADDR
     for i in "${ADDR[@]}"; do
       printf "%s" "$i\n"
     done
   else
     # echo "There is no stdin"
     # read input from 1st argument and split on 2nd argument
-    IFS="$2" read -ra ADDR <<< "$1"
+    # default to splitting on default IFS which is space, tab, newline
+    local sep=${2:-$IFS}
+    IFS="$sep" read -ra ADDR <<< "$1"
     for i in "${ADDR[@]}"; do
       printf "%s" "$i\n"
     done
