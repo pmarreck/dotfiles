@@ -1,7 +1,25 @@
 #!/usr/bin/env bash
-__oldstate=$(set +o)
-set -o errexit -o nounset -o pipefail -o noglob
-if [[ "${DEBUG-0}" != "0" ]]; then set -o xtrace; fi
+
+record_console_settings() {
+  __oldhistcontrol="$HISTCONTROL"
+  __oldstate=$(set +o | sed 's/^/ /g')
+}
+
+restore_console_settings() {
+  # For some reason, this eval dumped all these set commands into HISTFILE/command history
+  # so I used HISTCONTROL plus sed prefixing them with spaces (above) to prevent that
+  eval "$__oldstate"
+  export HISTCONTROL="$__oldhistcontrol"
+  unset __oldhistcontrol
+  unset __oldstate
+}
+
+record_console_settings
+# The following 3 lines don't work when moved into the function above.
+# Imperative languages suck.
+  export HISTCONTROL=erasedups:ignoreboth
+  set -o errexit -o nounset -o pipefail -o noglob
+  [[ "${DEBUG-0}" != "0" ]] && set -o xtrace
 
 # alerting in yellow to stderr
 >/dev/null declare -F note || note() {
@@ -51,6 +69,7 @@ define() {
     env | grep --color=never "^$word="
   elif [ -z "$(type -a -t "$word")" ]; then
     warn "$word is undefined"
+    return 1
   else
     # if there are multiple types to search for, loop through them
     for type in $(type -a -t "$word" | uniq); do
@@ -84,10 +103,9 @@ define() {
       esac
     done
   fi
-  # if there are any words left to look up, recurse with them
-  if [ -n "$1" ]; then
-    define "$@"
-  fi
+  # if there are any words left to look up, recurse with them.
+  # Note that any undefined term will return 1 and stop evaluating the rest.
+  [ -z "$1" ] || define "$@"
 }
-eval "$__oldstate"
-unset __oldstate
+
+restore_console_settings
