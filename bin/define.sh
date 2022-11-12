@@ -56,6 +56,9 @@ function defined? {
 # Also useful to do things like exporting specific definitions to sudo contexts etc.
 # or seeing if one definition is masking another.
 define() {
+  # on macOS, you need gnu-sed from homebrew or equivalent, which is installed as "gsed"
+  # I set PLATFORM elsewhere in my env config
+  [ "$PLATFORM" = "osx" ] && local -r sed="gsed" || local -r sed="sed"
   local word="$1"
   shift
   if [ -z "$word" ] && [ -z "$1" ]; then
@@ -82,9 +85,9 @@ define() {
           # replace runs of 2 spaces with 1 space
           # and format the function definition the way I like it
           declare -f "$word" |\
-            sed -z 's/\n{/ {/' |\
-            sed 's/  / /g' |\
-            sed -E 's/^([_[:alpha:]][_[:alnum:]]*)\s\(\)/\1()/'
+            $sed -z 's/\n{/ {/' |\
+            $sed 's/  / /g' |\
+            $sed -E 's/^([_[:alpha:]][_[:alnum:]]*)\s\(\)/\1()/'
           ;;
         alias)
           note "$word is an alias"
