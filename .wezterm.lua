@@ -7,11 +7,12 @@ scheme.scrollbar_thumb = "#aaa"
 return {
   check_for_updates = false,
   font = wezterm.font("Berkeley Mono"),
+  harfbuzz_features = { 'calt=1', 'clig=1', 'liga=1' },
   color_schemes = {
     ["Cobalt Peter"] = scheme,
   },
   color_scheme = "Cobalt Peter",
-  font_size = 15.0,
+  font_size = 12.0,
   window_background_opacity = 0.85,
   use_fancy_tab_bar = true,
   hide_tab_bar_if_only_one_tab = true,

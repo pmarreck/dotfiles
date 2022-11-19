@@ -6,7 +6,12 @@ if [ "$pf" = "Darwin" ]; then
   export PLATFORM="osx"
 elif [ "$(expr substr $pf 1 5)" = "Linux" ]; then
   export PLATFORM="linux"
-  export DISTRO="$(cat /etc/os-release | rg -r '$1' -o --color never '^NAME=(.+)$')"
+  # The following are 2 different ways to extract the value of a name=value pair input file
+  # One depends on ripgrep being installed, the other on awk (which is installed by default on most linux distros)
+  # You could also just source the file and then use the variable directly, but that pollutes the env
+  export DISTRO="$(cat /etc/os-release | rg -r '$1' -o --color never '^NAME="?(.+)"?$')"
+  export DISTRO_PRETTY="$(cat /etc/os-release | rg -r '$1' -o --color never '^PRETTY_NAME="?(.+)"?$')"
+  export DISTRO_VERSION="$(cat /etc/os-release | awk -F= '$1=="VERSION_ID"{gsub(/(^["]|["]$)/,"",$2);print$2}')"
 elif [ "$(expr substr $pf 1 10)" = "MINGW32_NT" ]; then
   export PLATFORM="windows"
 else

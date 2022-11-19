@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-$DEBUG_SHELLCONFIG && $INTERACTIVE_SHELL && echo "Running .profile" || echo "#" # last debug gets a crlf
+$DEBUG_SHELLCONFIG && $INTERACTIVE_SHELL && echo "Running .profile" || echo -n "#"
 
-$INTERACTIVE_SHELL && echo "Platform: $PLATFORM"
+$INTERACTIVE_SHELL && echo " Platform: $PLATFORM"
 
 # graceful dependency enforcement
 # Usage: needs <executable> provided by <packagename>
@@ -122,6 +122,8 @@ alias beep='tput bel'
 # forget curl vs wget; just get a URL, follow any redirects, and output it to stdout, reliably
 alias get='wget -q -O - --'
 
+alias shellconfig='code $WEZTERM_CONFIG_FILE'
+
 # forkbomb!
 # alias forkbomb=':(){ :|:& };:'
 
@@ -157,6 +159,7 @@ nvidia() {
 }
 
 # Get the zfs compression savings for every file or directory in this directory
+# Note: Currently borked. Need to fix
 zfs_compsavings() {
   echo "actual compressed savings  filename"
   echo "------ ---------- -------- --------"
@@ -577,10 +580,20 @@ ff() {
 # using oh-my-bash for now
 # $INTERACTIVE_SHELL && source ~/.commandpromptconfig
 
+flip_a_coin() {
+  [ $((RANDOM % 2)) -eq 1 ] && echo "heads" || echo "tails"
+}
+
 # silliness
 if $INTERACTIVE_SHELL; then
-  needs fortune
   echo
-  fortune
-  echo
+  if [ "$(flip_a_coin)" = "heads" ]; then
+    needs fortune
+    fortune
+    echo
+  else
+    # in the beginning... was the command line
+    needs convert please install imagemagick
+    convert inthebeginning.jpg -geometry 800x480 sixel:-
+  fi
 fi
