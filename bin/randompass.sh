@@ -26,6 +26,7 @@ export CHARSET_HEX="${CHARSET_NUM}abcdef"
 
 randompass() {
   needs shuf
+  RANDOM_SOURCE="${RANDOM_SOURCE:-/dev/random}"
   # globbing & history expansion here is a pain, so we store its state, temp turn it off & restore it later
   local maybeglob="$(shopt -po noglob histexpand)"
   set -o noglob # turn off globbing
@@ -51,7 +52,7 @@ randompass() {
   # printf is necessary due to some of the punctuation characters being interpreted when using echo
   local characterset=$(printf "%s" "$PWCHARSET" | awk NF=NF FS="")
   # using /dev/random to enforce entropy, but use urandom if you want speed
-  { shuf --random-source=/dev/random -n $1 -er $characterset; } | tr -d '\n'
+  { shuf --random-source=$RANDOM_SOURCE -n $1 -er $characterset; } | tr -d '\n'
   echo
   # restore any globbing state
   eval "$maybeglob"
@@ -73,6 +74,7 @@ load_and_filter_dict() {
 # Second argument is minimum word length
 randompassdict() {
   needs shuf
+  RANDOM_SOURCE="${RANDOM_SOURCE:-/dev/random}"
   if [ $# -eq 0 ]; then
     echo "Usage: randompassdict <num-words> [<min-word-length default 8> [<max-word-length default 99>]]"
     echo "This function is defined in $BASH_SOURCE"
@@ -90,12 +92,15 @@ randompassdict() {
   local poolsize=$(printf "%s" "$dict" | wc -l)
   # why is poolsize getting spaces in front? No idea. Removing them.
   poolsize=${poolsize##* }
-  local words=$(echo -n "$dict" | shuf --random-source=/dev/random -r -n "$numwords" | tr '\n' ' ')
+  local words=$(echo -n "$dict" | shuf --random-source=$RANDOM_SOURCE -r -n "$numwords" | tr '\n' ' ' | xargs)
   echo "$words"
   echo "(out of a possible $poolsize available words in the dictionary that suit the requested length range [$minlen-$maxlen])" 1>&2
   # a former attempt that worked but was less flexible:
   #cat /dev/urandom | LC_ALL=C tr -dc 'a-zA-Z0-9\!\@\#\$\%\&\*\?' | fold -w $1 | head -n $2 | tr '\n' ' '
 }
+
+assert $(RANDOM_SOURCE=/dev/zero randompass 10 2>/dev/null) = "aaaaaaaaaa"
+assert "$(RANDOM_SOURCE=/dev/zero randompassdict 5 2>/dev/null)" = "aardvark aardvark aardvark aardvark aardvark"
 
 # if this script is sourced, return; otherwise it will error, and exit
 return 0 2>/dev/null || exit 0

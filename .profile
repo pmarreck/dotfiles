@@ -22,6 +22,71 @@ fi
 # If you hate noise
 # set bell-style visible
 
+# for assertions everywhere!
+
+# add hex command to dump hex from stdin or args (note that hexdump also exists)
+# usage: echo "peter" | hex
+# or: hex peter
+hex() {
+  if [ -z "$1" ]; then # if no arguments
+    # The following exits code 0 if stdin not empty; 1 if empty; does not consume any bytes.
+    # This may only be a Bash-ism, FYI. Not sure if it's shell-portable.
+    # read -t 0
+    # retval=${?##1} # replace 1 with blank so it falses correctly if stdin is empty
+    if read -t 0; then
+      xxd -pu  # receive piped input from stdin
+    else # if stdin is empty AND no arguments
+      echo "Usage: hex <string>"
+      echo "       (or pipe something to hex)"
+      echo "This function is defined in ${BASH_SOURCE[0]}"
+    fi
+  else # if arguments
+    echo -ne "$@" | xxd -pu # pipe all arguments to xxd
+  fi
+}
+
+# usage: assert [condition] [message]
+# if condition is false, print message and exit
+assert() {
+  local arg1="$1"
+  local comp="$2"
+  local arg2="$3"
+  local message="$4"
+  arg1_enc=$(hex "$arg1")
+  arg2_enc=$(hex "$arg2")
+  case $comp in
+    = | == )
+      comparison_encoded="[ \"$arg1_enc\" $comp \"$arg2_enc\" ]"
+      comparison="[ \"$1\" $comp \"$2\" ]"
+    ;;
+    != | !== )
+      comparison_encoded="[ \"$arg1_enc\" \!= \"$arg2_enc\" ]"
+      comparison="[ \"$1\" \!= \"$2\" ]"
+    ;;
+    =~ ) # can't do encoded regex comparisons, so just do a plaintext comparison
+      comparison_encoded="[[ \"$1\" =~ $2 ]]"
+      comparison="[[ \"$1\" =~ $2 ]]"
+    ;;
+    !=~ | !~ )
+      comparison_encoded="[[ ! \"$1\" =~ $2 ]]"
+      comparison="[[ ! \"$1\" =~ $2 ]]"
+    ;;
+    * ) 
+      echo "Unknown comparison operator: $comp" >&2
+      return 1
+    ;;
+  esac
+  if eval "$comparison_encoded"; then
+    return 0
+  else
+    echo "Assertion failed: \"$arg1\" $comp \"$arg2\" @ ${BASH_SOURCE[0]}:${BASH_LINENO[0]}"
+    echo $message
+    exit 1
+  fi
+}
+
+assert "$(hex "peter")" == "7065746572" "hex function should encode strings to hex"
+
 # Pager config (ex., for git diff output)
 #E=quit at first EOF
 #Q=no bell
@@ -216,12 +281,20 @@ cpv() {
 
 # do simple math in the shell
 # example: calc 2+2
-# calc define fac(x) { if (x == 0) return (1); return (fac(x-1) * x); }; fac(5)
+# note that 'calc 4 * 23' will fail due to globbing, but 'calc 4*23' or 'calc "4 * 23"' will work
+# calc "define fac(x) { if (x == 0) return (1); return (fac(x-1) * x); }; fac(5)"
 calc() {
   local scale=${SCALE:-10}
   # echo "$*"
-  echo "scale=${scale};$*" | bc -l
+  # ok so bc *requires* a newline after an open brace, but it *doesn't* require a newline before a close brace
+  # so we have to do this weird thing where we replace all newlines with spaces, then replace all spaces after an open brace with a newline
+  local bcscript=$(echo -e "$*" | sed 's/\n+/ /g' | sed 's/{\s*/{\n/g' | sed 's/} *;?/}\n/g' | sed 's/;/\n/g')
+  [ -n "$DEBUG" ] && echo -e "string received by calc:\n$bcscript" >&2
+  echo -e "scale=${scale}\n$bcscript" | bc -l
 }
+
+assert "$(calc 2*4)" == 8
+assert "$(calc "define fac(x) { if (x == 0) return (1); return (fac(x-1) * x); }; fac(5)")" == 120
 
 source $HOME/bin/encrypt_decrypt.sh
 
@@ -353,25 +426,6 @@ otp() {
   esac
 }
 
-# add hex command to dump hex from stdin or args (note that hexdump also exists)
-hex() {
-  if [ -z "$1" ]; then # if no arguments
-    # The following exits code 0 if stdin not empty; 1 if empty; does not consume any bytes.
-    # This may only be a Bash-ism, FYI. Not sure if it's shell-portable.
-    read -t 0
-    retval=${?##1} # replace 1 with blank so it falses correctly if stdin is empty
-    if [ "$retval" ]; then
-      xxd -pu  # receive piped input from stdin
-    else # if stdin is empty AND no arguments
-      echo "Usage: hex <string>"
-      echo "       (or pipe something to hex)"
-      echo "This function is defined in $BASH_SOURCE"
-    fi
-  else # if arguments
-    echo -ne "$@" | xxd -pu # pipe all arguments to xxd
-  fi
-}
-
 # Use LLVM-GCC4.2 as the c compiler
 # CC='`xcode-select -print-path`/usr/bin/llvm-gcc-4.2 make'
 
@@ -418,6 +472,9 @@ xn() {
   # print a newline only if the string does not end in a newline
   [[ "$1" == "${1%$'\n'}" ]] && echo
 }
+
+assert $(x a 3) == aaa "x function should repeat a string"
+assert "$(xn "a\n" 2)" == "a\na\n" "xn function should repeat a string with a newline"
 
 # only enable this on arch somehow
 # source ~/bin/pac
@@ -583,6 +640,10 @@ ff() {
 flip_a_coin() {
   [ $((RANDOM % 2)) -eq 1 ] && echo "heads" || echo "tails"
 }
+
+# testing this is interesting...
+assert $(RANDOM=0; flip_a_coin) == "tails"
+assert $(RANDOM=1; flip_a_coin) == "heads"
 
 # silliness
 if $INTERACTIVE_SHELL; then
