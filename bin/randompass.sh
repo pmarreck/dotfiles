@@ -8,6 +8,30 @@ needs() {
   command -v $bin >/dev/null 2>&1 || { echo >&2 "I require $bin but it's not installed or in PATH; $*"; return 1; }
 }
 
+# deterministic random number generator
+# Usage: [DRANDOM_SEED=<whatever>] drandom [-h|--hex|--help]
+# Outputs a decimal number between 0 and 2^128-1 or an equivalent hex string if -h|--hex is specified
+# Note: The hash algorithm used here, xxHash, is NOT considered a secure algorithm, just very fast.
+drandom() {
+  needs xxhsum requires xxHash
+  # if unset, seed to hash of seconds since epoch
+  export DRANDOM_SEED=${DRANDOM_SEED:-$(date +%s | xxhsum -H2 | cut -d' ' -f1)}
+  export DRANDOM_SEED=$(echo $DRANDOM_SEED | xxhsum -H2 | cut -d' ' -f1)
+  case "$1" in
+    -h|--hex)
+      echo $DRANDOM_SEED
+      ;;
+    --help)
+      echo "Usage: [DRANDOM_SEED=<whatever>] drandom [-h|--hex]"
+      echo "Outputs a decimal number between 0 and 2^128-1 or an equivalent hex string if -h|--hex is specified"
+      ;;
+    *)
+      # convert to unsigned int from 128-bit hex
+      printf "%u\n" $((16#$DRANDOM_SEED))
+      ;;
+  esac
+}
+
 # get a random-character password
 # First argument is password length
 # Can override the default character set by passing in PWCHARSET=<charset> as env

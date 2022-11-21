@@ -79,9 +79,11 @@ assert() {
   if eval "$comparison_encoded"; then
     return 0
   else
+    # These values (BASH_SOURCE and BASH_LINENO) seem valid when triggered in my dotfiles, but not from my shell.
+    # Not sure how to fix yet.
     echo "Assertion failed: \"$arg1\" $comp \"$arg2\" @ ${BASH_SOURCE[0]}:${BASH_LINENO[0]}"
-    echo $message
-    exit 1
+    [ -n "$message" ] && echo $message
+    return 1
   fi
 }
 
@@ -187,7 +189,7 @@ alias beep='tput bel'
 # forget curl vs wget; just get a URL, follow any redirects, and output it to stdout, reliably
 alias get='wget -q -O - --'
 
-alias shellconfig='code $WEZTERM_CONFIG_FILE'
+alias consoleconfig='code $WEZTERM_CONFIG_FILE'
 
 # forkbomb!
 # alias forkbomb=':(){ :|:& };:'
@@ -293,8 +295,8 @@ calc() {
   echo -e "scale=${scale}\n$bcscript" | bc -l
 }
 
-assert "$(calc 2*4)" == 8
-assert "$(calc "define fac(x) { if (x == 0) return (1); return (fac(x-1) * x); }; fac(5)")" == 120
+assert "$(calc 2*4)" == 8 "simple calculations with calc should work"
+assert "$(calc "define fac(x) { if (x == 0) return (1); return (fac(x-1) * x); }; fac(5)")" == 120 "recursive functions with calc should work"
 
 source $HOME/bin/encrypt_decrypt.sh
 
