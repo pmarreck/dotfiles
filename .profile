@@ -640,7 +640,7 @@ ff() {
 # $INTERACTIVE_SHELL && source ~/.commandpromptconfig
 
 flip_a_coin() {
-  [ $((RANDOM % 2)) -eq 1 ] && echo "heads" || echo "tails"
+  (( RANDOM % 2 )) && echo "heads" || echo "tails"
 }
 
 # testing this is interesting...
@@ -657,6 +657,6 @@ if $INTERACTIVE_SHELL; then
   else
     # in the beginning... was the command line
     needs convert please install imagemagick
-    convert inthebeginning.jpg -geometry 800x480 sixel:-
+    convert $HOME/inthebeginning.jpg -geometry 800x480 sixel:-
   fi
 fi
