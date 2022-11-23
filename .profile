@@ -644,8 +644,34 @@ flip_a_coin() {
 }
 
 # testing this is interesting...
-assert $(RANDOM=0; flip_a_coin) == "tails"
-assert $(RANDOM=1; flip_a_coin) == "heads"
+assert $(RANDOM=0 flip_a_coin) == "tails"
+assert $(RANDOM=1 flip_a_coin) == "heads"
+
+roll_a_die() {
+  # so the trick to be strictly correct here is that 32767 is not evenly divisible by 6,
+  # so there will be bias UNLESS you cap at 32766
+  # since 32766 is evenly divisible by 6 (5461)
+  local candidate=$RANDOM
+  while [ $candidate -gt 32766 ]; do
+    candidate=$RANDOM
+  done
+  echo $((1 + $candidate % 6))
+}
+
+assert $(RANDOM=5 roll_a_die) == "6"
+assert $(RANDOM=6 roll_a_die) == "1"
+
+# usage: repeat <number of times> <command>
+repeat() {
+  local count=$1
+  shift
+  cmd=($@)
+  for ((i = 0; i < count; i++)); do
+    eval "${cmd[@]}"
+  done
+}
+
+assert "$(repeat 3 "echo -n \"hi \"")" == 'hi hi hi '
 
 # silliness
 if $INTERACTIVE_SHELL; then
