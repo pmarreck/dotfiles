@@ -639,6 +639,54 @@ ff() {
 # using oh-my-bash for now
 # $INTERACTIVE_SHELL && source ~/.commandpromptconfig
 
+ltrim() {
+  local var="$*"
+  # remove leading whitespace characters
+  var="${var#"${var%%[![:space:]]*}"}"
+  printf '%s' "$var"
+}
+
+rtrim() {
+  local var="$*"
+  # remove trailing whitespace characters
+  var="${var%"${var##*[![:space:]]}"}"
+  printf '%s' "$var"
+}
+
+trim() {
+  local var="$*"
+  var="$(ltrim "$var")"
+  var="$(rtrim "$var")"
+  printf '%s' "$var"
+}
+
+assert "$(ltrim "  foo  ")" == "foo  "
+assert "$(rtrim "  foo  ")" == "  foo"
+assert "$(trim "  foo  ")" == "foo"
+
+# "simulate" decimal division with integers and a given number of significant digits of the mantissa
+# without using bc or awk because I hate firing up a new process for something so simple
+div() {
+  local sd=${3:-2}
+  case $1 in
+  -h | --help | "")
+    echo "Divide two numbers as decimal, not integer"
+    echo "Usage: div <numerator> <denominator> [<digits after decimal point, defaults to 2>]"
+    echo "This function is defined in $BASH_SOURCE"
+    echo "Note that the result is truncated to $sd significant digits after the decimal point,"
+    echo "NOT rounded from the next decimal place."
+    echo "Also, things get weird with big arguments; compare 'div 1234234 121233333 5' with 'div 1234234 121233333 50'."
+    echo "Not sure why, yet; possibly internal bash integer overflow."
+    ;;
+  *)
+    printf "%.${sd}f\n" "$((10**${sd} * ${1}/${2}))e-${sd}"
+    ;;
+  esac
+}
+
+assert "$(div 22 15)" == "1.46"
+assert "$(div 1234234 121233333 5)" == "0.01018"
+
 flip_a_coin() {
   (( RANDOM % 2 )) && echo "heads" || echo "tails"
 }
