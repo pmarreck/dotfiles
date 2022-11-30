@@ -87,8 +87,11 @@ randompass() {
 load_and_filter_dict() {
   # local dict_loc="${WORDLIST:-"/usr/share/dict/words"}"
   # [ -f "$dict_loc" ] || { echo "$dict_loc missing. May need to install 'words' package (or just pass in a WORDLIST env var that paths to a file of words). Exiting."; return 1; }
-  local dict=$(sed '0,/^__DICT__$/d' "$BASH_SOURCE")
-  # take the dict, filter out anything not within the min/max length or that has apostrophes, and shuffle
+  # local dict=$(sed '0,/^__DICT__$/d' "${BASH_SOURCE[0]}")
+  # The above broke on OS X because of differences between gnu sed and BSD sed,
+  # so just use good ol' awk to strip out the dict from this script
+  local dict=$(awk 'p;/^__DICT__$/{p=1}' "${BASH_SOURCE[0]}")
+  # take the dict, filter out anything not within the min/max length
   local pool=$(LC_ALL=C printf "%s" "$dict" | awk 'length($0) >= '$1' && length($0) <= '$2'')
   printf "%s" "$pool"
 }
