@@ -6,6 +6,7 @@
 [core]
 	precomposeUnicode = true
 	pager = delta
+	editor = code --wait
 [interactive]
 	diffFilter = delta --color-only
 [delta]

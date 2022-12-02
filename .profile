@@ -57,19 +57,19 @@ assert() {
   case $comp in
     = | == )
       comparison_encoded="[ \"$arg1_enc\" $comp \"$arg2_enc\" ]"
-      comparison="[ \"$1\" $comp \"$2\" ]"
+      comparison="[ \"$arg1\" $comp \"$arg2\" ]"
     ;;
     != | !== )
       comparison_encoded="[ \"$arg1_enc\" \!= \"$arg2_enc\" ]"
-      comparison="[ \"$1\" \!= \"$2\" ]"
+      comparison="[ \"$arg1\" \!= \"$arg2\" ]"
     ;;
     =~ ) # can't do encoded regex comparisons, so just do a plaintext comparison
-      comparison_encoded="[[ \"$1\" =~ $2 ]]"
-      comparison="[[ \"$1\" =~ $2 ]]"
+      comparison_encoded="[[ \"$arg1\" =~ $arg2 ]]"
+      comparison="[[ \"$arg1\" =~ $arg2 ]]"
     ;;
     !=~ | !~ )
-      comparison_encoded="[[ ! \"$1\" =~ $2 ]]"
-      comparison="[[ ! \"$1\" =~ $2 ]]"
+      comparison_encoded="[[ ! \"$arg1\" =~ $arg2 ]]"
+      comparison="[[ ! \"$arg1\" =~ $arg2 ]]"
     ;;
     * ) 
       echo "Unknown comparison operator: $comp" >&2
@@ -142,7 +142,7 @@ scr() {
 }
 alias p='ping www.yahoo.com'
 alias pp='ping -A -i 5 8.8.4.4' #Ping the root google nameserver every 5 seconds and beep if no route
-alias t='top'
+alias t='btop'
 # alias tu='top -ocpu -Otime'
 alias bye='logout'
 
@@ -623,17 +623,56 @@ ff() {
   case $1 in
   -h | --help)
     echo "Find File (pmarreck wrapper function)"
-    echo 'Usage: ff [[<start path, defaults to .>] <searchterm>]'
-    echo "This function is defined in $BASH_SOURCE"
+    echo 'Usage: ff [<start path> <searchterm> | "<searchterm>" <start path> | <searchterm>]'
+    echo '(defaults to starting in current directory if no valid directory argument is provided)'
+    echo "This function is defined in ${BASH_SOURCE[0]}"
     echo '(ff with no arguments lists all files recursively from $PWD)'
     ;;
   *)
+    local dir=""
+    local term=""
+    # I did this logic because I got tired of remembering whether the (optional) directory argument was
+    # the first or second argument, lol. (Computers are smart, they can make this easier!)
+    # If either of the first 2 arguments is a valid directory, use that as the directory argument
+    # and use the other argument (or the rest of the arguments if the directory argument was the first argument)
+    # as the search query.
+    # If no valid directory argument is provided, default to the current directory
+    # and use all arguments as a search term.
+    [ -d "$2" ] && dir="$2" && term="$1"
+    [ -d "$1" ] && dir="$1" && shift && term="$*"
+    [ -z "$dir" ] && dir="$PWD" && term="$*" && echo -e "${ANSI}${TXTYLW}Searching from current directory ${PWD}...${ANSI}${TXTRST}" >&2
     # search all hidden and gitignore'd files
-    >&2 echo -e "${ANSI}${TXTYLW}${fdbin} -HI ${2} ${1}${ANSI}${TXTRST}"
-    $fdbin -HI $2 $1
+    >&2 echo -e "${ANSI}${TXTYLW}${fdbin} -HI \"${term}\" \"${dir}\"${ANSI}${TXTRST}"
+    $fdbin -HI "$term" "$dir"
     ;;
   esac
 }
+
+# inline ff test
+_fftest() {
+  local - # scant docs on this but this apparently automatically resets shellopts when the function exits
+  set -o errexit
+  local _testlocname=$(randompass 10)
+  if assert "${#_testlocname}" == "10" "Generated test location name for ff test is not working: ${BASH_SOURCE[0]}:${BASH_LINENO[0]}"; then
+    local _testloc="/tmp/$_testlocname"
+    # the point of [ 1 == 0 ] below is to fail the line and trigger errexit IF errexit is set
+    mkdir -p $_testloc >/dev/null 2>&1 || ( echo "Cannot create test directory '$_testloc' in ff test: ${BASH_SOURCE[0]}:${BASH_LINENO[0]}"; [ 1 == 0 ] )
+    touch $_testloc/$_testlocname
+    pushd $_testloc >/dev/null
+    assert $(ff $_testlocname 2>/dev/null) == "$_testloc/$_testlocname"
+    popd >/dev/null
+    pushd $HOME >/dev/null
+    assert $(ff $_testloc $_testlocname 2>/dev/null) == "$_testloc/$_testlocname"
+    assert $(ff $_testlocname $_testloc 2>/dev/null) == "$_testloc/$_testlocname"
+    popd >/dev/null
+    rm $_testloc/$_testlocname
+    rm -d $_testloc
+  fi
+}
+# time _fftest # why the frick is this taking a half second to run?? Disabling for now
+assert $- !=~ e "errexit shellopt is still set after function exit: ${BASH_SOURCE[0]}:${BASH_LINENO[0]}"
+unset _fftest
+# end inline ff test
 
 # command prompt
 # using oh-my-bash for now

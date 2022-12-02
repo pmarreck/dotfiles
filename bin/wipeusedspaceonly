@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+
+wipeusedspaceonly() {
+  declare -r default_blocksize=$((2 ** 20))
+  if [ $# -eq 0 ]; then
+    echo "Usage: wipeusedspaceonly <device> [<blocksize in bytes, defaults to $default_blocksize>]"
+    return 1
+  fi
+  local device="$1"
+  local blocksize=${2:-$default_blocksize} # $((2 ** 20)) = 1048576 or 1MiB
+  local total_dev_size_b=$(lsblk -bn $device | head -n 1 | awk '{print $4}')
+  echo "Device: $device"
+  echo "Total device size in bytes: $total_dev_size_b"
+  echo "Block size in bytes that will be used: $blocksize"
+  local read_head=0
+  local read_bytes=""
+  local block_hash=""
+  local last_op=""
+  declare -r sd=6 # significant digits for the percentage indication
+
+  while [ $read_head -lt $total_dev_size_b ]; do
+    if [ $((read_head + blocksize)) -gt $total_dev_size_b ]; then
+      blocksize=$((total_dev_size_b - read_head))
+    fi
+    # bash strings can't contain null bytes (C strings are null-terminated) so we must tr them out immediately
+    read_bytes="$(dd status=none if=$device bs=$blocksize iflag=skip_bytes skip=$read_head count=1 | tr -d '\0')"
+    if [ "$read_bytes" != "" ]; then # it has data, so wipe it
+      # echo "byte $read_head has data!"
+      last_op="W"
+      # without the use of "fullblock", this had a bug for a while where it didn't write the whole block of zeroes
+      dd status=none if=/dev/zero | dd status=none iflag=fullblock of=$device bs=$blocksize oflag=seek_bytes seek=$read_head count=1
+    else
+      last_op="R"
+    fi
+    read_head=$(( read_head + blocksize ))
+    # output progress computation via awk
+    # NOPE: clever use of printf builtin instead, avoids firing up awk (or bc) thousands of times
+    # disclaimer regarding not using variables in the format portion of printf; I use a readonly :)
+    # awk -v a=${read_head}00 -v b=$total_dev_size_b 'BEGIN{printf("%.4f%\r", a/b)}'
+    echo -ne "$last_op "
+    printf '%.'$sd'f%%\r' "$((10**sd * read_head/total_dev_size_b))e-${sd}"
+  done
+  echo
+  echo "Done."
+}
+
+# run the function, passing along any args, if this file was run directly (such as via sudo) instead of as an include
+# sometimes, $0 contains a leading dash to indicate an interactive (or is it login?) shell,
+# which is apparently an old convention (which also broke the basename call on OS X)
+me=$(basename "${0##\-}")
+if [ "$me" = "wipeusedspaceonly" ]; then
+  wipeusedspaceonly $*
+fi
