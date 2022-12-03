@@ -642,8 +642,57 @@ ff() {
     [ -d "$1" ] && dir="$1" && shift && term="$*"
     [ -z "$dir" ] && dir="$PWD" && term="$*" && echo -e "${ANSI}${TXTYLW}Searching from current directory ${PWD}...${ANSI}${TXTRST}" >&2
     # search all hidden and gitignore'd files
-    >&2 echo -e "${ANSI}${TXTYLW}${fdbin} -HI \"${term}\" \"${dir}\"${ANSI}${TXTRST}"
-    $fdbin -HI "$term" "$dir"
+    # Note: Not including -j1 argument currently results in massive slowdown due to bug: https://github.com/sharkdp/fd/issues/1131
+    >&2 echo -e "${ANSI}${TXTYLW}${fdbin} -j1 -HI \"${term}\" \"${dir}\"${ANSI}${TXTRST}"
+    $fdbin -j1 -HI "$term" "$dir"
+    ;;
+  esac
+}
+
+# For the Ruby fans.
+# Floating point seconds since epoch, to nanosecond resolution.
+Time.now.to_f() {
+  date +'%s.%N'
+}
+
+# Nanoseconds since unix epoch.
+# Might be cheap just to strip the decimal, but there's always a fixed number of digits to the right of the decimal
+now_in_ns() {
+  local now=$(Time.now.to_f)
+  echo ${now//.}
+}
+
+# Lets you time different parts of your bash code consecutively to see where slowdowns are occurring.
+# Usage example:
+# note_time_diff --start
+# ... one or more commands ...
+# note_time_diff "some note about the previous command"
+# ... more commands ...
+# note_time_diff
+# ... more commands ...
+# note_time_diff --end
+note_time_diff() {
+  case $1 in
+  --start)
+    _start_time=$(Time.now.to_f)
+    _interstitial_time=$_start_time
+    echo "timestart: $_start_time"
+    ;;
+  --end)
+    local _end_time=$(Time.now.to_f)
+    local totaltimediff=$(echo "scale=10;$_end_time - $_start_time" | bc)
+    local timediff=$(echo "scale=10;$_end_time - $_interstitial_time" | bc)
+    echo "timediff: $timediff"
+    echo "time_end: $_end_time"
+    echo "totaltimediff: $totaltimediff"
+    unset _start_time
+    unset _interstitial_time
+    ;;
+  *)
+    local _now=$(Time.now.to_f)
+    local timediff=$(echo "scale=10;$_now - $_interstitial_time" | bc)
+    echo "timediff: $timediff $1"
+    _interstitial_time=$_now
     ;;
   esac
 }
@@ -660,6 +709,7 @@ _fftest() {
     touch $_testloc/$_testlocname
     pushd $_testloc >/dev/null
     assert $(ff $_testlocname 2>/dev/null) == "$_testloc/$_testlocname"
+    assert $(ff 2>/dev/null) == "$_testloc/$_testlocname"
     popd >/dev/null
     pushd $HOME >/dev/null
     assert $(ff $_testloc $_testlocname 2>/dev/null) == "$_testloc/$_testlocname"
@@ -669,7 +719,8 @@ _fftest() {
     rm -d $_testloc
   fi
 }
-# time _fftest # why the frick is this taking a half second to run?? Disabling for now
+_fftest # why the frick is this taking a half second to run??
+# ...EDIT: Turns out to be an fd bug, I put in a workaround: https://github.com/sharkdp/fd/issues/1131
 assert $- !=~ e "errexit shellopt is still set after function exit: ${BASH_SOURCE[0]}:${BASH_LINENO[0]}"
 unset _fftest
 # end inline ff test
