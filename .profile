@@ -317,6 +317,9 @@ export GPG_TTY=`tty`
 # Note: Superseded by "define" function below
 
 source $HOME/bin/define.sh
+# and also alias it to d because that's convenient
+# define d # it's already defined somewhere, I know not where!
+alias def=define
 
 # elixir and js lines of code count
 # removes blank lines and commented-out lines
@@ -642,9 +645,11 @@ ff() {
     [ -d "$1" ] && dir="$1" && shift && term="$*"
     [ -z "$dir" ] && dir="$PWD" && term="$*" && echo -e "${ANSI}${TXTYLW}Searching from current directory ${PWD}...${ANSI}${TXTRST}" >&2
     # search all hidden and gitignore'd files
-    # Note: Not including -j1 argument currently results in massive slowdown due to bug: https://github.com/sharkdp/fd/issues/1131
-    >&2 echo -e "${ANSI}${TXTYLW}${fdbin} -j1 -HI \"${term}\" \"${dir}\"${ANSI}${TXTRST}"
-    $fdbin -j1 -HI "$term" "$dir"
+    # Note: Not including -jN argument (where N is a lowish number)
+    # currently results in massive slowdown due to bug: https://github.com/sharkdp/fd/issues/1131
+    # I made it -j2 after some testing
+    >&2 echo -e "${ANSI}${TXTYLW}${fdbin} -j2 -HI \"${term}\" \"${dir}\"${ANSI}${TXTRST}"
+    $fdbin -j2 -HI "$term" "$dir"
     ;;
   esac
 }
@@ -739,8 +744,7 @@ unset _fftest
 # end inline ff test
 
 # command prompt
-# using oh-my-bash for now
-# $INTERACTIVE_SHELL && source ~/.commandpromptconfig
+$INTERACTIVE_SHELL && source ~/.commandpromptconfig
 
 ltrim() {
   local var="$*"

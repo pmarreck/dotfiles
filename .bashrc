@@ -1,5 +1,3 @@
-export DEBUG_SHELLCONFIG=false
-
 # mute direnv constantly telling me what it's loading
 export DIRENV_LOG_FORMAT=
 
@@ -21,80 +19,6 @@ if $LOGIN_SHELL; then
 fi
 
 $DEBUG_SHELLCONFIG && $INTERACTIVE_SHELL && echo "Running .bashrc" || echo -n "#"
-
-# Path to your oh-my-bash installation.
-export OSH=$HOME/.oh-my-bash
-
-# Set name of the theme to load. Optionally, if you set this to "random"
-# it'll load a random theme each time that oh-my-bash is loaded.
-OSH_THEME="powerline-multiline"
-
-# Uncomment the following line to use case-sensitive completion.
-# CASE_SENSITIVE="true"
-
-# Uncomment the following line to use hyphen-insensitive completion. Case
-# sensitive completion must be off. _ and - will be interchangeable.
-# HYPHEN_INSENSITIVE="true"
-
-# Uncomment the following line to disable bi-weekly auto-update checks.
-# DISABLE_AUTO_UPDATE="true"
-
-# Uncomment the following line to change how often to auto-update (in days).
-export UPDATE_OSH_DAYS=7
-
-# Uncomment the following line to disable colors in ls.
-# DISABLE_LS_COLORS="true"
-
-# Uncomment the following line to disable auto-setting terminal title.
-# DISABLE_AUTO_TITLE="true"
-
-# Uncomment the following line to enable command auto-correction.
-# ENABLE_CORRECTION="true"
-
-# Uncomment the following line to display red dots whilst waiting for completion.
-# COMPLETION_WAITING_DOTS="true"
-
-# Uncomment the following line if you want to disable marking untracked files
-# under VCS as dirty. This makes repository status check for large repositories
-# much, much faster.
-# DISABLE_UNTRACKED_FILES_DIRTY="true"
-
-# Uncomment the following line if you want to change the command execution time
-# stamp shown in the history command output.
-# The optional three formats: "mm/dd/yyyy"|"dd.mm.yyyy"|"yyyy-mm-dd"
-# HIST_STAMPS="mm/dd/yyyy"
-
-# Would you like to use another custom folder than $OSH/custom?
-# OSH_CUSTOM=/path/to/new-custom-folder
-
-# Which completions would you like to load? (completions can be found in ~/.oh-my-bash/completions/*)
-# Custom completions may be added to ~/.oh-my-bash/custom/completions/
-# Example format: completions=(ssh git bundler gem pip pip3)
-# Add wisely, as too many completions slow down shell startup.
-completions=(
-  git
-  composer
-  ssh
-)
-
-# Which aliases would you like to load? (aliases can be found in ~/.oh-my-bash/aliases/*)
-# Custom aliases may be added to ~/.oh-my-bash/custom/aliases/
-# Example format: aliases=(vagrant composer git-avh)
-# Add wisely, as too many aliases slow down shell startup.
-aliases=(
-  general
-)
-
-# Which plugins would you like to load? (plugins can be found in ~/.oh-my-bash/plugins/*)
-# Custom plugins may be added to ~/.oh-my-bash/custom/plugins/
-# Example format: plugins=(rails git textmate ruby lighthouse)
-# Add wisely, as too many plugins slow down shell startup.
-plugins=(
-  git
-  bashmarks
-)
-
-source $OSH/oh-my-bash.sh
 
 # User configuration
 # export MANPATH="/usr/local/man:$MANPATH"
@@ -120,18 +44,76 @@ export SSH_KEY_PATH="~/.ssh/id_ed25519"
 # Guix integration
 [[ -s "$HOME/.guix-profile/etc/profile" ]] && source $HOME/.guix-profile/etc/profile
 
-# Set personal aliases, overriding those provided by oh-my-bash libs,
-# plugins, and themes. Aliases can be placed here, though oh-my-bash
-# users are encouraged to define aliases within the OSH_CUSTOM folder.
-# For a full list of active aliases, run `alias`.
-#
-# Example aliases
-# alias bashconfig="mate ~/.bashrc"
-# alias ohmybash="mate ~/.oh-my-bash"
+# platform info
+pf="$(uname)"
+if [ "$pf" = "Darwin" ]; then
+  export PLATFORM="osx"
+elif [ "$(expr substr $pf 1 5)" = "Linux" ]; then
+  export PLATFORM="linux"
+  # The following are 2 different ways to extract the value of a name=value pair input file
+  # One depends on ripgrep being installed, the other on awk (which is installed by default on most linux distros)
+  # You could also just source the file and then use the variable directly, but that pollutes the env
+  export DISTRO="$(cat /etc/os-release | rg -r '$1' -o --color never '^NAME="?(.+)"?$')"
+  export DISTRO_PRETTY="$(cat /etc/os-release | rg -r '$1' -o --color never '^PRETTY_NAME="?(.+)"?$')"
+  export DISTRO_VERSION="$(cat /etc/os-release | awk -F= '$1=="VERSION_ID"{gsub(/(^["]|["]$)/,"",$2);print$2}')"
+elif [ "$(expr substr $pf 1 10)" = "MINGW32_NT" ]; then
+  export PLATFORM="windows"
+else
+  # this downcase requires bash 4+; you can pipe to tr '[:upper:]' '[:lower:]' instead
+  export PLATFORM="${pf,,}"
+fi
+unset pf
 
-# Pull in artifacts from before oh-my-bash
-$DEBUG_SHELLCONFIG && $INTERACTIVE_SHELL && [[ -s "$HOME/.pre-oh-my-bash.bashrc" ]] && echo -n "from .bashrc: "
-[[ -s "$HOME/.pre-oh-my-bash.bashrc" ]] && source ~/.pre-oh-my-bash.bashrc
+# asdf config
+[[ -s "$HOME/.asdf/asdf.sh" ]] && source "$HOME/.asdf/asdf.sh"
+[[ -s "$HOME/.asdf/completions/asdf.bash" ]] && source "$HOME/.asdf/completions/asdf.bash"
+export ASDF_INSTALL_PATH=$ASDF_DIR
+
+# mix config to fix an asdf issue that cropped up
+export MIX_HOME="$HOME/.mix"
+export MIX_ARCHIVES="$MIX_HOME/archives"
+
+# partial history search
+if $INTERACTIVE_SHELL
+then
+    bind '"\e[A": history-search-backward' # up-arrow
+    bind '"\e[B": history-search-forward'  # down-arrow
+fi
+
+# graceful dependency enforcement
+# Usage: needs <executable> ["provided by <packagename>"]
+needs() {
+  local bin=$1
+  shift
+  command -v $bin >/dev/null 2>&1 || { echo >&2 "I require $bin but it's not installed or in PATH; $*"; return 1; }
+}
+
+# who am I? (should work even when sourced from elsewhere, but only in Bash)
+me=`basename ${BASH_SOURCE[0]}`
+
+# Pull in path configuration
+$DEBUG_SHELLCONFIG && $INTERACTIVE_SHELL && echo -n "from $me: "
+source ~/.pathconfig
+
+# rust cargo hook and related environment dependencies
+[[ -s "$HOME/.cargo/env" ]] && source "$HOME/.cargo/env"
+needs rustc "curl https://sh.rustup.rs -sSf | sh"
+needs exa "cargo install exa"
+needs tokei "cargo install --git https://github.com/XAMPPRocky/tokei.git tokei"
+
+# direnv hook
+eval "$(direnv hook bash)"
+
+# for git paging:
+needs delta cargo install git-delta
+
+# environment vars config
+$DEBUG_SHELLCONFIG && $INTERACTIVE_SHELL && echo -n "from $me: "
+source ~/.envconfig
+
+$DEBUG_SHELLCONFIG && [[ -s "$HOME/.profile" ]] && $INTERACTIVE_SHELL && echo -n "from $me: "
+[[ -s "$HOME/.profile" ]] && source "$HOME/.profile" # Load the default .profile
+
 
 # mcfly integration (access via ctrl-r)
 needs mcfly "curl -LSfs https://raw.githubusercontent.com/cantino/mcfly/master/ci/install.sh | sudo sh -s -- --git cantino/mcfly" && eval "$(mcfly init bash)"
