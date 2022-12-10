@@ -1,3 +1,5 @@
+export DEBUG_SHELLCONFIG=false
+
 # mute direnv constantly telling me what it's loading
 export DIRENV_LOG_FORMAT=
 
@@ -117,3 +119,7 @@ $DEBUG_SHELLCONFIG && [[ -s "$HOME/.profile" ]] && $INTERACTIVE_SHELL && echo -n
 
 # mcfly integration (access via ctrl-r)
 needs mcfly "curl -LSfs https://raw.githubusercontent.com/cantino/mcfly/master/ci/install.sh | sudo sh -s -- --git cantino/mcfly" && eval "$(mcfly init bash)"
+
+# starship
+needs starship
+eval "$(starship init bash)"
