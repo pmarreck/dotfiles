@@ -165,7 +165,8 @@ fi
 
 # elixir/phoenix gigalixir prod deploy command
 needs git
-alias deploy='git push gigalixir master'
+alias deploy_prod='git push gigalixir master'
+alias deploy_staging='git push gigalixir staging:master'
 
 # log all terminal output to a file
 alias log='/usr/bin/script -a ~/Terminal.log; source ~/.bash_profile'
@@ -226,7 +227,7 @@ nvidia() {
 }
 
 # Get the zfs compression savings for every file or directory in this directory
-# Note: Currently borked. Need to fix
+# FIXME: Currently borked. Need to fix
 zfs_compsavings() {
   echo "actual compressed savings  filename"
   echo "------ ---------- -------- --------"
@@ -315,6 +316,36 @@ export GPG_TTY=`tty`
 #   fi
 # }
 # Note: Superseded by "define" function below
+
+datetimestamp() {
+  local format=${DATETIMESTAMPFORMAT:-'+%Y%m%d%H%M%S'}
+  # if there is a --date argument
+  case "$1" in
+    --date=*|-d=*)
+      date --date="${1#*=}" "$format"
+      ;;
+    --date|-d)
+      date --date="$2" "$format"
+      ;;
+    --help|-h)
+      echo "Usage: datetimestamp [--date|-d[=| ]'date']"
+      echo "  --date|-d [date]  date to use, defaults to now, see man date for format details"
+      echo "  --help|-h         show this help"
+      return 0
+      ;;
+    -*)
+      echo "Unknown option: $1" >&2
+      datetimestamp -h
+      return 1
+      ;;
+    *)
+      date "$format"
+      ;;
+  esac
+}
+assert "$(datetimestamp --date='@2147483640')" == 20380118221400 "datetimestamp should work as expected and pad zeroes"
+assert "$(DATETIMESTAMPFORMAT='+%Y-%m-%d %H:%M:%S' datetimestamp --date='@2147483640')" == \
+       "2038-01-18 22:14:00" "datetimestamp should take an env format string with a space"
 
 source $HOME/bin/define.sh
 # and also alias it to d because that's convenient
