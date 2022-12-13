@@ -317,15 +317,19 @@ export GPG_TTY=`tty`
 # }
 # Note: Superseded by "define" function below
 
+# set the date bin to gdate (or one that recognizes --resolution) if available
+datebin=date
+$datebin --resolution >/dev/null 2>&1 || datebin=gdate
+$datebin --resolution >/dev/null 2>&1 || datebin=date
 datetimestamp() {
   local format=${DATETIMESTAMPFORMAT:-'+%Y%m%d%H%M%S'}
   # if there is a --date argument
   case "$1" in
     --date=*|-d=*)
-      date --date="${1#*=}" "$format"
+      $datebin --date="${1#*=}" "$format"
       ;;
     --date|-d)
-      date --date="$2" "$format"
+      $datebin --date="$2" "$format"
       ;;
     --help|-h)
       echo "Usage: datetimestamp [--date|-d[=| ]'date']"
@@ -339,7 +343,7 @@ datetimestamp() {
       return 1
       ;;
     *)
-      date "$format"
+      $datebin "$format"
       ;;
   esac
 }
@@ -685,10 +689,6 @@ ff() {
   esac
 }
 
-# set the date bin to gdate (or one that recognizes --resolution) if available
-datebin=date
-$datebin --resolution >/dev/null 2>&1 || datebin=gdate
-$datebin --resolution >/dev/null 2>&1 || datebin=date
 # use perl for timestamps if the date timestamp resolution isn't small enough
 _use_perl_for_more_accurate_timestamps=0
 if [ "$($datebin --resolution)" != "0.000000001" ]; then
