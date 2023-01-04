@@ -123,3 +123,7 @@ needs mcfly "curl -LSfs https://raw.githubusercontent.com/cantino/mcfly/master/c
 # starship
 needs starship
 eval "$(starship init bash)"
+
+# line completion
+# nope, doesn't work right with starship
+# source ~/linecomp/linecomp.sh
