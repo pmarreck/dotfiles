@@ -10,20 +10,22 @@ needs() {
 
 # deterministic random number generator
 # Usage: [DRANDOM_SEED=<whatever>] drandom [-h|--hex|--help]
-# Outputs a decimal number between 0 and 2^128-1 or an equivalent hex string if -h|--hex is specified
+# Outputs an integer between 0 and 2^128-1 or an equivalent hex string if -h|--hex is specified
 # Note: The hash algorithm used here, xxHash, is NOT considered a secure algorithm, just very fast.
 drandom() {
   needs xxhsum requires xxHash
+  [ "$?" = "0" ] || return 1
   # if unset, seed to hash of seconds since epoch
   export DRANDOM_SEED=${DRANDOM_SEED:-$(date +%s | xxhsum -H2 | cut -d' ' -f1)}
+  # otherwise set to hash of previous seed
   export DRANDOM_SEED=$(echo $DRANDOM_SEED | xxhsum -H2 | cut -d' ' -f1)
   case "$1" in
-    -h|--hex)
+    --hex)
       echo $DRANDOM_SEED
       ;;
-    --help)
-      echo "Usage: [DRANDOM_SEED=<whatever>] drandom [-h|--hex]"
-      echo "Outputs a decimal number between 0 and 2^128-1 or an equivalent hex string if -h|--hex is specified"
+    -h|--help)
+      echo "Usage: [DRANDOM_SEED=<whatever>] drandom [--hex]"
+      echo "Outputs an integer between 0 and 2^128-1 or an equivalent hex string if --hex is specified"
       ;;
     *)
       # convert to unsigned int from 128-bit hex
@@ -31,6 +33,10 @@ drandom() {
       ;;
   esac
 }
+
+# well, this should be easy to test...
+DRANDOM_SEED=0 assert "$(drandom)" == "15428324558373599405"
+DRANDOM_SEED=1 assert "$(drandom --hex)" == "3f2442b98591cb63d61c6b716d4b38ad"
 
 # get a random-character password
 # First argument is password length
@@ -44,30 +50,31 @@ export CHARSET_NUM="$(echo -n {0..9} | tr -d ' ')"
 export CHARSET_ALPHA="$CHARSET_LOWER$CHARSET_UPPER"
 export CHARSET_ALNUM="$CHARSET_ALPHA$CHARSET_NUM"
 # delete glyphs that can be confused with other characters
+# zero and one are the preferred glyphs to capital O, lowercase l and capital I
 export CHARSET_ALNUM_SANE="$(printf "%s" "$CHARSET_ALNUM" | tr -d 'OlI')"
 export CHARSET_PUNC='!@#$%^&*-_=+[]{}|;:,.<>/?~'
 export CHARSET_HEX="${CHARSET_NUM}abcdef"
 
 randompass() {
-  needs shuf
-  RANDOM_SOURCE="${RANDOM_SOURCE:-/dev/random}"
-  # globbing & history expansion here is a pain, so we store its state, temp turn it off & restore it later
-  local maybeglob="$(shopt -po noglob histexpand)"
-  set -o noglob # turn off globbing
-  set +o histexpand # turn off history expansion
-  if [ $# -eq 0 ]; then
+  if [[ $# -eq 0 || "$1" == "--help" ]]; then
     echo "Usage: randompass <length>"
     echo "This function is defined in $BASH_SOURCE"
     echo "You can override the default character set CHARSET_ALNUM_SANE by passing in PWCHARSET=<charset> as env"
     echo "where <charset> is one or more of:"
     echo "CHARSET_LOWER, CHARSET_UPPER, CHARSET_NUM, CHARSET_ALPHA, CHARSET_ALNUM, CHARSET_ALNUM_SANE, CHARSET_PUNC, CHARSET_HEX"
-    return 1
+    [ $# -eq 0 ] && return 1 # only error if insufficient input
+    return 0
   fi
+  needs shuf || return 1
+  RANDOM_SOURCE="${RANDOM_SOURCE:-/dev/random}"
+  # globbing & history expansion here is a pain, so we store its state, temp turn it off & restore it later
+  local maybeglob="$(shopt -po noglob histexpand)"
+  set -o noglob # turn off globbing
+  set +o histexpand # turn off history expansion
   # allow overriding the password character set with env var PWCHARSET
   # NOTE that we DELETE THE CAPITAL O, CAPITAL I, LOWERCASE L CHARACTERS
   # DUE TO SIMILARITY TO 1 AND 0 (which we leave in)
   # (but only if you use the default "sane alnum" set)
-  # BECAUSE WHO THE FUCK EVER THOUGHT THAT WOULD BE A GOOD IDEA? 😂
   local PWCHARSET="${PWCHARSET:-$CHARSET_ALNUM_SANE}"
   # ...but also intersperse it with spaces so that the -e option to shuf works.
   # Using awk to split the character set into a space-separated string of characters.
@@ -100,7 +107,7 @@ load_and_filter_dict() {
 # First argument is number of words to generate
 # Second argument is minimum word length
 randompassdict() {
-  needs shuf
+  needs shuf || return 1
   local random_source="${RANDOM_SOURCE:-/dev/random}"
   if [ $# -eq 0 ]; then
     echo "Usage: randompassdict <num-words> [<min-word-length default 8> [<max-word-length default 99>]]"
@@ -127,6 +134,7 @@ randompassdict() {
   #cat /dev/urandom | LC_ALL=C tr -dc 'a-zA-Z0-9\!\@\#\$\%\&\*\?' | fold -w $1 | head -n $2 | tr '\n' ' '
 }
 
+assert "$(randompass --help)" =~ "Usage:"
 # For some reason, the following line is either 10 C's or 10 a's, depending on... nondeterministic things?
 assert "$(RANDOM_SOURCE=/dev/zero randompass 10 2>/dev/null)" =~ "^[Ca]{10}$"
 assert "$(RANDOM_SOURCE=/dev/zero randompassdict 5 5 5 2>/dev/null)" = "Aaron Aaron Aaron Aaron Aaron"
@@ -134,8 +142,13 @@ assert "$(RANDOM_SOURCE=/dev/zero randompassdict 5 5 5 2>/dev/null)" = "Aaron Aa
 # if this script is sourced, return; otherwise it will error, and exit
 return 0 2>/dev/null || exit 0
 
-# the dictionary data follows.
-# this was generated via: cat $WORDLIST | awk '$0 ~ /^[^'\'']+$/' | sort
+# The dictionary data follows.
+# This was generated via: cat $WORDLIST | awk '$0 ~ /^[^'\'']+$/' | sort
+# where WORDLIST is sourced from, say, /usr/share/dict/words on macOS
+# The reasons for including it here are:
+# 1. to avoid having to install the 'words' package on linux or 'scowl' package on NixOS
+# 2. because I usually run on a filesystem with integrated compression, and this will compress well
+# 3. to guarantee deterministic behavior for the tests =)
 __DICT__
 a
 A
