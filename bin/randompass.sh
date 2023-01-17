@@ -121,7 +121,8 @@ randompassdict() {
   poolsize=${poolsize##* }
   local words=$(echo -n "$dict" | shuf --random-source=$random_source -r -n "$numwords" | tr '\n' ' ' | xargs)
   echo "$words"
-  echo "(out of a possible $poolsize available words in the dictionary that suit the requested length range [$minlen-$maxlen])" 1>&2
+  echo "(out of a possible $poolsize available words in the dictionary that suit the requested length range [$minlen-$maxlen]" >&2
+  echo "for a total of ($poolsize ** $numwords) or $(calc ${poolsize}^${numwords}) possible combinations)" >&2
   # a former attempt that worked but was less flexible:
   #cat /dev/urandom | LC_ALL=C tr -dc 'a-zA-Z0-9\!\@\#\$\%\&\*\?' | fold -w $1 | head -n $2 | tr '\n' ' '
 }
