@@ -81,7 +81,9 @@ assert() {
   else
     # These values (BASH_SOURCE and BASH_LINENO) seem valid when triggered in my dotfiles, but not from my shell.
     # Not sure how to fix yet.
-    echo "Assertion failed: \"$arg1\" $comp \"$arg2\" @ ${BASH_SOURCE[0]}:${BASH_LINENO[0]}"
+    local actualfile
+    actualfile="$(readlink -f ${BASH_SOURCE[1]})"
+    echo "Assertion failed: \"$arg1\" $comp \"$arg2\" @ ${actualfile}:${BASH_LINENO[0]}"
     [ -n "$message" ] && echo $message
     return 1
   fi

@@ -10,33 +10,31 @@ needs() {
 
 # deterministic random number generator
 # Usage: [DRANDOM_SEED=<whatever>] drandom [-h|--hex|--help]
-# Outputs an integer between 0 and 2^128-1 or an equivalent hex string if -h|--hex is specified
-# Note: The hash algorithm used here, xxHash, is NOT considered a secure algorithm, just very fast.
+# Outputs an integer between 0 and 2^256-1 or an equivalent hex string if -h|--hex is specified
 drandom() {
-  needs xxhsum requires xxHash
-  [ "$?" = "0" ] || return 1
+  needs sha256sum || return 1
   # if unset, seed to hash of seconds since epoch
-  export DRANDOM_SEED=${DRANDOM_SEED:-$(date +%s | xxhsum -H2 | cut -d' ' -f1)}
+  export DRANDOM_SEED="${DRANDOM_SEED:-$(date +%s | sha256sum | cut -d' ' -f1)}"
   # otherwise set to hash of previous seed
-  export DRANDOM_SEED=$(echo $DRANDOM_SEED | xxhsum -H2 | cut -d' ' -f1)
+  export DRANDOM_SEED="$(echo $DRANDOM_SEED | sha256sum | cut -d' ' -f1)"
   case "$1" in
     --hex)
       echo $DRANDOM_SEED
       ;;
     -h|--help)
       echo "Usage: [DRANDOM_SEED=<whatever>] drandom [--hex]"
-      echo "Outputs an integer between 0 and 2^128-1 or an equivalent hex string if --hex is specified"
+      echo "Outputs an integer between 0 and 2^256-1 or an equivalent hex string if --hex is specified"
       ;;
     *)
-      # convert to unsigned int from 128-bit hex
-      printf "%u\n" $((16#$DRANDOM_SEED))
+      # convert to unsigned int from 256-bit hex
+      printf "%u\n" $((32#$DRANDOM_SEED))
       ;;
   esac
 }
 
 # well, this should be easy to test...
-DRANDOM_SEED=0 assert "$(drandom)" == "15428324558373599405"
-DRANDOM_SEED=1 assert "$(drandom --hex)" == "3f2442b98591cb63d61c6b716d4b38ad"
+assert "$(DRANDOM_SEED=0 drandom)" == "17527006380214720842"
+assert "$(DRANDOM_SEED=1 drandom --hex)" == "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865"
 
 # get a random-character password
 # First argument is password length
