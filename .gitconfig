@@ -20,3 +20,5 @@
 	colorMoved = default
 [safe]
 	directory = /etc/nixos
+[pull]
+	rebase = true
