@@ -22,12 +22,10 @@ fi
 # If you hate noise
 # set bell-style visible
 
-# for assertions everywhere!
-
-# add hex command to dump hex from stdin or args (note that hexdump also exists)
-# usage: echo "peter" | hex
-# or: hex peter
-hex() {
+# add binhex command to dump hex from stdin or args (note that hexdump also exists)
+# usage: echo "peter" | binhex
+# or: binhex peter
+binhex() {
   if [ -z "$1" ]; then # if no arguments
     # The following exits code 0 if stdin not empty; 1 if empty; does not consume any bytes.
     # This may only be a Bash-ism, FYI. Not sure if it's shell-portable.
@@ -36,15 +34,33 @@ hex() {
     if read -t 0; then
       xxd -pu  # receive piped input from stdin
     else # if stdin is empty AND no arguments
-      echo "Usage: hex <string>"
-      echo "       (or pipe something to hex)"
+      echo "Usage: binhex <string>"
+      echo "       (or pipe something to binhex)"
       echo "This function is defined in ${BASH_SOURCE[0]}"
     fi
   else # if arguments
-    echo -ne "$@" | xxd -pu # pipe all arguments to xxd
+    printf "%b" "$1" | xxd -pu # pipe all arguments to xxd
   fi
 }
 
+# convert hex back to binary
+hexbin() {
+  if [ -z "$1" ]; then # if no arguments
+    # The following exits code 0 if stdin not empty; 1 if empty; does not consume any bytes.
+    # This may only be a Bash-ism, FYI. Not sure if it's shell-portable.
+    if read -t 0; then
+      xxd -r -p   # receive piped input from stdin
+    else # if stdin is empty AND no arguments
+      echo "Usage: hexbin <hex string>"
+      echo "       (or pipe something to hexbin)"
+      echo "This function is defined in ${BASH_SOURCE[0]}"
+    fi
+  else # if arguments
+    printf "%b" "$1" | xxd -r -p  # pipe all arguments to xxd
+  fi
+}
+
+# for assertions everywhere!
 # usage: assert [condition] [message]
 # if condition is false, print message and exit
 assert() {
@@ -52,8 +68,8 @@ assert() {
   local comp="$2"
   local arg2="$3"
   local message="$4"
-  arg1_enc=$(hex "$arg1")
-  arg2_enc=$(hex "$arg2")
+  arg1_enc=$(binhex "$arg1")
+  arg2_enc=$(binhex "$arg2")
   case $comp in
     = | == )
       comparison_encoded="[ \"$arg1_enc\" $comp \"$arg2_enc\" ]"
@@ -89,7 +105,10 @@ assert() {
   fi
 }
 
-assert "$(hex "peter")" == "7065746572" "hex function should encode strings to hex"
+assert "$(binhex "Peter")" == "5065746572" "binhex function should encode binary strings to hex"
+assert "$(hexbin "5065746572")" == "Peter" "hexbin function should decode binary from hex"
+# TODO: the following is not easy to make pass so tabled for now. just be aware of it
+# assert "$(hexbin "50657465720a")" == "Peter\n" "hexbin function shouldn't eat hex-encoded end-of-line newlines"
 
 # Pager config (ex., for git diff output)
 #E=quit at first EOF
@@ -133,6 +152,15 @@ if [ "$PLATFORM" = "osx" ]; then
   alias tophog='top -ocpu -s 3'
 else # linux
   alias tophog='top -o %CPU -d 3'
+fi
+
+# NixOS-specific stuff
+if [ "${PLATFORM}-${DISTRO}" = "linux-NixOS" ]; then
+  alias nix-list-gens='sudo nix-env -p /nix/var/nix/profiles/system --list-generations'
+  alias nix-gen-num='readlink /nix/var/nix/profiles/system | cut -d- -f2'
+  nix-genstamp() {
+    echo "$(datetimestamp) generation $(nix-gen-num); nvidia version $(nvidia --version); kernel version $(uname -r)" >> ~/nix-genstamp.txt
+  }
 fi
 
 #alias wordcount=(cat \!* | tr -s '\''  .,;:?\!()[]"'\'' '\''\012'\'' |' \
