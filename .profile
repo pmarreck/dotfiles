@@ -426,6 +426,33 @@ EOD
   echo -e "${esc}[0m"
 }
 
+# Many of these are taken from the game "Darktide"; will probably add more in the future
+warhammer_quote() {
+  local whquotes
+  whquotes=(
+    "A dagger in the dark is worth a thousand swords at dawn"
+    "Blessed is the mind too small for doubt"
+    "Blood for the Blood God! Skulls for the Skull Throne"
+    "An open mind is like a fortress with its gates unbarred and unguarded"
+    "REDACTED BY ORDER OF THE INQUISITION"
+    "The Emperor protects"
+    "Do not shy the hopeless fight, for endeavour is its own reward"
+    "Happiness is a delusion of the Weak"
+    "Blessed be the vengeful God, for He is the only true God"
+    "Blessed be the vengeful"
+    "Innocence proves nothing"
+    "Let faith trample reason"
+    "The Emperor bestows upon us the gift of intolerance"
+    "Narrow minds are faithful minds"
+    "Blessed are they without introspection, for they shall know no doubt"
+    "An informed opinion must be dismissed with the resolute certainty of faith"
+    "Thou shalt kill"
+    "Forgiveness is punishable by death"
+  );
+  # select a random item from the whquotes array
+  echo "${whquotes[$RANDOM % ${#whquotes[@]}]}!"
+}
+
 # mandelbrot set
 # from https://bruxy.regnet.cz/web/linux/EN/mandelbrot-set-in-bash/
 # (fixed point version for speed. also because fuck floating point math)
