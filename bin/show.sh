@@ -50,19 +50,19 @@ function defined? {
   ( "var_defined?" "$word" || >/dev/null type -t "$word" ) && ( [ -z "$1" ] || "defined?" "$@" )
 }
 
-# "define": spit out the definition of any name
-# usage: define <function or alias or variable or builtin or executable-in-PATH name> [...function|alias] ...
+# "show": spit out the definition of any name
+# usage: show <function or alias or variable or builtin or executable-in-PATH name> [...function|alias] ...
 # It will dig out all definitions, helping you find things like overridden bins.
 # Also useful to do things like exporting specific definitions to sudo contexts etc.
 # or seeing if one definition is masking another.
-define() {
+show() {
   # on macOS, you need gnu-sed from homebrew or equivalent, which is installed as "gsed"
   # I set PLATFORM elsewhere in my env config
   [ "$PLATFORM" = "osx" ] && local -r sed="gsed" || local -r sed="sed"
   local word="$1"
   shift
   if [ -z "$word" ] && [ -z "$1" ]; then
-    echo "Usage: define <function or alias or variable or builtin or executable-in-PATH name> [...function|alias] ..."
+    echo "Usage: show <function or alias or variable or builtin or executable-in-PATH name> [...function|alias] ..."
     echo "Returns the value or definition or location of those name(s)."
     echo "This function is defined in ${BASH_SOURCE[0]}"
     return 0
@@ -108,7 +108,7 @@ define() {
   fi
   # if there are any words left to look up, recurse with them.
   # Note that any undefined term will return 1 and stop evaluating the rest.
-  [ -z "$1" ] || define "$@"
+  [ -z "$1" ] || show "$@"
 }
 
 restore_console_settings

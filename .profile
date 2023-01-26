@@ -381,10 +381,8 @@ assert "$(datetimestamp --date='@2147483640')" == 20380118221400 "datetimestamp 
 assert "$(DATETIMESTAMPFORMAT='+%Y-%m-%d %H:%M:%S' datetimestamp --date='@2147483640')" == \
        "2038-01-18 22:14:00" "datetimestamp should take an env format string with a space"
 
-source $HOME/bin/define.sh
-# and also alias it to d because that's convenient
-# define d # it's already defined somewhere, I know not where!
-alias def=define
+source $HOME/bin/show.sh
+alias v=show # "view" goes to vim, "s" usually launches a search or server, so "v" is a good alias for show IMHO
 
 # elixir and js lines of code count
 # removes blank lines and commented-out lines
