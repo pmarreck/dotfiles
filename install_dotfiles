@@ -6,6 +6,7 @@ declare -a dotfiles=(
     .bash_profile
     .bashrc
     .commandpromptconfig
+    .direnvrc
     .envconfig
     .envrc
     .esrc
