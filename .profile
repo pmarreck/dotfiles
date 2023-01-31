@@ -318,12 +318,22 @@ cpv() {
 # calc "define fac(x) { if (x == 0) return (1); return (fac(x-1) * x); }; fac(5)"
 calc() {
   local scale=${SCALE:-10}
+  local old_bcll
+  [[ -v BC_LINE_LENGTH ]] && old_bcll=$BC_LINE_LENGTH
+  export BC_LINE_LENGTH=${BC_LINE_LENGTH:-0}
   # echo "$*"
   # ok so bc *requires* a newline after an open brace, but it *doesn't* require a newline before a close brace
   # so we have to do this weird thing where we replace all newlines with spaces, then replace all spaces after an open brace with a newline
   local bcscript=$(echo -e "$*" | sed 's/\n+/ /g' | sed 's/{\s*/{\n/g' | sed 's/} *;?/}\n/g' | sed 's/;/\n/g')
   [ -n "$DEBUG" ] && echo -e "string received by calc:\n$bcscript" >&2
   echo -e "scale=${scale}\n$bcscript" | bc -l
+  local retcode=$?
+  if [[ "$old_bcll" != '' ]]; then # it was set before and its old value is that
+    BC_LINE_LENGTH=$old_bcll
+  else
+    unset BC_LINE_LENGTH # it wasn't originally set, so unset it now
+  fi
+  return $retcode
 }
 
 assert "$(calc 2*4)" == 8 "simple calculations with calc should work"
