@@ -446,6 +446,7 @@ warhammer_quote() {
     "An informed opinion must be dismissed with the resolute certainty of faith"
     "An open mind is like a fortress with its gates unbarred and unguarded"
     "Arise for vengeance"
+    "Be not merciful"
     "Be steadfast in defence"
     "Be the Emperor's reaper"
     "Be thou the scourge of traitors"
