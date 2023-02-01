@@ -233,6 +233,98 @@ if [ "$PLATFORM" = "linux" ]; then
   }
 fi
 
+source_relative() {
+  PATH="$(cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )" source "$1"
+}
+
+# the following utility functions are duplicated from tinytestlib
+save_shellenv() {
+  _prev_shell_opts=$(set +o; shopt -p;)
+}
+
+restore_shellenv() {
+  eval "$_prev_shell_opts"
+  # clean up after ourselves, don't want to pollute the ENV
+  unset _prev_shell_opts
+}
+
+# Is this a color TTY? Or, is one (or the lack of one) being faked for testing reasons?
+isacolortty() {
+  [[ -v FAKE_COLORTTY ]] && return 0
+  [[ -v FAKE_NOCOLORTTY ]] && return 1
+  [[ "$TERM" =~ 'color' ]] && return 0 || return 1
+}
+
+# echo has nonstandard behavior, so...
+puts() {
+  local print_fmt end_fmt print_spec fd newline
+  print_fmt=''
+  print_spec='%s'
+  newline='\n'
+  end_fmt=''
+  fd='1'
+  while true; do
+    case "${1}" in
+      (--green)   print_fmt='\e[32m'; end_fmt='\e[0m' ;;
+      (--yellow)  print_fmt='\e[93m'; end_fmt='\e[0m' ;;
+      (--red)     print_fmt='\e[31m'; end_fmt='\e[0m' ;;
+      (--stderr)  fd='2' ;;
+      (-n)        newline='' ;;
+      (-e)        print_spec='%b' ;;
+      (-en|-ne)   print_spec='%b'; newline='' ;;
+      (-E)        print_spec='%s' ;;
+      (-*)        die "Unknown format specifier: ${1}" ;;
+      (*)         break ;;
+    esac
+    shift
+  done
+
+  # If we're not interactive/color, override print_fmt and end_fmt to remove ansi
+  isacolortty || unset -v print_fmt end_fmt
+
+  # shellcheck disable=SC2059
+  printf -- "${print_fmt}${print_spec}${end_fmt}${newline}" "${*}" >&$fd
+}
+
+# ANSI color helpers
+red_text() {
+  puts --red -en "$*"
+}
+
+green_text() {
+  puts --green -en "$*"
+}
+
+yellow_text() {
+  puts --yellow -en "$*"
+}
+
+# exit with red text to stderr, optional 2nd arg is error code
+die() {
+  red_text "${1}" >&2
+  echo >&2
+  exit ${2:-1}
+}
+
+# fail with red text to stderr, optional 2nd arg is return code
+fail() {
+  red_text "${1}" >&2
+  echo >&2
+  return ${2:-1}
+}
+
+strip_ansi() {
+  local ansiregex="s/[\x1b\x9b]\[([0-9]{1,4}(;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]//g"
+  # Take stdin if it's there; otherwise expect arguments.
+  # The following exits code 0 if stdin not empty; 1 if empty; does not consume any bytes.
+  # This may only be a Bash-ism, FYI. Not sure if it's shell-portable.
+  if read -t 0; then # consume stdin
+    sed -E "$ansiregex"
+  else
+    puts -en "${1}" | sed -E "$ansiregex"
+  fi
+}
+
 # get nvidia driver version on linux
 nvidia() {
   needs nvidia-smi # from nvidia-cuda-toolkit
@@ -322,10 +414,27 @@ calc() {
   [[ -v BC_LINE_LENGTH ]] && old_bcll=$BC_LINE_LENGTH
   export BC_LINE_LENGTH=${BC_LINE_LENGTH:-0}
   # echo "$*"
+  local bcscript=""
+  if read -t 0; then
+    read -d '' -r bcscript
+  else
+    if [[ $# > 0 ]]; then
+      bcscript="$*"
+    else
+      read -d '' -r bcscript # last resort, just try stdin again
+    fi
+  fi
+  # trim leading and trailing whitespace
+  bcscript="${bcscript##+([[:space:]])}"
+  if [[ -z "$bcscript" ]]; then
+    fail "calc's input looks blank."
+    return 1
+  fi
+  # format function definitions per bc requirements
   # ok so bc *requires* a newline after an open brace, but it *doesn't* require a newline before a close brace
   # so we have to do this weird thing where we replace all newlines with spaces, then replace all spaces after an open brace with a newline
-  local bcscript=$(echo -e "$*" | sed 's/\n+/ /g' | sed 's/{\s*/{\n/g' | sed 's/} *;?/}\n/g' | sed 's/;/\n/g')
-  [ -n "$DEBUG" ] && echo -e "string received by calc:\n$bcscript" >&2
+  bcscript=$(echo -e "$bcscript" | sed -e 's/\n+/ /g' -e 's/{\s*/{\n/g' -e 's/} *;?/}\n/g' -e 's/;/\n/g')
+  [ -n "$DEBUG" ] && puts -e --stderr "string received by calc:\n'$bcscript'"
   echo -e "scale=${scale}\n$bcscript" | bc -l
   local retcode=$?
   if [[ "$old_bcll" != '' ]]; then # it was set before and its old value is that
@@ -338,7 +447,7 @@ calc() {
 
 assert "$(calc 2*4)" == 8 "simple calculations with calc should work"
 assert "$(calc "define fac(x) { if (x == 0) return (1); return (fac(x-1) * x); }; fac(5)")" == 120 "recursive functions with calc should work"
-
+assert "$(puts "define fac(x) { if (x == 0) return (1); return (fac(x-1) * x); }; fac(5)" | calc)" == 120 "piping into calc should work"
 source $HOME/bin/encrypt_decrypt.sh
 
 source $HOME/bin/randompass.sh
