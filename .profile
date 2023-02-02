@@ -348,6 +348,17 @@ nvidia() {
   esac
 }
 
+# Get the git status of all repos underneath $HOME
+# As to why I decided to use "statii" instead of "statuses", see this:
+# https://english.stackexchange.com/questions/877/what-is-the-plural-form-of-status
+# Also because "octopi/octopii" is (arguably erroneously) accepted now, and it already
+# breaks the same Latin (or Greek?) rule.
+get_all_git_stati() {
+  needs fd "install fd-find" # you can easily rewrite this with the built-in 'find' if you must:
+  # find . -maxdepth 10 -mindepth 0 -type d -exec sh -c '(cd "{}" && [ -d .git ] && echo "{}" && git diff --shortstat && echo)' 2>/dev/null \; || return 0
+  fd . ~ --type d --threads 10 --hidden --exec sh -c '(cd "{}" && [ -d .git ] && echo "{}" && git diff --shortstat && echo)' 2>/dev/null \; || return 0
+}
+
 # Get the zfs compression savings for every file or directory in this directory
 # FIXME: Currently borked. Need to fix
 zfs_compsavings() {
