@@ -218,7 +218,8 @@ alias fuck='sudo $(history -p \!\!)'
 alias beep='tput bel'
 
 # forget curl vs wget; just get a URL, follow any redirects, and output it to stdout, reliably
-alias get='wget -q -O - --'
+alias get='wget --xattr --show-progress -c -q -O - --'
+alias getfile='wget --xattr --show-progress -c -q --'
 
 alias consoleconfig='code $WEZTERM_CONFIG_FILE'
 
