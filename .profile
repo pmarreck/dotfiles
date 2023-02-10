@@ -871,6 +871,10 @@ lnwtf() {
   echo "This function is defined in $BASH_SOURCE"
 }
 
+up() {
+  uptime | awk '{split($0,a,"  up ");split(a[2],b,", ");print"["b[1]", "b[2]"]"}'
+}
+
 # add otp --version command
 otp() {
   needs erl
