@@ -217,18 +217,17 @@ if [ "${PLATFORM}" = "linux" ]; then
          ;;
     esac
   }
+  # attr on the fly test suite
+  touch /tmp/attr_test
+  fsattr /tmp/attr_test a 1
+  fsattr /tmp/attr_test b 2
+  assert "$(fsattr /tmp/attr_test a)" == "1" "setting extended attributes on files should work"
+  assert "$(fsattr /tmp/attr_test)" == "a=\"1\"\nb=\"2\"" "Listing extended attributes on files should work"
+  fsattr /tmp/attr_test a ""
+  assert "$(fsattr /tmp/attr_test)" == "b=\"2\"" "Deleting a named extended attribute by setting it to blank should work"
+  assert "$(fsattr /tmp/attr_test a 2>/dev/null)" !=~ "1" "Accessing a deleted named extended attribute should fail"
+  rm /tmp/attr_test
 fi
-
-# attr on the fly test suite
-touch /tmp/attr_test
-fsattr /tmp/attr_test a 1
-fsattr /tmp/attr_test b 2
-assert "$(fsattr /tmp/attr_test a)" == "1" "setting extended attributes on files should work"
-assert "$(fsattr /tmp/attr_test)" == "a=\"1\"\nb=\"2\"" "Listing extended attributes on files should work"
-fsattr /tmp/attr_test a ""
-assert "$(fsattr /tmp/attr_test)" == "b=\"2\"" "Deleting a named extended attribute by setting it to blank should work"
-assert "$(fsattr /tmp/attr_test a 2>/dev/null)" !=~ "1" "Accessing a deleted named extended attribute should fail"
-rm /tmp/attr_test
 
 #alias wordcount=(cat \!* | tr -s '\''  .,;:?\!()[]"'\'' '\''\012'\'' |' \
 #                'cat -n | tail -1 | awk '\''{print $1}'\'')' # Histogram words
