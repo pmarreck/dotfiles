@@ -179,11 +179,11 @@ if [ "${PLATFORM}" = "linux" ]; then
       echo "sending files over the network, etc. etc."
       echo "The name length limit is 256 bytes and the value length limit is 64KB, at least on XFS."
       echo "Usage:"
+      echo "fsattr [-h|--help] : this help"
       echo "fsattr <pathname> : list all extended attributes and values of object at <pathname> as name=value pairs."
       echo "fsattr <pathname> <name> : list the value of named extended attribute of <pathname>."
       echo "fsattr <pathname> <name> <value> : set the named extended attribute value of <pathname>."
       echo "fsattr <pathname> <name> \"\" : clear the named extended attribute value of <pathname>."
-      echo "This wrapper wraps the actual 'attr' binary which lives at: $orig_attr"
     }
     case $# in
       1) case $1 in
@@ -217,7 +217,7 @@ if [ "${PLATFORM}" = "linux" ]; then
          ;;
     esac
   }
-  # attr on the fly test suite
+  # fsattr on the fly test suite
   touch /tmp/attr_test
   fsattr /tmp/attr_test a 1
   fsattr /tmp/attr_test b 2
@@ -623,7 +623,7 @@ EOD
   echo -e "${esc}[0m"
 }
 
-# Many of these are taken from the game "Darktide"; will probably add more in the future
+# Many of these are taken from the game "Warhammer: Darktide"; will probably add more in the future
 warhammer_quote() {
   local whquotes
   whquotes=(
@@ -754,6 +754,7 @@ warhammer_quote() {
     "Retribution is your birthright"
     "Scourge the stars in the Emperor's name"
     "Seek for yourself a death worthy of remembrance"
+    "Slay the impure and sanctify the faithful"
     "Smite all who oppose the Emperor"
     "Smite all who would besmirch the Emperor's name"
     "Speak not the names of traitors"
@@ -769,6 +770,7 @@ warhammer_quote() {
     "The guilt of heresy weighs heavy on the soul"
     "The Imperium of Mankind shall never yield"
     "The mutant is guileful, trust it not"
+    "The price of duty is high, but the rewards are eternal"
     "The righteous fear naught"
     "The same hammer that shatters the glass, forges the steel"
     "The seeds of heresy are planted in the minds of the enlightened"
@@ -778,7 +780,9 @@ warhammer_quote() {
     "The truth is terrible to bear"
     "The victor lives in honour; the vanquished dies in shame"
     "The wage of negligence is utter destruction"
+    "The weak shall be purged, the strong shall endure"
     "The Will of the Emperor is the might of the Imperium"
+    "The wise have much to fear; the ignorant are blessed with courage"
     "The wise learn from the deaths of others"
     "There are no walls strong enough to protect the enemies of Mankind"
     "There is no being so foul as the traitor"
@@ -800,6 +804,7 @@ warhammer_quote() {
     "To withdraw in disgust is not apathy"
     "Tolerance begets heresy"
     "True faith is blind and justified"
+    "True wisdom is acceptance of the inevitable"
     "Trust only the Emperor"
     "Truth begets hatred"
     "Understanding weakens the will to act"
@@ -809,6 +814,7 @@ warhammer_quote() {
     "Weigh the fist that strikes men down and salutes the battle won"
     "Welcome the judgement of the Emperor"
     "Without fear or falter, do thy duty"
+    "Withstand the winds of chaos, for the Emperor's light shines through"
     "You need understand nothing to do your duty"
     "Your honor is your life. Let none dispute it"
   );
@@ -820,11 +826,11 @@ warhammer_quote() {
 # from https://bruxy.regnet.cz/web/linux/EN/mandelbrot-set-in-bash/
 # (fixed point version for speed. also because fuck floating point math)
 mandelbrot() {
-  p=\>\>14 e=echo\ -ne\  S=(S H E L L) I=-16384 t=/tmp/m$$; for x in {1..13}; do \
+  p=\>\>14 e=echo\ -ne\  S=(B A S H) I=-16384 t=/tmp/m$$; for x in {1..13}; do \
   R=-32768; for y in {1..80}; do B=0 r=0 s=0 j=0 i=0; while [ $((B++)) -lt 32 -a \
   $(($s*$j)) -le 1073741824 ];do s=$(($r*$r$p)) j=$(($i*$i$p)) t=$(($s-$j+$R));
   i=$(((($r*$i)$p-1)+$I)) r=$t;done;if [ $B -ge 32 ];then $e\ ;else #---::BruXy::-
-  $e"\E[01;$(((B+3)%8+30))m${S[$((C++%5))]}"; fi;R=$((R+512));done;#----:::(c):::-
+  $e"\E[01;$(((B+3)%8+30))m${S[$((C++%4))]}"; fi;R=$((R+512));done;#----:::(c):::-
   $e "\E[m\E(\r\n";I=$((I+1311)); done|tee $t;head -n 12 $t| tac  #-----:2 O 1 O:-  
 }
 
