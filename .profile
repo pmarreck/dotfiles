@@ -567,7 +567,7 @@ datetimestamp() {
     -*)
       echo "Unknown option: $1" >&2
       datetimestamp -h
-      return 1
+      return 2
       ;;
     *)
       $datebin "$format"
@@ -685,6 +685,7 @@ warhammer_quote() {
     "Endure the present, so those who follow may continue your endeavours"
     "Even the greatest hero is but a ripple on the surface of space"
     "Exist for the Emperor"
+    "Facts are chains that bind perception and fetter truth"
     "Faith conquers all"
     "Faith needs no excuse"
     "Fear not obliteration, for it awaits us all"
@@ -820,6 +821,32 @@ warhammer_quote() {
   );
   # select a random item from the whquotes array
   echo "${whquotes[$RANDOM % ${#whquotes[@]}]}!"
+}
+
+ask() {
+  needs jq
+  needs glow
+  local request response response_parsed args
+  args="$*"
+  args=$(printf "%b" "$args" | jq -sRr '@json') # json value escaping
+# printf "escaped args: %s\n" "$args" >&2
+  read -r -d '' request <<EOF
+  curl https://api.openai.com/v1/chat/completions\
+ -H "Authorization: Bearer $OPENAI_API_KEY"\
+ -H "Content-Type: application/json"\
+ --silent\
+ -d '{"model": "gpt-3.5-turbo-0301", "messages": [{"role": "user", "content": $args}]}'
+EOF
+# printf "request: %s\n" "$request" >&2
+  response=$(eval $request)
+# printf "response: %s\n" "$response" >&2
+  response_parsed=$(printf "%s" "$response" | jq --raw-output '.choices[0].message.content')
+  if [[ "$response_parsed" == "null" || "$?" != "0" ]]; then
+    printf "%b" "$response" >&2
+    printf "%b" "$response_parsed"
+  else
+    printf "%s" "$response_parsed" | sed -e 's/^[\\n]\+//' -e 's/^[\n]\+//' | glow -
+  fi
 }
 
 # mandelbrot set
