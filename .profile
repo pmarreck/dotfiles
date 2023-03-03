@@ -9,7 +9,7 @@ $INTERACTIVE_SHELL && echo " Platform: $PLATFORM"
 # source a file relative to the current file
 source_relative() {
   local temp_path dir_name
-  dir_name="$(/run/current-system/sw/bin/dirname "${BASH_SOURCE[0]}" )"
+  dir_name="$(dirname "${BASH_SOURCE[0]}" )"
   temp_path="$(cd "$dir_name" && pwd )"
   $TRACE_SOURCING && echo "Sourcing $temp_path/$1"
   source "$temp_path/$1"
@@ -25,11 +25,11 @@ source_relative_once() {
   local file="$1"
   
   # Get the directory of the currently executing script
-  local dir=$(/run/current-system/sw/bin/dirname "${BASH_SOURCE[0]}")
+  local dir=$(dirname "${BASH_SOURCE[0]}")
   
   # Convert the relative path to an absolute path
   local abs_path="$dir/$file"
-  abs_path=$(/run/current-system/sw/bin/realpath "$abs_path")
+  abs_path=$(realpath "$abs_path")
 
   if ! [[ -e "$abs_path" ]]; then
     echo "Error in source_relative_once: could not find file $abs_path" >&2
