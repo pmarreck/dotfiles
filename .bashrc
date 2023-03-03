@@ -1,4 +1,5 @@
 export DEBUG_SHELLCONFIG=false
+export TRACE_SOURCING=false
 
 # mute direnv constantly telling me what it's loading
 export DIRENV_LOG_FORMAT=

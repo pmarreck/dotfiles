@@ -35,24 +35,19 @@ curdir=$(pwd)
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd $DIR
 
-declare -a binfiles=$(ls -d bin/*)
-echo "List of bin files to install:"
-echo "${binfiles[@]}"
-
 declare -a scriptfiles=$(ls -d Scripts/*)
 echo "List of script files to install:"
 echo "${scriptfiles[@]}"
 
 cd ~
 
-# make a bin directory if it doesn't exist
-if [ ! -d bin ]; then
-    mkdir bin
-fi
+# symlink the bin directory
+pushd $HOME
+ln -sfv dotfiles/bin # this assumes your dotfiles repo is in $HOME
+popd
+
 # make a Scripts directory if it doesn't exist
-if [ ! -d Scripts ]; then
-    mkdir Scripts
-fi
+mkdir -p Scripts
 
 for dotfile in ${dotfiles[@]}; do
     if [[ ! -L $dotfile ]]; then
@@ -62,17 +57,6 @@ for dotfile in ${dotfiles[@]}; do
         fi
     fi
     ln -sfv "dotfiles/$dotfile"
-done
-
-for binfile in ${binfiles[@]}; do
-    if [[ ! -L $binfile ]]; then
-        if [ -f "$binfile" ]; then
-            echo "$binfile already exists; renaming to $binfile.old"
-            mv -v "$binfile" "$binfile.old"
-        fi
-    fi
-    echo "Linking $binfile"
-    ln -sfv ../dotfiles/$binfile $binfile
 done
 
 for scriptfile in ${scriptfiles[@]}; do
