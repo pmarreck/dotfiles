@@ -1,3 +1,5 @@
+#!/usr/bin/env bash
+
 # Print a string num times. Comes from Perl apparently.
 # usage: x string num
 x() {

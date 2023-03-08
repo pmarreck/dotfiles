@@ -58,5 +58,5 @@ assert "$(fsattr /tmp/attr_test a)" == "1" "setting extended attributes on files
 assert "$(fsattr /tmp/attr_test)" == "a=\"1\"\nb=\"2\"" "Listing extended attributes on files should work"
 fsattr /tmp/attr_test a ""
 assert "$(fsattr /tmp/attr_test)" == "b=\"2\"" "Deleting a named extended attribute by setting it to blank should work"
-assert "$(fsattr /tmp/attr_test a 2>/dev/null)" !=~ "1" "Accessing a deleted named extended attribute should fail"
+assert "$(fsattr /tmp/attr_test a 1>/dev/null 2>/dev/null; echo $?)" != "0" "Accessing a deleted named extended attribute should fail"
 rm /tmp/attr_test

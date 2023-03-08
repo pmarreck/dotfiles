@@ -92,7 +92,9 @@ needs() {
 }
 
 # who am I? (should work even when sourced from elsewhere, but only in Bash)
-me=`basename ${BASH_SOURCE[0]}`
+me() {
+  basename ${BASH_SOURCE[0]}
+}
 
 # Pull in path configuration
 $DEBUG_SHELLCONFIG && $INTERACTIVE_SHELL && echo -n "from $me: "

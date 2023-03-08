@@ -12,6 +12,8 @@ source_relative bin/functions/assert.bash
 
 # the following utility functions are duplicated from tinytestlib
 save_shellenv() {
+  export OLDHISTIGNORE=$HISTIGNORE
+  export HISTIGNORE="shopt:set:eval"
   _prev_shell_opts=$(set +o; shopt -p;)
 }
 
@@ -19,7 +21,23 @@ restore_shellenv() {
   eval "$_prev_shell_opts"
   # clean up after ourselves, don't want to pollute the ENV
   unset _prev_shell_opts
+  export HISTIGNORE=$OLDHISTIGNORE
+  unset OLDHISTIGNORE
 }
+
+trim_leading_heredoc_whitespace() {
+  # this expects heredoc contents to be piped in via stdin
+  awk 'BEGIN { shortest = 99999 } /^[[:space:]]+/ { match($0, /[^[:space:]]/); shortest = shortest < RSTART - 1 ? shortest : RSTART - 1 } END { OFS=""; } { gsub("^" substr($0, 1, shortest), ""); print }' 
+}
+
+assert "$(echo -e "  This\n  is a\n  multiline\n  string." | trim_leading_heredoc_whitespace)" == "This\nis a\nmultiline\nstring."
+
+collapse_whitespace_containing_newline_to_single_space() {
+  # this expects contents to be piped in via stdin
+  sed -e ':a' -e 'N' -e '$!ba' -e 's/\s\n/ /g' -e 's/\n\s/ /g' -e 's/\s+/ /g'
+}
+
+assert "$(echo -e "This\nis a \nmultiline\n string." | collapse_whitespace_containing_newline_to_single_space)" == "This\nis a multiline string."
 
 # Is this a color TTY? Or, is one (or the lack of one) being faked for testing reasons?
 isacolortty() {
@@ -101,7 +119,7 @@ strip_ansi() {
 # elixir and js lines of code count
 # removes blank lines and commented-out lines
 elixir_js_loc() {
-  git ls-files | egrep '\.erl|\.exs?|\.js$' | xargs cat | sed '/^$/d' | sed '/^ *#/d' | sed '/^ *\/\//d' | wc -l
+  git ls-files | egrep '\.erl|\.exs?|\.js$' | xargs cat | sed -e '/^$/d' -e '/^ *#/d' -e '/^ *\/\//d' | wc -l
 }
 
 # universal edit command, points back to your defined $EDITOR

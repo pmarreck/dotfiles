@@ -50,7 +50,7 @@ source_relative_once() {
   $TRACE_SOURCING && echo "$_debug_id _sourced_files is now ${_sourced_files[@]}"
 }
 
-source_relative bin/functions/utility_functions.bash
+source_relative_once bin/functions/utility_functions.bash
 source_relative_once bin/functions/binhex.bash
 
 # config for Visual Studio Code
@@ -74,11 +74,11 @@ export LESS="-EQRX"
 # ulimit. to see all configs, run `ulimit -a`
 # ulimit -n 10000
 
-source_relative bin/aliases.sh
+source_relative_once bin/aliases.sh
 
 # Linux-specific stuff
 if [ "${PLATFORM}" = "linux" ]; then
-  source_relative bin/functions/fsattr.bash
+  source_relative_once bin/functions/fsattr.bash
 fi
 
 # provide a universal "open" on linux to open a path in the file manager
@@ -89,11 +89,11 @@ if [ "$PLATFORM" = "linux" ]; then
   }
 fi
 
-source_relative bin/functions/nvidia.bash
+source_relative_once bin/functions/nvidia.bash
 
-source_relative bin/functions/get_all_git_stati.sh
+source_relative_once bin/functions/get_all_git_stati.sh
 
-source_relative bin/functions/zfs_compsavings.bash
+source_relative_once bin/functions/zfs_compsavings.bash
 
 # because I always forget how to do this...
 dd_example() {
@@ -105,13 +105,13 @@ write_iso() {
   sudo dd if="$1" of="$2" bs=1M oflag=sync status=progress
 }
 
-source_relative bin/functions/cpv_copy_verbose.sh
+source_relative_once bin/functions/cpv_copy_verbose.sh
 
-source_relative bin/functions/calc.bash
+source_relative_once bin/functions/calc.bash
 
-source_relative bin/functions/encrypt_decrypt.sh
+source_relative_once bin/functions/encrypt_decrypt.sh
 
-source_relative bin/functions/randompass.sh
+source_relative_once bin/functions/randompass.sh
 
 # GPG configuration to set up in-terminal challenge-response
 export GPG_TTY=`tty`
@@ -127,22 +127,22 @@ export GPG_TTY=`tty`
 # }
 # Note: Superseded by "show" function below
 
-source_relative bin/functions/datetimestamp.bash
+source_relative_once bin/functions/datetimestamp.bash
 
-source_relative bin/functions/show.sh
+source_relative_once bin/functions/show.sh
 alias v=show # "view" goes to vim, "s" usually launches a search or server, so "v" is a good alias for show IMHO
 
-source_relative bin/functions/dragon.sh
+source_relative_once bin/functions/dragon.sh
 
-source_relative bin/functions/warhammer_quote.bash
+source_relative_once bin/functions/warhammer_quote.bash
 
-source_relative bin/functions/ask.sh
+source_relative_once bin/functions/ask.sh
 
-source_relative bin/functions/mandelbrot.sh
+source_relative_once bin/functions/mandelbrot.sh
 
-source_relative bin/functions/clock.bash
+source_relative_once bin/functions/clock.bash
 
-source_relative bin/functions/weather.bash
+source_relative_once bin/functions/weather.bash
 
 # crypto market data. can pass a symbol in or just get the current overall market data
 crypto() {
@@ -160,13 +160,13 @@ up() {
   uptime | awk '{split($0,a,"  up ");split(a[2],b,", ");print"["b[1]", "b[2]"]"}'
 }
 
-source_relative bin/functions/otp_version.sh
+source_relative_once bin/functions/otp_version.sh
 
-source_relative bin/functions/pman_nice_man_pages.sh
+source_relative_once bin/functions/pman_nice_man_pages.sh
 
-source_relative bin/functions/portopen_fileopen.sh
+source_relative_once bin/functions/portopen_fileopen.sh
 
-source_relative bin/functions/print_x_times.sh
+source_relative_once bin/functions/print_x_times.sh
 
 # only enable this on arch somehow
 # source ~/bin/pac
@@ -234,27 +234,27 @@ source_relative bin/functions/print_x_times.sh
 #   git bisect reset;
 # }
 
-source_relative bin/functions/pg_postgres_wrapper.sh
+source_relative_once bin/functions/pg_postgres_wrapper.sh
 
 # git functions and extra config
 source_relative_once bin/functions/git-branch.bash # defines parse_git_branch and parse_git_branch_with_dirty
 source_relative_once bin/functions/git-completion.bash
 
-source_relative bin/functions/notify.sh
+source_relative_once bin/functions/notify.sh
 
-source_relative bin/functions/ff_fast_find.sh
+source_relative_once bin/functions/ff_fast_find.sh
 
-source_relative bin/functions/Time.now.to_f.sh
+source_relative_once bin/functions/Time.now.to_f.sh
 
-source_relative bin/functions/note_time_diff.sh
+source_relative_once bin/functions/note_time_diff.sh
 
-source_relative bin/functions/div.sh
+source_relative_once bin/functions/div.sh
 
-source_relative bin/functions/flip_a_coin.sh
+source_relative_once bin/functions/flip_a_coin.sh
 
-source_relative bin/functions/roll_a_die.sh
+source_relative_once bin/functions/roll_a_die.sh
 
-source_relative bin/functions/repeat_command.bash
+source_relative_once bin/functions/repeat_command.bash
 
 # command prompt
 $INTERACTIVE_SHELL && source ~/.commandpromptconfig

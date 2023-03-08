@@ -1,15 +1,15 @@
 roll_a_die() {
 
-  # so the trick to be strictly correct here is that 32767 is not evenly divisible by 6,
+  # so the trick to be strictly correct here is that 32768 is not evenly divisible by 6,
   # so there will be bias UNLESS you cap at 32766
   # since 32766 is evenly divisible by 6 (5461)
   # But for any die size, you now have to find the maximum evenly divisible number
-  # that is below 32767...
+  # that is at or below 32768...
   local diesides=${1:-6} # default to 6-sided die
   local offset=$((32768 % diesides))
   local max=$((32768 - offset))
   local candidate=$RANDOM
-  while [ $candidate -gt $max ]; do
+  while [ $candidate -gt $((max-1)) ]; do
     candidate=$RANDOM
   done
   echo $((1 + candidate % diesides))
