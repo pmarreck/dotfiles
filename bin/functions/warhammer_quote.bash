@@ -103,6 +103,7 @@ warhammer_quote() {
     "Justice allows no doubt"
     "Keep the faith, kill the foe"
     "Kill the heretic with fervour"
+    "Knowledge brings us closer to annihilation"
     "Knowledge is power, guard it well"
     "Lack of faith is tantamount to treason"
     "Let faith trample reason"

@@ -262,13 +262,13 @@ $INTERACTIVE_SHELL && source ~/.commandpromptconfig
 # silliness
 if $INTERACTIVE_SHELL; then
   echo
-  if [ "$(flip_a_coin)" = "heads" ]; then
-    needs fortune
-    fortune
-    echo
-  else
-    # in the beginning... was the command line
-    needs convert please install imagemagick
-    convert $HOME/inthebeginning.jpg -geometry 800x480 sixel:-
-  fi
+  _fun_things=(
+    "needs fortune && fortune && echo"
+    "needs convert please install imagemagick && convert $HOME/inthebeginning.jpg -geometry 800x480 sixel:-"
+    "warhammer_quote"
+  )
+  _idx=$(( RANDOM % ${#_fun_things[@]} ))
+  eval "${_fun_things[$_idx]}"
+  unset _fun_things
+  unset _idx
 fi
