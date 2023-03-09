@@ -5,7 +5,7 @@
 needs() {
   local bin=$1
   shift
-  command -v $bin >/dev/null 2>&1 || { echo >&2 "I require $bin but it's not installed or in PATH; $*"; return 1; }
+  command -v "$bin" >/dev/null 2>&1 || { echo >&2 "I require $bin but it's not installed or in PATH; $*"; return 1; }
 }
 
 source_relative bin/functions/assert.bash
@@ -27,14 +27,18 @@ restore_shellenv() {
 
 trim_leading_heredoc_whitespace() {
   # this expects heredoc contents to be piped in via stdin
-  awk 'BEGIN { shortest = 99999 } /^[[:space:]]+/ { match($0, /[^[:space:]]/); shortest = shortest < RSTART - 1 ? shortest : RSTART - 1 } END { OFS=""; } { gsub("^" substr($0, 1, shortest), ""); print }' 
+  local awk=$(command -v gawk || command -v awk)
+  [ "${PLATFORM}${awk}" == "osxawk" ] && echo "WARNING: function trim_leading_heredoc_whitespace: The awk on PATH is not GNU awk on macOS, which may cause problems" >&2
+  $awk 'BEGIN { shortest = 99999 } /^[[:space:]]+/ { match($0, /[^[:space:]]/); shortest = shortest < RSTART - 1 ? shortest : RSTART - 1 } END { OFS=""; } { gsub("^" substr($0, 1, shortest), ""); print }' 
 }
 
 assert "$(echo -e "  This\n  is a\n  multiline\n  string." | trim_leading_heredoc_whitespace)" == "This\nis a\nmultiline\nstring."
 
 collapse_whitespace_containing_newline_to_single_space() {
   # this expects contents to be piped in via stdin
-  sed -e ':a' -e 'N' -e '$!ba' -e 's/\s\n/ /g' -e 's/\n\s/ /g' -e 's/\s+/ /g'
+  local sed=$(command -v gsed || command -v sed)
+  [ "${PLATFORM}${sed}" == "osxsed" ] && echo "WARNING: function collapse_whitespace_containing_newline_to_single_space: The sed on PATH is not GNU sed on macOS, which may cause problems" >&2
+  $sed -e ':a' -e 'N' -e '$!ba' -e 's/\s\n/ /g' -e 's/\n\s/ /g' -e 's/\s+/ /g'
 }
 
 assert "$(echo -e "This\nis a \nmultiline\n string." | collapse_whitespace_containing_newline_to_single_space)" == "This\nis a multiline string."
@@ -119,7 +123,7 @@ strip_ansi() {
 # elixir and js lines of code count
 # removes blank lines and commented-out lines
 elixir_js_loc() {
-  git ls-files | egrep '\.erl|\.exs?|\.js$' | xargs cat | sed -e '/^$/d' -e '/^ *#/d' -e '/^ *\/\//d' | wc -l
+  git ls-files | grep -E '\.erl|\.exs?|\.js$' | xargs cat | sed -e '/^$/d' -e '/^ *#/d' -e '/^ *\/\//d' | wc -l
 }
 
 # universal edit command, points back to your defined $EDITOR
@@ -130,7 +134,7 @@ edit() {
 
 # gem opener, if you have not yet moved on from Ruby to Elixir :)
 open_gem() {
-  $EDITOR `bundle show $1`
+  $EDITOR "$(bundle show "$1")"
 }
 
 ltrim() {

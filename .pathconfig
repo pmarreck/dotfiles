@@ -77,10 +77,21 @@ if [ "$PLATFORM" = "osx" ]; then
     prepend_path PATH /opt/homebrew/opt/llvm/bin
     # python utils from homebrew, may need to tweak version
     prepend_path PATH /opt/homebrew/opt/python@3.9/libexec/bin
+    # GNU utils from homebrew
+    prepend_path PATH /opt/homebrew/opt/coreutils/libexec/gnubin
+    # I don't know why gnu awk is stored separately?
+    prepend_path PATH /opt/homebrew/opt/gawk/libexec/gnubin
 fi
 
 # rust/cargo
 prepend_path PATH $HOME/.cargo/bin
+
+# Nix
+# Prefer Nix stuff to both system and homebrew
+if [ "$PLATFORM" = "osx" ]; then
+    prepend_path PATH /nix/var/nix/profiles/default/bin
+    prepend_path PATH $HOME/.nix-profile/bin
+fi
 
 # BINSTUBS
 # add binstub to front of PATH which overrides everything
