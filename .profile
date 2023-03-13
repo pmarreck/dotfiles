@@ -261,14 +261,17 @@ $INTERACTIVE_SHELL && source ~/.commandpromptconfig
 
 # silliness
 if $INTERACTIVE_SHELL; then
-  echo
-  _fun_things=(
-    "needs fortune && fortune && echo"
-    "needs convert please install imagemagick && convert $HOME/inthebeginning.jpg -geometry 800x480 sixel:-"
-    "warhammer_quote"
-  )
-  _idx=$(( RANDOM % ${#_fun_things[@]} ))
-  eval "${_fun_things[$_idx]}"
-  unset _fun_things
-  unset _idx
+  fun_intro() {
+    local fun_things=(
+      "needs fortune && fortune && echo"
+      "needs convert please install imagemagick && convert $HOME/inthebeginning.jpg -geometry 800x480 sixel:-"
+      "warhammer_quote"
+      "chuck" # of the norris variety
+      "mandelbrot"
+      "asciidragon"
+    )
+    local _idx=$(( RANDOM % ${#fun_things[@]} ))
+    eval "${fun_things[$_idx]}"
+  }
+  fun_intro
 fi

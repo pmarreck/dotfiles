@@ -13,17 +13,22 @@ needs() {
 # Outputs an integer between 0 and 2^256-1 or an equivalent hex string if -h|--hex is specified
 drandom() {
   needs sha256sum || return 1
-  # if unset, seed to hash of seconds since epoch
-  export DRANDOM_SEED="${DRANDOM_SEED:-$(date +%s | sha256sum | cut -d' ' -f1)}"
-  # otherwise set to hash of previous seed
-  export DRANDOM_SEED="$(echo $DRANDOM_SEED | sha256sum | cut -d' ' -f1)"
+  # if unset, initialize to hash of nanoseconds since epoch,
+  # otherwise, set to hash of previous seed
+  if [ -z $DRANDOM_SEED ]; then
+    export DRANDOM_SEED="$(date +%s%N | sha256sum | cut -d' ' -f1)"
+  else
+    export DRANDOM_SEED="$(echo -n $DRANDOM_SEED | sha256sum | cut -d' ' -f1)"
+  fi
   case "$1" in
     --hex)
       echo $DRANDOM_SEED
       ;;
     -h|--help)
+      echo "drandom is a deterministic random number generator."
       echo "Usage: [DRANDOM_SEED=<whatever>] drandom [--hex]"
       echo "Outputs an integer between 0 and 2^256-1 or an equivalent hex string if --hex is specified"
+      echo "If no seed is specified, it will be seeded to the sha256 hash of the nanoseconds since epoch on first run."
       ;;
     *)
       # convert to unsigned int from 256-bit hex
@@ -33,8 +38,8 @@ drandom() {
 }
 
 # well, this should be easy to test...
-assert "$(DRANDOM_SEED=0 drandom)" == "17527006380214720842"
-assert "$(DRANDOM_SEED=1 drandom --hex)" == "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865"
+assert "$(DRANDOM_SEED=0 drandom)" == "10852665827039288777"
+assert "$(DRANDOM_SEED=1 drandom --hex)" == "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b"
 
 # get a random-character password
 # First argument is password length

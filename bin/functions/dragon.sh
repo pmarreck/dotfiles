@@ -1,11 +1,12 @@
 # thar be dragons
-dragon() {
+asciidragon() {
   # first store the escape code for the ANSI color
   local esc=$(printf '\033')
   # set foreground text color to green
   echo -e "${esc}[0;32m"
-  # print the dragon, prefacing and suffixing runs of # with a background ansi mode of green
-  cat <<-'EOD' | sed -E "s/(#+)/${esc}[42m\1${esc}[49m/g"
+  # print the dragon
+  # uncomment the sed to preface and suffix runs of # with a background ansi mode of green
+  cat <<-'EOD' #| sed -E "s/(#+)/${esc}[42m\1${esc}[49m/g"
                     ___====-_  _-====___
               _--~~~#####//      \\#####~~~--_
            _-~##########// (    ) \\##########~-_

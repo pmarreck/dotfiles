@@ -1,8 +1,8 @@
 fsattr() {
-needs attr "The 'attr' binary must be available to this OS for this function to work."
-local orig_attr name value file
-orig_attr=$(which attr);
-function _help() {
+  needs attr "The 'attr' binary must be available to this OS for this function to work."
+  local orig_attr name value file
+  orig_attr=$(which attr);
+  function _help() {
     echo "'fsattr' lets you list, get or set extended attributes (xattrs) on filesystem objects,"
     echo "assuming your filesystem supports this feature."
     echo "Filesystem objects can be files, directories, aliases, etc.;"
@@ -16,38 +16,38 @@ function _help() {
     echo "fsattr <pathname> <name> : list the value of named extended attribute of <pathname>."
     echo "fsattr <pathname> <name> <value> : set the named extended attribute value of <pathname>."
     echo "fsattr <pathname> <name> \"\" : clear the named extended attribute value of <pathname>."
-}
-case $# in
+  }
+  case $# in
     1) case $1 in
-        --help|-h)
-            _help
-            return 0
-            ;;
-        *)
-            file=$1
-            $orig_attr -lq "$file" |\
-            xargs -I {} sh -c 'echo $1=\"$('$orig_attr' -q -g $1 "'$file'")\"' - {}
-            ;;
-        esac
+      --help|-h)
+        _help
+        return 0
         ;;
+      *)
+        file=$1
+        $orig_attr -lq "$file" |\
+        xargs -I {} sh -c 'echo $1=\"$('$orig_attr' -q -g $1 "'$file'")\"' - {}
+        ;;
+      esac
+      ;;
     2) file=$1
-        name=$2
-        $orig_attr -qg "$name" "$file"
-        ;;
+      name=$2
+      $orig_attr -qg "$name" "$file"
+      ;;
     3) file=$1
-        name=$2
-        value=$3
-        if [[ $value == "" ]]; then
-        # remove value
-        $orig_attr -r "$name" "$file"
-        else
-        $orig_attr -s "$name" -V "$value" -q "$file"
-        fi
-        ;;
+      name=$2
+      value=$3
+      if [[ $value == "" ]]; then
+      # remove value
+      $orig_attr -r "$name" "$file"
+      else
+      $orig_attr -s "$name" -V "$value" -q "$file"
+      fi
+      ;;
     *) _help
-        return 1
-        ;;
-esac
+      return 1
+      ;;
+  esac
 }
 source_relative_once bin/functions/assert.bash
 # fsattr on the fly test suite

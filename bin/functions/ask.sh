@@ -12,7 +12,8 @@ needs() {
 
 _generate_curl_api_request_for_ask() {
   needs jq
-  local request args
+  local request args timeout
+  timeout=${ASK_TIMEOUT:-15}
   args="$*"
   args=$(printf "%b" "$args" | jq -sRr '@json') # json value escaping for quotes, etc
 # printf "escaped args: %s\n" "$args" >&2
@@ -22,7 +23,7 @@ _generate_curl_api_request_for_ask() {
   -H "Authorization: Bearer $OPENAI_API_KEY" \
   -H "Content-Type: application/json" \
   --silent \
-  --max-time 10 \
+  --max-time $timeout \
   -d '{"model": "gpt-3.5-turbo-0301", "messages": [{"role": "user", "content": $args}]}'
 EOF
   printf "%s" "$request"
