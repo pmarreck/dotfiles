@@ -11,7 +11,7 @@ source_relative() {
   local temp_path dir_name
   dir_name="$(dirname "${BASH_SOURCE[0]}" )"
   temp_path="$(cd "$dir_name" && pwd )"
-  $TRACE_SOURCING && echo "Sourcing $temp_path/$1"
+  $_TRACE_SOURCING && echo "Sourcing $temp_path/$1"
   source "$temp_path/$1"
 }
 
@@ -38,16 +38,16 @@ source_relative_once() {
 
   # Check if the file has already been sourced
   if [[ "${_sourced_files[@]}" =~ "${abs_path}" ]]; then
-    $TRACE_SOURCING && echo "Already sourced $abs_path"
+    $_TRACE_SOURCING && echo "Already sourced $abs_path"
     return
   fi
-  $TRACE_SOURCING && local _debug_id=$RANDOM
+  $_TRACE_SOURCING && local _debug_id=$RANDOM
   # If the file hasn't been sourced yet, source it and add it to the list of sourced files
-  $TRACE_SOURCING && echo "$_debug_id Sourcing (once?) $abs_path"
+  $_TRACE_SOURCING && echo "$_debug_id Sourcing (once?) $abs_path"
   _sourced_files+=("$abs_path")
-  $TRACE_SOURCING && echo "$_debug_id prior to sourcing, _sourced_files is now ${_sourced_files[@]}"
+  $_TRACE_SOURCING && echo "$_debug_id prior to sourcing, _sourced_files is now ${_sourced_files[@]}"
   source "$abs_path"
-  $TRACE_SOURCING && echo "$_debug_id _sourced_files is now ${_sourced_files[@]}"
+  $_TRACE_SOURCING && echo "$_debug_id _sourced_files is now ${_sourced_files[@]}"
 }
 
 source_relative_once bin/functions/utility_functions.bash
@@ -93,7 +93,7 @@ source_relative_once bin/functions/nvidia.bash
 
 source_relative_once bin/functions/get_all_git_stati.sh
 
-source_relative_once bin/functions/zfs_compsavings.bash
+source_relative_once bin/functions/compsavings.bash
 
 # because I always forget how to do this...
 dd_example() {
@@ -260,18 +260,27 @@ source_relative_once bin/functions/repeat_command.bash
 $INTERACTIVE_SHELL && source ~/.commandpromptconfig
 
 # silliness
+
+inthebeginning() {
+  needs convert please install imagemagick && convert $HOME/inthebeginning.jpg -geometry 400x240 sixel:-
+}
+
 if $INTERACTIVE_SHELL; then
   fun_intro() {
     local fun_things=(
-      "needs fortune && fortune && echo"
-      "needs convert please install imagemagick && convert $HOME/inthebeginning.jpg -geometry 800x480 sixel:-"
+      "fortune"
+      "inthebeginning"
       "warhammer_quote"
       "chuck" # of the norris variety
       "mandelbrot"
       "asciidragon"
     )
     local _idx=$(( RANDOM % ${#fun_things[@]} ))
-    eval "${fun_things[$_idx]}"
+    if type -t ${fun_things[$_idx]} &>/dev/null; then
+      eval "${fun_things[$_idx]}"
+    else
+      echo "Tried to call '${fun_things[$_idx]}', but it was not defined" >&2
+    fi
   }
   fun_intro
 fi

@@ -38,6 +38,10 @@ function func_defined? {
   declare -F "$1" >/dev/null
 }
 
+function alias_defined? {
+  alias "$1" >/dev/null 2>&1
+}
+
 function defined? {
   local word="$1"
   shift
