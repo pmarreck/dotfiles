@@ -11,7 +11,7 @@ source_relative() {
   local temp_path dir_name
   dir_name="$(dirname "${BASH_SOURCE[0]}" )"
   temp_path="$(cd "$dir_name" && pwd )"
-  $_TRACE_SOURCING && echo "Sourcing $temp_path/$1"
+  # $_TRACE_SOURCING && echo "Sourcing $temp_path/$1" >&2
   source "$temp_path/$1"
 }
 
@@ -38,16 +38,16 @@ source_relative_once() {
 
   # Check if the file has already been sourced
   if [[ "${_sourced_files[@]}" =~ "${abs_path}" ]]; then
-    $_TRACE_SOURCING && echo "Already sourced $abs_path"
+    # $_TRACE_SOURCING && echo "Already sourced $abs_path" >&2
     return
   fi
-  $_TRACE_SOURCING && local _debug_id=$RANDOM
+  # $_TRACE_SOURCING && local _debug_id=$RANDOM
   # If the file hasn't been sourced yet, source it and add it to the list of sourced files
-  $_TRACE_SOURCING && echo "$_debug_id Sourcing (once?) $abs_path"
+  # $_TRACE_SOURCING && echo "$_debug_id Sourcing (once?) $abs_path" >&2
   _sourced_files+=("$abs_path")
-  $_TRACE_SOURCING && echo "$_debug_id prior to sourcing, _sourced_files is now ${_sourced_files[@]}"
+  # $_TRACE_SOURCING && echo "$_debug_id prior to sourcing, _sourced_files is now ${_sourced_files[@]}" >&2
   source "$abs_path"
-  $_TRACE_SOURCING && echo "$_debug_id _sourced_files is now ${_sourced_files[@]}"
+  # $_TRACE_SOURCING && echo "$_debug_id _sourced_files is now ${_sourced_files[@]}" >&2
 }
 
 source_relative_once bin/functions/utility_functions.bash
