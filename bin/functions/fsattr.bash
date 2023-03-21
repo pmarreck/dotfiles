@@ -51,12 +51,16 @@ fsattr() {
 }
 source_relative_once bin/functions/assert.bash
 # fsattr on the fly test suite
-touch /tmp/attr_test
-fsattr /tmp/attr_test a 1
-fsattr /tmp/attr_test b 2
-assert "$(fsattr /tmp/attr_test a)" == "1" "setting extended attributes on files should work"
-assert "$(fsattr /tmp/attr_test)" == "a=\"1\"\nb=\"2\"" "Listing extended attributes on files should work"
-fsattr /tmp/attr_test a ""
-assert "$(fsattr /tmp/attr_test)" == "b=\"2\"" "Deleting a named extended attribute by setting it to blank should work"
-assert "$(fsattr /tmp/attr_test a 1>/dev/null 2>/dev/null; echo $?)" != "0" "Accessing a deleted named extended attribute should fail"
-rm /tmp/attr_test
+# this setup function takes a PID as an argument and uses it to create a file unique to the process
+# ... Because prior to this I actually had fails here firing up multiple shells at the same time, facepalm.gif
+_fsattr_test_setup() {
+  touch /tmp/attr_test$1
+  fsattr /tmp/attr_test$1 a 1
+  fsattr /tmp/attr_test$1 b 2
+}
+assert "$(_fsattr_test_setup $! && fsattr /tmp/attr_test$! a)" == "1" "setting extended attributes on files should work"
+assert "$(_fsattr_test_setup $! && fsattr /tmp/attr_test$! a 1 && fsattr /tmp/attr_test$! b 2 && fsattr /tmp/attr_test$!)" == "a=\"1\"\nb=\"2\"" "Listing extended attributes on files should work"
+assert "$(fsattr /tmp/attr_test$! a "" && fsattr /tmp/attr_test$!)" == "b=\"2\"" "Deleting a named extended attribute by setting it to blank should work"
+assert "$(fsattr /tmp/attr_test$! a 1 && fsattr /tmp/attr_test$! a "" && fsattr /tmp/attr_test$! a 1>/dev/null 2>/dev/null; echo $?)" != "0" "Accessing a deleted named extended attribute should fail"
+[ -f /tmp/attr_test$! ] && rm /tmp/attr_test$!
+unset -f _fsattr_test_setup

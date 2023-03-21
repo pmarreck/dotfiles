@@ -39,6 +39,7 @@ if [ "${PLATFORM}-${DISTRO}" = "linux-NixOS" ]; then
   nix-genstamp() {
     echo "$(datetimestamp) generation $(nix-gen-num); nvidia version $(nvidia --version); kernel version $(uname -r)" >> ~/nix-genstamp.txt
   }
+  alias nixos="$EDITOR /etc/nixos"
 fi
 
 #alias wordcount=(cat \!* | tr -s '\''  .,;:?\!()[]"'\'' '\''\012'\'' |' \
