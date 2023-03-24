@@ -3,3 +3,5 @@
 .secrets
 .netrc
 .bash_history
+bin/direnv
+
