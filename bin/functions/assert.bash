@@ -10,7 +10,7 @@ assert() {
   arg2="$3"
   if [[ -z "$arg1" || -z "$comp" || -z "$arg2" ]]; then
     echo "Insufficient arguments to assert: $*" >&2
-    return 1
+    return 0 # because returning 1 would cause the shell to exit during sourcing
   fi
   message="$4"
   arg1_enc=$(binhex "$arg1")
