@@ -90,5 +90,3 @@ EOF
 unset -f curl # unmock curl
 $extglob_set || shopt -u extglob # restore extglob setting
 unset extglob_set
-
-exit 0 # test fails should not kill the shell here when including this file

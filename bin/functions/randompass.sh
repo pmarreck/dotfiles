@@ -143,8 +143,7 @@ assert "$(randompass --help)" =~ "Usage:"
 assert "$(RANDOM_SOURCE=/dev/zero randompass 10 2>/dev/null)" =~ "^[Ca]{10}$"
 assert "$(RANDOM_SOURCE=/dev/zero randompassdict 5 5 5 2>/dev/null)" = "Aaron Aaron Aaron Aaron Aaron"
 
-# if this script is sourced, return; otherwise it will error, and exit success,
-# because we don't want to kill the shell if this script is sourced
+# if this script is sourced, return; otherwise it will error, and exit
 return 0 2>/dev/null || exit 0
 
 # The dictionary data follows.

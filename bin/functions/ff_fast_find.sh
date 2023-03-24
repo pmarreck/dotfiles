@@ -66,5 +66,3 @@ _fftest # why the frick is this taking a half second to run??
 assert $- !=~ e "errexit shellopt is still set after function exit: ${BASH_SOURCE[0]}:${BASH_LINENO[0]}"
 unset _fftest
 # end inline ff test
-
-exit 0 # test fails should not kill the shell here when including this file
