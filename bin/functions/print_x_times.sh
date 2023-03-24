@@ -14,3 +14,4 @@ xn() {
 
 assert $(x a 3) == aaa "x function should repeat a string"
 assert "$(xn "a\n" 2)" == "a\na\n" "xn function should repeat a string with a newline"
+exit 0 # test fails should not kill the shell here when including this file

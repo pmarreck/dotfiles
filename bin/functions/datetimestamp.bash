@@ -34,3 +34,5 @@ source_relative_once bin/functions/assert.bash
 assert "$(datetimestamp --date='@2147483640')" == 20380118221400 "datetimestamp should work as expected and pad zeroes"
 assert "$(DATETIMESTAMPFORMAT='+%Y-%m-%d %H:%M:%S' datetimestamp --date='@2147483640')" == \
        "2038-01-18 22:14:00" "datetimestamp should take an env format string with a space"
+
+exit 0 # test fails should not kill the shell here when including this file

@@ -161,3 +161,5 @@ trim() {
 assert "$(ltrim "  foo  ")" == "foo  "
 assert "$(rtrim "  foo  ")" == "  foo"
 assert "$(trim "  foo  ")" == "foo"
+
+exit 0 # test fails should not kill the shell here when including this file

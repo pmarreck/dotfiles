@@ -36,3 +36,6 @@ hexbin() {
     printf "%b" "$1" | xxd -r -p  # pipe all arguments to xxd
   fi
 }
+
+# tests for these functions are currently in assert.bash, it's explained why there;
+# in short, avoiding circular deps

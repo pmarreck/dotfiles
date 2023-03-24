@@ -43,3 +43,5 @@ source_relative_once bin/functions/assert.bash
 assert "$(calc 2*4)" == 8 "simple calculations with calc should work"
 assert "$(calc "define fac(x) { if (x == 0) return (1); return (fac(x-1) * x); }; fac(5)")" == 120 "recursive functions with calc should work"
 assert "$(puts "define fac(x) { if (x == 0) return (1); return (fac(x-1) * x); }; fac(5)" | calc)" == 120 "piping into calc should work"
+
+exit 0 # test fails should not kill the shell here when including this file

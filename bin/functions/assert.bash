@@ -68,3 +68,5 @@ assert "$(binhex "Peter")" == "5065746572" "binhex function should encode binary
 assert "$(hexbin "5065746572")" == "Peter" "hexbin function should decode binary from hex"
 # TODO: the following is not easy to make pass so tabled for now. just be aware of it
 # assert "$(hexbin "50657465720a")" == "Peter\n" "hexbin function shouldn't eat hex-encoded end-of-line newlines"
+
+exit 0 # test fails should not kill the shell here when including this file

@@ -20,3 +20,5 @@ source_relative_once bin/functions/assert.bash
 assert $(RANDOM=5 roll_a_die) == "6"
 assert $(RANDOM=6 roll_a_die) == "1"
 assert $(RANDOM=7 roll_a_die 20) == "8"
+
+exit 0 # test fails should not kill the shell here when including this file

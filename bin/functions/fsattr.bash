@@ -64,3 +64,4 @@ assert "$(fsattr /tmp/attr_test$! a "" && fsattr /tmp/attr_test$!)" == "b=\"2\""
 assert "$(fsattr /tmp/attr_test$! a 1 && fsattr /tmp/attr_test$! a "" && fsattr /tmp/attr_test$! a 1>/dev/null 2>/dev/null; echo $?)" != "0" "Accessing a deleted named extended attribute should fail"
 [ -f /tmp/attr_test$! ] && rm /tmp/attr_test$!
 unset -f _fsattr_test_setup
+exit 0 # test fails should not kill the shell here when including this file
