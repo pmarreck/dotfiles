@@ -32,14 +32,35 @@ drandom() {
       ;;
     *)
       # convert to unsigned int from 256-bit hex
-      printf "%u\n" $((32#$DRANDOM_SEED))
+      printf "%u\n" $((16#$DRANDOM_SEED))
       ;;
   esac
 }
 
 # well, this should be easy to test...
-assert "$(DRANDOM_SEED=0 drandom)" == "10852665827039288777"
+assert "$(DRANDOM_SEED=0 drandom)" == "7433709304730572777"
 assert "$(DRANDOM_SEED=1 drandom --hex)" == "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b"
+
+# Normally-distributed random numbers using the Box-Muller transform
+# Usage: nrandom start end
+nrandom() {
+    start=${1:-0}
+    end=${2:-100}
+    range=$(echo "$end - $start" | bc -l)
+
+    awk -v start=$start -v range=$range -v seed=$RANDOM '
+    BEGIN {
+        srand(seed);
+        u1 = rand();
+        u2 = rand();
+        z0 = sqrt(-2 * log(u1)) * cos(2 * 3.14159265358979323846 * u2);
+        z1 = sqrt(-2 * log(u1)) * sin(2 * 3.14159265358979323846 * u2);
+
+        random_number = start + (z0 * (range / 6)) + (range / 2);
+        printf("%.0f\n", random_number);
+    }'
+}
+
 
 # get a random-character password
 # First argument is password length
