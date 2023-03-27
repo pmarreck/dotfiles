@@ -44,8 +44,19 @@ assert "$(DRANDOM_SEED=1 drandom --hex)" == "6b86b273ff34fce19d6b804eff5a3f5747a
 # Normally-distributed random numbers using the Box-Muller transform
 # Usage: nrandom start end
 nrandom() {
+    if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+      echo "Usage: nrandom <start> <end>"
+      echo "This function is defined in $BASH_SOURCE"
+      echo "Outputs a normally-distributed random number between <start> and <end>"
+      echo "If <start> is not specified, it defaults to 0"
+      echo "If <end> is not specified, it defaults to 100"
+      return 0
+    fi
     start=${1:-0}
     end=${2:-100}
+    if [[ $# -eq 0 ]]; then
+      echo "(with a start of $start and an end of $end)" >&2
+    fi
     range=$(echo "$end - $start" | bc -l)
 
     awk -v start=$start -v range=$range -v seed=$RANDOM '
@@ -54,9 +65,10 @@ nrandom() {
         u1 = rand();
         u2 = rand();
         z0 = sqrt(-2 * log(u1)) * cos(2 * 3.14159265358979323846 * u2);
-        z1 = sqrt(-2 * log(u1)) * sin(2 * 3.14159265358979323846 * u2);
+        # z1 = sqrt(-2 * log(u1)) * sin(2 * 3.14159265358979323846 * u2);
 
         random_number = start + (z0 * (range / 6)) + (range / 2);
+        # random_number2 = start + (z1 * (range / 6)) + (range / 2);
         printf("%.0f\n", random_number);
     }'
 }
