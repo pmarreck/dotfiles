@@ -58,9 +58,9 @@ _fsattr_test_setup() {
   fsattr /tmp/attr_test$1 a 1
   fsattr /tmp/attr_test$1 b 2
 }
-assert "$(_fsattr_test_setup $! && fsattr /tmp/attr_test$! a)" == "1" "setting extended attributes on files should work"
-assert "$(_fsattr_test_setup $! && fsattr /tmp/attr_test$! a 1 && fsattr /tmp/attr_test$! b 2 && fsattr /tmp/attr_test$!)" == "a=\"1\"\nb=\"2\"" "Listing extended attributes on files should work"
-assert "$(fsattr /tmp/attr_test$! a "" && fsattr /tmp/attr_test$!)" == "b=\"2\"" "Deleting a named extended attribute by setting it to blank should work"
-assert "$(fsattr /tmp/attr_test$! a 1 && fsattr /tmp/attr_test$! a "" && fsattr /tmp/attr_test$! a 1>/dev/null 2>/dev/null; echo $?)" != "0" "Accessing a deleted named extended attribute should fail"
-[ -f /tmp/attr_test$! ] && rm /tmp/attr_test$!
+assert "$(_fsattr_test_setup $$ && fsattr /tmp/attr_test$$ a)" == "1" "setting extended attributes on files should work"
+assert "$(_fsattr_test_setup $$ && fsattr /tmp/attr_test$$ a 1 && fsattr /tmp/attr_test$$ b 2 && fsattr /tmp/attr_test$$)" == "a=\"1\"\nb=\"2\"" "Listing extended attributes on files should work"
+assert "$(fsattr /tmp/attr_test$$ a "" && fsattr /tmp/attr_test$$)" == "b=\"2\"" "Deleting a named extended attribute by setting it to blank should work"
+assert "$(fsattr /tmp/attr_test$$ a 1 && fsattr /tmp/attr_test$$ a "" && fsattr /tmp/attr_test$$ a 1>/dev/null 2>/dev/null; echo $?)" != "0" "Accessing a deleted named extended attribute should fail"
+[ -f /tmp/attr_test$$ ] && rm /tmp/attr_test$$
 unset -f _fsattr_test_setup
