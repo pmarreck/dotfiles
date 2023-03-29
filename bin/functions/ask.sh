@@ -12,33 +12,37 @@ needs() {
 
 _generate_curl_api_request_for_ask() {
   needs jq
-  local request args timeout
+  local request args timeout model curl
+  curl=${CURL:-curl}
+  model=${ASK_MODEL:-gpt-3.5-turbo-0301} # other options: gpt-4
   timeout=${ASK_TIMEOUT:-15}
-  args="$*"
-  args=$(printf "%b" "$args" | jq -sRr '@json') # json value escaping for quotes, etc
-# printf "escaped args: %s\n" "$args" >&2
+  args="$@"
+  args=$(printf "%b" "$args" | sed "s/'/'\\\\''/g") # This is just a narsty sed to escape single quotes.
+  # (Piping to "jq -sRr '@json'" was not working correctly, so I had to take control of the escaping myself.)
+# printf "escaped args: %b\n" "$args" >&2
   # note that gpt-3.5-turbo-0301 is the very latest model as of 2021-03-01 but will only be supported for a few weeks
   read -r -d '' request <<EOF
-  curl https://api.openai.com/v1/chat/completions \
+  $curl https://api.openai.com/v1/chat/completions \
   -H "Authorization: Bearer $OPENAI_API_KEY" \
   -H "Content-Type: application/json" \
   --silent \
   --max-time $timeout \
-  -d '{"model": "gpt-3.5-turbo-0301", "messages": [{"role": "user", "content": $args}]}'
+  -d '{"model": "$model", "messages": [{"role": "user", "content": "$args"}], "temperature": 0.7}'
 EOF
-  printf "%s" "$request"
+  printf "%b" "$request"
 }
 
 # Command line access to the ChatGPT API
-needs curl # this call is outside the function so that it can be mocked properly
-
 ask() {
+  needs curl
   needs jq
   needs glow see https://github.com/charmbracelet/glow
-  local response response_parsed args
-  request=$(_generate_curl_api_request_for_ask "$*")
-# printf "request: %s\n" "$request" >&2
+  local request response response_parsed args
+  request=$(_generate_curl_api_request_for_ask "$@")
   response=$(eval "$request")
+# printf "request: %s\n" "$request" >&2
+# printf "response: %s\n" "$response" >&2
+  # response=$(eval "$request")
   # response="bogus"
 # printf "response: %s\n" "$response" >&2
   response_parsed=$(printf "%s" "$response" | jq --raw-output '.choices[0].message.content')
@@ -61,7 +65,7 @@ shopt -q extglob && extglob_set=true || extglob_set=false
 shopt -s extglob
 
 # mock out curl
-curl() {
+mocked_curl() {
   case "$1" in
   ?(What is the connection between)*)
     cat <<EOF | trim_leading_heredoc_whitespace | collapse_whitespace_containing_newline_to_single_space
@@ -84,9 +88,12 @@ EOF
   esac
 }
 
-# assert "$(ltrim "$(ask 'What is the connection between "The Last Question" and "The Last Answer" by Isaac Asimov?')" | head -n1)" =~ "connection"
+# TESTS
+resp=$(CURL=mocked_curl ask What is the connection between "The Last Question" and "The Last Answer" by Isaac Asimov?)
+# echo "response in test: $resp"
+assert "$resp" =~ "connection"
 
 # TEST TEARDOWN
-unset -f curl # unmock curl
+unset -f mocked_curl # unmock curl
 $extglob_set || shopt -u extglob # restore extglob setting
 unset extglob_set
