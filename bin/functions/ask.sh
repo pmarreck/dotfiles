@@ -58,23 +58,25 @@ ask() {
 source_relative_once bin/functions/datetimestamp.bash
 # Uses the OpenAI image generation API to generate an image from a prompt
 # and output it to the terminal via the sixel protocol.
-ask_img() {
+# Example usage: imagine a cow jumping over the moon
+imagine() {
   needs convert Please install ImageCraptastick I mean ImageMagick
-  local prompt geometry create_img url rand_num stamp
+  local prompt geometry create_img url rand_num stamp filename
   prompt="$@"
   geometry=${GEOMETRY:-512x512} # options: 256x256, 512x512, or 1024x1024
   create_img=$(curl https://api.openai.com/v1/images/generations -s \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $OPENAI_API_KEY" \
-  -d "{\"prompt\": \"$prompt\", \"n\": 1, \"size\": \"1024x1024\"}"
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer $OPENAI_API_KEY" \
+    -d "{\"prompt\": \"$prompt\", \"n\": 1, \"size\": \"$geometry\"}"
   )
   (( DEBUG )) && echo $create_img | jq
   url=$(echo $create_img | jq -r '.data[0].url')
   # rand_num=$(shuf -i 1-1000000 -n 1)
   stamp=$(DATETIMESTAMPFORMAT="+%Y%m%d%H%M%S%N" datetimestamp)
-  curl -s $url -o "/tmp/img-${stamp}.png"
-  convert "/tmp/img-${stamp}.png" -geometry $geometry sixel:-
-  echo "This image is currently stored temporarily at: /tmp/img-${stamp}.png"
+  filename=$(mktemp -t "img-${stamp}-XXXX" --suffix .png)
+  curl -s $url -o "$filename"
+  convert "$filename" -geometry $geometry sixel:-
+  echo "This image is currently stored temporarily at: $filename"
 }
 
 # IMPORTANT!
