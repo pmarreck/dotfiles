@@ -1,11 +1,13 @@
-local wezterm = require 'wezterm';
+local wezterm = require 'wezterm'
 -- see color schemes with examples at https://wezfurlong.org/wezterm/colorschemes/index.html
 local scheme = wezterm.get_builtin_color_schemes()["Cobalt2"]
 -- overrides
 scheme.scrollbar_thumb = "#aaa"
 
-return {
+local config = {
   check_for_updates = false,
+  initial_rows = 40,
+  initial_cols = 100,
   font = wezterm.font("Berkeley Mono"),
   harfbuzz_features = { 'calt=1', 'clig=1', 'liga=1' },
   color_schemes = {
@@ -17,7 +19,7 @@ return {
   use_fancy_tab_bar = true,
   hide_tab_bar_if_only_one_tab = true,
   enable_scroll_bar = true,
-  scrollback_lines = 1000000,
+  scrollback_lines = 10000000,
   -- https://wezfurlong.org/wezterm/config/lua/config/window_frame.html
   window_frame = {
     inactive_titlebar_bg = "#353535",
@@ -34,12 +36,14 @@ return {
   -- https://wezfurlong.org/wezterm/config/lua/config/window_padding.html
   window_padding = {
     left = "1cell",
-    right = "1.5cell",
+    right = "1cell",
     top = "0.5cell",
     bottom = "0.5cell",
   },
   -- https://wezfurlong.org/wezterm/config/lua/config/window_close_confirmation.html
   window_close_confirmation = "NeverPrompt",
+  -- https://wezfurlong.org/wezterm/config/lua/config/window_decorations.html
+  window_decorations = "RESIZE",
   -- https://github.com/wez/wezterm/discussions/2426 plus modifications by me
   keys = {
     {
@@ -63,5 +67,17 @@ return {
     },
     { key = 'c', mods = 'ALT', action = wezterm.action.CopyTo 'ClipboardAndPrimarySelection' },
     { key = 'v', mods = 'ALT', action = wezterm.action.PasteFrom 'Clipboard' },
+    -- ctrl-backspace does what ctrl-u does, clears an entire input line
+    { key = 'Backspace', mods = 'CTRL', action = wezterm.action.SendKey{ key='u', mods='CTRL'}},
   },
 }
+
+for _, gpu in ipairs(wezterm.gui.enumerate_gpus()) do
+  if gpu.backend == 'Vulkan' then -- and gpu.device_type == 'Integrated' then
+    config.webgpu_preferred_adapter = gpu
+    config.front_end = 'WebGpu'
+    break
+  end
+end
+
+return config

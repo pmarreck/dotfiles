@@ -244,6 +244,8 @@ source_relative_once bin/functions/notify.sh
 
 source_relative_once bin/functions/ff_fast_find.sh
 
+source_relative_once bin/functions/git_commit_ai.bash
+
 source_relative_once bin/functions/Time.now.to_f.sh
 
 source_relative_once bin/functions/note_time_diff.sh
