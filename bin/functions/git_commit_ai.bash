@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 
-git_commit_ai() {
-  if ! defined? OPENAI_API_KEY; then
+function git_commit_ai() {
+  if [[ -z "$OPENAI_API_KEY" ]]; then
     echo "OPENAI_API_KEY is not defined." >&2
     return 1
   fi
-  local model request response timeout diff temp_json message
+
+  local model request response timeout diff temp_json message http_status
   diff=$(git diff)
   if [[ -z "$diff" ]]; then
     diff=$(git diff --cached)
@@ -14,9 +15,12 @@ git_commit_ai() {
     echo "No changes to commit." >&2
     return 1
   fi
-  model=${ASK_MODEL:-gpt-3.5-turbo-0301};
+
+  model=${ASK_MODEL:-gpt-3.5-turbo-0301}
   timeout=${ASK_TIMEOUT:-15}
-  temp_json=$(mktemp)
+  temp_json=$(mktemp -t git_commit_ai.XXXXXX --tmpdir)
+  trap 'rm -f "$temp_json"' EXIT # ensure temp file is cleaned up on exit
+
   jq -n --arg model "$model" --arg diff "$diff" '{
     model: $model,
     messages: [
@@ -28,15 +32,23 @@ git_commit_ai() {
     stop: null,
     temperature: 0.7
   }' > "$temp_json"
-  response=$(curl -s -X POST https://api.openai.com/v1/chat/completions \
+
+  http_status=$(curl -w "%{http_code}" -s -o "$temp_json" -X POST https://api.openai.com/v1/chat/completions \
     -H "Content-Type: application/json" \
     -H "Authorization: Bearer $OPENAI_API_KEY" \
     --silent \
     --max-time "$timeout" \
     -d "@$temp_json")
-  response=$(printf '%s' "$response" | jq -r '.choices[0].message.content' | sed 's/^[ \t]*//;s/[ \t]*$//')
+
+  if [[ "$http_status" -ne 200 ]]; then
+    echo "Error: API request failed with status code $http_status." >&2
+    echo "Response:" >&2
+    cat "$temp_json" >&2
+    return 1
+  fi
+
+  response=$(jq -r '.choices[0].message.content' < "$temp_json" | sed 's/^[ \t]*//;s/[ \t]*$//')
   message=$response
-  [ -f "$temp_json" ] && rm "$temp_json"
 
   if [[ "$(uname)" == "Darwin" ]]; then
     echo -n "git commit -m \"$message\"" | pbcopy
@@ -47,4 +59,5 @@ git_commit_ai() {
   echo "Commit command copied to clipboard:"
   echo "git commit -m \"$message\""
 }
+
 alias gcai=git_commit_ai
