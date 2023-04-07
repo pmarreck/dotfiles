@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 
 git_commit_ai() {
+  if ! defined? OPENAI_API_KEY; then
+    echo "OPENAI_API_KEY is not defined." >&2
+    return 1
+  fi
   local model request response timeout diff temp_json message
   diff=$(git diff)
   if [[ -z "$diff" ]]; then
@@ -43,4 +47,4 @@ git_commit_ai() {
   echo "Commit command copied to clipboard:"
   echo "git commit -m \"$message\""
 }
-alias gc_ai=git_commit_ai
+alias gcai=git_commit_ai
