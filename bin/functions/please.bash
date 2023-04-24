@@ -49,7 +49,12 @@ please() {
     printf "%b\n" "$response_parsed"
   else
     response_parsed_cleaned=$(printf "%s" "$response_parsed" | sed -e 's/^[\\n]\+//' -e 's/^[\n]\+//')
-    printf "\e[0;33m%s\n\e[m" "$response_parsed_cleaned" >&2
-    printf "%s" "$response_parsed_cleaned" | bash
+    if gum confirm --affirmative="Run it" --negative="GTFO" "$response_parsed_cleaned"; then
+      printf "\e[0;33m%s\n\e[m" "$response_parsed_cleaned" >&2
+      printf "%s" "$response_parsed_cleaned" | bash
+    else
+      printf "%s" "Aborted."
+      return 1
+    fi
   fi
 }
