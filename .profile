@@ -144,6 +144,10 @@ source_relative_once bin/functions/clock.bash
 
 source_relative_once bin/functions/weather.bash
 
+source_relative_once bin/functions/list_all_executables_on_PATH.sh
+
+source_relative_once bin/functions/please.bash
+
 # crypto market data. can pass a symbol in or just get the current overall market data
 crypto() {
   curl rate.sx/$1
@@ -158,6 +162,15 @@ lnwtf() {
 
 up() {
   uptime | awk '{split($0,a,"  up ");split(a[2],b,", ");print"["b[1]", "b[2]"]"}'
+}
+
+# browse a CSV file as a scrollable table
+csv() {
+  if [ -e "$1" ]; then
+    column -s, -t < $1 | less -#2 -N -S --header 1
+  else
+    echo "File argument nonexistent or file not found" >&2
+  fi
 }
 
 source_relative_once bin/functions/otp_version.sh

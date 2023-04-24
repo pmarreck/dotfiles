@@ -14,8 +14,8 @@ _generate_curl_api_request_for_ask() {
   needs jq
   local request args timeout model curl
   curl=${CURL:-curl}
-  model=${ASK_MODEL:-gpt-3.5-turbo-0301} # other options: gpt-4
-  timeout=${ASK_TIMEOUT:-15}
+  model=${OPENAI_MODEL:-gpt-3.5-turbo-0301} # other options: gpt-4, gpt-4-0314, gpt-4-32k, gpt-4-32k-0314, gpt-3.5-turbo, gpt-3.5-turbo-0301
+  timeout=${OPENAI_TIMEOUT:-15}
   args="$@"
   args=$(printf "%b" "$args" | sed "s/'/'\\\\''/g") # This is just a narsty sed to escape single quotes.
   # (Piping to "jq -sRr '@json'" was not working correctly, so I had to take control of the escaping myself.)
@@ -41,9 +41,6 @@ ask() {
   request=$(_generate_curl_api_request_for_ask "$@")
   response=$(eval "$request")
 # printf "request: %s\n" "$request" >&2
-# printf "response: %s\n" "$response" >&2
-  # response=$(eval "$request")
-  # response="bogus"
 # printf "response: %s\n" "$response" >&2
   response_parsed=$(printf "%s" "$response" | jq --raw-output '.choices[0].message.content')
   if [[ "$response_parsed" == "null" || "$?" != "0" ]]; then
