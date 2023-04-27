@@ -274,6 +274,11 @@ source_relative_once bin/functions/repeat_command.bash
 # command prompt
 $INTERACTIVE_SHELL && source ~/.commandpromptconfig
 
+# Pull in path configuration AGAIN because macos keeps mangling it
+# (also did it in .bashrc)
+$DEBUG_SHELLCONFIG && $INTERACTIVE_SHELL && echo -n "from $me: "
+source ~/.pathconfig
+
 # silliness
 
 inthebeginning() {

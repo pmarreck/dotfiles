@@ -6,26 +6,27 @@ $DEBUG_SHELLCONFIG && $INTERACTIVE_SHELL && echo "Running .pathconfig" || echo -
 
 # function to prepend paths in an idempotent way
 prepend_path() {
-    # $1: path variable name
-    # $2: path to prepend
-    # ensure both arguments are set
-    if [ -z "$1" ] || [ -z "$2" ]; then
-        echo "usage: prepend_path <name_of_path_var> <path_to_prepend>" >&2
-        return 1
-    fi
-    # ${1} is, for example, "PATH"
-    # ${!1} is the value of PATH (dereferenced)
-    local temp_path=${!1}
-    # remove any duplicate entries
-    temp_path="${temp_path//$2/}"
-    # replace any double colons with single ones
-    temp_path="${temp_path//::/:}"
-    # prepend the new entry
-    temp_path="$2:$temp_path"
-    # strip any trailing colons
-    temp_path="${temp_path%:}"
-    # export the final result
-    export ${1}="$temp_path"
+  # $1: path variable name
+  # $2: path to prepend
+  # ensure both arguments are set
+  if [ -z "$1" ] || [ -z "$2" ]; then
+    echo "prepend_path lets you prepend a path after gsubbing it out first."
+    echo "Usage: prepend_path <name_of_path_var> <path_to_prepend>" >&2
+    return 1
+  fi
+  # ${1} is, for example, "PATH"
+  # ${!1} is the value of PATH (dereferenced)
+  local temp_path=${!1}
+  # remove any duplicate entries
+  temp_path="${temp_path//$2/}"
+  # prepend the new entry
+  temp_path="$2:$temp_path"
+  # replace any resulting double colons with single ones
+  temp_path="${temp_path//::/:}"
+  # strip any trailing colons
+  temp_path="${temp_path%:}"
+  # export the final result
+  export ${1}="$temp_path"
 }
 
 # Add Python installed scripts to front of PATH
@@ -71,16 +72,17 @@ prepend_path PATH $HOME/Scripts
     # prepend_path LD_LIBRARY_PATH $HOME/.linuxbrew/lib
 # elif
 if [ "$PLATFORM" = "osx" ]; then
-    prepend_path PATH /opt/homebrew/bin
-    prepend_path PATH /opt/homebrew/sbin
-    # add homebrew llvm in front of apple llvm
-    prepend_path PATH /opt/homebrew/opt/llvm/bin
-    # python utils from homebrew, may need to tweak version
-    prepend_path PATH /opt/homebrew/opt/python@3.9/libexec/bin
-    # GNU utils from homebrew
-    prepend_path PATH /opt/homebrew/opt/coreutils/libexec/gnubin
-    # I don't know why gnu awk is stored separately?
-    prepend_path PATH /opt/homebrew/opt/gawk/libexec/gnubin
+  prepend_path PATH /opt/homebrew/bin
+  prepend_path PATH /opt/homebrew/sbin
+  prepend_path PATH /opt/homebrew/opt/curl/bin
+  # add homebrew llvm in front of apple llvm
+  prepend_path PATH /opt/homebrew/opt/llvm/bin
+  # python utils from homebrew, may need to tweak version
+  prepend_path PATH /opt/homebrew/opt/python@3.9/libexec/bin
+  # GNU utils from homebrew
+  prepend_path PATH /opt/homebrew/opt/coreutils/libexec/gnubin
+  # I don't know why gnu awk is stored separately?
+  prepend_path PATH /opt/homebrew/opt/gawk/libexec/gnubin
 fi
 
 # rust/cargo
@@ -89,8 +91,15 @@ prepend_path PATH $HOME/.cargo/bin
 # Nix
 # Prefer Nix stuff to both system and homebrew
 if [ "$PLATFORM" = "osx" ]; then
-    prepend_path PATH /nix/var/nix/profiles/default/bin
-    prepend_path PATH $HOME/.nix-profile/bin
+  # idempotent nix config that every macos update seems to need
+  # (it checks if it's already been run before and returns if so)
+  if [ -e '/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh' ]; then
+    source '/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh'
+  fi
+  # now since it simply added it to the front without checking if it was already in PATH,
+  # we have to redo its PATH edits to make sure it's only there once
+  prepend_path PATH /nix/var/nix/profiles/default/bin
+  prepend_path PATH $HOME/.nix-profile/bin
 fi
 
 # BINSTUBS
