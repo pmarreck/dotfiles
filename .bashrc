@@ -15,13 +15,13 @@ esac
 export LOGIN_SHELL=${LOGIN_SHELL:-true};
 
 if $INTERACTIVE_SHELL; then
-  echo -n "i"
+  printf "i"
 fi
 if $LOGIN_SHELL; then
-  echo -n "l"
+  printf "l"
 fi
 
-$DEBUG_SHELLCONFIG && $INTERACTIVE_SHELL && echo "Running .bashrc" || echo -n "#"
+$DEBUG_SHELLCONFIG && $INTERACTIVE_SHELL && echo "Running .bashrc" || printf "#"
 
 # User configuration
 # export MANPATH="/usr/local/man:$MANPATH"
@@ -97,7 +97,7 @@ me() {
 }
 
 # Pull in path configuration
-$DEBUG_SHELLCONFIG && $INTERACTIVE_SHELL && echo -n "from $me: "
+$DEBUG_SHELLCONFIG && $INTERACTIVE_SHELL && printf "from $(me): "
 source ~/.pathconfig
 
 # rust cargo hook and related environment dependencies
@@ -113,10 +113,10 @@ eval "$(direnv hook bash)"
 needs delta cargo install git-delta
 
 # environment vars config
-$DEBUG_SHELLCONFIG && $INTERACTIVE_SHELL && echo -n "from $me: "
+$DEBUG_SHELLCONFIG && $INTERACTIVE_SHELL && printf "from $(me): "
 source ~/.envconfig
 
-$DEBUG_SHELLCONFIG && [[ -s "$HOME/.profile" ]] && $INTERACTIVE_SHELL && echo -n "from $me: "
+$DEBUG_SHELLCONFIG && [[ -s "$HOME/.profile" ]] && $INTERACTIVE_SHELL && printf "from $(me): "
 [[ -s "$HOME/.profile" ]] && source "$HOME/.profile" # Load the default .profile
 
 

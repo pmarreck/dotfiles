@@ -1,5 +1,7 @@
-#!/usr/bin/env bash
-$DEBUG_SHELLCONFIG && $INTERACTIVE_SHELL && echo "Running .profile" || echo -n "#"
+#!/bin/sh
+# .profile must remain POSIX-compliant, use shellcheck to verify
+
+$DEBUG_SHELLCONFIG && $INTERACTIVE_SHELL && echo "Running .profile" || printf "#"
 
 $INTERACTIVE_SHELL && echo " Platform: $PLATFORM"
 
@@ -8,46 +10,46 @@ $INTERACTIVE_SHELL && echo " Platform: $PLATFORM"
 
 # source a file relative to the current file
 source_relative() {
-  local temp_path dir_name
-  dir_name="$(dirname "${BASH_SOURCE[0]}" )"
-  temp_path="$(cd "$dir_name" && pwd )"
+  # _dir_name=`dirname "$0"` # doesn't work reliably
+  _dir_name=`dirname "${BASH_SOURCE[0]}"` # works in bash but not POSIX compliant sh
+  _temp_path=`cd "$_dir_name" && pwd`
   # $_TRACE_SOURCING && echo "Sourcing $temp_path/$1" >&2
-  source "$temp_path/$1"
+  . "$_temp_path/$1"
+  unset _dir_name _temp_path
 }
-
-# Define a variable to store previously-sourced files
-declare -ga _sourced_files
-_sourced_files=()
-export _sourced_files
 
 # Define the source_relative_once function
 source_relative_once() {
-  local file="$1"
-  
+  _file="$1"
   # Get the directory of the currently executing script
-  local dir=$(dirname "${BASH_SOURCE[0]}")
+  # _dir=`dirname "$0"` # doesn't work reliably
+  _dir=`dirname "${BASH_SOURCE[0]}"` # works in bash but not POSIX compliant sh
   
   # Convert the relative path to an absolute path
-  local abs_path="$dir/$file"
-  abs_path=$(realpath "$abs_path")
+  _abs_path="$_dir/$_file"
+  _abs_dirname=`dirname "$_abs_path"`
+  _abs_dirname=`cd "$_abs_dirname" && pwd`
+  _abs_filename=`basename "$_abs_path"`
+  _abs_path="$_abs_dirname/$_abs_filename"
 
-  if ! [[ -e "$abs_path" ]]; then
-    echo "Error in source_relative_once: could not find file $abs_path" >&2
+  if [ ! -e "$_abs_path" ]; then
+    echo "Error in source_relative_once: could not find file $_abs_path" >&2
     return
   fi
 
   # Check if the file has already been sourced
-  if [[ "${_sourced_files[@]}" =~ "${abs_path}" ]]; then
+  if echo " ${_sourced_files} " | grep -q " ${_abs_path} "; then
     # $_TRACE_SOURCING && echo "Already sourced $abs_path" >&2
     return
   fi
-  # $_TRACE_SOURCING && local _debug_id=$RANDOM
+  # $_TRACE_SOURCING && _debug_id=$RANDOM
   # If the file hasn't been sourced yet, source it and add it to the list of sourced files
   # $_TRACE_SOURCING && echo "$_debug_id Sourcing (once?) $abs_path" >&2
-  _sourced_files+=("$abs_path")
-  # $_TRACE_SOURCING && echo "$_debug_id prior to sourcing, _sourced_files is now ${_sourced_files[@]}" >&2
-  source "$abs_path"
-  # $_TRACE_SOURCING && echo "$_debug_id _sourced_files is now ${_sourced_files[@]}" >&2
+  # $_TRACE_SOURCING && echo "$_debug_id prior to sourcing, _sourced_files is now ${_sourced_files}" >&2
+  . "$_abs_path" && _sourced_files="$_sourced_files $_abs_path"
+  # $_TRACE_SOURCING && echo "$_debug_id _sourced_files is now ${_sourced_files}" >&2
+  unset _file _dir _abs_path
+  # $_TRACE_SOURCING && unset _debug_id
 }
 
 source_relative_once bin/functions/utility_functions.bash
@@ -55,7 +57,7 @@ source_relative_once bin/functions/binhex.bash
 
 # config for Visual Studio Code
 if [ "$PLATFORM" = "osx" ]; then
-  code () { VSCODE_CWD="$PWD" open -n -b com.microsoft.VSCode --args $* ;}
+  code () { VSCODE_CWD="$PWD" open -n -b com.microsoft.VSCode --args "$*" ;}
   pipeable_code () { VSCODE_CWD="$PWD" open -n -b com.microsoft.VSCode -f ;}
   export PIPEABLE_EDITOR='pipeable_code'
 fi
@@ -82,7 +84,7 @@ if [ "${PLATFORM}" = "linux" ]; then
 fi
 
 # provide a universal "open" on linux to open a path in the file manager
-if [ "$PLATFORM" = "linux" ]; then
+if [ "${PLATFORM}" = "linux" ]; then
   open() {
     # if no args, open current dir
     xdg-open "${1:-.}"
@@ -157,7 +159,7 @@ crypto() {
 lnwtf() {
   echo 'ln -s path_of_thing_to_link_to [name_of_link]'
   echo '(If you omit the latter, it puts a basename-named link in the current directory)'
-  echo "This function is defined in $BASH_SOURCE"
+  echo "This function is defined in $0"
 }
 
 up() {
@@ -167,7 +169,7 @@ up() {
 # browse a CSV file as a scrollable table
 csv() {
   if [ -e "$1" ]; then
-    column -s, -t < $1 | less -#2 -N -S --header 1
+    column -s, -t < "$1" | less -#2 -N -S --header 1
   else
     echo "File argument nonexistent or file not found" >&2
   fi
@@ -272,35 +274,47 @@ source_relative_once bin/functions/roll_a_die.sh
 source_relative_once bin/functions/repeat_command.bash
 
 # command prompt
-$INTERACTIVE_SHELL && source ~/.commandpromptconfig
+$INTERACTIVE_SHELL && . $HOME/.commandpromptconfig
 
 # Pull in path configuration AGAIN because macos keeps mangling it
 # (also did it in .bashrc)
-$DEBUG_SHELLCONFIG && $INTERACTIVE_SHELL && echo -n "from $me: "
-source ~/.pathconfig
+$DEBUG_SHELLCONFIG && $INTERACTIVE_SHELL && echo "from $(me): "
+. $HOME/.pathconfig
 
 # silliness
 
 inthebeginning() {
-  needs convert please install imagemagick && convert $HOME/inthebeginning.jpg -geometry 400x240 sixel:-
+  needs convert please install imagemagick && convert "$HOME/inthebeginning.jpg" -geometry 400x240 sixel:-
 }
 
-if $INTERACTIVE_SHELL; then
+if [ "$INTERACTIVE_SHELL" = "true" ]; then
   fun_intro() {
-    local fun_things=(
-      "fortune"
-      "inthebeginning"
-      "warhammer_quote"
-      "chuck" # of the norris variety
-      "mandelbrot"
-      "asciidragon"
-    )
-    local _idx=$(( RANDOM % ${#fun_things[@]} ))
-    if type -t ${fun_things[$_idx]} &>/dev/null; then
-      eval "${fun_things[$_idx]}"
+    _fun_things="fortune inthebeginning warhammer_quote chuck mandelbrot asciidragon"
+    _count=0
+    for _item in $_fun_things; do
+      _count=$(( _count + 1 ))
+    done
+
+    _random_seed=$(date +%N)
+    _random_number=$(awk -v seed="$_random_seed" 'BEGIN { srand(seed); print int(rand() * 32768) }')
+    _idx=$(( _random_number % _count ))
+
+    _current_idx=0
+    _selected_fun_thing=""
+    for _item in $_fun_things; do
+      if [ $_current_idx -eq $_idx ]; then
+        _selected_fun_thing="$_item"
+        break
+      fi
+      _current_idx=$(( _current_idx + 1 ))
+    done
+
+    if command -v "$_selected_fun_thing" >/dev/null 2>&1; then
+      eval "$_selected_fun_thing"
     else
-      echo "Tried to call '${fun_things[$_idx]}', but it was not defined" >&2
+      echo "Tried to call '$_selected_fun_thing', but it was not defined" >&2
     fi
+    unset _fun_things _count _random_seed _random_number _idx _current_idx _selected_fun_thing _item
   }
   fun_intro
 fi
