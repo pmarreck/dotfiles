@@ -1,5 +1,6 @@
 #!/bin/sh
 # .profile must remain POSIX-compliant, use shellcheck to verify
+# There is currently 1 exception to this rule: the use of ${BASH_SOURCE[0]} in source_relative[_once]
 
 $DEBUG_SHELLCONFIG && $INTERACTIVE_SHELL && echo "Running .profile" || printf "#"
 
@@ -278,7 +279,7 @@ $INTERACTIVE_SHELL && . $HOME/.commandpromptconfig
 
 # Pull in path configuration AGAIN because macos keeps mangling it
 # (also did it in .bashrc)
-$DEBUG_SHELLCONFIG && $INTERACTIVE_SHELL && echo "from $(me): "
+$DEBUG_SHELLCONFIG && $INTERACTIVE_SHELL && echo "from $0: "
 . $HOME/.pathconfig
 
 # silliness
@@ -287,16 +288,22 @@ inthebeginning() {
   needs convert please install imagemagick && convert "$HOME/inthebeginning.jpg" -geometry 400x240 sixel:-
 }
 
+just_one_taoup() {
+  # ChatGPT4 wrote 99% of this. I preserved the conversation with it about it: https://gist.github.com/pmarreck/339fb955a74caed692b439038c9c1c9d
+  needs taoup please install taoup && \
+  taoup | awk -v seed=`date +%N` 'BEGIN{srand(seed)} /^-{3,}/{header=$0; next} !/^$/{lines[count++]=$0; headers[count-1]=header} END{randIndex=int(rand()*count); print headers[randIndex]; print lines[randIndex]}'
+}
+
 if [ "$INTERACTIVE_SHELL" = "true" ]; then
   fun_intro() {
-    _fun_things="fortune inthebeginning warhammer_quote chuck mandelbrot asciidragon"
+    _fun_things="fortune inthebeginning warhammer_quote chuck mandelbrot asciidragon just_one_taoup"
     _count=0
     for _item in $_fun_things; do
       _count=$(( _count + 1 ))
     done
 
-    _random_seed=$(date +%N)
-    _random_number=$(awk -v seed="$_random_seed" 'BEGIN { srand(seed); print int(rand() * 32768) }')
+    _random_seed=`date +%N`
+    _random_number=`awk -v seed="$_random_seed" 'BEGIN { srand(seed); print int(rand() * 32768) }'`
     _idx=$(( _random_number % _count ))
 
     _current_idx=0
