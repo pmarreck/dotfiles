@@ -27,9 +27,7 @@ restore_shellenv() {
 
 trim_leading_heredoc_whitespace() {
   # this expects heredoc contents to be piped in via stdin
-  local awk=$(command -v gawk || command -v awk)
-  [ "${PLATFORM}${awk}" == "osxawk" ] && echo "WARNING: function trim_leading_heredoc_whitespace: The awk on PATH is not GNU awk on macOS, which may cause problems" >&2
-  $awk 'BEGIN { shortest = 99999 } /^[[:space:]]+/ { match($0, /[^[:space:]]/); shortest = shortest < RSTART - 1 ? shortest : RSTART - 1 } END { OFS=""; } { gsub("^" substr($0, 1, shortest), ""); print }' 
+  $AWK 'BEGIN { shortest = 99999 } /^[[:space:]]+/ { match($0, /[^[:space:]]/); shortest = shortest < RSTART - 1 ? shortest : RSTART - 1 } END { OFS=""; } { gsub("^" substr($0, 1, shortest), ""); print }' 
 }
 
 assert "$(echo -e "  This\n  is a\n  multiline\n  string." | trim_leading_heredoc_whitespace)" == "This\nis a\nmultiline\nstring."

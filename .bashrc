@@ -67,6 +67,14 @@ else
 fi
 unset pf
 
+# using the right awk is a PITA on macOS vs. Linux so let's ensure GNU Awk everywhere
+export AWK=$(command -v gawk || command -v awk)
+is_gnu_awk=$($AWK --version | grep -q -m 1 'GNU Awk' && echo true || echo false)
+[ "${PLATFORM}${AWK}" == "osxawk" ] && \
+  [ "$is_gnu_awk" = "false" ] && \
+  echo "WARNING: The awk on PATH is not GNU Awk on macOS, which may cause problems" >&2
+
+
 # asdf config
 [[ -s "$HOME/.asdf/asdf.sh" ]] && source "$HOME/.asdf/asdf.sh"
 [[ -s "$HOME/.asdf/completions/asdf.bash" ]] && source "$HOME/.asdf/completions/asdf.bash"

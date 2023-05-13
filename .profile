@@ -164,7 +164,7 @@ lnwtf() {
 }
 
 up() {
-  uptime | awk '{split($0,a,"  up ");split(a[2],b,", ");print"["b[1]", "b[2]"]"}'
+  uptime | $AWK '{split($0,a,"  up ");split(a[2],b,", ");print"["b[1]", "b[2]"]"}'
 }
 
 # browse a CSV file as a scrollable table
@@ -291,7 +291,7 @@ inthebeginning() {
 just_one_taoup() {
   # ChatGPT4 wrote 99% of this. I preserved the conversation with it about it: https://gist.github.com/pmarreck/339fb955a74caed692b439038c9c1c9d
   needs taoup please install taoup && \
-  taoup | awk -v seed=`date +%N` 'BEGIN{srand(seed)} /^-{3,}/{header=$0; next} !/^$/{lines[count++]=$0; headers[count-1]=header} END{randIndex=int(rand()*count); print headers[randIndex]; print lines[randIndex]}'
+  taoup | $AWK -v seed=`date +%N` 'BEGIN{srand(seed)} /^-{3,}/{header=$0; next} !/^$/{lines[count++]=$0; headers[count-1]=header} END{randIndex=int(rand()*count); print headers[randIndex]; print lines[randIndex]}'
 }
 
 if [ "$INTERACTIVE_SHELL" = "true" ]; then
@@ -303,7 +303,7 @@ if [ "$INTERACTIVE_SHELL" = "true" ]; then
     done
 
     _random_seed=`date +%N`
-    _random_number=`awk -v seed="$_random_seed" 'BEGIN { srand(seed); print int(rand() * 32768) }'`
+    _random_number=`$AWK -v seed="$_random_seed" 'BEGIN { srand(seed); print int(rand() * 32768) }'`
     _idx=$(( _random_number % _count ))
 
     _current_idx=0
