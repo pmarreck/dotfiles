@@ -47,6 +47,9 @@ export SSH_KEY_PATH="~/.ssh/id_ed25519"
 # Guix integration
 [[ -s "$HOME/.guix-profile/etc/profile" ]] && source $HOME/.guix-profile/etc/profile
 
+# Awk-ward! (see note below about "using the right awk"...)
+export AWK=$(command -v gawk || command -v awk)
+
 # platform info
 pf="$(uname)"
 if [ "$pf" = "Darwin" ]; then
@@ -58,7 +61,7 @@ elif [ "$(expr substr $pf 1 5)" = "Linux" ]; then
   # You could also just source the file and then use the variable directly, but that pollutes the env
   export DISTRO="$(cat /etc/os-release | rg -r '$1' -o --color never '^NAME="?(.+)"?$')"
   export DISTRO_PRETTY="$(cat /etc/os-release | rg -r '$1' -o --color never '^PRETTY_NAME="?(.+)"?$')"
-  export DISTRO_VERSION="$(cat /etc/os-release | awk -F= '$1=="VERSION_ID"{gsub(/(^["]|["]$)/,"",$2);print$2}')"
+  export DISTRO_VERSION="$(cat /etc/os-release | $AWK -F= '$1=="VERSION_ID"{gsub(/(^["]|["]$)/,"",$2);print$2}')"
 elif [ "$(expr substr $pf 1 10)" = "MINGW32_NT" ]; then
   export PLATFORM="windows"
 else
@@ -68,7 +71,6 @@ fi
 unset pf
 
 # using the right awk is a PITA on macOS vs. Linux so let's ensure GNU Awk everywhere
-export AWK=$(command -v gawk || command -v awk)
 is_gnu_awk=$($AWK --version | grep -q -m 1 'GNU Awk' && echo true || echo false)
 [ "${PLATFORM}${AWK}" == "osxawk" ] && \
   [ "$is_gnu_awk" = "false" ] && \

@@ -25,9 +25,12 @@ restore_shellenv() {
   unset OLDHISTIGNORE
 }
 
+# check if the AWK environment variable is already set and if not, set it to gawk or awk
+[ -z "${AWK}" ] && export AWK=$(command -v gawk || command -v awk)
+
 trim_leading_heredoc_whitespace() {
   # this expects heredoc contents to be piped in via stdin
-  $AWK 'BEGIN { shortest = 99999 } /^[[:space:]]+/ { match($0, /[^[:space:]]/); shortest = shortest < RSTART - 1 ? shortest : RSTART - 1 } END { OFS=""; } { gsub("^" substr($0, 1, shortest), ""); print }' 
+  ${AWK:-awk} 'BEGIN { shortest = 99999 } /^[[:space:]]+/ { match($0, /[^[:space:]]/); shortest = shortest < RSTART - 1 ? shortest : RSTART - 1 } END { OFS=""; } { gsub("^" substr($0, 1, shortest), ""); print }' 
 }
 
 assert "$(echo -e "  This\n  is a\n  multiline\n  string." | trim_leading_heredoc_whitespace)" == "This\nis a\nmultiline\nstring."
