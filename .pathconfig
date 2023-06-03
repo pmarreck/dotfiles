@@ -6,27 +6,18 @@ $DEBUG_SHELLCONFIG && $INTERACTIVE_SHELL && echo "Running .pathconfig" # || prin
 
 # function to prepend paths in an idempotent way
 prepend_path() {
-  # $1: path variable name
-  # $2: path to prepend
-  # ensure both arguments are set
-  if [ -z "$1" ] || [ -z "$2" ]; then
-    echo "prepend_path lets you prepend a path after gsubbing it out first."
-    echo "Usage: prepend_path <name_of_path_var> <path_to_prepend>" >&2
-    return 1
+  local dir="${1%/}"     # discard trailing slash
+  local var="${2:-PATH}"
+  if [ -z "$dir" ]; then
+    echo "Usage: prepend_path <path_to_prepend> [name_of_path_var]" >&2
+    return 2 # incorrect usage return code, may be an informal standard
   fi
-  # ${1} is, for example, "PATH"
-  # ${!1} is the value of PATH (dereferenced)
-  local temp_path=${!1}
-  # remove any duplicate entries
-  temp_path="${temp_path//$2/}"
+  local newvalue=${!var}
+  [[ $newvalue =~ ^$dir: ]] && return # quit if value already starts with $dir
+  newvalue=${newvalue%:$dir}          # remove $dir from end of path
+  newvalue=${newvalue//:$dir:/:}      # remove $dir from middle of path
   # prepend the new entry
-  temp_path="$2:$temp_path"
-  # replace any resulting double colons with single ones
-  temp_path="${temp_path//::/:}"
-  # strip any trailing colons
-  temp_path="${temp_path%:}"
-  # export the final result
-  export ${1}="$temp_path"
+  export ${var}="$dir:$newvalue"
 }
 
 # Add Python installed scripts to front of PATH
@@ -39,11 +30,11 @@ prepend_path() {
 ## export PATH=/usr/local/Homebrew/bin:${PATH/\/usr\/local\/Homebrew\/bin:/}
 
 # gigalixir and other pip3 --user installed tools, per XDG spec
-prepend_path PATH $HOME/.local/bin
+prepend_path $HOME/.local/bin
 
 # add my Scripts bin to PATH
 # export PATH=$PATH:~/Scripts
-prepend_path PATH $HOME/Scripts
+prepend_path $HOME/Scripts
 
 # Add RVM to PATH for scripting
 # export PATH=~/.rvm/bin:${PATH/~\/.rvm\/bin:/}
@@ -67,26 +58,26 @@ prepend_path PATH $HOME/Scripts
 
 # if [ "$PLATFORM" = "linux" ]; then
 # disabled because nixos doesn't need this shite
-    # prepend_path PATH $HOME/.linuxbrew/bin
-    # prepend_path PATH $HOME/.linuxbrew/sbin
-    # prepend_path LD_LIBRARY_PATH $HOME/.linuxbrew/lib
+    # prepend_path $HOME/.linuxbrew/bin
+    # prepend_path $HOME/.linuxbrew/sbin
+    # prepend_path $HOME/.linuxbrew/lib LD_LIBRARY_PATH
 # elif
 if [ "$PLATFORM" = "osx" ]; then
-  prepend_path PATH /opt/homebrew/bin
-  prepend_path PATH /opt/homebrew/sbin
-  prepend_path PATH /opt/homebrew/opt/curl/bin
+  prepend_path /opt/homebrew/bin
+  prepend_path /opt/homebrew/sbin
+  prepend_path /opt/homebrew/opt/curl/bin
   # add homebrew llvm in front of apple llvm
-  prepend_path PATH /opt/homebrew/opt/llvm/bin
+  prepend_path /opt/homebrew/opt/llvm/bin
   # python utils from homebrew, may need to tweak version
-  prepend_path PATH /opt/homebrew/opt/python@3.9/libexec/bin
+  prepend_path /opt/homebrew/opt/python@3.9/libexec/bin
   # GNU utils from homebrew
-  prepend_path PATH /opt/homebrew/opt/coreutils/libexec/gnubin
+  prepend_path /opt/homebrew/opt/coreutils/libexec/gnubin
   # I don't know why gnu awk is stored separately?
-  prepend_path PATH /opt/homebrew/opt/gawk/libexec/gnubin
+  prepend_path /opt/homebrew/opt/gawk/libexec/gnubin
 fi
 
 # rust/cargo
-prepend_path PATH $HOME/.cargo/bin
+prepend_path $HOME/.cargo/bin
 
 # Nix
 # Prefer Nix stuff to both system and homebrew
@@ -98,17 +89,17 @@ if [ "$PLATFORM" = "osx" ]; then
   fi
   # now since it simply added it to the front without checking if it was already in PATH,
   # we have to redo its PATH edits to make sure it's only there once
-  prepend_path PATH /nix/var/nix/profiles/default/bin
-  prepend_path PATH $HOME/.nix-profile/bin
+  prepend_path /nix/var/nix/profiles/default/bin
+  prepend_path $HOME/.nix-profile/bin
 fi
 
 # BINSTUBS
 # add binstub to front of PATH which overrides everything
 # aaaand disabled for security and buggy reasons
-# prepend_path PATH ./bin
+# prepend_path ./bin
 
 # add my user bin to PATH
 # export PATH=$PATH:~/bin
-prepend_path PATH $HOME/bin
+prepend_path $HOME/bin
 
 # echo "PATH after config is $PATH"
