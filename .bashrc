@@ -32,8 +32,10 @@ export LANG=en_US.UTF-8
 # Preferred editor for local and remote sessions
 if [[ -n $SSH_CONNECTION ]]; then
   export EDITOR='nano'
+  unset VISUAL
 else
   export EDITOR='code'
+  export VISUAL='code'
 fi
 
 # Compilation flags

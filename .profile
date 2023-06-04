@@ -82,14 +82,23 @@ source_relative_once bin/aliases.sh
 # Linux-specific stuff
 if [ "${PLATFORM}" = "linux" ]; then
   source_relative_once bin/functions/fsattr.bash
-fi
-
-# provide a universal "open" on linux to open a path in the file manager
-if [ "${PLATFORM}" = "linux" ]; then
+  # provide a universal "open" on linux to open a path in the file manager
   open() {
     # if no args, open current dir
     xdg-open "${1:-.}"
   }
+  # list network interface names. Why is this so hard on linux?
+  list-nics() {
+    # ip -o link show | awk -F': ' '{print $2}' | sed 's/@.*//'
+    # the above was missing altnames.
+    # this is a bit hacky but there are many ways to skin this cat
+    ip link show | $AWK '{print $2}' | sed 's/://' | grep -E '^(lo|en|wl)'
+  }
+  # list processes with optional filter argument
+  list-procs() {
+    PS_PERSONALITY=linux ps -ewwo pid,%cpu,%mem,nice,pri,rtprio,args --sort=-pcpu,-pid | awk -v filter="$1" 'NR==1 || tolower($0) ~ tolower(filter)' | less -e --header=1
+  }
+  alias procs=list-procs
 fi
 
 source_relative_once bin/functions/nvidia.bash
