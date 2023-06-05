@@ -8,7 +8,7 @@ needs() {
   command -v "$bin" >/dev/null 2>&1 || { echo >&2 "I require $bin but it's not installed or in PATH; $*"; return 1; }
 }
 
-source_relative bin/functions/assert.bash
+source_relative_once bin/functions/assert.bash
 
 # the following utility functions are duplicated from tinytestlib
 save_shellenv() {

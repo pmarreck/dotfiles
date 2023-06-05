@@ -9,50 +9,6 @@ $INTERACTIVE_SHELL && echo " Platform: $PLATFORM"
 # The only functions defined here should be the ones that are needed everywhere
 # and are not specific to a particular shell (e.g. bash, zsh, etc.)
 
-# source a file relative to the current file
-source_relative() {
-  # _dir_name=`dirname "$0"` # doesn't work reliably
-  _dir_name=`dirname "${BASH_SOURCE[0]}"` # works in bash but not POSIX compliant sh
-  _temp_path=`cd "$_dir_name" && pwd`
-  # $_TRACE_SOURCING && echo "Sourcing $temp_path/$1" >&2
-  . "$_temp_path/$1"
-  unset _dir_name _temp_path
-}
-
-# Define the source_relative_once function
-source_relative_once() {
-  _file="$1"
-  # Get the directory of the currently executing script
-  # _dir=`dirname "$0"` # doesn't work reliably
-  _dir=`dirname "${BASH_SOURCE[0]}"` # works in bash but not POSIX compliant sh
-  
-  # Convert the relative path to an absolute path
-  _abs_path="$_dir/$_file"
-  _abs_dirname=`dirname "$_abs_path"`
-  _abs_dirname=`cd "$_abs_dirname" && pwd`
-  _abs_filename=`basename "$_abs_path"`
-  _abs_path="$_abs_dirname/$_abs_filename"
-
-  if [ ! -e "$_abs_path" ]; then
-    echo "Error in source_relative_once: could not find file $_abs_path" >&2
-    return
-  fi
-
-  # Check if the file has already been sourced
-  if echo " ${_sourced_files} " | grep -q " ${_abs_path} "; then
-    # $_TRACE_SOURCING && echo "Already sourced $abs_path" >&2
-    return
-  fi
-  # $_TRACE_SOURCING && _debug_id=$RANDOM
-  # If the file hasn't been sourced yet, source it and add it to the list of sourced files
-  # $_TRACE_SOURCING && echo "$_debug_id Sourcing (once?) $abs_path" >&2
-  # $_TRACE_SOURCING && echo "$_debug_id prior to sourcing, _sourced_files is now ${_sourced_files}" >&2
-  . "$_abs_path" && _sourced_files="$_sourced_files $_abs_path"
-  # $_TRACE_SOURCING && echo "$_debug_id _sourced_files is now ${_sourced_files}" >&2
-  unset _file _dir _abs_path
-  # $_TRACE_SOURCING && unset _debug_id
-}
-
 source_relative_once bin/functions/utility_functions.bash
 source_relative_once bin/functions/binhex.bash
 
@@ -289,7 +245,7 @@ $INTERACTIVE_SHELL && . $HOME/.commandpromptconfig
 # Pull in path configuration AGAIN because macos keeps mangling it
 # (also did it in .bashrc)
 $DEBUG_SHELLCONFIG && $INTERACTIVE_SHELL && echo "from $0: "
-. $HOME/.pathconfig
+source_relative_once .pathconfig
 
 # silliness
 

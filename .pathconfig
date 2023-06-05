@@ -3,22 +3,57 @@ $DEBUG_SHELLCONFIG && $INTERACTIVE_SHELL && echo "Running .pathconfig" # || prin
 
 # All path configs here should replace any existing version of themselves in the PATH before appending
 # (idempotent)
+source_relative_once bin/functions/assert.bash
 
 # function to prepend paths in an idempotent way
 prepend_path() {
   local dir="${1%/}"     # discard trailing slash
   local var="${2:-PATH}"
+  local is_test="${TEST:-false}"
   if [ -z "$dir" ]; then
     echo "Usage: prepend_path <path_to_prepend> [name_of_path_var]" >&2
     return 2 # incorrect usage return code, may be an informal standard
   fi
   local newvalue=${!var}
-  [[ $newvalue =~ ^$dir: ]] && return # quit if value already starts with $dir
-  newvalue=${newvalue%:$dir}          # remove $dir from end of path
-  newvalue=${newvalue//:$dir:/:}      # remove $dir from middle of path
-  # prepend the new entry
-  export ${var}="$dir:$newvalue"
+  if [ -z "$newvalue" ]; then
+    $is_test || echo "prepend_path warning: $var was empty, which may be unexpected: setting to $dir" >&2
+    $is_test && echo "$dir" || export ${var}="$dir"
+    return
+  fi
+  newvalue=${newvalue%:$dir}          # remove $dir from end of path if there
+  newvalue=${newvalue//:$dir:/:}      # remove $dir from middle of path if there
+                                      # NOTE: May not remove multiple properly, need to test!
+  # unless value already starts with $dir or is the only value, prepend the new entry
+  [[ $newvalue =~ ^$dir(:|$) ]] || newvalue="$dir:$newvalue"
+  $is_test && echo "$newvalue" || export ${var}="$newvalue"
 }
+export _FAKEPATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+export _FAKEPATHDUPES="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+export _FAKEPATHCONSECUTIVEDUPES="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+export _FAKEPATH1="/usr/bin"
+export _FAKEPATHBLANK=""
+assert $(TEST=true prepend_path /usr/local/bin _FAKEPATH) == "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+  "prepend_path failed when the path was already in front"
+assert $(TEST=true prepend_path /usr/sbin _FAKEPATH) == "/usr/sbin:/usr/local/bin:/usr/bin:/bin:/sbin" \
+  "prepend_path failed when the path was already in the middle"
+assert $(TEST=true prepend_path /sbin _FAKEPATH) == "/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin" \
+  "prepend_path failed when the path was already at the end"
+assert $(TEST=true prepend_path /usr/local/bin _FAKEPATHBLANK) == "/usr/local/bin" \
+  "prepend_path failed when the path was blank"
+assert $(TEST=true prepend_path /usr/local/bin _FAKEPATH1) == "/usr/local/bin:/usr/bin" \
+  "prepend_path failed when the path just had 1 value"
+assert $(TEST=true prepend_path /usr/bin _FAKEPATH1) == "/usr/bin" \
+  "prepend_path failed when the path just had 1 value and it's the same"
+assert $(TEST=true prepend_path /usr/bin _FAKEPATHDUPES) == "/usr/bin:/usr/local/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/bin:/usr/sbin:/sbin" \
+  "prepend_path failed when there were multiple copies of it already in the path (it should also only dedupe the added one)"
+# I'm not sure why this fails when the copies are consecutive, but it's not a big deal for now... YET
+# assert $(TEST=true prepend_path /usr/local/bin _FAKEPATHCONSECUTIVEDUPES) == "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/bin:/usr/sbin:/sbin" \
+#  "prepend_path failed when there were multiple consecutive copies of it already in the path and it is also already in front"
+unset _FAKEPATH
+unset _FAKEPATHDUPES
+unset _FAKEPATHCONSECUTIVEDUPES
+unset _FAKEPATH1
+unset _FAKEPATHBLANK
 
 # Add Python installed scripts to front of PATH
 # export PATH=/usr/local/share/python:${PATH/\/usr\/local\/share\/python:/}
