@@ -1,4 +1,4 @@
-$DEBUG_SHELLCONFIG && $INTERACTIVE_SHELL && echo "Running .envconfig" || printf "#"
+[[ -v DEBUG_SHELLCONFIG ]] && $INTERACTIVE_SHELL && echo "Running .envconfig" || printf "#"
 
 # canonical gcc tweaks for OS X's homebrew gcc; Linux shouldn't need these
 if [ "$PLATFORM" = "osx" ]; then

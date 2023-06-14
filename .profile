@@ -2,7 +2,7 @@
 # .profile must remain POSIX-compliant, use shellcheck to verify
 # There is currently 1 exception to this rule: the use of ${BASH_SOURCE[0]} in source_relative[_once]
 
-$DEBUG_SHELLCONFIG && $INTERACTIVE_SHELL && echo "Running .profile" || printf "#"
+[ -n "$DEBUG_SHELLCONFIG" ] && $INTERACTIVE_SHELL && echo "Running .profile" || printf "#"
 
 $INTERACTIVE_SHELL && echo " Platform: $PLATFORM"
 
@@ -247,7 +247,7 @@ $INTERACTIVE_SHELL && . $HOME/.commandpromptconfig
 
 # Pull in path configuration AGAIN because macos keeps mangling it
 # (also did it in .bashrc)
-$DEBUG_SHELLCONFIG && $INTERACTIVE_SHELL && echo "from $0: "
+[ -n "$DEBUG_SHELLCONFIG" ] && $INTERACTIVE_SHELL && echo "from $0: "
 source_relative_once .pathconfig
 
 # silliness

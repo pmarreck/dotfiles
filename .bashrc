@@ -1,5 +1,9 @@
-export DEBUG_SHELLCONFIG=false
-export _TRACE_SOURCING=false
+# So for debug switches, we will check whether they are even set using [[ -v VARNAME ]]
+# because we do not want to pollute the env with the unnecessary presence of
+# debug switches that are just set to false.
+# For all other configs, just set to true/false as appropriate (but never blank!)
+# export DEBUG_SHELLCONFIG=false
+# export _TRACE_SOURCING=false
 
 # mute direnv constantly telling me what it's loading
 export DIRENV_LOG_FORMAT=
@@ -21,7 +25,7 @@ if $LOGIN_SHELL; then
   printf "l"
 fi
 
-$DEBUG_SHELLCONFIG && $INTERACTIVE_SHELL && echo "Running .bashrc" || printf "#"
+[[ -v DEBUG_SHELLCONFIG ]] && $INTERACTIVE_SHELL && echo "Running .bashrc" || printf "#"
 
 # User configuration
 # export MANPATH="/usr/local/man:$MANPATH"
@@ -112,7 +116,7 @@ me() {
 }
 
 # Pull in path configuration
-$DEBUG_SHELLCONFIG && $INTERACTIVE_SHELL && printf "from $(me): "
+[[ -v DEBUG_SHELLCONFIG ]] && $INTERACTIVE_SHELL && printf "from $(me): "
 source_relative_once .pathconfig
 
 # rust cargo hook and related environment dependencies
@@ -128,10 +132,10 @@ eval "$(direnv hook bash)"
 needs delta cargo install git-delta
 
 # environment vars config
-$DEBUG_SHELLCONFIG && $INTERACTIVE_SHELL && printf "from $(me): "
+[[ -v DEBUG_SHELLCONFIG ]] && $INTERACTIVE_SHELL && printf "from $(me): "
 source_relative_once .envconfig
 
-$DEBUG_SHELLCONFIG && [[ -s "$HOME/.profile" ]] && $INTERACTIVE_SHELL && printf "from $(me): "
+[[ -v DEBUG_SHELLCONFIG ]] && [[ -s "$HOME/.profile" ]] && $INTERACTIVE_SHELL && printf "from $(me): "
 [[ -s "$HOME/.profile" ]] && source_relative_once .profile # Load the default .profile
 
 

@@ -1,4 +1,4 @@
-$DEBUG_SHELLCONFIG && echo "Configuring command prompt via .commandpromptconfig"
+[[ -v DEBUG_SHELLCONFIG ]] && echo "Configuring command prompt via .commandpromptconfig"
 # Command prompt config
 # Depends on colors being defined as well as parse_git_branch functions
 

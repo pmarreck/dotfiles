@@ -11,7 +11,7 @@ repeat() {
   return $retcodes
 }
 
-source_relative_once bin/functions/assert.bash
+source_relative_once assert.bash
 
 assert "$(repeat 3 "echo -n \"hi \"")" == 'hi hi hi '
 # ensure return code is summed up from failed commands

@@ -52,7 +52,7 @@ ask() {
   fi
 }
 
-source_relative_once bin/functions/datetimestamp.bash
+source_relative_once datetimestamp.bash
 # Uses the OpenAI image generation API to generate an image from a prompt
 # and output it to the terminal via the sixel protocol.
 # Example usage: imagine a cow jumping over the moon
@@ -84,8 +84,8 @@ imagine() {
 
 # IMPORTANT!
 # how do we even test this function? Pass in a mocked curl somehow?
-source_relative_once bin/functions/assert.bash
-source_relative_once bin/functions/utility_functions.bash
+source_relative_once assert.bash
+source_relative_once utility_functions.bash
 
 # TEST SETUP
 shopt -q extglob && extglob_set=true || extglob_set=false

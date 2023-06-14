@@ -37,7 +37,7 @@ ff() {
   esac
 }
 
-source_relative_once bin/functions/assert.bash
+source_relative_once assert.bash
 
 # inline ff test
 _fftest() {

@@ -1,4 +1,4 @@
-source_relative_once bin/functions/binhex.bash
+source_relative_once binhex.bash
 
 # for assertions everywhere!
 # usage: assert [condition] [message]

@@ -29,7 +29,7 @@ datetimestamp() {
       ;;
   esac
 }
-source_relative_once bin/functions/assert.bash
+source_relative_once assert.bash
 
 assert "$(datetimestamp --date='@2147483640')" == 20380118221400 "datetimestamp should work as expected and pad zeroes"
 assert "$(DATETIMESTAMPFORMAT='+%Y-%m-%d %H:%M:%S' datetimestamp --date='@2147483640')" == \

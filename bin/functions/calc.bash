@@ -39,7 +39,7 @@ if needs bc ; then
     fi
     return $retcode
   }
-  source_relative_once bin/functions/assert.bash
+  source_relative_once assert.bash
 
   assert "$(calc 2*4)" == 8 "simple calculations with calc should work"
   assert "$(calc "define fac(x) { if (x == 0) return (1); return (fac(x-1) * x); }; fac(5)")" == 120 "recursive functions with calc should work"

@@ -15,7 +15,7 @@ roll_a_die() {
   echo $((1 + candidate % diesides))
 }
 
-source_relative_once bin/functions/assert.bash
+source_relative_once assert.bash
 
 assert $(RANDOM=5 roll_a_die) == "6"
 assert $(RANDOM=6 roll_a_die) == "1"
