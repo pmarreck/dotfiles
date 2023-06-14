@@ -6,6 +6,9 @@ $DEBUG_SHELLCONFIG && $INTERACTIVE_SHELL && echo "Running .profile" || printf "#
 
 $INTERACTIVE_SHELL && echo " Platform: $PLATFORM"
 
+# most things should be sourced via source_relative... except source_relative itself
+source $HOME/dotfiles/bin/functions/source_relative.bash
+
 # The only functions defined here should be the ones that are needed everywhere
 # and are not specific to a particular shell (e.g. bash, zsh, etc.)
 
