@@ -66,9 +66,10 @@ source_relative_once() {
   [ -v _TRACE_SOURCING ] && echo "source_relative_once invocation #${_debug_id}: Sourcing (once?) \"$_abs_path\"" >&2
   [ -v _TRACE_SOURCING ] && echo "source_relative_once invocation #${_debug_id}: prior to sourcing, _SOURCED_FILES is now \"${_SOURCED_FILES}\"" >&2
   if [ -z "$_SOURCED_FILES" ]; then
-    export _SOURCED_FILES="$_abs_path"
+    # So the reason why we DO NOT export this is to force reloading of all dotfiles in a new shell
+    _SOURCED_FILES="$_abs_path"
   else
-    export _SOURCED_FILES="$_abs_path $_SOURCED_FILES"
+    _SOURCED_FILES="$_abs_path $_SOURCED_FILES"
   fi
   source "$_abs_path"
   [ -v _TRACE_SOURCING ] && echo "source_relative_once invocation #${_debug_id}: after sourcing \"$_abs_path\", _SOURCED_FILES is now \"${_SOURCED_FILES}\"" >&2
