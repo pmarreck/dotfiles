@@ -23,7 +23,7 @@ alias l4='l1 --tree --level=4'
 # alias ll='ls -lagG \!* | more'
 # alias term='set noglob; unset TERMCAP; eval `tset -s -I -Q - \!*`'
 # alias rehash='hash -r'
-alias rehash='unset _SOURCED_FILES; source_relative_once .bash_profile'
+alias rehash='unset _SOURCED_FILES; source $HOME/.bashrc'
 # alias rehash='source ~/.profile'
 # alias word='grep \!* /usr/share/dict/web2' # Grep thru dictionary
 if [ "$PLATFORM" = "osx" ]; then
