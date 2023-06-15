@@ -145,3 +145,7 @@ export BASH_SILENCE_DEPRECATION_WARNING=1
 
 # steam custom proton stuff
 export STEAM_EXTRA_COMPAT_TOOLS_PATHS="$HOME/.steam/root/compatibilitytools.d"
+
+# erlang/elixir config- 2 million process limit
+# (# of schedulers is automatic to # of CPU logical cores, but can be forced with +S arg)
+export ERL_FLAGS="+P 2000000";
