@@ -2,13 +2,8 @@
 # usage: echo "peter" | binhex
 # or: binhex peter
 binhex() {
-# echo "PATH from binhex: $PATH" >&2
   if [ -z "$1" ]; then # if no arguments
-    # The following exits code 0 if stdin not empty; 1 if empty; does not consume any bytes.
-    # This may only be a Bash-ism, FYI. Not sure if it's shell-portable.
-    # read -t 0
-    # retval=${?##1} # replace 1 with blank so it falses correctly if stdin is empty
-    if read -t 0; then
+    if [ ! -t 0 ]; then
       xxd -pu  # receive piped input from stdin
     else # if stdin is empty AND no arguments
       echo "Usage: binhex <string>"
@@ -23,9 +18,7 @@ binhex() {
 # convert hex back to binary
 hexbin() {
   if [ -z "$1" ]; then # if no arguments
-    # The following exits code 0 if stdin not empty; 1 if empty; does not consume any bytes.
-    # This may only be a Bash-ism, FYI. Not sure if it's shell-portable.
-    if read -t 0; then
+    if [ ! -t 0 ]; then
       xxd -r -p   # receive piped input from stdin
     else # if stdin is empty AND no arguments
       echo "Usage: hexbin <hex string>"
@@ -36,3 +29,15 @@ hexbin() {
     printf "%b" "$1" | xxd -r -p  # pipe all arguments to xxd
   fi
 }
+
+# this is at the bottom because assert depends on binhex/hexbin
+source_relative_once assert.bash
+assert "$(binhex "Peter")" == "5065746572" "binhex function should encode binary strings to hex"
+assert "$(hexbin "5065746572")" == "Peter" "hexbin function should decode binary from hex"
+assert "$(binhex "Peter" | hexbin)" == "Peter" "hexbin function should accept a pipe"
+assert "$(hexbin "5065746572" | binhex)" == "5065746572" "binhex function should accept a pipe"
+# TODO: the following is not easy to make pass so tabled for now. just be aware of it
+# POSIX standard literally says that linefeeds after command substitution should be removed, sigh
+# Consider appending a formfeed character (\f) to plaintext or "0a" to the hex to work around this,
+# which is what I did here
+assert "$(hexbin "50657465720a0c")" == "Peter\n\f" "hexbin function shouldn't eat hex-encoded end-of-line newlines"

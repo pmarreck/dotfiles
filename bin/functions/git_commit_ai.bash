@@ -52,7 +52,7 @@ function git_commit_ai() {
 
   if [[ "$(uname)" == "Darwin" ]]; then
     echo -n "git commit -m \"$message\"" | pbcopy
-  else
+  else # assume linux if not macos
     echo -n "git commit -m \"$message\"" | xclip -selection clipboard
   fi
 

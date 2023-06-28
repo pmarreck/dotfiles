@@ -1,0 +1,42 @@
+#!/usr/bin/env -S awk -f
+
+# note: -S option is required for a shebang with args to work
+# https://stackoverflow.com/questions/4303128/how-to-have-a-shebang-with-argument-when-using-env
+# Requires GNU coreutils v8.30+ for the -S option
+
+# this script aligns output on the = signs
+# which is presumably ini-like configuration or env data
+
+# example usage:
+# $ env | align-on-equals
+# ...
+# bash> echo -e "name=value\nbiggername=biggervalue\n" | align-on-equals
+# name       = value
+# biggername = biggervalue
+
+BEGIN {
+  FS = "=" # set the field separator to "="
+  max_length = 0 # initialize the maximum key length to zero
+  kl = 0 # initialize the key length to zero
+  num_valid = 0 # initialize the number of valid lines to zero
+}
+
+{
+  kl = length($1)
+  # Skip lines where the key length is zero
+  if (kl == 0) {
+    next
+  }
+  num_valid++ # increment the number of valid lines
+  keys[NR] = $1 # store the key in an array
+  values[NR] = $2 # store the value in an array
+  if (kl > max_length) {
+    max_length = kl # update the maximum key length if necessary
+  }
+}
+
+END {
+  for (i = 1; i <= num_valid; i++) {
+    printf("%-" max_length "s = %s\n", keys[i], values[i]) # use printf to format the output
+  }
+}

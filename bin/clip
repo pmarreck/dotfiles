@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+
+if [[ "$(uname)" == "Darwin" ]]; then
+  clip() {
+    [ -t 0 ] && pbpaste || pbcopy
+  }
+else # assume linux if not macos
+  clip() {
+    [ -t 0 ] && xclip -o -selection clipboard || xclip -selection clipboard
+  }
+fi
+
+export -f clip
+
+# Run the function, passing along any args, if this file was run directly (such as via sudo) instead of as an include
+# Sometimes, $0 contains a leading dash to indicate an interactive (or is it login?) shell,
+# which is apparently an old convention (which also broke the basename call on OS X)
+_me=$(basename "${0##\-}")
+if [ "$_me" = "clip" ]; then
+  $_me "$@"
+fi
+unset _me

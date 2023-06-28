@@ -105,9 +105,12 @@ fi
 # graceful dependency enforcement
 # Usage: needs <executable> ["provided by <packagename>"]
 needs() {
-  local bin=$1
-  shift
-  command -v $bin >/dev/null 2>&1 || { echo >&2 "I require $bin but it's not installed or in PATH; $*"; return 1; }
+	local bin=$1
+	shift
+	command -v $bin >/dev/null 2>&1 || {
+		printf "%s is required but it's not installed or in PATH; %s\n" "$bin" "$*" >&2
+		return 1
+	}
 }
 
 # who am I? (should work even when sourced from elsewhere, but only in Bash)

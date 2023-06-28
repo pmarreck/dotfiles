@@ -140,11 +140,18 @@ warn() {
 # prompt for set -x output
 export PS4='$0:$LINENO+ '
 
-# shut up, macos
-export BASH_SILENCE_DEPRECATION_WARNING=1
+# shut up, macos, zsh isn't significantly better enough than bash to warrant switching
+# (If this is unset on macos, it will keep reminding you to switch to zsh)
+if [ "$PLATFORM" = "osx" ]; then
+  export BASH_SILENCE_DEPRECATION_WARNING=1
+fi
 
-# steam custom proton stuff
-export STEAM_EXTRA_COMPAT_TOOLS_PATHS="$HOME/.steam/root/compatibilitytools.d"
+# steam custom proton stuff, but only on linux
+if [ "$PLATFORM" = "linux" ]; then
+  export STEAM_COMPAT_DATA_PATH="$HOME/.steam/steam/steamapps/compatdata"
+  export STEAM_COMPAT_CLIENT_INSTALL_PATH="$HOME/.steam/root"
+  export STEAM_EXTRA_COMPAT_TOOLS_PATHS="$HOME/.steam/root/compatibilitytools.d"
+fi
 
 # erlang/elixir config- 2 million process limit
 # (# of schedulers is automatic to # of CPU logical cores, but can be forced with +S arg)

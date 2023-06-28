@@ -8,7 +8,7 @@ source_relative_once bin/functions/assert.bash
 # function to prepend paths in an idempotent way
 prepend_path() {
   function docs() {
-    echo "Usage: prepend_path [-o|-h|--help] <path_to_prepend> [name_of_path_var]" >&2
+    echo "Usage: prepend_path [-o|-h|--help] <path_to_prepend> [name_of_path_var, defaults to PATH]" >&2
     echo "Setting -o will print the new path to stdout instead of exporting it" >&2
   }
   local stdout=false

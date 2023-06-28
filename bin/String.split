@@ -1,31 +1,33 @@
 #!/usr/bin/env bash
+
 String.split() {
   # peek at stdin to see if it's not empty
   if read -r -t0; then # fyi: -t0 trick to not consume but peek is not POSIX
     # echo "There is stdin"
     # read from stdin and split on first argument
     # default to splitting on default IFS which is space, tab, newline
-    local sep=${1:-$IFS}
+    local sep="${1:-$IFS}"
     IFS="$sep" read -ra ADDR
     for i in "${ADDR[@]}"; do
-      printf "%s" "$i\n"
+      printf "%s\n" "$i"
     done
   else
     # echo "There is no stdin"
     # read input from 1st argument and split on 2nd argument
     # default to splitting on default IFS which is space, tab, newline
-    local sep=${2:-$IFS}
+    local sep="${2:-$IFS}"
     IFS="$sep" read -ra ADDR <<< "$1"
     for i in "${ADDR[@]}"; do
-      printf "%s" "$i\n"
+      printf "%s\n" "$i"
     done
   fi
 }
 
-# run the function, passing along any args, if this file was run directly (such as via sudo) instead of as an include
-# sometimes, $0 contains a leading dash to indicate an interactive (or is it login?) shell,
+# Run the function, passing along any args, if this file was run directly (such as via sudo) instead of as an include
+# Sometimes, $0 contains a leading dash to indicate an interactive (or is it login?) shell,
 # which is apparently an old convention (which also broke the basename call on OS X)
-me=$(basename "${0##\-}")
-if [ "$me" = "String.split" ]; then
+_me=$(basename "${0##\-}")
+if [ "$_me" = "String.split" ]; then
   String.split "$1" "$2"
 fi
+unset _me

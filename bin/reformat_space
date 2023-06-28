@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+
+reformat_space() {
+	local file="$1"
+	function determine_tab_size_in_spaces() {
+		awk '
+			{
+				# Match the leading spaces and count the occurrences
+				match($0, /^ */);
+				indents[RLENGTH]++;
+			}
+			END {
+				# Find the 3 most common indentation levels
+				max_count = 0;
+				max_indent = 0;
+				second_max_indent = 0;
+				third_max_indent = 0;
+				for (indent in indents) {
+					if (indents[indent] > max_count) {
+						third_max_indent = second_max_indent;
+						second_max_indent = max_indent;
+						max_indent = indent;
+						max_count = indents[indent];
+					}
+				}
+				# Determine what the multiple is for the most common indentation levels, handling up to 5
+				if (max_indent % 5 == 0 && second_max_indent % 5 == 0 && third_max_indent % 5 == 0) {
+					print 5;
+				} else if (max_indent % 4 == 0 && second_max_indent % 4 == 0 && third_max_indent % 4 == 0) {
+					print 4;
+				} else if (max_indent % 3 == 0 && second_max_indent % 3 == 0 && third_max_indent % 3 == 0) {
+					print 3;
+				} else if (max_indent % 2 == 0 && second_max_indent % 2 == 0 && third_max_indent % 2 == 0) {
+					print 2;
+				} else if (max_indent == 0) {
+					print 0;
+				} else {
+					print 1;
+				}
+			}
+		' "$1"
+	}
+	local indent=$(determine_tab_size_in_spaces "$file")
+	if (( indent > 0 )); then
+		indent_spaces=$(printf "%${indent}s")
+		awk -v indent="$indent_spaces" '
+		{
+			while (match($0, "^\t*"indent)) {
+				$0 = gensub("^(\t*)"indent, "\\1\t", "g");
+			}
+			print;
+		}' "$file" #> "$file.tmp" && mv "$file.tmp" "$file"
+	fi
+}
+
+# Export the function so it can be used by find -exec
+export -f reformat_space
+
+# Run the function, passing along any args, if this file was run directly (such as via sudo) instead of as an include
+# Sometimes, $0 contains a leading dash to indicate an interactive (or is it login?) shell,
+# which is apparently an old convention (which also broke the basename call on OS X)
+_me=$(basename "${0##\-}")
+if [ "$_me" = "reformat_space" ]; then
+	$_me "$@"
+fi
+unset _me

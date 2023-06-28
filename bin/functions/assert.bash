@@ -1,5 +1,3 @@
-source_relative_once binhex.bash
-
 # for assertions everywhere!
 # usage: assert [condition] [message]
 # if condition is false, print message and exit
@@ -13,8 +11,10 @@ assert() {
     return 0 # because returning 1 would cause the shell to exit during sourcing
   fi
   message="$4"
-  arg1_enc=$(binhex "$arg1")
-  arg2_enc=$(binhex "$arg2")
+  # We add a form feed character at the end of both due to how Bash command substitution
+  # gobbles up trailing newlines (and that's POSIX!).
+  arg1_enc=$(binhex "$arg1\f")
+  arg2_enc=$(binhex "$arg2\f")
   comp_result=false # default to false
   case $comp in
     = | == )
@@ -48,23 +48,27 @@ assert() {
     # These values (BASH_SOURCE and BASH_LINENO) seem valid when triggered in my dotfiles, but not from my shell.
     # Not sure how to fix yet.
     local actualfile
-    actualfile="$(readlink -f ${BASH_SOURCE[1]})"
-    # As to why we need the 1th index of BASH_SOURCE but the 0th index of BASH_LINENO, I have no idea. But it works.
+    local linenum
+    if [ -t 0 ]; then # if stdin is a tty
+      actualfile="tty"
+      linenum=$(history 1 | awk '{print $1}')
+    else # if this is run from a script
+      # As to why we need the 1th index of BASH_SOURCE but the 0th index of BASH_LINENO, I have no idea. But it works.
+      actualfile="$(readlink -f ${BASH_SOURCE[1]})"
+      linenum="${BASH_LINENO[0]}"
+    fi
     case $comp in
       =~ | !=~ | !~ ) # regex comparisons
-        echo "Assertion failed: \"$arg1\" $comp $arg2 @ ${actualfile}:${BASH_LINENO[0]}" >&2
+        echo "Assertion failed: \"$arg1\" $comp $arg2 @ ${actualfile}:${linenum}" >&2
       ;;
       *) # non-regex comparisons
-        echo "Assertion failed: \"$arg1\" $comp \"$arg2\" @ ${actualfile}:${BASH_LINENO[0]}" >&2
+        echo "Assertion failed: \"$arg1\" $comp \"$arg2\" @ ${actualfile}:${linenum}" >&2
       ;;
     esac
-    [ -n "$message" ] && echo $message
+    [ -n "$message" ] && echo $message >&2
     return 1
   fi
 }
 
-# these tests had to go here instead of binhex.bash due to an endless loop of sourcing assert.bash from in there
-assert "$(binhex "Peter")" == "5065746572" "binhex function should encode binary strings to hex"
-assert "$(hexbin "5065746572")" == "Peter" "hexbin function should decode binary from hex"
-# TODO: the following is not easy to make pass so tabled for now. just be aware of it
-# assert "$(hexbin "50657465720a")" == "Peter\n" "hexbin function shouldn't eat hex-encoded end-of-line newlines"
+# this is at the bottom because it depends on assert
+source_relative_once binhex.bash

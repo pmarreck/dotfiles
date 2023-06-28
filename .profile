@@ -119,6 +119,8 @@ source_relative_once bin/functions/list_all_executables_on_PATH.sh
 
 source_relative_once bin/functions/please.bash
 
+source_relative_once bin/functions/grandfather_clock_chime.sh
+
 # crypto market data. can pass a symbol in or just get the current overall market data
 crypto() {
   curl rate.sx/$1
