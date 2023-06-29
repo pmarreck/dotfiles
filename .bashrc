@@ -86,14 +86,14 @@ is_gnu_awk=$($AWK --version | grep -q -m 1 'GNU Awk' && echo true || echo false)
   echo "WARNING: The awk on PATH is not GNU Awk on macOS, which may cause problems" >&2
 
 
-# asdf config
-[[ -s "$HOME/.asdf/asdf.sh" ]] && source "$HOME/.asdf/asdf.sh"
-[[ -s "$HOME/.asdf/completions/asdf.bash" ]] && source "$HOME/.asdf/completions/asdf.bash"
-export ASDF_INSTALL_PATH=$ASDF_DIR
+# # asdf config
+# [[ -s "$HOME/.asdf/asdf.sh" ]] && source "$HOME/.asdf/asdf.sh"
+# [[ -s "$HOME/.asdf/completions/asdf.bash" ]] && source "$HOME/.asdf/completions/asdf.bash"
+# export ASDF_INSTALL_PATH=$ASDF_DIR
 
-# mix config to fix an asdf issue that cropped up
-export MIX_HOME="$HOME/.mix"
-export MIX_ARCHIVES="$MIX_HOME/archives"
+# # mix config to fix an asdf issue that cropped up
+# export MIX_HOME="$HOME/.mix"
+# export MIX_ARCHIVES="$MIX_HOME/archives"
 
 # partial history search
 if $INTERACTIVE_SHELL
