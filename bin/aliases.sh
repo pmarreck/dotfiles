@@ -132,7 +132,7 @@ alias grc='git rebase --continue'
 alias loc='tokei'
 
 # homebrew utils
-alias bubu='brew update && brew upgrade'
+# alias bubu='brew update && brew upgrade'
 
 # fun
 alias chuck="curl -sS https://api.chucknorris.io/jokes/random | jq -c -r '.value'"

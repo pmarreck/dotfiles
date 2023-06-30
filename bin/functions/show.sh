@@ -62,7 +62,9 @@ function defined? {
 show() {
   # on macOS, you need gnu-sed from homebrew or equivalent, which is installed as "gsed"
   # I set PLATFORM elsewhere in my env config
-  [ "$PLATFORM" = "osx" ] && local -r sed="gsed" || local -r sed="sed"
+  # [ "$PLATFORM" = "osx" ] && local -r sed="gsed" || local -r sed="sed"
+  # screw homebrew, all in on nix now; this is gnused
+  local -r sed="sed"
   local word="$1"
   shift
   if [ -z "$word" ] && [ -z "$1" ]; then

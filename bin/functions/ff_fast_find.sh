@@ -38,13 +38,14 @@ ff() {
 }
 
 source_relative_once assert.bash
-
+source_relative_once randompass.sh
 # inline ff test
 _fftest() {
   local - # scant docs on this but this apparently automatically resets shellopts when the function exits
   set -o errexit
   local _testlocname=$(randompass 10)
-  if assert "${#_testlocname}" == "10" "Generated test location name for ff test is not working: ${BASH_SOURCE[0]}:${BASH_LINENO[0]}"; then
+  assert "${#_testlocname}" == "10" "Generated test location name for ff test is not working: ${BASH_SOURCE[0]}:${BASH_LINENO[0]}"
+  if [ $? -eq 0 ]; then
     local _testloc="/tmp/$_testlocname"
     # the point of [ 1 == 0 ] below is to fail the line and trigger errexit IF errexit is set
     mkdir -p $_testloc >/dev/null 2>&1 || ( echo "Cannot create test directory '$_testloc' in ff test: ${BASH_SOURCE[0]}:${BASH_LINENO[0]}"; [ 1 == 0 ] )

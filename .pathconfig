@@ -118,19 +118,19 @@ prepend_path $HOME/Scripts
     # prepend_path $HOME/.linuxbrew/sbin
     # prepend_path $HOME/.linuxbrew/lib LD_LIBRARY_PATH
 # elif
-if [ "$PLATFORM" = "osx" ]; then
-  prepend_path /opt/homebrew/bin
-  prepend_path /opt/homebrew/sbin
-  prepend_path /opt/homebrew/opt/curl/bin
-  # add homebrew llvm in front of apple llvm
-  prepend_path /opt/homebrew/opt/llvm/bin
-  # python utils from homebrew, may need to tweak version
-  prepend_path /opt/homebrew/opt/python@3.9/libexec/bin
-  # GNU utils from homebrew
-  prepend_path /opt/homebrew/opt/coreutils/libexec/gnubin
-  # I don't know why gnu awk is stored separately?
-  prepend_path /opt/homebrew/opt/gawk/libexec/gnubin
-fi
+# if [ "$PLATFORM" = "osx" ]; then
+#   prepend_path /opt/homebrew/bin
+#   prepend_path /opt/homebrew/sbin
+#   prepend_path /opt/homebrew/opt/curl/bin
+#   # add homebrew llvm in front of apple llvm
+#   prepend_path /opt/homebrew/opt/llvm/bin
+#   # python utils from homebrew, may need to tweak version
+#   prepend_path /opt/homebrew/opt/python@3.9/libexec/bin
+#   # GNU utils from homebrew
+#   prepend_path /opt/homebrew/opt/coreutils/libexec/gnubin
+#   # I don't know why gnu awk is stored separately?
+#   prepend_path /opt/homebrew/opt/gawk/libexec/gnubin
+# fi
 
 # rust/cargo
 prepend_path $HOME/.cargo/bin

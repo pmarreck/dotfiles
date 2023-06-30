@@ -1,9 +1,9 @@
 [[ -v DEBUG_SHELLCONFIG ]] && $INTERACTIVE_SHELL && echo "Running .envconfig" || printf "#"
 
 # canonical gcc tweaks for OS X's homebrew gcc; Linux shouldn't need these
-if [ "$PLATFORM" = "osx" ]; then
-  needs brew
-  brew_prefix=$(brew --prefix)
+# if [ "$PLATFORM" = "osx" ]; then
+  # needs brew
+  # brew_prefix=$(brew --prefix)
   # Homebrew LLVM and compiler toolchain config
   # export LDFLAGS="-L/opt/homebrew/opt/llvm/lib -Wl,-rpath,/opt/homebrew/opt/llvm/lib"
   # export CPPFLAGS="-I/opt/homebrew/opt/llvm/include"
@@ -28,7 +28,7 @@ if [ "$PLATFORM" = "osx" ]; then
   # alias gcov=$brew_prefix_bin/gcov-$gcc_ver
   # alias gcov-dump=$brew_prefix_bin/gcov-dump-$gcc_ver
   # alias gcov-tool=$brew_prefix_bin/gcov-tool-$gcc_ver
-fi
+# fi
 
 # stop checking for unix mail, OS X!
 unset MAILCHECK
