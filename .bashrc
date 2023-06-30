@@ -25,6 +25,17 @@ if $LOGIN_SHELL; then
   printf "l"
 fi
 
+# require at least Bash 4.2
+if [[ $BASH_VERSION =~ ^([0-9]+)\.([0-9]+) ]]; then
+  if (( BASH_REMATCH[1] > 4 || ( BASH_REMATCH[1] == 4 && BASH_REMATCH[2] >= 2 ) )); then
+    : # echo "Bash version is greater than or equal to 4.2"
+  else
+    echo "Warning: Bash version less than 4.2 detected. Expect incompatible behavior." >&2
+  fi
+else
+  echo "Warning: Couldn't parse Bash version: $BASH_VERSION"
+fi
+
 [[ -v DEBUG_SHELLCONFIG ]] && $INTERACTIVE_SHELL && echo "Running .bashrc" || printf "#"
 
 # User configuration
