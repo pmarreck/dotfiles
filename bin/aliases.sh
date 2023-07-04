@@ -58,6 +58,8 @@ alias addigence='cd ~/Documents/addigence-ex'
 # alias simpaticio='cd ~/Documents/simpaticio'
 alias work=addigence
 
+alias dotfiles='cd ~/dotfiles'
+
 # alias ss='script/server'
 # alias sc='script/console'
 # alias rc='rails console'
