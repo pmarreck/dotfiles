@@ -1,9 +1,25 @@
 # So for debug switches, we will check whether they are even set using [[ -v VARNAME ]]
 # because we do not want to pollute the env with the unnecessary presence of
 # debug switches that are just set to false.
+# But note that that only works in Bash 4+!
 # For all other configs, just set to true/false as appropriate (but never blank!)
-# export DEBUG_SHELLCONFIG=false
 # export _TRACE_SOURCING=false
+# export DEBUG_SHELLCONFIG=true
+# export DEBUG_PATHCONFIG=true
+
+# require at least Bash 4.2
+if [[ $BASH_VERSION =~ ^([0-9]+)\.([0-9]+) ]]; then
+  if (( BASH_REMATCH[1] > 4 || ( BASH_REMATCH[1] == 4 && BASH_REMATCH[2] >= 2 ) )); then
+    : # echo "Bash version is greater than or equal to 4.2"
+  else
+    echo "Warning: Bash version less than 4.2 detected. Expect incompatible behavior." >&2
+  fi
+else
+  echo "Warning: Couldn't parse Bash version: $BASH_VERSION"
+fi
+
+[[ -v DEBUG_SHELLCONFIG ]] && echo "Entering $(echo "${BASH_SOURCE[0]}" | sed "s|^$HOME|~|")" || printf "#"
+[[ -v DEBUG_PATHCONFIG ]] && echo $PATH
 
 # mute direnv constantly telling me what it's loading
 export DIRENV_LOG_FORMAT=
@@ -24,19 +40,6 @@ fi
 if $LOGIN_SHELL; then
   printf "l"
 fi
-
-# require at least Bash 4.2
-if [[ $BASH_VERSION =~ ^([0-9]+)\.([0-9]+) ]]; then
-  if (( BASH_REMATCH[1] > 4 || ( BASH_REMATCH[1] == 4 && BASH_REMATCH[2] >= 2 ) )); then
-    : # echo "Bash version is greater than or equal to 4.2"
-  else
-    echo "Warning: Bash version less than 4.2 detected. Expect incompatible behavior." >&2
-  fi
-else
-  echo "Warning: Couldn't parse Bash version: $BASH_VERSION"
-fi
-
-[[ -v DEBUG_SHELLCONFIG ]] && $INTERACTIVE_SHELL && echo "Running .bashrc" || printf "#"
 
 # User configuration
 # export MANPATH="/usr/local/man:$MANPATH"
@@ -130,7 +133,6 @@ me() {
 }
 
 # Pull in path configuration
-[[ -v DEBUG_SHELLCONFIG ]] && $INTERACTIVE_SHELL && printf "from $(me): "
 source_relative_once .pathconfig
 
 # rust cargo hook and related environment dependencies
@@ -146,10 +148,8 @@ eval "$(direnv hook bash)"
 needs delta cargo install git-delta
 
 # environment vars config
-[[ -v DEBUG_SHELLCONFIG ]] && $INTERACTIVE_SHELL && printf "from $(me): "
 source_relative_once .envconfig
 
-[[ -v DEBUG_SHELLCONFIG ]] && [[ -s "$HOME/.profile" ]] && $INTERACTIVE_SHELL && printf "from $(me): "
 [[ -s "$HOME/.profile" ]] && source_relative_once .profile # Load the default .profile
 
 
@@ -163,3 +163,6 @@ eval "$(starship init bash)"
 # line completion
 # nope, doesn't work right with starship
 # source ~/linecomp/linecomp.sh
+
+[[ -v DEBUG_SHELLCONFIG ]] && echo "Exiting $(echo "${BASH_SOURCE[0]}" | sed "s|^$HOME|~|")"
+[[ -v DEBUG_PATHCONFIG ]] && echo $PATH

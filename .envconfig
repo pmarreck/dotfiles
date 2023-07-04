@@ -1,5 +1,5 @@
-[[ -v DEBUG_SHELLCONFIG ]] && $INTERACTIVE_SHELL && echo "Running .envconfig" || printf "#"
-
+[[ -v DEBUG_SHELLCONFIG ]] && echo "Entering $(echo "${BASH_SOURCE[0]}" | sed "s|^$HOME|~|")" || printf "#"
+[[ -v DEBUG_PATHCONFIG ]] && echo $PATH
 # canonical gcc tweaks for OS X's homebrew gcc; Linux shouldn't need these
 # if [ "$PLATFORM" = "osx" ]; then
   # needs brew
@@ -153,6 +153,12 @@ if [ "$PLATFORM" = "linux" ]; then
   export STEAM_EXTRA_COMPAT_TOOLS_PATHS="$HOME/.steam/root/compatibilitytools.d"
 fi
 
+# Nix config
+IGNORE_PREPEND_PATH_WARNINGS=true prepend_path /nix/var/nix/profiles/per-user/root/channels NIX_PATH
+
 # erlang/elixir config- 2 million process limit
 # (# of schedulers is automatic to # of CPU logical cores, but can be forced with +S arg)
 export ERL_FLAGS="+P 2000000";
+
+[[ -v DEBUG_SHELLCONFIG ]] && echo "Exiting $(echo "${BASH_SOURCE[0]}" | sed "s|^$HOME|~|")"
+[[ -v DEBUG_PATHCONFIG ]] && echo $PATH

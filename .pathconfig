@@ -1,4 +1,5 @@
-[[ -v DEBUG_SHELLCONFIG ]] && $INTERACTIVE_SHELL && echo "Running .pathconfig" # || printf "#"
+[[ -v DEBUG_SHELLCONFIG ]] && echo "Entering $(echo "${BASH_SOURCE[0]}" | sed "s|^$HOME|~|")" # || printf "#"
+[[ -v DEBUG_PATHCONFIG ]] && echo $PATH
 # echo "Current PATH is $PATH"
 
 # All path configs here should replace any existing version of themselves in the PATH before appending
@@ -10,8 +11,10 @@ prepend_path() {
   function docs() {
     echo "Usage: prepend_path [-o|-h|--help] <path_to_prepend> [name_of_path_var, defaults to PATH]" >&2
     echo "Setting -o will print the new path to stdout instead of exporting it" >&2
+    echo "Env var IGNORE_PREPEND_PATH_WARNINGS=true will suppress warnings" >&2
   }
   local stdout=false
+  local IGNORE_PREPEND_PATH_WARNINGS=${IGNORE_PREPEND_PATH_WARNINGS:-false}
   case "$1" in
     -h|--help)
       docs
@@ -32,11 +35,11 @@ prepend_path() {
   fi
   case "$dir" in
     /*) :;; # absolute path, do nothing
-    *) echo "prepend_path warning: '$dir' is not an absolute path, which may be unexpected" >&2;;
+    *) $IGNORE_PREPEND_PATH_WARNINGS || echo "prepend_path warning: '$dir' is not an absolute path, which may be unexpected" >&2;;
   esac
   local newpath=${!var}
   if [ -z "$newpath" ]; then
-    $stdout || echo "prepend_path warning: $var was empty, which may be unexpected: setting to $dir" >&2
+    $stdout || $IGNORE_PREPEND_PATH_WARNINGS || echo "prepend_path warning: $var was empty, which may be unexpected: setting to $dir" >&2
     $stdout && echo "$dir" || export ${var}="$dir"
     return
   fi
@@ -159,3 +162,5 @@ fi
 prepend_path $HOME/bin
 
 # echo "PATH after config is $PATH"
+[[ -v DEBUG_SHELLCONFIG ]] && echo "Exiting $(echo "${BASH_SOURCE[0]}" | sed "s|^$HOME|~|")"
+[[ -v DEBUG_PATHCONFIG ]] && echo $PATH

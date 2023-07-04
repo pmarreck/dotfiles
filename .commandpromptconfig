@@ -1,7 +1,11 @@
-[[ -v DEBUG_SHELLCONFIG ]] && echo "Configuring command prompt via .commandpromptconfig"
+[[ -v DEBUG_SHELLCONFIG ]] && echo "Entering $(echo "${BASH_SOURCE[0]}" | sed "s|^$HOME|~|")"
+[[ -v DEBUG_PATHCONFIG ]] && echo $PATH
 # Command prompt config
 # Depends on colors being defined as well as parse_git_branch functions
 
 # PS1="$ANSI$TXTWHT\u@\H$ANSI$TXTWHT:$ANSI$TXTYLW\w $ANSI$TXTRST\D{%F %T} $ANSI$BLDRED\$(parse_git_branch_with_dirty)\n$ANSI$TXTPUR\# $ANSI$TXTYLW${SHELL##*/}>>$ANSI$TXTRST "
 PS1="\[${ANSI}G\]\[$ANSI$TXTWHT\]\u@\H\[$ANSI$TXTWHT\]:\[$ANSI$TXTYLW\]\w \[$ANSI$TXTRST\]\D{%F %T} $ANSI$BLDRED\$(parse_git_branch_with_dirty)\n\[$ANSI$TXTPUR\]\# \[$ANSI$TXTYLW\]${SHELL##*/}>>\[$ANSI$TXTRST\] "
 # PS1="${TXTWHT}\w${BLDRED} \$(parse_git_branch)${BLDWHT}\$ "
+
+[[ -v DEBUG_SHELLCONFIG ]] && echo "Exiting $(echo "${BASH_SOURCE[0]}" | sed "s|^$HOME|~|")"
+[[ -v DEBUG_PATHCONFIG ]] && echo $PATH
