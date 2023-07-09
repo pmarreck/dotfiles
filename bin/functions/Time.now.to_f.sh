@@ -1,11 +1,16 @@
-# use perl for timestamps if the date timestamp resolution isn't small enough
-_use_perl_for_more_accurate_timestamps=0
-if [ "$($datebin --resolution)" != "0.000000001" ]; then
-  _use_perl_for_more_accurate_timestamps=1
-fi
+
 # For the Ruby fans.
 # Floating point seconds since epoch, to nanosecond resolution.
 Time.now.to_f() {
+  # set the date bin to gdate (or one that recognizes --resolution) if available
+  local datebin="date"
+  $datebin --resolution >/dev/null 2>&1 || datebin="gdate"
+  $datebin --resolution >/dev/null 2>&1 || datebin="date"
+  # use perl for timestamps if the date timestamp resolution isn't small enough
+  local _use_perl_for_more_accurate_timestamps=0
+  if [ "$($datebin --resolution)" != "0.000000001" ]; then
+    _use_perl_for_more_accurate_timestamps=1
+  fi
   if [ $_use_perl_for_more_accurate_timestamps -eq 1 ]; then
     perl -MTime::HiRes=time -e 'printf "%.9f\n", time'
   else

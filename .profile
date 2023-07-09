@@ -27,13 +27,6 @@ fi
 # If you hate noise
 # set bell-style visible
 
-# Pager config (ex., for git diff output)
-#E=quit at first EOF
-#Q=no bell
-#R=pass through raw ansi so colors work
-#X=no termcap init
-export LESS="-EQRX"
-
 # ulimit. to see all configs, run `ulimit -a`
 # ulimit -n 10000
 
@@ -59,9 +52,8 @@ if [ "${PLATFORM}" = "linux" ]; then
     PS_PERSONALITY=linux ps -ewwo pid,%cpu,%mem,nice,pri,rtprio,args --sort=-pcpu,-pid | awk -v filter="$1" 'NR==1 || tolower($0) ~ tolower(filter)' | less -e --header=1
   }
   alias procs=list-procs
+  source_relative_once bin/functions/nvidia.bash
 fi
-
-source_relative_once bin/functions/nvidia.bash
 
 source_relative_once bin/functions/get_all_git_stati.sh
 
@@ -84,9 +76,6 @@ source_relative_once bin/functions/calc.bash
 source_relative_once bin/functions/encrypt_decrypt.sh
 
 source_relative_once bin/functions/randompass.sh
-
-# GPG configuration to set up in-terminal challenge-response
-export GPG_TTY=`tty`
 
 # which hack, so it also shows defined aliases and functions that match
 # where() {
@@ -140,6 +129,7 @@ up() {
 
 # browse a CSV file as a scrollable table
 csv() {
+  needs column
   if [ -e "$1" ]; then
     column -s, -t < "$1" | less -#2 -N -S --header 1
   else
@@ -223,10 +213,6 @@ source_relative_once bin/functions/print_x_times.sh
 
 source_relative_once bin/functions/pg_postgres_wrapper.sh
 
-# git functions and extra config
-source_relative_once bin/functions/git-branch.bash # defines parse_git_branch and parse_git_branch_with_dirty
-source_relative_once bin/functions/git-completion.bash
-
 source_relative_once bin/functions/notify.sh
 
 source_relative_once bin/functions/ff_fast_find.sh
@@ -248,7 +234,8 @@ source_relative_once bin/functions/repeat_command.bash
 source_relative_once bin/functions/kill_steam_proton_pids.bash
 
 # command prompt
-$INTERACTIVE_SHELL && . $HOME/.commandpromptconfig
+# NOTE: Now configured via starship in apply-hooks
+# $INTERACTIVE_SHELL && . $HOME/.commandpromptconfig
 
 # Pull in path configuration AGAIN because macos keeps mangling it
 # (also did it in .bashrc)
@@ -263,7 +250,23 @@ inthebeginning() {
 just_one_taoup() {
   # ChatGPT4 wrote 99% of this. I preserved the conversation with it about it: https://gist.github.com/pmarreck/339fb955a74caed692b439038c9c1c9d
   needs taoup please install taoup && \
-  taoup | $AWK -v seed=`date +%N` 'BEGIN{srand(seed)} /^-{3,}/{header=$0; next} !/^$/{lines[count++]=$0; headers[count-1]=header} END{randIndex=int(rand()*count); print headers[randIndex]; print lines[randIndex]}'
+  taoup | $AWK -v seed=`date +%N` '
+    BEGIN{
+      srand(seed)
+    }
+    /^-{3,}/{
+      header=$0; next
+    } 
+    !/^$/{
+      lines[count++]=$0;
+      headers[count-1]=header;
+    }
+    END{
+      randIndex=int(rand()*count);
+      print headers[randIndex];
+      print lines[randIndex];
+    }
+  '
 }
 
 if [ "$INTERACTIVE_SHELL" = "true" ]; then
@@ -299,4 +302,4 @@ if [ "$INTERACTIVE_SHELL" = "true" ]; then
 fi
 
 [ -n "$DEBUG_SHELLCONFIG" ] && echo "Exiting $(echo "${BASH_SOURCE[0]}" | sed "s|^$HOME|~|")"
-[ -n "$DEBUG_PATHCONFIG" ] && echo $PATH
+[ -n "$DEBUG_PATHCONFIG" ] && echo $PATH || :

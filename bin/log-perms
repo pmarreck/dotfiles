@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+
+# Make sure you're running this as root, or it might not have access to all files
+# if [[ $EUID -ne 0 ]]; then
+#   echo "This script must be run as root"
+#   exit 1
+# fi
+
+# Note current pwd
+curdir=$(pwd)
+
+# Note current user and group
+loggedinuser=$(whoami)
+loggedingroup=$(id -gn)
+
+# Start at root
+pushd /
+
+timestamp=$(date +%Y%m%d%H%M%S)
+
+# Find all files, directories, symlinks and hardlinks
+sudo find . -type f -o -type d -o -type l | while read -r file; do
+  # Skip the ./ at the start of every filename given by find
+  file="${file#./}"
+
+  # Get the user, group and permissions of the file
+  user=$(sudo stat -c "%U" "$file")
+  group=$(sudo stat -c "%G" "$file")
+  perm=$(sudo stat -c "%a" "$file")
+
+  # Create the directory if it doesn't exist
+  mkdir -p "${curdir}/log_perms-$timestamp/$group/$user"
+  # if [ ! -d "${curdir}/log_perms-$timestamp/$group/$user" ]; then
+  #   mkdir -p "${curdir}/log_perms-$timestamp/$group/$user"
+  #   chown "$loggedinuser":"$loggedingroup" "${curdir}/log_perms-$timestamp/$group/$user"
+  # fi
+
+  # Log the file and its permission
+  echo "/$file" >> "${curdir}/log_perms-$timestamp/$group/$user/$perm"
+done
+
+popd

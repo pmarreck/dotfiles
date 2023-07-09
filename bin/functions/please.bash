@@ -3,7 +3,7 @@
 # graceful dependency enforcement
 # Usage: needs <executable> [provided by <packagename>]
 # only redefines it here if it's not already defined
->/dev/null declare -F needs || \
+# >/dev/null declare -F needs || \
 needs() {
   local bin=$1
   shift

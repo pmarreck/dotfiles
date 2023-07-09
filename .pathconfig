@@ -4,139 +4,17 @@
 
 # All path configs here should replace any existing version of themselves in the PATH before appending
 # (idempotent)
-source_relative_once bin/functions/assert.bash
 
-# function to prepend paths in an idempotent way
-prepend_path() {
-  function docs() {
-    echo "Usage: prepend_path [-o|-h|--help] <path_to_prepend> [name_of_path_var, defaults to PATH]" >&2
-    echo "Setting -o will print the new path to stdout instead of exporting it" >&2
-    echo "Env var IGNORE_PREPEND_PATH_WARNINGS=true will suppress warnings" >&2
-  }
-  local stdout=false
-  local IGNORE_PREPEND_PATH_WARNINGS=${IGNORE_PREPEND_PATH_WARNINGS:-false}
-  case "$1" in
-    -h|--help)
-      docs
-      return 0
-      ;;
-    -o)
-      stdout=true
-      shift
-      ;;
-    *)
-      ;;
-  esac
-  local dir="${1%/}"     # discard trailing slash
-  local var="${2:-PATH}"
-  if [ -z "$dir" ]; then
-    docs
-    return 2 # incorrect usage return code, may be an informal standard
-  fi
-  case "$dir" in
-    /*) :;; # absolute path, do nothing
-    *) $IGNORE_PREPEND_PATH_WARNINGS || echo "prepend_path warning: '$dir' is not an absolute path, which may be unexpected" >&2;;
-  esac
-  local newpath=${!var}
-  if [ -z "$newpath" ]; then
-    $stdout || $IGNORE_PREPEND_PATH_WARNINGS || echo "prepend_path warning: $var was empty, which may be unexpected: setting to $dir" >&2
-    $stdout && echo "$dir" || export ${var}="$dir"
-    return
-  fi
-  # prepend to front of path
-  newpath="$dir:$newpath"
-  # remove all duplicates, retaining the first one encountered
-  newpath=$(echo -n $newpath | awk -v RS=: -v ORS=: '!($0 in a) {a[$0]; print}')
-  # remove trailing colon (awk's ORS (output record separator) adds a trailing colon)
-  newpath=${newpath%:}
-  $stdout && echo "$newpath" || export ${var}="$newpath"
-}
-# INLINE RUNTIME TEST SUITE
-export _FAKEPATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-export _FAKEPATHDUPES="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-export _FAKEPATHCONSECUTIVEDUPES="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-export _FAKEPATH1="/usr/bin"
-export _FAKEPATHBLANK=""
-assert $(prepend_path -o /usr/local/bin _FAKEPATH) == "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
-  "prepend_path failed when the path was already in front"
-assert $(prepend_path -o /usr/sbin _FAKEPATH) == "/usr/sbin:/usr/local/bin:/usr/bin:/bin:/sbin" \
-  "prepend_path failed when the path was already in the middle"
-assert $(prepend_path -o /sbin _FAKEPATH) == "/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin" \
-  "prepend_path failed when the path was already at the end"
-assert $(prepend_path -o /usr/local/bin _FAKEPATHBLANK) == "/usr/local/bin" \
-  "prepend_path failed when the path was blank"
-assert $(prepend_path -o /usr/local/bin _FAKEPATH1) == "/usr/local/bin:/usr/bin" \
-  "prepend_path failed when the path just had 1 value"
-assert $(prepend_path -o /usr/bin _FAKEPATH1) == "/usr/bin" \
-  "prepend_path failed when the path just had 1 value and it's the same"
-assert $(prepend_path -o /usr/bin _FAKEPATHDUPES) == "/usr/bin:/usr/local/bin:/bin:/usr/sbin:/sbin" \
-  "prepend_path failed when there were multiple copies of it already in the path"
-assert $(prepend_path -o /usr/local/bin _FAKEPATHCONSECUTIVEDUPES) == "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
-  "prepend_path failed when there were multiple consecutive copies of it already in the path and it is also already in front"
-unset _FAKEPATH
-unset _FAKEPATHDUPES
-unset _FAKEPATHCONSECUTIVEDUPES
-unset _FAKEPATH1
-unset _FAKEPATHBLANK
-
-# Add Python installed scripts to front of PATH
-# export PATH=/usr/local/share/python:${PATH/\/usr\/local\/share\/python:/}
-# Move /usr/local/bin and /usr/local/sbin to the front of PATH by subbing it out and prepending
-# export PATH=/usr/local/sbin:${PATH/\/usr\/local\/sbin:/}
-# export PATH=/usr/local/bin:${PATH/\/usr\/local\/bin:/}
-## # Move /usr/local/Homebrew/bin and /usr/local/Homebrew/sbin to the front of PATH by subbing it out and prepending
-## export PATH=/usr/local/Homebrew/sbin:${PATH/\/usr\/local\/Homebrew\/sbin:/}
-## export PATH=/usr/local/Homebrew/bin:${PATH/\/usr\/local\/Homebrew\/bin:/}
+source_relative_once bin/functions/prepend_path.bash
 
 # gigalixir and other pip3 --user installed tools, per XDG spec
-prepend_path $HOME/.local/bin
+[ -d $HOME/.local/bin ] && prepend_path $HOME/.local/bin
 
 # add my Scripts bin to PATH
-# export PATH=$PATH:~/Scripts
-prepend_path $HOME/Scripts
-
-# Add RVM to PATH for scripting
-# export PATH=~/.rvm/bin:${PATH/~\/.rvm\/bin:/}
-
-# just for linuxbrew, see: https://github.com/Homebrew/linuxbrew
-# if [ "$(uname -s)" == "Linux" ]; then
-#   export PATH="$HOME/.linuxbrew/bin:$PATH"
-#   export LD_LIBRARY_PATH="$HOME/.linuxbrew/lib:$LD_LIBRARY_PATH"
-# fi
-
-# add postgres app install dir to front of PATH
-# export PATH=/Applications/Postgres.app/Contents/Versions/9.6/bin:${PATH/\/Applications\/Postgres\.app\/Contents\/Versions\/9\.6\/bin:/}
-
-# prefer homebrew-installed sqlite to native one
-# export PATH="/usr/local/opt/sqlite/bin:$PATH"
-
-# get building of gem capybara-webkit to use qt@5.5's qmake
-# export PATH="$(brew --prefix qt@5.5)/bin:$PATH"
-
-# homebrew
-
-# if [ "$PLATFORM" = "linux" ]; then
-# disabled because nixos doesn't need this shite
-    # prepend_path $HOME/.linuxbrew/bin
-    # prepend_path $HOME/.linuxbrew/sbin
-    # prepend_path $HOME/.linuxbrew/lib LD_LIBRARY_PATH
-# elif
-# if [ "$PLATFORM" = "osx" ]; then
-#   prepend_path /opt/homebrew/bin
-#   prepend_path /opt/homebrew/sbin
-#   prepend_path /opt/homebrew/opt/curl/bin
-#   # add homebrew llvm in front of apple llvm
-#   prepend_path /opt/homebrew/opt/llvm/bin
-#   # python utils from homebrew, may need to tweak version
-#   prepend_path /opt/homebrew/opt/python@3.9/libexec/bin
-#   # GNU utils from homebrew
-#   prepend_path /opt/homebrew/opt/coreutils/libexec/gnubin
-#   # I don't know why gnu awk is stored separately?
-#   prepend_path /opt/homebrew/opt/gawk/libexec/gnubin
-# fi
+[ -d $HOME/Scripts ] && prepend_path $HOME/Scripts
 
 # rust/cargo
-prepend_path $HOME/.cargo/bin
+[ -d $HOME/.cargo/bin ] && prepend_path $HOME/.cargo/bin
 
 # Nix
 # Prefer Nix stuff to both system and homebrew
@@ -148,8 +26,8 @@ if [ "$PLATFORM" = "osx" ]; then
   fi
   # now since it simply added it to the front without checking if it was already in PATH,
   # we have to redo its PATH edits to make sure it's only there once
-  prepend_path /nix/var/nix/profiles/default/bin
-  prepend_path $HOME/.nix-profile/bin
+  [ -d /nix/var/nix/profiles/default/bin ] && prepend_path /nix/var/nix/profiles/default/bin
+  [ -d $HOME/.nix-profile/bin ] && prepend_path $HOME/.nix-profile/bin
 fi
 
 # BINSTUBS
@@ -163,4 +41,4 @@ prepend_path $HOME/bin
 
 # echo "PATH after config is $PATH"
 [[ -v DEBUG_SHELLCONFIG ]] && echo "Exiting $(echo "${BASH_SOURCE[0]}" | sed "s|^$HOME|~|")"
-[[ -v DEBUG_PATHCONFIG ]] && echo $PATH
+[[ -v DEBUG_PATHCONFIG ]] && echo $PATH || :

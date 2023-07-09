@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+
+[[ -v DEBUG_SHELLCONFIG ]] && echo "Entering $(echo "${BASH_SOURCE[0]}" | sed "s|^$HOME|~|")"
+[[ -v DEBUG_PATHCONFIG ]] && echo "$PATH"
+
+# if [[ $- == *i* ]]; then echo "Interactive Shell" >&2; else echo "Non-Interactive Shell!!" >&2; fi
+
+# Enable debug for any errors not caught
+# trap '[[ $? -ne 0 ]] && echo "Error on line $LINENO in $BASH_SOURCE."' ERR
+# set -o pipefail
+# set -x
+
+needs() {
+  local bin="$1"
+  shift
+  command -v "$bin" >/dev/null 2>&1 || {
+    printf "%s is required but it's not installed or in PATH; %s\n" "$bin" "$*" >&2
+    return 1
+  }
+}
+
+##### rust cargo hook and related environment dependencies
+# [[ -s "$HOME/.cargo/env" ]] && source "$HOME/.cargo/env"
+# needs rustc "curl https://sh.rustup.rs -sSf | sh"
+# needs exa "cargo install exa"
+# needs tokei "cargo install --git https://github.com/XAMPPRocky/tokei.git tokei"
+
+##### Guix integration
+# [[ -s "$HOME/.guix-profile/etc/profile" ]] && source "$HOME/.guix-profile/etc/profile"
+
+##### direnv hook
+# mute direnv constantly telling me what it's loading
+# export DIRENV_LOG_FORMAT=
+# eval "$(direnv hook bash)"
+
+# line completion
+# nope, doesn't work right with starship
+# source ~/linecomp/linecomp.sh
+
+##### git completion functions and extra config
+# disabled for now due to age (2008) and suspicion that it's interfering with other hooks
+# source_relative_once bin/functions/git-branch.bash # defines parse_git_branch and parse_git_branch_with_dirty
+# source_relative_once bin/functions/git-completion.bash
+
+##### mcfly integration (access via ctrl-r)
+needs mcfly "curl -LSfs https://raw.githubusercontent.com/cantino/mcfly/master/ci/install.sh | sudo sh -s -- --git cantino/mcfly"
+if [ $? -eq 0 ]; then
+  eval "$(mcfly init bash)"
+fi
+
+##### bash-preexec
+# You'll want to pull down the file and add it to your bash profile/configuration (i.e ~/.bashrc, ~/.profile, ~/.bash_profile, etc).
+# It must be the last thing imported in your bash profile!
+# Pull down our file from GitHub and write it to your home directory as a hidden file.
+export BASH_PREEXEC_LOCATION="$HOME/dotfiles/lib/bash-preexec.sh"
+update_bash_preexec() {
+  mkdir -p ~/dotfiles/lib
+  curl https://raw.githubusercontent.com/rcaloras/bash-preexec/master/bash-preexec.sh -o $BASH_PREEXEC_LOCATION
+}
+# # Source our file at the end of our bash profile (e.g. ~/.bashrc, ~/.profile, or ~/.bash_profile)
+[[ -f $BASH_PREEXEC_LOCATION ]] && source $BASH_PREEXEC_LOCATION
+
+##### starship
+# it will work with bash-preexec if it's loaded, so we run this after that hook
+needs starship
+eval "$(starship init bash)"
+
+[[ -v DEBUG_SHELLCONFIG ]] && echo "Exiting $(echo "${BASH_SOURCE[0]}" | sed "s|^$HOME|~|")"
+[[ -v DEBUG_PATHCONFIG ]] && echo "$PATH" || :

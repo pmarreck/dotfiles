@@ -1,3 +1,6 @@
+#!/usr/bin/env bash
+# shellcheck disable=SC2001
+
 # So for debug switches, we will check whether they are even set using [[ -v VARNAME ]]
 # because we do not want to pollute the env with the unnecessary presence of
 # debug switches that are just set to false.
@@ -19,7 +22,7 @@ else
 fi
 
 [[ -v DEBUG_SHELLCONFIG ]] && echo "Entering $(echo "${BASH_SOURCE[0]}" | sed "s|^$HOME|~|")" || printf "#"
-[[ -v DEBUG_PATHCONFIG ]] && echo $PATH
+[[ -v DEBUG_PATHCONFIG ]] && echo "$PATH"
 
 # mute direnv constantly telling me what it's loading
 export DIRENV_LOG_FORMAT=
@@ -58,34 +61,40 @@ fi
 
 # Compilation flags
 # export ARCHFLAGS="-arch arm64"
-export ARCHFLAGS="-arch $(uname -a | rev | cut -d ' ' -f 2 | rev)"
+ARCHFLAGS="-arch $(uname -a | rev | cut -d ' ' -f 2 | rev)"
+export ARCHFLAGS
 # note: "aarch64" may need to be mutated to "arm64" in some cases
 
 # ssh
-export SSH_KEY_PATH="~/.ssh/id_ed25519"
+export SSH_KEY_PATH="$HOME/.ssh/id_ed25519"
 
 # most things should be sourced via source_relative... except source_relative itself
-source $HOME/dotfiles/bin/functions/source_relative.bash
+source "$HOME/dotfiles/bin/functions/source_relative.bash"
 
 # Guix integration
 [[ -s "$HOME/.guix-profile/etc/profile" ]] && source $HOME/.guix-profile/etc/profile
 
 # Awk-ward! (see note below about "using the right awk"...)
-export AWK=$(command -v gawk || command -v awk)
+AWK=$(command -v gawk || command -v awk)
+export AWK
 
 # platform info
 pf="$(uname)"
 if [ "$pf" = "Darwin" ]; then
   export PLATFORM="osx"
-elif [ "$(expr substr $pf 1 5)" = "Linux" ]; then
+elif [ "${pf:0:5}" = "Linux" ]; then
   export PLATFORM="linux"
   # The following are 2 different ways to extract the value of a name=value pair input file
   # One depends on ripgrep being installed, the other on awk (which is installed by default on most linux distros)
   # You could also just source the file and then use the variable directly, but that pollutes the env
-  export DISTRO="$(cat /etc/os-release | rg -r '$1' -o --color never '^NAME="?(.+)"?$')"
-  export DISTRO_PRETTY="$(cat /etc/os-release | rg -r '$1' -o --color never '^PRETTY_NAME="?(.+)"?$')"
-  export DISTRO_VERSION="$(cat /etc/os-release | $AWK -F= '$1=="VERSION_ID"{gsub(/(^["]|["]$)/,"",$2);print$2}')"
-elif [ "$(expr substr $pf 1 10)" = "MINGW32_NT" ]; then
+  DISTRO="$(rg -r '$1' -o --color never '^NAME="?(.+)"?$' /etc/os-release)"
+  export DISTRO
+  DISTRO_PRETTY="$(rg -r '$1' -o --color never '^PRETTY_NAME="?(.+)"?$' /etc/os-release)"
+  export DISTRO_PRETTY
+  # shellcheck disable=SC2016
+  DISTRO_VERSION="$($AWK -F= '$1=="VERSION_ID"{gsub(/(^["]|["]$)/,"",$2);print$2}' /etc/os-release)"
+  export DISTRO_VERSION
+elif [ "${pf:0:10}" = "MINGW32_NT" ]; then
   export PLATFORM="windows"
 else
   # this downcase requires bash 4+; you can pipe to tr '[:upper:]' '[:lower:]' instead
@@ -119,50 +128,37 @@ fi
 # graceful dependency enforcement
 # Usage: needs <executable> ["provided by <packagename>"]
 needs() {
-	local bin=$1
-	shift
-	command -v $bin >/dev/null 2>&1 || {
-		printf "%s is required but it's not installed or in PATH; %s\n" "$bin" "$*" >&2
-		return 1
-	}
+  local bin="$1"
+  shift
+  command -v "$bin" >/dev/null 2>&1 || {
+    printf "%s is required but it's not installed or in PATH; %s\n" "$bin" "$*" >&2
+    return 1
+  }
 }
 
 # who am I? (should work even when sourced from elsewhere, but only in Bash)
 me() {
-  basename ${BASH_SOURCE[0]}
+  basename "${BASH_SOURCE[0]}"
 }
 
 # Pull in path configuration
 source_relative_once .pathconfig
 
-# rust cargo hook and related environment dependencies
-[[ -s "$HOME/.cargo/env" ]] && source "$HOME/.cargo/env"
-needs rustc "curl https://sh.rustup.rs -sSf | sh"
-needs exa "cargo install exa"
-needs tokei "cargo install --git https://github.com/XAMPPRocky/tokei.git tokei"
-
-# direnv hook
-eval "$(direnv hook bash)"
+needs exa "cargo install exa, or your package manager"
+needs tokei "cargo install --git https://github.com/XAMPPRocky/tokei.git tokei, or your package manager"
 
 # for git paging:
-needs delta cargo install git-delta
+needs delta "cargo install git-delta"
 
 # environment vars config
 source_relative_once .envconfig
 
+# source posix profile
 [[ -s "$HOME/.profile" ]] && source_relative_once .profile # Load the default .profile
 
+# Load hooks
+source $HOME/bin/apply-hooks || echo "Problem when sourcing $HOME/bin/apply-hooks"
 
-# mcfly integration (access via ctrl-r)
-needs mcfly "curl -LSfs https://raw.githubusercontent.com/cantino/mcfly/master/ci/install.sh | sudo sh -s -- --git cantino/mcfly" && eval "$(mcfly init bash)"
-
-# starship
-needs starship
-eval "$(starship init bash)"
-
-# line completion
-# nope, doesn't work right with starship
-# source ~/linecomp/linecomp.sh
 
 [[ -v DEBUG_SHELLCONFIG ]] && echo "Exiting $(echo "${BASH_SOURCE[0]}" | sed "s|^$HOME|~|")"
-[[ -v DEBUG_PATHCONFIG ]] && echo $PATH
+[[ -v DEBUG_PATHCONFIG ]] && echo "$PATH" || :

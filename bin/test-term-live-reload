@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+
+function test-term-live-reload() {
+  # Define your terminal command here
+  local TERM_APP
+  TERM_APP="${TERMINAL_APP:-wezterm}"
+  local shell
+  shell="${SHELL:-bash}"
+  shell="${shell##*/}"
+  while true; do
+    local terminal_pid
+    echo "Waiting for any changes to dotfiles..."
+    inotifywait -e close_write,moved_to,create ~/.bash_profile ~/.bashrc ~/.profile ~/.inputrc ~/bin/* ~/lib/* ~/dotfiles/.* ~/dotfiles/bin/* ~/dotfiles/bin/functions/* ~/dotfiles/lib/*
+    [ -n "$terminal_pid" ] && kill $terminal_pid
+
+    # Output the results of a test shell invocation.
+    local stamp=$(date +%Y%m%d%H%M%S%N)
+    local termstdout=$(mktemp -t "termstdout-${stamp}-XXXX" --suffix .txt)
+    local termstderr=$(mktemp -t "termstderr-${stamp}-XXXX" --suffix .txt)
+    local termretcode=$(mktemp -t "termretcode-${stamp}-XXXX" --suffix .txt)
+    $shell -i -c "echo -e terminal setup return code within terminal:\\\n"'$?'" >&2 && exit" > $termstdout 2>$termstderr
+    echo -e "terminal setup return code after terminal exit:\n$?" >> $termretcode
+    echo "terminal setup stdout:"
+    cat $termstdout
+    echo "terminal setup stderr:"
+    cat $termstderr
+    echo "terminal setup return code(s):"
+    cat $termretcode
+
+    # Start a new instance of the terminal emulator.
+    $TERM_APP start --always-new-process
+
+    # Update the PID for the next iteration.
+    terminal_pid=$!
+  done
+}

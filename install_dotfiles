@@ -41,9 +41,10 @@ echo "${scriptfiles[@]}"
 
 cd ~
 
-# symlink the bin directory
+# symlink the bin and lib directories
 pushd $HOME
 ln -sfv dotfiles/bin # this assumes your dotfiles repo is in $HOME
+ln -sfv dotfiles/lib
 popd
 
 # make a Scripts directory if it doesn't exist

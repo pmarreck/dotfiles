@@ -88,7 +88,9 @@ export CHARSET_ALNUM="$CHARSET_ALPHA$CHARSET_NUM"
 # delete glyphs that can be confused with other characters
 # zero and one are the preferred glyphs to capital O, lowercase l and capital I
 export CHARSET_ALNUM_SANE="$(printf "%s" "$CHARSET_ALNUM" | tr -d 'OlI')"
-export CHARSET_PUNC='!@#$%^&*-_=+[]{}|;:,.<>/?~'
+# export CHARSET_PUNC='!@#$%^&*-_=+[]{}|;:,.<>/?~'
+# I shortened the possible punctuation chars above due to incompatibility with various sites
+export CHARSET_PUNC='!@#$%^&*'
 export CHARSET_HEX="${CHARSET_NUM}abcdef"
 
 randompass() {

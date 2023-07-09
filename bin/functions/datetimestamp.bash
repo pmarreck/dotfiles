@@ -1,9 +1,9 @@
 
-# set the date bin to gdate (or one that recognizes --resolution) if available
-datebin=date
-$datebin --resolution >/dev/null 2>&1 || datebin=gdate
-$datebin --resolution >/dev/null 2>&1 || datebin=date
 datetimestamp() {
+  # set the date bin to gdate (or one that recognizes --resolution) if available
+  local datebin="date"
+  $datebin --resolution >/dev/null 2>&1 || datebin="gdate"
+  $datebin --resolution >/dev/null 2>&1 || datebin="date"
   local format=${DATETIMESTAMPFORMAT:-'+%Y%m%d%H%M%S'}
   # if there is a --date argument
   case "$1" in

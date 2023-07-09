@@ -12,10 +12,10 @@ To apply this to a new computer or dev environment:
 
 Install https://direnv.net/
 
-Install https://github.com/ohmybash/oh-my-bash
+Install https://starship.rs/
 
 Clone this repo right inside your home directory (so, at ~/dotfiles).
 
-Run ./dotfiles/install_dotfiles . This will symlink all the relevant files into ~, ~/bin and ~/Scripts, making those dirs if they don't exist yet.
+Run ./dotfiles/install_dotfiles . This will symlink all the relevant files into ~, ~/bin/ ~/lib and ~/Scripts, making those dirs if they don't exist yet.
 
 Open a new Terminal to make sure you're golden.
