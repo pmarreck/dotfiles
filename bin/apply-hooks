@@ -22,16 +22,16 @@ needs() {
 ##### rust cargo hook and related environment dependencies
 # [[ -s "$HOME/.cargo/env" ]] && source "$HOME/.cargo/env"
 # needs rustc "curl https://sh.rustup.rs -sSf | sh"
-# needs exa "cargo install exa"
-# needs tokei "cargo install --git https://github.com/XAMPPRocky/tokei.git tokei"
+needs exa "cargo install exa"
+needs tokei "cargo install --git https://github.com/XAMPPRocky/tokei.git tokei"
 
 ##### Guix integration
 # [[ -s "$HOME/.guix-profile/etc/profile" ]] && source "$HOME/.guix-profile/etc/profile"
 
 ##### direnv hook
 # mute direnv constantly telling me what it's loading
-# export DIRENV_LOG_FORMAT=
-# eval "$(direnv hook bash)"
+export DIRENV_LOG_FORMAT=
+eval "$(direnv hook bash)"
 
 # line completion
 # nope, doesn't work right with starship
