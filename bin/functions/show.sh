@@ -74,8 +74,31 @@ show() {
     return 0
   fi
   if env | grep -q "^$word="; then
-    note "$word is an environment variable"
+    local xported=""
+    if [[ $(declare -p "$word" 2>/dev/null) == declare\ -x* ]]; then
+      xported="exported "
+    fi
+    note "$word is an ${xported}environment variable"
     env | grep --color=never "^$word="
+  elif var_defined? "$word"; then
+    # get the output of declare -p
+    declare_str=$(declare -p "$word" 2>/dev/null)
+    if [[ $declare_str == declare\ -a* ]]; then
+      note "$word is an indexed array variable"
+    elif [[ $declare_str == declare\ -A* ]]; then
+      note "$word is an associative array variable"
+    elif [[ $declare_str == declare\ --* ]]; then
+      note "$word is a scalar variable"
+    elif [[ $declare_str == declare\ -x* ]]; then
+      note "$word is an exported variable"
+    elif [[ $declare_str == declare\ -r* ]]; then
+      note "$word is a readonly variable"
+    elif [[ $declare_str == declare\ -i* ]]; then
+      note "$word is an integer variable"
+    else
+      note "I have no idea what kind of variable $word is, but it is defined:"
+    fi
+    echo "$declare_str"
   elif [ -z "$(type -a -t "$word")" ]; then
     warn "$word is undefined"
     return 1
@@ -107,7 +130,6 @@ show() {
         *)
           # things should not get here; if they do, add a case for them above
           note "$word is not a variable, builtin, function, alias, or file; it is a $type"
-          # return 1
           ;;
       esac
     done
