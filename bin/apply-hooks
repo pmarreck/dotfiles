@@ -3,6 +3,9 @@
 [[ -v DEBUG_SHELLCONFIG ]] && echo "Entering $(echo "${BASH_SOURCE[0]}" | sed "s|^$HOME|~|")"
 [[ -v DEBUG_PATHCONFIG ]] && echo "$PATH"
 
+# We start with a clean PROMPT_COMMAND slate in the event we rehash (which used to screw this up)
+unset PROMPT_COMMAND
+
 # if [[ $- == *i* ]]; then echo "Interactive Shell" >&2; else echo "Non-Interactive Shell!!" >&2; fi
 
 # Enable debug for any errors not caught
@@ -28,6 +31,15 @@ needs tokei "cargo install --git https://github.com/XAMPPRocky/tokei.git tokei"
 ##### Guix integration
 # [[ -s "$HOME/.guix-profile/etc/profile" ]] && source "$HOME/.guix-profile/etc/profile"
 
+# echo "before starship hook: $(declare -p PROMPT_COMMAND)"
+##### starship
+# it claims it will work with bash-preexec if it's loaded, so we run this after that hook
+# Actually, turns out it's full of shit and a dirty hack, so we actually run it first
+# to minimize its brain damage to PROMPT_COMMAND hooking; see below
+needs starship
+eval "$(starship init bash)"
+
+# echo "before direnv hook: $(declare -p PROMPT_COMMAND)"
 ##### direnv hook
 # mute direnv constantly telling me what it's loading
 export DIRENV_LOG_FORMAT=
@@ -42,12 +54,29 @@ eval "$(direnv hook bash)"
 # source_relative_once bin/functions/git-branch.bash # defines parse_git_branch and parse_git_branch_with_dirty
 # source_relative_once bin/functions/git-completion.bash
 
+# echo "before mcfly hook: $(declare -p PROMPT_COMMAND)"
 ##### mcfly integration (access via ctrl-r)
 needs mcfly "curl -LSfs https://raw.githubusercontent.com/cantino/mcfly/master/ci/install.sh | sudo sh -s -- --git cantino/mcfly"
 if [ $? -eq 0 ]; then
   eval "$(mcfly init bash)"
 fi
 
+# So at this point we want to handle this more intelligently; let's assert
+# on the state of the PROMPT_COMMAND hooks and value at this point:
+
+if [ "$PROMPT_COMMAND" = "mcfly_prompt_command;_direnv_hook;starship_precmd" ]; then
+  # and now let's split it into an array that bash-preexec will handle itself:
+  [[ -v precmd_functions ]] || declare -a precmd_functions
+  IFS=';' read -ra precmd_functions <<< "$PROMPT_COMMAND"
+  # and finally let's delete PROMPT_COMMAND and let bash-preexec recreate it
+  unset PROMPT_COMMAND
+else
+  # Starship kept fucking these up on rehash, so we just force them to the proper values here
+  PROMPT_COMMAND=([0]="__bp_precmd_invoke_cmd" [1]="__bp_interactive_mode")
+  precmd_functions=([0]="mcfly_prompt_command" [1]="_direnv_hook" [2]="starship_precmd" [3]="precmd")
+fi
+
+# echo "before bash-preexec hook: $(declare -p PROMPT_COMMAND)"
 ##### bash-preexec
 # You'll want to pull down the file and add it to your bash profile/configuration (i.e ~/.bashrc, ~/.profile, ~/.bash_profile, etc).
 # It must be the last thing imported in your bash profile!
@@ -58,12 +87,10 @@ update_bash_preexec() {
   curl https://raw.githubusercontent.com/rcaloras/bash-preexec/master/bash-preexec.sh -o $BASH_PREEXEC_LOCATION
 }
 # # Source our file at the end of our bash profile (e.g. ~/.bashrc, ~/.profile, or ~/.bash_profile)
+# Disabled for now because it kills the auto-command-timing functionality of starship
 [[ -f $BASH_PREEXEC_LOCATION ]] && source $BASH_PREEXEC_LOCATION
 
-##### starship
-# it will work with bash-preexec if it's loaded, so we run this after that hook
-needs starship
-eval "$(starship init bash)"
+# echo "after bash-preexec hook: $(declare -p PROMPT_COMMAND)"
 
 [[ -v DEBUG_SHELLCONFIG ]] && echo "Exiting $(echo "${BASH_SOURCE[0]}" | sed "s|^$HOME|~|")"
 [[ -v DEBUG_PATHCONFIG ]] && echo "$PATH" || :

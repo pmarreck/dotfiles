@@ -78,6 +78,13 @@ source "$HOME/dotfiles/bin/functions/source_relative.bash"
 AWK=$(command -v gawk || command -v awk)
 export AWK
 
+# using the right awk is a PITA on macOS vs. Linux so let's ensure GNU Awk everywhere
+is_gnu_awk=$($AWK --version | grep -q -m 1 'GNU Awk' && echo true || echo false)
+[ "${PLATFORM}${AWK}" == "osxawk" ] && \
+  [ "$is_gnu_awk" = "false" ] && \
+  echo "WARNING: The awk on PATH is not GNU Awk on macOS, which may cause problems" >&2
+
+
 # platform info
 pf="$(uname)"
 if [ "$pf" = "Darwin" ]; then
@@ -86,13 +93,23 @@ elif [ "${pf:0:5}" = "Linux" ]; then
   export PLATFORM="linux"
   # The following are 2 different ways to extract the value of a name=value pair input file
   # One depends on ripgrep being installed, the other on awk (which is installed by default on most linux distros)
+  # (edit: I converted the ripgrep to awk)
   # You could also just source the file and then use the variable directly, but that pollutes the env
-  DISTRO="$(rg -r '$1' -o --color never '^NAME="?(.+)"?$' /etc/os-release)"
+  function distro() {
+    $AWK -F'=' '/^NAME=/{gsub(/"/, "", $2); print $2}' ${1:-/etc/os-release}
+  }
+  DISTRO=$(distro)
   export DISTRO
-  DISTRO_PRETTY="$(rg -r '$1' -o --color never '^PRETTY_NAME="?(.+)"?$' /etc/os-release)"
+  function distro_pretty() {
+    $AWK -F'=' '/^PRETTY_NAME=/{gsub(/"/, "", $2); print $2}' ${1:-/etc/os-release}
+  }
+  DISTRO_PRETTY=$(distro_pretty)
   export DISTRO_PRETTY
-  # shellcheck disable=SC2016
-  DISTRO_VERSION="$($AWK -F= '$1=="VERSION_ID"{gsub(/(^["]|["]$)/,"",$2);print$2}' /etc/os-release)"
+  function distro_version() {
+    # shellcheck disable=SC2016
+    $AWK -F= '$1=="VERSION_ID"{gsub(/(^["]|["]$)/,"",$2);print$2}' ${1:-/etc/os-release}
+  }
+  DISTRO_VERSION=$(distro_version)
   export DISTRO_VERSION
 elif [ "${pf:0:10}" = "MINGW32_NT" ]; then
   export PLATFORM="windows"
@@ -101,13 +118,6 @@ else
   export PLATFORM="${pf,,}"
 fi
 unset pf
-
-# using the right awk is a PITA on macOS vs. Linux so let's ensure GNU Awk everywhere
-is_gnu_awk=$($AWK --version | grep -q -m 1 'GNU Awk' && echo true || echo false)
-[ "${PLATFORM}${AWK}" == "osxawk" ] && \
-  [ "$is_gnu_awk" = "false" ] && \
-  echo "WARNING: The awk on PATH is not GNU Awk on macOS, which may cause problems" >&2
-
 
 # # asdf config
 # [[ -s "$HOME/.asdf/asdf.sh" ]] && source "$HOME/.asdf/asdf.sh"
