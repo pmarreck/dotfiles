@@ -24,6 +24,10 @@ if [ "$PLATFORM" = "osx" ]; then
 fi
 # export EDITOR='code' # already set in .bashrc
 
+# set default tab stops to 2 spaces
+# Note that this may mess up ncurses code that might assume 8 spaces
+tabs -2
+
 # If you hate noise
 # set bell-style visible
 

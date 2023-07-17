@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 
-reformat_space() {
+# OK, why tabs? Why resurrect this age-old nerd debate again?
+# Very simple: It's an accessibility issue:
+# https://adamtuttle.codes/blog/2021/tabs-vs-spaces-its-an-accessibility-issue/
+# UNFORTUNATELY, at this time, Elixir's formatter `mix format` assumes spaces.
+# To set the default tab width on your terminal (which unfortunately defaults to 8),
+# run: `tabs -2` (or whatever width you want), possibly in your dotfiles.
+
+reformat_spaces_to_tabs() {
 	local file="$1"
 	function determine_tab_size_in_spaces() {
 		awk '
@@ -16,15 +23,22 @@ reformat_space() {
 				second_max_indent = 0;
 				third_max_indent = 0;
 				for (indent in indents) {
-					if (indents[indent] > max_count) {
+					if (indents[indent] > max_count && indent > 0) {
 						third_max_indent = second_max_indent;
 						second_max_indent = max_indent;
 						max_indent = indent;
 						max_count = indents[indent];
 					}
 				}
-				# Determine what the multiple is for the most common indentation levels, handling up to 5
-				if (max_indent % 5 == 0 && second_max_indent % 5 == 0 && third_max_indent % 5 == 0) {
+				# Determine what the greatest common divisor is for the most common indentation levels,
+				# handling up to 8 spaces (which is what my terminal outputs, which is ridiculous)
+				if (max_indent % 8 == 0 && second_max_indent % 8 == 0 && third_max_indent % 8 == 0) {
+					print 8;
+				} else if (max_indent % 7 == 0 && second_max_indent % 7 == 0 && third_max_indent % 7 == 0) {
+					print 7;
+				} else if (max_indent % 6 == 0 && second_max_indent % 6 == 0 && third_max_indent % 6 == 0) {
+					print 6;
+				} else if (max_indent % 5 == 0 && second_max_indent % 5 == 0 && third_max_indent % 5 == 0) {
 					print 5;
 				} else if (max_indent % 4 == 0 && second_max_indent % 4 == 0 && third_max_indent % 4 == 0) {
 					print 4;
@@ -42,6 +56,7 @@ reformat_space() {
 	}
 	local indent=$(determine_tab_size_in_spaces "$file")
 	if (( indent > 0 )); then
+		# >&2 echo "Indent size: $indent"
 		indent_spaces=$(printf "%${indent}s")
 		awk -v indent="$indent_spaces" '
 		{
@@ -50,17 +65,20 @@ reformat_space() {
 			}
 			print;
 		}' "$file" #> "$file.tmp" && mv "$file.tmp" "$file"
+	else
+		# >&2 echo "Indent size: 0"
+		cat "$file"
 	fi
 }
 
 # Export the function so it can be used by find -exec
-export -f reformat_space
+export -f reformat_spaces_to_tabs
 
 # Run the function, passing along any args, if this file was run directly (such as via sudo) instead of as an include
 # Sometimes, $0 contains a leading dash to indicate an interactive (or is it login?) shell,
 # which is apparently an old convention (which also broke the basename call on OS X)
 _me=$(basename "${0##\-}")
-if [ "$_me" = "reformat_space" ]; then
+if [ "$_me" = "reformat_spaces_to_tabs" ]; then
 	$_me "$@"
 fi
 unset _me
