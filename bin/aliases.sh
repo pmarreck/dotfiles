@@ -23,7 +23,7 @@ alias l4='l1 --tree --level=4'
 # alias ll='ls -lagG \!* | more'
 # alias term='set noglob; unset TERMCAP; eval `tset -s -I -Q - \!*`'
 # alias rehash='hash -r'
-alias rehash='unset _SOURCED_FILES; source $HOME/.bashrc'
+# OK, thanks to badly written hooks, this now has to be a function
 # alias word='grep \!* /usr/share/dict/web2' # Grep thru dictionary
 if [ "$PLATFORM" = "osx" ]; then
   alias tophog='top -ocpu -s 3'

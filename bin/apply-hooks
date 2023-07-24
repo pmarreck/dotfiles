@@ -3,8 +3,9 @@
 [[ -v DEBUG_SHELLCONFIG ]] && echo "Entering $(echo "${BASH_SOURCE[0]}" | sed "s|^$HOME|~|")"
 [[ -v DEBUG_PATHCONFIG ]] && echo "$PATH"
 
-# We start with a clean PROMPT_COMMAND slate in the event we rehash (which used to screw this up)
+# We start with a clean PROMPT_COMMAND and precmd_functions slate in the event we rehash (which used to screw this up)
 unset PROMPT_COMMAND
+unset precmd_functions
 
 # if [[ $- == *i* ]]; then echo "Interactive Shell" >&2; else echo "Non-Interactive Shell!!" >&2; fi
 
@@ -84,11 +85,11 @@ fi
 export BASH_PREEXEC_LOCATION="$HOME/dotfiles/lib/bash-preexec.sh"
 update_bash_preexec() {
   mkdir -p ~/dotfiles/lib
-  curl https://raw.githubusercontent.com/rcaloras/bash-preexec/master/bash-preexec.sh -o $BASH_PREEXEC_LOCATION
+  curl https://raw.githubusercontent.com/rcaloras/bash-preexec/master/bash-preexec.sh -o "$BASH_PREEXEC_LOCATION"
 }
-# # Source our file at the end of our bash profile (e.g. ~/.bashrc, ~/.profile, or ~/.bash_profile)
-# Disabled for now because it kills the auto-command-timing functionality of starship
-[[ -f $BASH_PREEXEC_LOCATION ]] && source $BASH_PREEXEC_LOCATION
+# Source this file at the end of your bash profile (e.g. ~/.bashrc, ~/.profile, or ~/.bash_profile)
+[[ -f "$BASH_PREEXEC_LOCATION" ]] && source "$BASH_PREEXEC_LOCATION" || \
+  echo -e "Problem when setting up bash_preexec config from ${BASH_PREEXEC_LOCATION}; it is nonexistent.\n You may need to run update_bash_preexec to fix this."
 
 # echo "after bash-preexec hook: $(declare -p PROMPT_COMMAND)"
 

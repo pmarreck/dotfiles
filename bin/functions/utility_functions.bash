@@ -25,6 +25,59 @@ restore_shellenv() {
   unset OLDHISTIGNORE
 }
 
+uniquify_array() {
+  # ${AWK:-awk} '!seen[$0]++'
+  declare -n arr=$1  # indirect reference to the array name passed in as arg1
+  declare -A seen
+  local unique_arr=()
+  for value in ${arr[@]}; do  # loop over array elements, space separated
+    if [[ ! -v seen[$value] ]]; then
+      seen[$value]=1
+      unique_arr+=("$value")
+    fi
+  done
+  # Assign unique values back to the original array
+  arr=("${unique_arr[@]}")
+}
+
+# OK, thanks to badly written hooks, this now has to be a function
+function rehash() {
+  # Save state of hooks if they were already set up
+  # echo "precmd_functions/PROMPT_COMMAND:"
+  # declare -p PROMPT_COMMAND; declare -p precmd_functions
+  if [[ -v precmd_functions ]]; then
+    local orig_precmd_functions
+    orig_precmd_functions=("${precmd_functions[@]}")
+    # echo "we saved precmd_functions"
+  fi
+  if [[ -v PROMPT_COMMAND ]]; then
+    local orig_PROMPT_COMMAND
+    orig_PROMPT_COMMAND=("${PROMPT_COMMAND[@]}")
+    # echo "we saved PROMPT_COMMAND"
+  fi
+  unset _SOURCED_FILES
+  source $HOME/.bashrc
+  # echo "precmd_functions/PROMPT_COMMAND after bashrc:"
+  # declare -p PROMPT_COMMAND; declare -p precmd_functions
+  # Restore hook setup
+  if [[ -v orig_precmd_functions ]]; then
+    # echo "we are restoring original precmd_functions"
+    precmd_functions=(${orig_precmd_functions[*]})
+    # echo "precmd_functions after restoration: ${precmd_functions[@]}"
+    # The dumb hook code inserts dupes sometimes if they are rerun (not idempotent),
+    # so we have to do this:
+    # (I hate how mutable this looks but it was the easiest way.
+    # Reassigning arrays in Bash is a nightmare.)
+    uniquify_array precmd_functions
+    # echo "precmd_functions after uniquifying: ${precmd_functions[@]}"
+  fi
+  if [[ -v orig_PROMPT_COMMAND ]]; then
+    # echo "we are restoring original PROMPT_COMMAND"
+    PROMPT_COMMAND=(${orig_PROMPT_COMMAND[*]})
+    # Do not need to uniquify this one at this time.
+  fi
+}
+
 # check if the AWK environment variable is already set and if not, set it to gawk or awk
 [ -z "${AWK}" ] && export AWK=$(command -v gawk || command -v awk)
 
