@@ -24,7 +24,6 @@ alias l4='l1 --tree --level=4'
 # alias term='set noglob; unset TERMCAP; eval `tset -s -I -Q - \!*`'
 # alias rehash='hash -r'
 alias rehash='unset _SOURCED_FILES; source $HOME/.bashrc'
-export -a rehash
 # alias word='grep \!* /usr/share/dict/web2' # Grep thru dictionary
 if [ "$PLATFORM" = "osx" ]; then
   alias tophog='top -ocpu -s 3'
