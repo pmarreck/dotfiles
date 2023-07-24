@@ -4,8 +4,14 @@
 [[ -v DEBUG_PATHCONFIG ]] && echo "$PATH"
 
 # We start with a clean PROMPT_COMMAND and precmd_functions slate in the event we rehash (which used to screw this up)
-unset PROMPT_COMMAND
-unset precmd_functions
+# unset PROMPT_COMMAND
+# unset precmd_functions
+# declare -a PROMPT_COMMAND
+# declare -a precmd_functions
+# PROMPT_COMMAND="" # initialized to a string for a reason, even though it can be an array
+# unset PROMPT_COMMAND
+# precmd_functions=()
+# preexec_functions=()
 
 # if [[ $- == *i* ]]; then echo "Interactive Shell" >&2; else echo "Non-Interactive Shell!!" >&2; fi
 
@@ -32,19 +38,21 @@ needs tokei "cargo install --git https://github.com/XAMPPRocky/tokei.git tokei"
 ##### Guix integration
 # [[ -s "$HOME/.guix-profile/etc/profile" ]] && source "$HOME/.guix-profile/etc/profile"
 
-# echo "before starship hook: $(declare -p PROMPT_COMMAND)"
-##### starship
-# it claims it will work with bash-preexec if it's loaded, so we run this after that hook
-# Actually, turns out it's full of shit and a dirty hack, so we actually run it first
-# to minimize its brain damage to PROMPT_COMMAND hooking; see below
-needs starship
-eval "$(starship init bash)"
-
 # echo "before direnv hook: $(declare -p PROMPT_COMMAND)"
 ##### direnv hook
 # mute direnv constantly telling me what it's loading
 export DIRENV_LOG_FORMAT=
-eval "$(direnv hook bash)"
+needs direnv
+if [ $? -eq 0 ]; then
+  # if array_contains_element precmd_functions _direnv_hook; then
+  #   :
+  # else
+    eval "$(direnv hook bash)"
+  # fi
+fi
+
+# echo "after dirfuck:"
+# declare -p PROMPT_COMMAND; declare -p precmd_functions
 
 # line completion
 # nope, doesn't work right with starship
@@ -59,23 +67,36 @@ eval "$(direnv hook bash)"
 ##### mcfly integration (access via ctrl-r)
 needs mcfly "curl -LSfs https://raw.githubusercontent.com/cantino/mcfly/master/ci/install.sh | sudo sh -s -- --git cantino/mcfly"
 if [ $? -eq 0 ]; then
-  eval "$(mcfly init bash)"
+  # if array_contains_element precmd_functions mcfly_prompt_command; then
+  #   :
+  # else
+    eval "$(mcfly init bash)"
+  # fi
 fi
+
+# echo "after mcfuck:"
+# declare -p PROMPT_COMMAND; declare -p precmd_functions
 
 # So at this point we want to handle this more intelligently; let's assert
 # on the state of the PROMPT_COMMAND hooks and value at this point:
 
-if [ "$PROMPT_COMMAND" = "mcfly_prompt_command;_direnv_hook;starship_precmd" ]; then
-  # and now let's split it into an array that bash-preexec will handle itself:
-  [[ -v precmd_functions ]] || declare -a precmd_functions
-  IFS=';' read -ra precmd_functions <<< "$PROMPT_COMMAND"
-  # and finally let's delete PROMPT_COMMAND and let bash-preexec recreate it
-  unset PROMPT_COMMAND
-else
-  # Starship kept fucking these up on rehash, so we just force them to the proper values here
-  PROMPT_COMMAND=([0]="__bp_precmd_invoke_cmd" [1]="__bp_interactive_mode")
-  precmd_functions=([0]="mcfly_prompt_command" [1]="_direnv_hook" [2]="starship_precmd" [3]="precmd")
-fi
+# if [ "$PROMPT_COMMAND" = "mcfly_prompt_command;_direnv_hook;starship_precmd" ]; then
+#   # and now let's split it into an array that bash-preexec will handle itself:
+#   [[ -v precmd_functions ]] || declare -a precmd_functions
+#   IFS=';' read -ra precmd_functions <<< "$PROMPT_COMMAND"
+#   # and finally let's delete PROMPT_COMMAND and let bash-preexec recreate it
+#   unset PROMPT_COMMAND
+# else
+# :
+#   # Starship kept fucking these up on rehash, so we just force them to the proper values here
+#   # PROMPT_COMMAND=([0]="__bp_precmd_invoke_cmd" [1]="__bp_interactive_mode")
+#   # precmd_functions=([0]="mcfly_prompt_command" [1]="_direnv_hook" [2]="starship_precmd" [3]="precmd")
+# fi
+
+# NOW we merge the flat ;-separated strings into proper array elements
+# move_PROMPT_COMMAND_to_precmd_functions
+# and unique them
+# uniquify_array precmd_functions
 
 # echo "before bash-preexec hook: $(declare -p PROMPT_COMMAND)"
 ##### bash-preexec
@@ -91,7 +112,50 @@ update_bash_preexec() {
 [[ -f "$BASH_PREEXEC_LOCATION" ]] && source "$BASH_PREEXEC_LOCATION" || \
   echo -e "Problem when setting up bash_preexec config from ${BASH_PREEXEC_LOCATION}; it is nonexistent.\n You may need to run update_bash_preexec to fix this."
 
-# echo "after bash-preexec hook: $(declare -p PROMPT_COMMAND)"
+# and then force PROMPT_COMMAND to just be the bash_preexec hook
+# PROMPT_COMMAND=([0]="__bp_precmd_invoke_cmd" [1]="__bp_interactive_mode")
+
+# and then make sure precmd_functions contains precmd
+# if array_contains_element precmd_functions precmd; then
+#   :
+# else
+#   precmd_functions+=(precmd)
+# fi
+
+# echo "before starship hook: $(declare -p PROMPT_COMMAND)"
+##### starship
+# it claims it will work with bash-preexec if it's loaded, so we run this after that hook
+# Actually, turns out it's full of shit and a dirty hack, so we actually run it first
+# to minimize its brain damage to PROMPT_COMMAND hooking; see below
+needs starship
+if [ $? -eq 0 ]; then
+  # if array_contains_element precmd_functions starship_precmd; then
+  #   :
+  # else
+# starship init bash
+    eval "$(starship init bash)"
+  # fi
+fi
+
+# echo "after starshit:"
+# declare -p PROMPT_COMMAND; declare -p precmd_functions
+
+## SET UP CUSTOM HOOKS HERE
+# set up default terminal directory using OSC 7
+if array_contains_element precmd_functions __wezterm_osc7_home; then
+  :
+else
+  precmd_functions+=(__wezterm_osc7_home)
+fi
+
+# Just setting them declaratively here to avoid a lot of nondeterministic garbage with these hooks
+# unset PROMPT_COMMAND
+# unset precmd_functions
+# declare -a PROMPT_COMMAND=([0]="__bp_precmd_invoke_cmd" [1]="__bp_interactive_mode")
+# declare -a precmd_functions=([0]="mcfly_prompt_command" [1]="_direnv_hook" [2]="starship_precmd" [3]="__wezterm_osc7_home" [4]="precmd")
+
+# echo "after bash_preexsuck:"
+# declare -p PROMPT_COMMAND; declare -p precmd_functions; declare -p preexec_functions
 
 [[ -v DEBUG_SHELLCONFIG ]] && echo "Exiting $(echo "${BASH_SOURCE[0]}" | sed "s|^$HOME|~|")"
 [[ -v DEBUG_PATHCONFIG ]] && echo "$PATH" || :

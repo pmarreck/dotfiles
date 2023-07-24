@@ -25,6 +25,9 @@ restore_shellenv() {
   unset OLDHISTIGNORE
 }
 
+# check if the AWK environment variable is already set and if not, set it to gawk or awk
+[ -z "${AWK}" ] && export AWK=$(command -v gawk || command -v awk)
+
 uniquify_array() {
   # ${AWK:-awk} '!seen[$0]++'
   declare -n arr=$1  # indirect reference to the array name passed in as arg1
@@ -40,46 +43,106 @@ uniquify_array() {
   arr=("${unique_arr[@]}")
 }
 
+function array_contains_element() {
+  declare -n array=$1
+  element="$2"
+  for item in "${array[@]}"; do
+    if [[ "$item" == "$element" ]]; then
+      # Element found in array, exit with 0
+      return 0
+    fi
+  done
+  # If we got here, the element was not found in the array, exit with 1
+  return 1
+}
+
+move_PROMPT_COMMAND_to_precmd_functions() {
+  # Replace newlines with semicolons
+  PROMPT_COMMAND=${PROMPT_COMMAND//$'\n'/;}
+  
+  # Replace runs of 2 or more semicolons with one
+  while [[ $PROMPT_COMMAND == *';;'* ]]; do
+    PROMPT_COMMAND=${PROMPT_COMMAND//;;/;}
+  done
+
+  # Remove trailing semicolons
+  PROMPT_COMMAND=${PROMPT_COMMAND%;}
+
+  # Then split on semicolons
+  IFS=';' read -ra commands <<< "$PROMPT_COMMAND"
+  for cmd in "${commands[@]}"; do
+    precmd_functions+=("$cmd")
+  done
+
+  # Then clear PROMPT_COMMAND
+  PROMPT_COMMAND=''
+}
+
 # OK, thanks to badly written hooks, this now has to be a function
 function rehash() {
   # Save state of hooks if they were already set up
   # echo "precmd_functions/PROMPT_COMMAND:"
   # declare -p PROMPT_COMMAND; declare -p precmd_functions
-  if [[ -v precmd_functions ]]; then
-    local orig_precmd_functions
-    orig_precmd_functions=("${precmd_functions[@]}")
-    # echo "we saved precmd_functions"
-  fi
-  if [[ -v PROMPT_COMMAND ]]; then
-    local orig_PROMPT_COMMAND
-    orig_PROMPT_COMMAND=("${PROMPT_COMMAND[@]}")
-    # echo "we saved PROMPT_COMMAND"
-  fi
+  # if [[ -v precmd_functions ]]; then
+  #   local orig_precmd_functions
+  #   orig_precmd_functions=("${precmd_functions[@]}")
+  #   echo "we saved precmd_functions"
+  # fi
+  # if [[ -v PROMPT_COMMAND ]]; then
+  #   local orig_PROMPT_COMMAND
+  #   orig_PROMPT_COMMAND=("${PROMPT_COMMAND[@]}")
+  #   echo "we saved PROMPT_COMMAND"
+  # fi
   unset _SOURCED_FILES
   source $HOME/.bashrc
+  # I had to set this declaratively to what it's set in a new terminal to avoid brittle behavior
+  # declare -- PROMPT_COMMAND=$'mcfly_prompt_command;_direnv_hook\n__bp_trap_string="$(trap -p DEBUG)"\ntrap - DEBUG\n__bp_install'
+  # declare -a precmd_functions=([0]="starship_precmd")
+  # declare -a preexec_functions=([0]="starship_preexec_all")
+  declare -a PROMPT_COMMAND=([0]=$'__bp_precmd_invoke_cmd\nmcfly_prompt_command;_direnv_hook\n:' [1]="__bp_interactive_mode")
+  declare -a precmd_functions=([0]="starship_precmd" [1]="precmd")
+  declare -a preexec_functions=([0]="starship_preexec_all" [1]="preexec")
   # echo "precmd_functions/PROMPT_COMMAND after bashrc:"
   # declare -p PROMPT_COMMAND; declare -p precmd_functions
-  # Restore hook setup
-  if [[ -v orig_precmd_functions ]]; then
-    # echo "we are restoring original precmd_functions"
-    precmd_functions=(${orig_precmd_functions[*]})
-    # echo "precmd_functions after restoration: ${precmd_functions[@]}"
-    # The dumb hook code inserts dupes sometimes if they are rerun (not idempotent),
-    # so we have to do this:
-    # (I hate how mutable this looks but it was the easiest way.
-    # Reassigning arrays in Bash is a nightmare.)
-    uniquify_array precmd_functions
-    # echo "precmd_functions after uniquifying: ${precmd_functions[@]}"
-  fi
-  if [[ -v orig_PROMPT_COMMAND ]]; then
-    # echo "we are restoring original PROMPT_COMMAND"
-    PROMPT_COMMAND=(${orig_PROMPT_COMMAND[*]})
-    # Do not need to uniquify this one at this time.
-  fi
+  # # Restore hook setup
+  # if [[ -v orig_precmd_functions ]]; then
+  #   echo "we are restoring original precmd_functions"
+  #   precmd_functions=(${orig_precmd_functions[*]})
+  #   echo "precmd_functions/PROMPT_COMMAND after restoration:"
+  #   declare -p PROMPT_COMMAND; declare -p precmd_functions
+  #   # The dumb hook code inserts dupes sometimes if they are rerun (not idempotent),
+  #   # so we have to do this:
+  #   # (I hate how mutable this looks but it was the easiest way.
+  #   # Reassigning arrays in Bash is a nightmare.)
+  #   uniquify_array precmd_functions
+  #   echo "precmd_functions/PROMPT_COMMAND after uniquifying:"
+  #   declare -p PROMPT_COMMAND; declare -p precmd_functions
+  # fi
+  # if [[ -v orig_PROMPT_COMMAND ]]; then
+  #   echo "we are restoring original PROMPT_COMMAND"
+  #   PROMPT_COMMAND=(${orig_PROMPT_COMMAND[*]})
+  #   declare -p PROMPT_COMMAND; declare -p precmd_functions
+  #   # Do not need to uniquify this one at this time.
+  # fi
 }
 
-# check if the AWK environment variable is already set and if not, set it to gawk or awk
-[ -z "${AWK}" ] && export AWK=$(command -v gawk || command -v awk)
+# This function emits an OSC 7 sequence to inform the terminal
+# of the current working directory.  It prefers to use a helper
+# command provided by wezterm if wezterm is installed, but falls
+# back to a simple printf command otherwise.
+__wezterm_osc7() {
+  local default_directory=${1:-$PWD}
+  if hash wezterm 2>/dev/null ; then
+    wezterm set-working-directory $default_directory 2>/dev/null && return 0
+    # If the command failed (perhaps the installed wezterm
+    # is too old?) then fall back to the simple version below.
+  fi
+  printf "\033]7;file://%s%s\033\\" "${HOSTNAME}" "${default_directory}"
+}
+
+__wezterm_osc7_home() {
+  __wezterm_osc7 "$HOME"
+}
 
 trim_leading_heredoc_whitespace() {
   # this expects heredoc contents to be piped in via stdin
