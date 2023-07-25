@@ -39,6 +39,9 @@ if [ "${PLATFORM}-${DISTRO}" = "linux-NixOS" ]; then
     echo "$(datetimestamp) generation $(nix-gen-num); nvidia version $(nvidia --version); kernel version $(uname -r)" >> ~/nix-genstamp.txt
   }
   alias nixos="$EDITOR /etc/nixos"
+  function abbrev-nix-store-paths(){
+    sed -E 's|/nix/store/[a-z0-9]{32}-|/⌘/|g'
+  }
 fi
 
 #alias wordcount=(cat \!* | tr -s '\''  .,;:?\!()[]"'\'' '\''\012'\'' |' \

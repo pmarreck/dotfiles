@@ -5,14 +5,16 @@
 	email = lumbergh@gmail.com
 [core]
 	precomposeUnicode = true
-	pager = delta
+	pager = delta --tabs=2
 	editor = code --wait
 [interactive]
-	diffFilter = delta --color-only
+	difffilter = delta --tabs=2
 [delta]
 	navigate = true
 	side-by-side = true
 	line-numbers = true
+	tab-width = 2
+
 
 [merge]
 	conflictstyle = diff3
