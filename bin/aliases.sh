@@ -101,6 +101,8 @@ alias getfile='wget --xattr --show-progress -c -q --'
 
 alias consoleconfig='code $WEZTERM_CONFIG_FILE'
 
+# quick CLI editor shortcut
+alias e='micro'
 
 # why is grep dumb?
 # alias grep='egrep'
@@ -130,6 +132,7 @@ alias gcb='git checkout -b'
 alias gitrollback='git reset --hard; git clean -f'
 alias gunadd='git reset HEAD'
 alias grc='git rebase --continue'
+alias fetch='git fetch' # --all --prune'
 
 # lines of code counter
 # brew install tokei

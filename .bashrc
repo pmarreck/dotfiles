@@ -44,6 +44,17 @@ if $LOGIN_SHELL; then
   printf "l"
 fi
 
+# graceful dependency enforcement
+# Usage: needs <executable> ["provided by <packagename>"]
+needs() {
+  local bin="$1"
+  shift
+  command -v "$bin" >/dev/null 2>&1 || {
+    printf "%s is required but it's not installed or in PATH; %s\n" "$bin" "$*" >&2
+    return 1
+  }
+}
+
 # User configuration
 # export MANPATH="/usr/local/man:$MANPATH"
 
@@ -51,8 +62,10 @@ fi
 export LANG=en_US.UTF-8
 
 # Preferred editor for local and remote sessions
+needs micro "please install the micro terminal editor"
+needs code "please install VSCode"
 if [[ -n $SSH_CONNECTION ]]; then
-  export EDITOR='nano'
+  export EDITOR='micro'
   unset VISUAL
 else
   export EDITOR='code'
@@ -134,17 +147,6 @@ then
     bind '"\e[A": history-search-backward' # up-arrow
     bind '"\e[B": history-search-forward'  # down-arrow
 fi
-
-# graceful dependency enforcement
-# Usage: needs <executable> ["provided by <packagename>"]
-needs() {
-  local bin="$1"
-  shift
-  command -v "$bin" >/dev/null 2>&1 || {
-    printf "%s is required but it's not installed or in PATH; %s\n" "$bin" "$*" >&2
-    return 1
-  }
-}
 
 # who am I? (should work even when sourced from elsewhere, but only in Bash)
 me() {

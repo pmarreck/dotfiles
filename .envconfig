@@ -1,3 +1,5 @@
+#!/usr/bin/env bash
+
 [[ -v DEBUG_SHELLCONFIG ]] && echo "Entering $(echo "${BASH_SOURCE[0]}" | sed "s|^$HOME|~|")" || printf "#"
 [[ -v DEBUG_PATHCONFIG ]] && echo $PATH
 # canonical gcc tweaks for OS X's homebrew gcc; Linux shouldn't need these
@@ -94,7 +96,13 @@ export TXTRST="$SGR"          # Text Reset, disable coloring
 #Q=no bell
 #R=pass through raw ansi so colors work
 #X=no termcap init
-export LESS="-EQRX"
+#-x2=two spaces per tab
+export LESS="-EQRX -x2"
+
+# Color terminals
+export COLORTERM=truecolor
+# For the great "micro" editor
+export MICRO_TRUECOLOR=1
 
 # GPG configuration to set up in-terminal challenge-response
 export GPG_TTY=`tty`

@@ -1,3 +1,5 @@
+#!/usr/bin/env bash
+
 [[ -v DEBUG_SHELLCONFIG ]] && echo "Entering $(echo "${BASH_SOURCE[0]}" | sed "s|^$HOME|~|")" # || printf "#"
 [[ -v DEBUG_PATHCONFIG ]] && echo $PATH
 # echo "Current PATH is $PATH"
