@@ -62,8 +62,6 @@ needs() {
 export LANG=en_US.UTF-8
 
 # Preferred editor for local and remote sessions
-needs micro "please install the micro terminal editor"
-needs code "please install VSCode"
 if [[ -n $SSH_CONNECTION ]]; then
   export EDITOR='micro'
   unset VISUAL
@@ -158,6 +156,8 @@ source_relative_once .pathconfig
 
 needs exa "cargo install exa, or your package manager"
 needs tokei "cargo install --git https://github.com/XAMPPRocky/tokei.git tokei, or your package manager"
+needs micro "please install the micro terminal editor"
+needs code "please install VSCode"
 
 # for git paging:
 needs delta "cargo install git-delta"

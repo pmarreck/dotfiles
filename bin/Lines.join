@@ -1,25 +1,20 @@
 #!/usr/bin/env bash
 
-String.split() {
+Lines.join() {
+  local default_ifs_first_char="${IFS:0:1}"
   # peek at stdin to see if it's not empty
   if ! [ -t 0 ]; then
     # echo "There is stdin"
-    # read from stdin and split on first argument
-    # default to splitting on default IFS which is space, tab, newline
-    local sep="${1:-$IFS}"
-    IFS="$sep" read -ra ADDR
-    for i in "${ADDR[@]}"; do
-      printf "%s\n" "$i"
-    done
+    # read from stdin and join on first argument
+    # default to joining on first char of default IFS which is space
+    local sep="${1:-$default_ifs_first_char}"
+    tr '\n' "$sep" | sed -e "s/${sep}\$//g"
   else
     # echo "There is no stdin"
     # read input from 1st argument and split on 2nd argument
     # default to splitting on default IFS which is space, tab, newline
-    local sep="${2:-$IFS}"
-    IFS="$sep" read -ra ADDR <<< "$1"
-    for i in "${ADDR[@]}"; do
-      printf "%s\n" "$i"
-    done
+    local sep="${2:-$default_ifs_first_char}"
+    printf "%s" "$1" | tr '\n' "$sep" | sed -e "s/${sep}\$//"
   fi
 }
 
@@ -27,7 +22,7 @@ String.split() {
 # Sometimes, $0 contains a leading dash to indicate an interactive (or is it login?) shell,
 # which is apparently an old convention (which also broke the basename call on OS X)
 _me=$(basename "${0##\-}")
-if [ "$_me" = "String.split" ]; then
-  String.split "$1" "$2"
+if [ "$_me" = "Lines.join" ]; then
+  Lines.join "$1" "$2"
 fi
 unset _me
