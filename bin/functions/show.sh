@@ -55,10 +55,12 @@ function defined? {
 }
 
 # "show": spit out the definition of any name
-# usage: show <function or alias or variable or builtin or executable-in-PATH name> [...function|alias] ...
+# usage: show <function or alias or variable or builtin or file or executable-in-PATH name> [...function|alias] ...
 # It will dig out all definitions, helping you find things like overridden bins.
 # Also useful to do things like exporting specific definitions to sudo contexts etc.
 # or seeing if one definition is masking another.
+needs pygmentize "see pygments.org" # for syntax highlighting
+export PYGMENTIZE_STYLE=monokai
 show() {
   # on macOS, you need gnu-sed from homebrew or equivalent, which is installed as "gsed"
   # I set PLATFORM elsewhere in my env config
@@ -73,7 +75,11 @@ show() {
     echo "This function is defined in ${BASH_SOURCE[0]}"
     return 0
   fi
-  if env | grep -q "^$word="; then
+  # if it's a file, pygmentize it
+  if [ -f "$word" ]; then
+    note "$word is a file on disk"
+    pygmentize -O style=$PYGMENTIZE_STYLE "$word"
+  elif env | grep -q "^$word="; then
     local xported=""
     if [[ $(declare -p "$word" 2>/dev/null) == declare\ -x* ]]; then
       xported="exported "
