@@ -278,3 +278,13 @@ trim() {
 assert "$(ltrim "  foo  ")" == "foo  "
 assert "$(rtrim "  foo  ")" == "  foo"
 assert "$(trim "  foo  ")" == "foo"
+
+image_convert_to_heif() {
+  # base name of argument 1
+  # local bn="${1%.*}"
+  # ffmpeg -i "$1" -c:v libx265 -preset ultrafast -x265-params lossless=1 "${bn}.heif"
+
+  # lossless conversion, FYI
+  needs heif-enc "please install libheif" && \
+  heif-enc -L -p chroma=444 --matrix_coefficients=0 "$1"
+}
