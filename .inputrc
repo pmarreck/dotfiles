@@ -20,6 +20,10 @@ $if Bash
 
   #do history expansion when space entered
   Space: magic-space
+
+  # zsh like shell completion
+  set show-all-if-ambiguous on
+  TAB:menu-complete
 $endif
 
 # Include system wide settings which are ignored
