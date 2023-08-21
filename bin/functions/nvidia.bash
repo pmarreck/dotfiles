@@ -3,7 +3,7 @@ if [ "$PLATFORM" = "linux" ]; then
   nvidia() {
     needs nvidia-smi from nvidia-cuda-toolkit
     needs rg get ripgrep
-    nv_version=$(nvidia-smi | rg -r '$1' -o --color never 'Driver Version: ([0-9]{3}\.[0-9]{1,3}\.[0-9]{1,3})')
+    nv_version=$(nvidia-smi | rg -r '$1' -o --color never 'Driver Version: ([0-9]{3}\.[0-9]{1,3}(?:\.[0-9]{1,3})?)')
     case $1 in
       "--version")
         echo $nv_version
