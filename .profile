@@ -235,7 +235,7 @@ source_relative_once bin/functions/roll_a_die.sh
 
 source_relative_once bin/functions/repeat_command.bash
 
-source_relative_once bin/functions/kill_steam_proton_pids.bash
+source_relative_once bin/functions/kill-steam-proton-pids.bash
 
 # command prompt
 # NOTE: Now configured via starship in apply-hooks
