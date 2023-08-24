@@ -263,11 +263,25 @@ elixir_js_loc() {
   git ls-files | grep -E '\.erl|\.exs?|\.js$' | xargs cat | sed -e '/^$/d' -e '/^ *#/d' -e '/^ *\/\//d' | wc -l
 }
 
+contains() {
+  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  local word
+  for word in $1; do
+    if [[ "$word" == "$2" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
 # universal edit command, points back to your defined $EDITOR
 # note that there is an "edit" command in Ubuntu that I told to fuck off basically
 edit() {
   [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-  $EDITOR "$@"
+  if contains "$(functions)" $1; then
+    EDIT=1 $1
+  else
+    $EDITOR "$@"
+  fi
 }
 
 # gem opener, if you have not yet moved on from Ruby to Elixir :)
