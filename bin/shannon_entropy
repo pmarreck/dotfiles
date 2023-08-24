@@ -1,0 +1,24 @@
+#!/usr/bin/env -S awk -f
+
+function shannon_entropy(input_string,      freq, len, entropy, i) {
+	len = length(input_string)
+	split("", freq) # reset freq array
+
+	for (i = 1; i <= len; i++) {
+		char = substr(input_string, i, 1)
+		freq[char]++
+	}
+
+	entropy = 0
+
+	for (char in freq) {
+		p = freq[char] / len
+		entropy -= p * (log(p)/log(2))
+	}
+
+	return entropy
+}
+
+{
+	print shannon_entropy($0)
+}
