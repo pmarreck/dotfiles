@@ -17,11 +17,11 @@ source_relative_once bin/functions/utility_functions.bash
 source_relative_once bin/functions/binhex.bash
 
 # config for Visual Studio Code
-if [ "$PLATFORM" = "osx" ]; then
-  code () { VSCODE_CWD="$PWD" open -n -b com.microsoft.VSCode --args "$*" ;}
-  pipeable_code () { VSCODE_CWD="$PWD" open -n -b com.microsoft.VSCode -f ;}
-  export PIPEABLE_EDITOR='pipeable_code'
-fi
+# if [ "$PLATFORM" = "osx" ]; then
+#   code () { VSCODE_CWD="$PWD" open -n -b com.microsoft.VSCode --args "$*" ;}
+#   pipeable_code () { VSCODE_CWD="$PWD" open -n -b com.microsoft.VSCode -f ;}
+#   export PIPEABLE_EDITOR='pipeable_code'
+# fi
 # export EDITOR='code' # already set in .bashrc
 
 # set default tab stops to 2 spaces
