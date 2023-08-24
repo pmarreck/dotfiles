@@ -1,5 +1,6 @@
 # get current weather, output as big ASCII art
 weather() {
+  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   needs curl
   needs jq
   needs bc
@@ -23,5 +24,6 @@ weather() {
 # get the current FANCY (not just ANSI🤣) weather. wttr.in has tons of URL options, check out their site:
 # https://github.com/chubin/wttr.in
 weatherfancy() {
+  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   curl wttr.in
 }

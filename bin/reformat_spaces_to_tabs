@@ -8,6 +8,7 @@
 # run: `tabs -2` (or whatever width you want), possibly in your dotfiles.
 
 reformat_spaces_to_tabs() {
+	[ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	local file="$1"
 	function determine_tab_size_in_spaces() {
 		awk '

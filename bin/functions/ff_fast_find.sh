@@ -5,6 +5,7 @@ fdbin=fd
 command -v $fdbin >/dev/null 2>&1 || fdbin=fdfind
 command -v $fdbin >/dev/null 2>&1 || fdbin=fd
 ff() {
+  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   needs $fdbin cargo install fd-find or apt install fd-find \(binary is named fdfind then\)
   case $1 in
   -h | --help)

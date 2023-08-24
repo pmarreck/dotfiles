@@ -11,6 +11,7 @@
 # s2k-count 65000000 - Mangles the passphrase this number of times. Takes over a second on modern hardware.
 # compress-algo BZIP2- Uses a high quality compression algorithm before encryption. BZIP2 is good but not compatible with PGP proper, FYI.
 encrypt() {
+  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   needs gpg
   case "$1" in
   -h | --help | "")
@@ -26,6 +27,7 @@ encrypt() {
 }
 # note: will decrypt to STDOUT by default, for security reasons.
 decrypt() {
+  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   needs gpg
   case "$1" in
   -h | --help | "")

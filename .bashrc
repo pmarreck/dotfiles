@@ -47,6 +47,7 @@ fi
 # graceful dependency enforcement
 # Usage: needs <executable> ["provided by <packagename>"]
 needs() {
+  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   local bin="$1"
   shift
   command -v "$bin" >/dev/null 2>&1 || {
@@ -66,9 +67,18 @@ if [[ -n $SSH_CONNECTION ]]; then
   export EDITOR='micro'
   unset VISUAL
 else
-  export EDITOR='code'
-  export VISUAL='code'
+  export EDITOR='code -g'
+  export VISUAL='code -g'
 fi
+
+# go directly to edit of function source
+edit_function() {
+  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  local function_name="$1"
+  local file="$2"
+  local fl=$(grep -n "${function_name}() {" "$file" | cut -d: -f1)
+  $EDITOR "$file":$fl
+}
 
 # Compilation flags
 # export ARCHFLAGS="-arch arm64"
@@ -95,11 +105,41 @@ is_gnu_awk=$($AWK --version | grep -q -m 1 'GNU Awk' && echo true || echo false)
   [ "$is_gnu_awk" = "false" ] && \
   echo "WARNING: The awk on PATH is not GNU Awk on macOS, which may cause problems" >&2
 
-
 # platform info
 pf="$(uname)"
 if [ "$pf" = "Darwin" ]; then
+  mac_os_version_number_to_name() {
+    [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+    # Get macOS version
+    local version
+    local distribution
+    version=$(sw_vers -productVersion)
+    # Map macOS version to distribution name
+    case $version in
+      15.*) distribution="<Please Update Me At ${BASH_SOURCE}:${LINENO}>" ;;
+      14.*) distribution="Sonoma" ;;
+      13.*) distribution="Ventura" ;;
+      12.*) distribution="Monterey" ;;
+      11.*) distribution="Big Sur" ;;
+      10.15*) distribution="Catalina" ;;
+      10.14*) distribution="Mojave" ;;
+      10.13*) distribution="High Sierra" ;;
+      10.12*) distribution="Sierra" ;;
+      10.11*) distribution="El Capitan" ;;
+      10.10*) distribution="Yosemite" ;;
+      10.9*) distribution="Mavericks" ;;
+      10.8*) distribution="Mountain Lion" ;;
+      10.7*) distribution="Lion" ;;
+      10.6*) distribution="Snow Leopard" ;;
+      10.5*) distribution="Leopard" ;;
+      *) distribution="Unknown" ;;
+    esac
+    export DISTRO_VERSION="$version"
+    echo "$version ($distribution)"
+  }
   export PLATFORM="osx"
+  export DISTRO="macOS"
+  export DISTRO_PRETTY="$DISTRO $(mac_os_version_number_to_name)"
 elif [ "${pf:0:5}" = "Linux" ]; then
   export PLATFORM="linux"
   # The following are 2 different ways to extract the value of a name=value pair input file
@@ -107,16 +147,19 @@ elif [ "${pf:0:5}" = "Linux" ]; then
   # (edit: I converted the ripgrep to awk)
   # You could also just source the file and then use the variable directly, but that pollutes the env
   function distro() {
+    [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
     $AWK -F'=' '/^NAME=/{gsub(/"/, "", $2); print $2}' ${1:-/etc/os-release}
   }
   DISTRO=$(distro)
   export DISTRO
   function distro_pretty() {
+    [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
     $AWK -F'=' '/^PRETTY_NAME=/{gsub(/"/, "", $2); print $2}' ${1:-/etc/os-release}
   }
   DISTRO_PRETTY=$(distro_pretty)
   export DISTRO_PRETTY
   function distro_version() {
+    [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
     # shellcheck disable=SC2016
     $AWK -F= '$1=="VERSION_ID"{gsub(/(^["]|["]$)/,"",$2);print$2}' ${1:-/etc/os-release}
   }
@@ -124,6 +167,7 @@ elif [ "${pf:0:5}" = "Linux" ]; then
   export DISTRO_VERSION
 elif [ "${pf:0:10}" = "MINGW32_NT" ]; then
   export PLATFORM="windows"
+  export DISTRO_PRETTY="...ok, why are you using windows?"
 else
   # this downcase requires bash 4+; you can pipe to tr '[:upper:]' '[:lower:]' instead
   export PLATFORM="${pf,,}"
@@ -148,6 +192,7 @@ fi
 
 # who am I? (should work even when sourced from elsewhere, but only in Bash)
 me() {
+  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   basename "${BASH_SOURCE[0]}"
 }
 

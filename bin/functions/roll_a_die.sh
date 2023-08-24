@@ -1,5 +1,5 @@
 roll_a_die() {
-
+  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   # so the trick to be strictly correct here is that 32768 is not evenly divisible by 6,
   # so there will be bias UNLESS you cap at 32766
   # since 32766 is evenly divisible by 6 (5461)

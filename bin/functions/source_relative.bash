@@ -7,6 +7,7 @@
 # and which is actually set in these functions.
 [[ -v _SOURCED_FILES ]] || \
 source_relative() {
+  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   # _dir_name=`dirname "$0"` # doesn't work reliably
   local _dir_name=`dirname "${BASH_SOURCE[1]}"` # works in bash but not POSIX compliant sh
   local _temp_path=`cd "$_dir_name" && pwd`
@@ -18,6 +19,7 @@ source_relative() {
 # export _TRACE_SOURCING=true
 [[ -v _SOURCED_FILES ]] || \
 source_relative_once() {
+  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   [[ -v _TRACE_SOURCING ]] && local _debug_id=$RANDOM
   local _file="$1"
   [[ -v _TRACE_SOURCING ]] && echo "source_relative_once invocation #${_debug_id}: _file is $_file"

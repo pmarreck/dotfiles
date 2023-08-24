@@ -1,6 +1,7 @@
 # "simulate" decimal division with integers and a given number of significant digits of the mantissa
 # without using bc or awk because I hate firing up a new process for something so simple
 div() {
+  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   local sd=${3:-2}
   case $1 in
   -h | --help | "")

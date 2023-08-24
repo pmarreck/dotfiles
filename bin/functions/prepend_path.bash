@@ -2,6 +2,7 @@ source_relative_once assert.bash
 
 # function to prepend paths in an idempotent way
 prepend_path() {
+  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   function docs() {
     echo "Usage: prepend_path [-o|-h|--help] <path_to_prepend> [name_of_path_var, defaults to PATH]" >&2
     echo "Setting -o will print the new path to stdout instead of exporting it" >&2

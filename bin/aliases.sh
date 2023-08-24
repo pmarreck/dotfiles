@@ -36,10 +36,12 @@ if [ "${PLATFORM}-${DISTRO}" = "linux-NixOS" ]; then
   alias nix-list-gens='sudo nix-env -p /nix/var/nix/profiles/system --list-generations'
   alias nix-gen-num='readlink /nix/var/nix/profiles/system | cut -d- -f2'
   nix-genstamp() {
+    [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
     echo "$(datetimestamp) generation $(nix-gen-num); nvidia version $(nvidia --version); kernel version $(uname -r)" >> ~/nix-genstamp.txt
   }
   alias nixos="$EDITOR /etc/nixos"
   function abbrev-nix-store-paths(){
+    [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
     sed -E 's|/nix/store/[a-z0-9]{32}-|/⌘/|g'
   }
 fi

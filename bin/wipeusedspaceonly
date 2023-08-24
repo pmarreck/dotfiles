@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 wipeusedspaceonly() {
+  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   declare -r default_blocksize=$((2 ** 20))
   if [ $# -eq 0 ]; then
     echo "Usage: wipeusedspaceonly <device> [<blocksize in bytes, defaults to $default_blocksize>]"

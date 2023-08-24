@@ -3,6 +3,7 @@
 # graceful dependency enforcement
 # Usage: needs <executable> ["provided by <packagename>"]
 needs() {
+  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   local bin=$1
   shift
   command -v $bin >/dev/null 2>&1 || { echo >&2 "I require $bin but it's not installed or in PATH; $*"; return 1; }
@@ -12,6 +13,7 @@ needs() {
 # Usage: [DRANDOM_SEED=<whatever>] drandom [-h|--hex|--help]
 # Outputs an integer between 0 and 2^256-1 or an equivalent hex string if -h|--hex is specified
 drandom() {
+  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   needs sha256sum || return 1
   # if unset, initialize to hash of nanoseconds since epoch,
   # otherwise, set to hash of previous seed
@@ -44,33 +46,34 @@ assert "$(DRANDOM_SEED=1 drandom --hex)" == "6b86b273ff34fce19d6b804eff5a3f5747a
 # Normally-distributed random numbers using the Box-Muller transform
 # Usage: nrandom start end
 nrandom() {
-    if [[ "$1" == "--help" || "$1" == "-h" ]]; then
-      echo "Usage: nrandom <start> <end>"
-      echo "This function is defined in $BASH_SOURCE"
-      echo "Outputs a normally-distributed random number between <start> and <end>"
-      echo "If <start> is not specified, it defaults to 0"
-      echo "If <end> is not specified, it defaults to 100"
-      return 0
-    fi
-    start=${1:-0}
-    end=${2:-100}
-    if [[ $# -eq 0 ]]; then
-      echo "(with a start of $start and an end of $end)" >&2
-    fi
-    range=$(echo "$end - $start" | bc -l)
+  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    echo "Usage: nrandom <start> <end>"
+    echo "This function is defined in $BASH_SOURCE"
+    echo "Outputs a normally-distributed random number between <start> and <end>"
+    echo "If <start> is not specified, it defaults to 0"
+    echo "If <end> is not specified, it defaults to 100"
+    return 0
+  fi
+  start=${1:-0}
+  end=${2:-100}
+  if [[ $# -eq 0 ]]; then
+    echo "(with a start of $start and an end of $end)" >&2
+  fi
+  range=$(echo "$end - $start" | bc -l)
 
-    awk -v start=$start -v range=$range -v seed=$RANDOM '
-    BEGIN {
-        srand(seed);
-        u1 = rand();
-        u2 = rand();
-        z0 = sqrt(-2 * log(u1)) * cos(2 * 3.14159265358979323846 * u2);
-        # z1 = sqrt(-2 * log(u1)) * sin(2 * 3.14159265358979323846 * u2);
+  awk -v start=$start -v range=$range -v seed=$RANDOM '
+  BEGIN {
+      srand(seed);
+      u1 = rand();
+      u2 = rand();
+      z0 = sqrt(-2 * log(u1)) * cos(2 * 3.14159265358979323846 * u2);
+      # z1 = sqrt(-2 * log(u1)) * sin(2 * 3.14159265358979323846 * u2);
 
-        random_number = start + (z0 * (range / 6)) + (range / 2);
-        # random_number2 = start + (z1 * (range / 6)) + (range / 2);
-        printf("%.0f\n", random_number);
-    }'
+      random_number = start + (z0 * (range / 6)) + (range / 2);
+      # random_number2 = start + (z1 * (range / 6)) + (range / 2);
+      printf("%.0f\n", random_number);
+  }'
 }
 
 
@@ -94,6 +97,7 @@ export CHARSET_PUNC='!@#$%^&*'
 export CHARSET_HEX="${CHARSET_NUM}abcdef"
 
 randompass() {
+  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   if [[ $# -eq 0 || "$1" == "--help" ]]; then
     echo "Usage: randompass <length>"
     echo "This function is defined in $BASH_SOURCE"
@@ -130,6 +134,7 @@ randompass() {
 
 # expects a minlen as first argument and a maxlen as second argument
 load_and_filter_dict() {
+  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   # local dict_loc="${WORDLIST:-"/usr/share/dict/words"}"
   # [ -f "$dict_loc" ] || { echo "$dict_loc missing. May need to install 'words' package (or just pass in a WORDLIST env var that paths to a file of words). Exiting."; return 1; }
   # local dict=$(sed '0,/^__DICT__$/d' "${BASH_SOURCE[0]}")
@@ -145,6 +150,7 @@ load_and_filter_dict() {
 # First argument is number of words to generate
 # Second argument is minimum word length
 randompassdict() {
+  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   needs shuf || return 1
   local random_source="${RANDOM_SOURCE:-/dev/random}"
   if [ $# -eq 0 ]; then

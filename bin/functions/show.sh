@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 
 record_console_settings() {
+  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   __oldhistcontrol="$HISTCONTROL"
   __oldstate=$(set +o | sed 's/^/ /g')
 }
 
 restore_console_settings() {
+  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   # For some reason, this eval dumped all these set commands into HISTFILE/command history
   # so I used HISTCONTROL plus sed prefixing them with spaces (above) to prevent that
   eval "$__oldstate"
@@ -23,26 +25,32 @@ record_console_settings
 
 # alerting in yellow to stderr
 >/dev/null declare -F note || note() {
+  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   >&2 printf "\e[0;33m%s\e[0;39m\n" "$@"
 }
 # warning in red to stderr
 >/dev/null declare -F warn || warn() {
+  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   >&2 printf "\e[0;31m%s\e[0;39m\n" "$@"
 }
 
 function var_defined? {
+  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   declare -p "$1" >/dev/null 2>&1
 }
 
 function func_defined? {
+  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   declare -F "$1" >/dev/null
 }
 
 function alias_defined? {
+  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   alias "$1" >/dev/null 2>&1
 }
 
 function defined? {
+  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   local word="$1"
   shift
   if [ -z "$word" ] && [ -z "$1" ]; then
@@ -62,6 +70,7 @@ function defined? {
 needs pygmentize "see pygments.org" # for syntax highlighting
 export PYGMENTIZE_STYLE=monokai
 show() {
+  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   # on macOS, you need gnu-sed from homebrew or equivalent, which is installed as "gsed"
   # I set PLATFORM elsewhere in my env config
   # [ "$PLATFORM" = "osx" ] && local -r sed="gsed" || local -r sed="sed"

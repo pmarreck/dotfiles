@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 function test-term-live-reload() {
+  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   # Define your terminal command here
   local TERM_APP
   TERM_APP="${TERMINAL_APP:-wezterm}"

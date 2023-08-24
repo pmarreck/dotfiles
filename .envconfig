@@ -110,6 +110,7 @@ export GPG_TTY=`tty`
 # see: https://wezfurlong.org/wezterm/hyperlinks.html
 # example: hyperlink http://google.com "this is a test"
 hyperlink() {
+  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   printf '\e]8;;'
   printf "$1"
   printf '\e\\'
@@ -119,11 +120,13 @@ hyperlink() {
 
 # alerting in yellow to stderr
 note() {
+  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   >&2 printf "$ANSI$TXTYLW%s$ANSI$TXTDFT\n" "$@"
 }
 
 # warning in red to stderr
 warn() {
+  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   >&2 printf "$ANSI$TXTRED%s$ANSI$TXTDFT\n" "$@"
 }
 

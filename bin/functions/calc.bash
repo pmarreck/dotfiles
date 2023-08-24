@@ -4,6 +4,7 @@
 # calc "define fac(x) { if (x == 0) return (1); return (fac(x-1) * x); }; fac(5)"
 if needs bc ; then
   calc() {
+    [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
     local scale=${SCALE:-10}
     local old_bcll
     [[ -v BC_LINE_LENGTH ]] && old_bcll=$BC_LINE_LENGTH

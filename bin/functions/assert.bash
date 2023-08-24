@@ -2,6 +2,7 @@
 # usage: assert [condition] [message]
 # if condition is false, print message and exit
 assert() {
+  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   local arg1 comp arg2 message comp_result
   arg1="$1"
   comp="$2"

@@ -1,5 +1,6 @@
 # usage: repeat <number of times> <command>
 repeat() {
+  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   local count=$1
   local retcodes=0
   shift

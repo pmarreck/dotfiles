@@ -1,5 +1,6 @@
 
 datetimestamp() {
+  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   # set the date bin to gdate (or one that recognizes --resolution) if available
   local datebin="date"
   $datebin --resolution >/dev/null 2>&1 || datebin="gdate"

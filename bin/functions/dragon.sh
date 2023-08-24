@@ -1,5 +1,6 @@
 # thar be dragons
 asciidragon() {
+  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   # first store the escape code for the ANSI color
   local esc=$(printf '\033')
   # set foreground text color to green

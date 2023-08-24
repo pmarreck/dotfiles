@@ -1,5 +1,6 @@
 # Many of these are taken from the game "Warhammer: Darktide"; will probably add more in the future
 warhammer_quote() {
+  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   local whquotes
   whquotes=(
     "A coward's only reward is to live in fear another day"

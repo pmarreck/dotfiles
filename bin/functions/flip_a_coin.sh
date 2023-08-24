@@ -1,4 +1,5 @@
 flip_a_coin() {
+  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   (( RANDOM % 2 )) && echo "heads" || echo "tails"
 }
 

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 function git_commit_ai() {
+  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   if [[ -z "$OPENAI_API_KEY" ]]; then
     echo "OPENAI_API_KEY is not defined." >&2
     return 1
