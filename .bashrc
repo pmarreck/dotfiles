@@ -74,9 +74,36 @@ fi
 # go directly to edit of function source
 edit_function() {
   [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  needs rg "please install ripgrep!"
   local function_name="$1"
+  # escape any question marks in the function name, some of mine end in one
+  local function_name="${function_name//\?/\\?}"
   local file="$2"
-  local fl=$(grep -n "${function_name}() {" "$file" | cut -d: -f1)
+  # *** The following docs provided by ChatGPT4 ***
+  # This line searches for Bash function definitions in the provided file using two potential patterns.
+  # It then returns the line number of the last matched function definition.
+  #
+  # Components:
+  # 1. `rg` is the ripgrep command, a fast text search tool.
+  # 2. `-n` flag tells ripgrep to output line numbers for matches.
+  # 3. `-e` flag is used to specify the regex patterns to search for.
+  #
+  # Patterns explained:
+  # a. "${function_name} *\(\) *\{":
+  #    This matches function definitions of the form "function_name()"
+  #    followed by optional spaces and then a curly brace '{'.
+  # b. "function +${function_name}(?: *\(\))? *\{":
+  #    This matches the `function` keyword followed by one or more spaces,
+  #    then the function name, optionally followed by a pair of parentheses (which can have spaces around),
+  #    and then a curly brace '{'.
+  #    The `(?: ... )?` construct is a non-capturing group with an optional match.
+  #
+  # 4. `tail -n1`: If multiple matches are found in the file, this will get the last one.
+  # 5. `cut -d: -f1`: This extracts the line number from ripgrep's output.
+  #    The delimiter (-d) is : (colon). -f1 means the first delimited field.
+  #    ripgrep's output is of the form "linenumber:matched_line" due to the `-n` flag,
+  #    so cutting on the colon in this way, gets the line number.
+  local fl=$(rg -n -e "${function_name} *\(\) *\{" -e "function +${function_name}(?: *\(\))? *\{" "$file" | tail -n1 | cut -d: -f1)
   $EDITOR "$file":$fl
 }
 
