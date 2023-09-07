@@ -7,7 +7,7 @@ function git_commit_ai() {
     return 1
   fi
 
-  local model request response timeout diff temp_json message http_status
+  local model request response timeout diff temp_json commit_message http_status
   diff=$(git diff)
   if [[ -z "$diff" ]]; then
     diff=$(git diff --cached)
@@ -17,8 +17,8 @@ function git_commit_ai() {
     return 1
   fi
 
-  model=${ASK_MODEL:-gpt-3.5-turbo-0301}
-  timeout=${ASK_TIMEOUT:-15}
+  model=${OPENAI_MODEL:-gpt-3.5-turbo-0301}
+  timeout=${OPENAI_TIMEOUT:-15}
   temp_json=$(mktemp -t git_commit_ai.XXXXXX --tmpdir)
   trap 'rm -f "$temp_json"' EXIT # ensure temp file is cleaned up on exit
 
@@ -49,16 +49,16 @@ function git_commit_ai() {
   fi
 
   response=$(jq -r '.choices[0].message.content' < "$temp_json" | sed 's/^[ \t]*//;s/[ \t]*$//')
-  message=$response
+  commit_message="git commit -m \"$response\""
 
   if [[ "$(uname)" == "Darwin" ]]; then
-    echo -n "git commit -m \"$message\"" | pbcopy
+    echo -ne "$commit_message" | pbcopy
   else # assume linux if not macos
-    echo -n "git commit -m \"$message\"" | xclip -selection clipboard
+    echo -ne "$commit_message" | xclip -selection clipboard
   fi
 
-  echo "Commit command copied to clipboard:"
-  echo "git commit -m \"$message\""
+  echo "Commit command copied to clipboard:" >&2
+  echo -ne "$commit_message"
 }
 
 alias gcai=git_commit_ai
