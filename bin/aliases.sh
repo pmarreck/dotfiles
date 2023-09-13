@@ -15,10 +15,10 @@ alias files='find \!:1 -type f -print'      # files x => list files in x
 # alias line='sed -n '\''\!:1 p'\'' \!:2'    # line 5 file => show line 5 of file
 # alias l='ls -lGaph'
 # brew install exa
-alias l='exa --long --header --sort=name --all'
+alias l='eza --long --header --sort=name --all'
 alias l1='l --git -@ --icons'
 alias l2='l1 --tree --level=2'
-alias l3='l1 --tree --level=3' #--extended 
+alias l3='l1 --tree --level=3' #--extended
 alias l4='l1 --tree --level=4'
 # alias ll='ls -lagG \!* | more'
 # alias term='set noglob; unset TERMCAP; eval `tset -s -I -Q - \!*`'

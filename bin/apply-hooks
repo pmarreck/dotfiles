@@ -33,7 +33,7 @@ needs() {
 ##### rust cargo hook and related environment dependencies
 # [[ -s "$HOME/.cargo/env" ]] && source "$HOME/.cargo/env"
 # needs rustc "curl https://sh.rustup.rs -sSf | sh"
-needs exa "cargo install exa"
+needs eza "cargo install eza"
 needs tokei "cargo install --git https://github.com/XAMPPRocky/tokei.git tokei"
 
 ##### Guix integration

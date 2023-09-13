@@ -226,7 +226,7 @@ me() {
 # Pull in path configuration
 source_relative_once .pathconfig
 
-needs exa "cargo install exa, or your package manager"
+needs eza "cargo install eza, or your package manager"
 needs tokei "cargo install --git https://github.com/XAMPPRocky/tokei.git tokei, or your package manager"
 needs micro "please install the micro terminal editor"
 needs code "please install VSCode"
