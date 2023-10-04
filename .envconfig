@@ -181,5 +181,9 @@ IGNORE_PREPEND_PATH_WARNINGS=true prepend_path /nix/var/nix/profiles/per-user/ro
 # (# of schedulers is automatic to # of CPU logical cores, but can be forced with +S arg)
 export ERL_FLAGS="+P 2000000";
 
+# take any $HOME/.secrets and export them
+[ -f $HOME/.secrets ] && source $HOME/.secrets
+[ -f $HOME/.secrets ] && export $(cat $HOME/.secrets | grep -v -s -e '^\s*#' | cut -d "=" -f 1 | xargs -L 1)
+
 [[ -v DEBUG_SHELLCONFIG ]] && echo "Exiting $(echo "${BASH_SOURCE[0]}" | sed "s|^$HOME|~|")"
 [[ -v DEBUG_PATHCONFIG ]] && echo $PATH || :

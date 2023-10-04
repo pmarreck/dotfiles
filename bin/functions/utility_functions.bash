@@ -65,7 +65,7 @@ move_PROMPT_COMMAND_to_precmd_functions() {
   [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   # Replace newlines with semicolons
   PROMPT_COMMAND=${PROMPT_COMMAND//$'\n'/;}
-  
+
   # Replace runs of 2 or more semicolons with one
   while [[ $PROMPT_COMMAND == *';;'* ]]; do
     PROMPT_COMMAND=${PROMPT_COMMAND//;;/;}
@@ -156,7 +156,7 @@ __wezterm_osc7_home() {
 trim_leading_heredoc_whitespace() {
   [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   # this expects heredoc contents to be piped in via stdin
-  ${AWK:-awk} 'BEGIN { shortest = 99999 } /^[[:space:]]+/ { match($0, /[^[:space:]]/); shortest = shortest < RSTART - 1 ? shortest : RSTART - 1 } END { OFS=""; } { gsub("^" substr($0, 1, shortest), ""); print }' 
+  ${AWK:-awk} 'BEGIN { shortest = 99999 } /^[[:space:]]+/ { match($0, /[^[:space:]]/); shortest = shortest < RSTART - 1 ? shortest : RSTART - 1 } END { OFS=""; } { gsub("^" substr($0, 1, shortest), ""); print }'
 }
 
 assert "$(echo -e "  This\n  is a\n  multiline\n  string." | trim_leading_heredoc_whitespace)" == "This\nis a\nmultiline\nstring."
@@ -225,6 +225,12 @@ green_text() {
 yellow_text() {
   [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   puts --yellow -en "$*"
+}
+
+echo_command() {
+  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  yellow_text "$*\n" >&2
+  eval "$*"
 }
 
 # exit with red text to stderr, optional 2nd arg is error code
@@ -326,5 +332,16 @@ image_convert_to_heif() {
 
   # lossless conversion, FYI
   needs heif-enc "please install libheif" && \
-  heif-enc -L -p chroma=444 --matrix_coefficients=0 "$1"
+  echo_command "heif-enc -L -p chroma=444 --matrix_coefficients=0 \"$1\""
+}
+
+image_convert_to_jpegxl() {
+  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  # base name of argument 1
+  local bn="${1%.*}"
+  local d="${JXL_DISTANCE:-0}" # 0-9 where 0 is lossless; default 0
+  local e="${JXL_EFFORT:-7}" # 0-9 where 9 is extremely slow but smallest; default 7
+
+  needs cjxl "please install the libjxl package to get the cjxl executable" && \
+  echo_command "cjxl -d $d -e $e --lossless_jpeg=0 \"$1\" \"${bn}.jxl\""
 }
