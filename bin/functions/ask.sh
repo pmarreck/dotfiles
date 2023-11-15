@@ -17,7 +17,7 @@ _generate_curl_api_request_for_ask() {
   local request args timeout model curl
   curl=${CURL:-curl}
   model=${OPENAI_MODEL:-gpt-4-1106-preview} # other options: gpt-3.5-turbo, gpt-3.5-turbo-1106, gpt-4, gpt-4-0314, gpt-4-32k, gpt-4-32k-0314
-  timeout=${OPENAI_TIMEOUT:-15}
+  timeout=${OPENAI_TIMEOUT:-30}
   args="$@"
   args=$(printf "%b" "$args" | sed "s/'/'\\\\''/g") # This is just a narsty sed to escape single quotes.
   # (Piping to "jq -sRr '@json'" was not working correctly, so I had to take control of the escaping myself.)
