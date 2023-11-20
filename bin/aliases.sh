@@ -58,7 +58,7 @@ alias bye='logout'
 
 # The current thing(s) I'm working on
 alias mpnetwork='cd ~/Documents/mpnetwork*'
-alias addigence='cd ~/Documents/addigence-ex'
+alias addigence='cd ~/Documents/addigence-ex*'
 # alias simpaticio='cd ~/Documents/simpaticio'
 alias work=addigence
 
