@@ -17,8 +17,8 @@ function git_commit_ai() {
     return 1
   fi
 
-  model=${OPENAI_MODEL:-gpt-3.5-turbo-0301}
-  timeout=${OPENAI_TIMEOUT:-15}
+  model=${OPENAI_MODEL:-gpt-4-1106-preview}
+  timeout=${OPENAI_TIMEOUT:-30}
   temp_json=$(mktemp -t git_commit_ai.XXXXXX --tmpdir)
   trap 'rm -f "$temp_json"' EXIT # ensure temp file is cleaned up on exit
 
@@ -26,7 +26,7 @@ function git_commit_ai() {
     model: $model,
     messages: [
       {role: "system", content: "You are a senior developer."},
-      {role: "user", content: "Generate a commit message for the following git diff. If there does not appear to be diff data, please say so instead:\n\n\($diff)\n\nCommit message: "}
+      {role: "user", content: "Generate a concise commit message for the following git diff. If there does not appear to be diff data, please say so instead:\n\n\($diff)\n\nCommit message: "}
     ],
     max_tokens: 150,
     n: 1,
