@@ -11,6 +11,21 @@ needs() {
   command -v "$bin" >/dev/null 2>&1 || { echo >&2 "I require $bin but it's not installed or in PATH; $*"; return 1; }
 }
 
+platform() {
+  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  local unameOut
+  local machine
+  unameOut="$(uname -s)"
+  case "${unameOut}" in
+    Linux*)     machine=Linux;;
+    Darwin*)    machine=macOS;;
+    CYGWIN*)    machine=Cygwin;;
+    MINGW*)     machine=MinGW;;
+    *)          machine="${unameOut}"
+  esac
+  printf "%s" "$machine"
+}
+
 _generate_curl_api_request_for_please() {
   [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   needs jq
@@ -40,7 +55,8 @@ please() {
   needs jq
   needs gum from https://github.com/charmbracelet/gum
   local request response response_parsed response_parsed_cleaned args
-  request=$(_generate_curl_api_request_for_please "What is the linux bash command to $@? Only return the command to run itself, do not describe anything. Only use commands and executables that are common on most Linux systems. Do not quote the response and do not use markdown.")
+  local plat=$(platform)
+  request=$(_generate_curl_api_request_for_please "What is the $plat bash command to $@? Only return the command to run itself, do not describe anything. Only use commands and executables that are common on most $plat systems. Do not quote the response and do not use markdown.")
 # printf "request: %s\n" "$request" >&2 
   response=$(eval "gum spin --show-output -s line --title \"Figuring out how to do this...\" -- $request")
 # printf "response: %s\n" "$response" >&2
