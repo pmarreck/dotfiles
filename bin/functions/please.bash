@@ -40,7 +40,7 @@ please() {
   needs jq
   needs gum from https://github.com/charmbracelet/gum
   local request response response_parsed response_parsed_cleaned args
-  request=$(_generate_curl_api_request_for_please "What is the linux bash command to $@? Only return the command to run itself, do not describe anything. Only use commands and executables that are common on most Linux systems.")
+  request=$(_generate_curl_api_request_for_please "What is the linux bash command to $@? Only return the command to run itself, do not describe anything. Only use commands and executables that are common on most Linux systems. Do not quote the response and do not use markdown.")
 # printf "request: %s\n" "$request" >&2 
   response=$(eval "gum spin --show-output -s line --title \"Figuring out how to do this...\" -- $request")
 # printf "response: %s\n" "$response" >&2
