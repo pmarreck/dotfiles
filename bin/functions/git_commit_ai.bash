@@ -26,7 +26,7 @@ function git_commit_ai() {
     model: $model,
     messages: [
       {role: "system", content: "You are a senior developer."},
-      {role: "user", content: "Generate a concise commit message for the following git diff. If there does not appear to be diff data, please say so instead:\n\n\($diff)\n\nCommit message: "}
+      {role: "user", content: "Generate a concise git commit command and message(s) for the following git diff. Do not use markdown or triple backticks. If you use multiple comment lines, separate them into separate `-m` arguments. If there does not appear to be diff data, please say so instead:\n\n\($diff)\n\nCommit message: "}
     ],
     max_tokens: 150,
     n: 1,
@@ -49,7 +49,7 @@ function git_commit_ai() {
   fi
 
   response=$(jq -r '.choices[0].message.content' < "$temp_json" | sed 's/^[ \t]*//;s/[ \t]*$//')
-  commit_message="git commit -m \"$response\""
+  commit_message="$response"
 
   if [[ "$(uname)" == "Darwin" ]]; then
     echo -ne "$commit_message" | pbcopy

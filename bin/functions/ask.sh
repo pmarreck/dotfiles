@@ -18,17 +18,23 @@ _generate_curl_api_request_for_ask() {
   curl=${CURL:-curl}
   model=${OPENAI_MODEL:-gpt-4-1106-preview} # other options: gpt-3.5-turbo, gpt-3.5-turbo-1106, gpt-4, gpt-4-0314, gpt-4-32k, gpt-4-32k-0314
   timeout=${OPENAI_TIMEOUT:-30}
-  args="$@"
-  args=$(printf "%b" "$args" | sed "s/'/'\\\\''/g") # This is just a narsty sed to escape single quotes.
+  args="$*"
+  json_encoded_text=$(
+    jq --null-input \
+    --arg model "$model" \
+    --arg text "$*" \
+    '{"model": $model, "messages": [{"role": "user", "content": $text}], "top_p": 0.1}'
+  )
+  # args=$(printf "%b" "$args" | sed 's/\\/\\\\/g; s/"/\\"/g;') # This is just a narsty sed to escape single quotes.  
   # (Piping to "jq -sRr '@json'" was not working correctly, so I had to take control of the escaping myself.)
-# printf "escaped args: %b\n" "$args" >&2
+# printf "escaped args: %b\n" "$json_encoded_text" >&2
   read -r -d '' request <<EOF
   $curl https://api.openai.com/v1/chat/completions \
   -H "Authorization: Bearer $OPENAI_API_KEY" \
   -H "Content-Type: application/json" \
   --silent \
   --max-time $timeout \
-  -d '{"model": "$model", "messages": [{"role": "user", "content": "$args"}], "top_p": 0.1}'
+  -d '$json_encoded_text'
 EOF
   printf "%b" "$request"
 }
@@ -40,7 +46,7 @@ ask() {
   needs jq
   needs glow see https://github.com/charmbracelet/glow
   local request response response_parsed args
-  request=$(_generate_curl_api_request_for_ask "$@")
+  request=$(_generate_curl_api_request_for_ask "$*")
   response=$(eval "$request")
 # printf "request: %s\n" "$request" >&2
 # printf "response: %s\n" "$response" >&2
@@ -120,7 +126,7 @@ EOF
 }
 
 # TESTS
-resp=$(CURL=mocked_curl ask What is the connection between "The Last Question" and "The Last Answer" by Isaac Asimov?)
+resp=$(CURL=mocked_curl ask "What is the connection between \"The Last Question\" and \"The Last Answer\" by Isaac Asimov?")
 # echo "response in test: $resp"
 assert "$resp" =~ "connection"
 
