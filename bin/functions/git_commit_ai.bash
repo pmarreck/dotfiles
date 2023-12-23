@@ -18,7 +18,7 @@ function git_commit_ai() {
   fi
 
   model=${OPENAI_MODEL:-gpt-4-1106-preview}
-  timeout=${OPENAI_TIMEOUT:-30}
+  timeout=${OPENAI_TIMEOUT:-60}
   temp_json=$(mktemp -t git_commit_ai.XXXXXX --tmpdir)
   trap 'rm -f "$temp_json"' EXIT # ensure temp file is cleaned up on exit
 
@@ -26,7 +26,7 @@ function git_commit_ai() {
     model: $model,
     messages: [
       {role: "system", content: "You are a senior developer."},
-      {role: "user", content: "Generate a concise git commit command and message(s) for the following git diff. Do not use markdown or triple backticks. If you use multiple comment lines, separate them into separate `-m` arguments. If there does not appear to be diff data, please say so instead:\n\n\($diff)\n\nCommit message: "}
+      {role: "user", content: "Generate a concise git commit command and message(s) for the following git diff. Do not use markdown or triple backticks and do not editorialize. Only output the command. If you need to use multiple comment lines, separate them into separate `-m` arguments to git. If there does not appear to be diff data, please say so instead:\n\n\($diff)\n\nCommit message: "}
     ],
     max_tokens: 150,
     n: 1,
