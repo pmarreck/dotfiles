@@ -14,10 +14,11 @@ needs() {
 _generate_curl_api_request_for_ask() {
   [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   needs jq
-  local request args timeout model curl
+  local request args timeout model curl openai_host json_encoded_text
   curl=${CURL:-curl}
   model=${OPENAI_MODEL:-gpt-4-1106-preview} # other options: gpt-3.5-turbo, gpt-3.5-turbo-1106, gpt-4, gpt-4-0314, gpt-4-32k, gpt-4-32k-0314
-  timeout=${OPENAI_TIMEOUT:-30}
+  timeout=${OPENAI_TIMEOUT:-60}
+  openai_host=${OPENAI_HOST:-api.openai.com}
   args="$*"
   json_encoded_text=$(
     jq --null-input \
@@ -29,7 +30,7 @@ _generate_curl_api_request_for_ask() {
   # (Piping to "jq -sRr '@json'" was not working correctly, so I had to take control of the escaping myself.)
 # printf "escaped args: %b\n" "$json_encoded_text" >&2
   read -r -d '' request <<EOF
-  $curl https://api.openai.com/v1/chat/completions \
+  $curl https://${openai_host}/v1/chat/completions \
   -H "Authorization: Bearer $OPENAI_API_KEY" \
   -H "Content-Type: application/json" \
   --silent \

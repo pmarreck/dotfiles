@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+
+# The point of this script is to output all user-generated code that would be relevant
+# for further processing to something like an LLM, a security check, or a LOC counter,
+# as a single unified output.
+git ls-files | while read -r file; do
+  # Exclude directories and files you don't want
+  if [[ "$file" == priv/static/* || \
+      "$file" == priv/gettext/* || \
+      "$file" == *.lock || \
+      "$file" == *.gpg || \
+      "$file" == .secrets* || \
+      "$file" == .starship.toml || \
+      "$file" == .dockerignore || \
+      "$file" == .gitignore || \
+      "$file" == .githooks* || \
+      "$file" == .editorconfig || \
+      "$file" == .formatter.exs || \
+      "$file" == *.formatter.exs || \
+      "$file" == .iex.exs || \
+      # "$file" != *.ex* || \
+      "$file" == Dockerfile || \
+      "$file" == .env* || \
+      "$file" == *.dot || \
+      "$file" == *.txt || \
+      "$file" == rel/* || \
+      "$file" == bin/* || \
+      "$file" == basic-ad.conf || \
+      "$file" == *.md || \
+      ("$file" == assets/css/* && "$file" != assets/css/app.css) || \
+      ("$file" == assets/js/* && "$file" != assets/js/app.js) || \
+      "$file" == test/support/fixtures/typeform/* || \
+      "$file" == assets/vendor/* ]]; then
+    continue
+  fi
+
+  # Check if the file is a binary file
+  if [[ -f "$file" && ! $(file --mime "$file") =~ binary ]]; then
+    echo
+    # add a separator between files
+    echo -n "────────── "
+    echo "📄 $file:"
+    # Output the file contents
+    cat "$file"
+  fi
+done
