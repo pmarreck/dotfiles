@@ -9,7 +9,7 @@ function git_commit_ai() {
 
   local model request response timeout diff temp_json temp_json_out commit_message http_status \
     openai_host openai_path openai_protocol openai_url local_llm \
-    top_k top_p temperature
+    top_k top_p temperature system_prompt user_prompt repeat_penalty num_ctx
   diff=$(git diff)
   if [[ -z "$diff" ]]; then
     diff=$(git diff --cached)
@@ -20,64 +20,91 @@ function git_commit_ai() {
   fi
 
   model=${OPENAI_MODEL:-gpt-4-1106-preview}
-  timeout=${OPENAI_TIMEOUT:-60}
+  timeout=${OPENAI_TIMEOUT:-1200}
   openai_host=${OPENAI_HOST:-api.openai.com}
   openai_path=${OPENAI_PATH:-/v1/chat/completions}
   openai_protocol=${OPENAI_PROTOCOL:-https}
   openai_url=${OPENAI_URL:-${openai_protocol}://${openai_host}${openai_path}}
   top_k=${TOP_K:-40}
   top_p=${TOP_P:-0.9}
-  temperature=${TEMPERATURE:-0.7}
+  repeat_penalty=${REPEAT_PENALTY:-1.1}
+  temperature=${TEMPERATURE:-0.2}
+  num_ctx=${NUM_CTX:-32000}
   temp_json=$(mktemp -t git_commit_ai.XXXXXX --tmpdir)
   temp_json_out=$(mktemp -t git_commit_ai.XXXXXX --tmpdir)
+  system_prompt="You are a helpful coding AI assistant. You always output plaintext without markdown."
+  user_prompt="Output only the git commit command for the following git diff. Do not include any markdown formatting, triple backticks, discussion, or description. Provide the command in plain text, exactly as it should be entered in a command-line interface. If multiple lines of commit messages are required, use separate '-m' arguments to git. If no diff data is present, state 'No diff data'."
   # trap 'rm -f "$temp_json" && rm -f "$temp_json_out' EXIT # ensure temp file is cleaned up on exit
 
   local_llm=false
-  if [[ "$openai_host" == "localhost*" ]]; then
+  if [[ "$openai_host" == localhost* ]]; then
     local_llm=true
   fi
+# echo "openai_host: $openai_host" >&2
+# echo "local_llm: $local_llm" >&2
   if $local_llm; then
-    jq -n --arg model "$model" --arg diff "$diff" --argjson top_k "$top_k" --argjson top_p "$top_p" --argjson temperature "$temperature" '{
+    jq -n --arg model "$model" \
+          --arg diff "$diff" \
+          --argjson top_k "$top_k" \
+          --argjson top_p "$top_p" \
+          --argjson repeat_penalty "$repeat_penalty" \
+          --argjson temperature "$temperature" \
+          --argjson num_ctx "$num_ctx" \
+          --arg system_prompt "$system_prompt" \
+          --arg user_prompt "$user_prompt" \
+      '{
       model: $model,
-      messages: [
-        {role: "system", content: "You are a senior developer who hates writing markdown- plaintext or GTFO!"},
-        {role: "user", content: "Generate a concise git commit command and message(s) for the following git diff. DO NOT use markdown or triple backticks and do not editorialize. ONLY output the git command. If you need to use multiple comment lines, separate them into separate `-m` arguments to git. If there does not appear to be diff data, please say so instead:\n\n\($diff)\n\nNow generate the correct `git commit` command for the above changes: "}
-      ],
       options: {
         temperature: $temperature,
         top_k: $top_k,
-        top_p: $top_p
+        top_p: $top_p,
+        num_ctx: $num_ctx,
+        repeat_penalty: $repeat_penalty
       },
-      max_tokens: 150,
+      messages: [
+        {role: "system", content: $system_prompt},
+        {role: "user", content: "\($user_prompt)\n\nBEGIN GIT DIFF\n\($diff)\nEND GIT DIFF\n"}
+      ],
+      max_tokens: 200,
       stream: false
     }' > "$temp_json"
   else # openAI
-    jq -n --arg model "$model" --arg diff "$diff" --argjson top_k "$top_k" --argjson top_p "$top_p" --argjson temperature "$temperature" '{
+    jq -n --arg model "$model" \
+          --arg diff "$diff" \
+          --argjson top_k "$top_k" \
+          --argjson top_p "$top_p" \
+          --argjson repeat_penalty "$repeat_penalty" \
+          --argjson temperature "$temperature" \
+          --argjson num_ctx "$num_ctx" \
+          --arg system_prompt "$system_prompt" \
+          --arg user_prompt "$user_prompt" \
+      '{
       model: $model,
       messages: [
-        {role: "system", content: "You are a senior developer who hates writing markdown- plaintext or GTFO!"},
-        {role: "user", content: "Generate a concise git commit command and message(s) for the following git diff. DO NOT use markdown or triple backticks and do not editorialize. ONLY output the git command. If you need to use multiple comment lines, separate them into separate `-m` arguments to git. If there does not appear to be diff data, please say so instead:\n\n\($diff)\n\nNow generate the correct `git commit` command for the above changes: "}
+        {role: "system", content: $system_prompt},
+        {role: "user", content: "\($user_prompt)\n\nBEGIN GIT DIFF\n\($diff)\nEND GIT DIFF\n"}
       ],
       temperature: $temperature,
-      max_tokens: 150,
+      max_tokens: 200,
       stream: false
     }' > "$temp_json"
   fi
 
 # cat "$temp_json" >&2
-
+# echo >&2
 # echo curl -w \"%{http_code}\" -s -o \"$temp_json_out\" -X POST $openai_url \
 #     -H \"Content-Type: application/json\" \
 #     -H \"Authorization: Bearer $OPENAI_API_KEY\" \
 #     --silent \
-#     --max-time \"$timeout\" \
-#     -d \"@$temp_json\"
+#     --max-time $timeout \
+#     -d \"@$temp_json\" >&2
+# echo >&2
 
   http_status=$(curl -w "%{http_code}" -s -o "$temp_json_out" -X POST $openai_url \
     -H "Content-Type: application/json" \
     -H "Authorization: Bearer $OPENAI_API_KEY" \
     --silent \
-    --max-time "$timeout" \
+    --max-time $timeout \
     -d "@$temp_json")
 
   if [[ "$http_status" -ne 200 ]]; then
@@ -105,7 +132,7 @@ function git_commit_ai() {
 
 function git_commit_ai_local() {
   [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-  OPENAI_MODEL="codellama:34b-code" \
+  OPENAI_MODEL="dolphin-mixtral:latest" \
   OPENAI_HOST="localhost:11434" \
   OPENAI_PATH="/api/chat" \
   OPENAI_PROTOCOL="http" \
