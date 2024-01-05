@@ -27,20 +27,26 @@ git ls-files | while read -r file; do
       "$file" == bin/* || \
       "$file" == basic-ad.conf || \
       "$file" == *.md || \
-      ("$file" == assets/css/* && "$file" != assets/css/app.css) || \
-      ("$file" == assets/js/* && "$file" != assets/js/app.js) || \
+      # ("$file" == assets/css/* && "$file" != assets/css/app.css) || \
+      # ("$file" == assets/js/* && "$file" != assets/js/app.js) || \
       "$file" == test/support/fixtures/typeform/* || \
-      "$file" == assets/vendor/* ]]; then
+      # "$file" == assets/vendor/* || \
+      "0" == "1" ]]; then
     continue
   fi
 
   # Check if the file is a binary file
   if [[ -f "$file" && ! $(file --mime "$file") =~ binary ]]; then
-    echo
-    # add a separator between files
-    echo -n "────────── "
-    echo "📄 $file:"
-    # Output the file contents
-    cat "$file"
+    # Check if the first argument is "--filenames" or "-f"
+    if [[ "$1" == "--filenames" || "$1" == "-f" ]]; then
+      echo "$file"
+    else
+      # add a separator between files
+      echo -n "────────── "
+      echo "📄 $file:"
+      # Output the file contents
+      cat "$file"
+      echo
+    fi
   fi
 done
