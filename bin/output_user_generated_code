@@ -29,7 +29,7 @@ git ls-files | while read -r file; do
       "$file" == *.md || \
       # ("$file" == assets/css/* && "$file" != assets/css/app.css) || \
       # ("$file" == assets/js/* && "$file" != assets/js/app.js) || \
-      "$file" == test/support/fixtures/typeform/* || \
+      # "$file" == test/support/fixtures/typeform/* || \
       # "$file" == assets/vendor/* || \
       "0" == "1" ]]; then
     continue

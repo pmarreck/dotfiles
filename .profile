@@ -108,6 +108,8 @@ source_relative_once bin/functions/dragon.sh
 
 source_relative_once bin/functions/warhammer_quote.bash
 
+source_relative_once bin/functions/bashorg_quote.bash
+
 source_relative_once bin/functions/ask.sh
 
 source_relative_once bin/functions/mandelbrot.sh
@@ -287,7 +289,7 @@ just_one_taoup() {
 if [ "$INTERACTIVE_SHELL" = "true" ]; then
   fun_intro() {
     [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-    _fun_things="fortune inthebeginning warhammer_quote chuck mandelbrot asciidragon just_one_taoup"
+    _fun_things="fortune inthebeginning warhammer_quote bashorg_quote chuck mandelbrot asciidragon just_one_taoup"
     _count=0
     for _item in $_fun_things; do
       _count=$(( _count + 1 ))
