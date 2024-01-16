@@ -142,7 +142,13 @@ load_and_filter_dict() {
   # so just use good ol' awk to strip out the dict from this script
   local dict=$(awk 'p;/^__DICT__$/{p=1}' "${BASH_SOURCE[0]}")
   # take the dict, filter out anything not within the min/max length
-  local pool=$(LC_ALL=C printf "%s" "$dict" | awk 'length($0) >= '$1' && length($0) <= '$2'')
+  # optionally filter out anything that starts with a capital letter (e.g. proper nouns)
+  local pool;
+  if [ -v FILTERPROPERNOUNS ]; then
+    pool=$(LC_ALL=C printf "%s" "$dict" | awk 'length($0) >= '$1' && length($0) <= '$2' && !/^[[:upper:]]/')
+  else
+    pool=$(LC_ALL=C printf "%s" "$dict" | awk 'length($0) >= '$1' && length($0) <= '$2)
+  fi
   printf "%s" "$pool"
 }
 
@@ -154,7 +160,7 @@ randompassdict() {
   needs shuf || return 1
   local random_source="${RANDOM_SOURCE:-/dev/random}"
   if [ $# -eq 0 ]; then
-    echo "Usage: randompassdict <num-words> [<min-word-length default 8> [<max-word-length default 99>]]"
+    echo "Usage: randompassdict <num-words> [<min-word-length default 4> [<max-word-length default 14>]]"
     echo "This function is defined in $BASH_SOURCE"
     # if [ "$PLATFORM" = "linux" ]; then
     #   echo "Note that on linux, this may require installation of the 'words' package"
@@ -164,8 +170,8 @@ randompassdict() {
     return 1
   fi
   local numwords=$1
-  local minlen=${2:-8}
-  local maxlen=${3:-99}
+  local minlen=${2:-4}
+  local maxlen=${3:-14}
   local dict="$(load_and_filter_dict $minlen $maxlen)"
   local poolsize=$(printf "%s" "$dict" | wc -l)
   # why is poolsize getting spaces in front? No idea. Removing them.
@@ -174,10 +180,15 @@ randompassdict() {
   local combinations_with_thousands_sep=$(printf "%'.0f" $(calc ${poolsize}^${numwords}))
   echo "$words"
   echo "(out of a possible $poolsize available words in the dictionary that suit the requested length range [$minlen-$maxlen]" >&2
+  if [ -v FILTERPROPERNOUNS ]; then
+    echo "and that do not start with a capital letter," >&2
+  fi
   echo "for a total of ($poolsize ** $numwords) or $combinations_with_thousands_sep possible combinations)" >&2
   # a former attempt that worked but was less flexible:
   #cat /dev/urandom | LC_ALL=C tr -dc 'a-zA-Z0-9\!\@\#\$\%\&\*\?' | fold -w $1 | head -n $2 | tr '\n' ' '
 }
+
+alias randompassphrase='FILTERPROPERNOUNS=true randompassdict 5'
 
 assert "$(randompass --help)" =~ "Usage:"
 # For some reason, the following line is either 10 C's or 10 a's, depending on... nondeterministic things?
