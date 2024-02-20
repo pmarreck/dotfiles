@@ -102,7 +102,7 @@ source_relative_once bin/functions/executables.bash
 source_relative_once bin/functions/datetimestamp.bash
 
 source_relative_once bin/functions/show.sh
-alias v=show # "view" goes to vim, "s" usually launches a search or server, so "v" is a good alias for show IMHO
+alias d=show # "view" goes to vim, "s" usually launches a search or server, so "d" (for "define") is a good alias for show IMHO
 
 source_relative_once bin/functions/dragon.sh
 
@@ -273,7 +273,7 @@ just_one_taoup() {
     }
     /^-{3,}/{
       header=$0; next
-    } 
+    }
     !/^$/{
       lines[count++]=$0;
       headers[count-1]=header;
