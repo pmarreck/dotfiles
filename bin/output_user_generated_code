@@ -3,50 +3,72 @@
 # The point of this script is to output all user-generated code that would be relevant
 # for further processing to something like an LLM, a security check, or a LOC counter,
 # as a single unified output.
-git ls-files | while read -r file; do
-  # Exclude directories and files you don't want
-  if [[ "$file" == priv/static/* || \
-      "$file" == priv/gettext/* || \
-      "$file" == *.lock || \
-      "$file" == *.gpg || \
-      "$file" == .secrets* || \
-      "$file" == .starship.toml || \
-      "$file" == .dockerignore || \
-      "$file" == .gitignore || \
-      "$file" == .githooks* || \
-      "$file" == .editorconfig || \
-      "$file" == .formatter.exs || \
-      "$file" == *.formatter.exs || \
-      "$file" == .iex.exs || \
-      # "$file" != *.ex* || \
-      "$file" == Dockerfile || \
-      "$file" == .env* || \
-      "$file" == *.dot || \
-      "$file" == *.txt || \
-      "$file" == rel/* || \
-      "$file" == bin/* || \
-      "$file" == basic-ad.conf || \
-      "$file" == *.md || \
-      # ("$file" == assets/css/* && "$file" != assets/css/app.css) || \
-      # ("$file" == assets/js/* && "$file" != assets/js/app.js) || \
-      # "$file" == test/support/fixtures/typeform/* || \
-      # "$file" == assets/vendor/* || \
-      "0" == "1" ]]; then
-    continue
-  fi
 
-  # Check if the file is a binary file
-  if [[ -f "$file" && ! $(file --mime "$file") =~ binary ]]; then
-    # Check if the first argument is "--filenames" or "-f"
-    if [[ "$1" == "--filenames" || "$1" == "-f" ]]; then
-      echo "$file"
-    else
-      # add a separator between files
-      echo -n "────────── "
-      echo "📄 $file:"
-      # Output the file contents
-      cat "$file"
-      echo
+output_user_generated_code() {
+  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  # Define the regex pattern with comments for clarity
+  read -r -d '' exclusion_pattern << 'EOF' || true
+\(
+^priv/static/|          # Exclude 'priv/static/' directory
+^priv/gettext/|           # Exclude 'priv/gettext/' directory
+\.lock$|                # Exclude '.lock' files
+\.gpg$|                 # Exclude '.gpg' files
+\.secrets$|             # Exclude '.secrets' files
+\.starship.toml$|         # Exclude '.starship.toml'
+\.dockerignore$|          # Exclude '.dockerignore'
+\.gitignore$|             # Exclude '.gitignore'
+\.githooks$|            # Exclude '.githooks' files
+\.editorconfig$|          # Exclude '.editorconfig'
+.*\.formatter.exs$|       # Exclude '.formatter.exs' files
+\.iex.exs$|               # Exclude '.iex.exs'
+Dockerfile$|              # Exclude 'Dockerfile'
+\.env$|                 # Exclude '.env' files
+\.dot$|                 # Exclude '.dot' files
+\.txt$|                 # Exclude '.txt' files
+^rel/|                    # Exclude 'rel/' directory
+^bin/|                    # Exclude 'bin/' directory
+^deps/|                   # Exclude 'deps/' directory
+^basic-ad\.conf$|          # Exclude 'basic-ad.conf'
+\.md$|                  # Exclude '.md' files
+\(^assets/css/.*&!assets/css/app.css\)| # Exclude 'assets/css/' except 'app.css'
+\(^assets/js/.*&!assets/js/app.js\)|    # Exclude 'assets/js/' except 'app.js'
+^assets/vendor/|    # Exclude 'assets/vendor/' directory
+^test/support/fixtures/|  # Exclude 'test/support/fixtures/' directory
+^assets/vendor/          # Exclude 'assets/vendor/' directory
+\)
+EOF
+
+  # Use the pattern in the git ls-files | grep -vE pipeline
+  git ls-files | grep -vE "$exclusion_pattern" | while read -r file; do
+
+    # Check if the file is a binary file
+    if [[ -f "$file" && ! $(file --mime "$file") =~ binary ]]; then
+      # Check if the first argument is "--filenames" or "-f"
+      if [[ "$1" == "--filenames" || "$1" == "-f" ]]; then
+        echo "$file"
+      else
+        # add a separator between files
+        echo -n "────────── "
+        echo "📄 $file:"
+        # Output the file contents (possibly excluding comments)
+        if [[ -v SKIP_COMMENTS ]]; then # requires Bash 4.2+
+          # If SKIP_COMMENTS is set, exclude comments
+          grep -vE '^\s*(//|#)' "$file"
+        else
+          # If SKIP_COMMENTS is unset, just output the file as is
+          cat "$file"
+        fi
+        echo
+      fi
     fi
-  fi
-done
+  done
+}
+
+# Run the function, passing along any args, if this file was run directly (such as via sudo) instead of as an include
+# Sometimes, $0 contains a leading dash to indicate an interactive (or is it login?) shell,
+# which is apparently an old convention (which also broke the basename call on OS X)
+_me=$(basename "${0##\-}")
+if [ "$_me" = "output_user_generated_code" ]; then
+  output_user_generated_code $*
+fi
+unset _me
