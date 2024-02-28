@@ -32,7 +32,6 @@ Dockerfile$|              # Exclude 'Dockerfile'
 \.md$|                  # Exclude '.md' files
 \(^assets/css/.*&!assets/css/app.css\)| # Exclude 'assets/css/' except 'app.css'
 \(^assets/js/.*&!assets/js/app.js\)|    # Exclude 'assets/js/' except 'app.js'
-^assets/vendor/|    # Exclude 'assets/vendor/' directory
 ^test/support/fixtures/|  # Exclude 'test/support/fixtures/' directory
 ^assets/vendor/          # Exclude 'assets/vendor/' directory
 \)
