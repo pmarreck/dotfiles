@@ -106,6 +106,8 @@ alias d=show # "view" goes to vim, "s" usually launches a search or server, so "
 
 source_relative_once bin/functions/dragon.sh
 
+source_relative_once bin/functions/ds_bore.sh
+
 source_relative_once bin/functions/warhammer_quote.bash
 
 source_relative_once bin/functions/bashorg_quote.bash

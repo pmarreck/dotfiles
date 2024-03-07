@@ -1,60 +1,93 @@
 #!/usr/bin/env bash
 
 # The point of this script is to output all user-generated code that would be relevant
-# for further processing to something like an LLM, a security check, or a LOC counter,
+# for further processing to something like an LLM, a security check, or an LOC counter,
 # as a single unified output.
 
 output_user_generated_code() {
   [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-  # Define the regex pattern with comments for clarity
-  read -r -d '' exclusion_pattern << 'EOF' || true
-\(
-^priv/static/|          # Exclude 'priv/static/' directory
-^priv/gettext/|           # Exclude 'priv/gettext/' directory
-\.lock$|                # Exclude '.lock' files
-\.gpg$|                 # Exclude '.gpg' files
-\.secrets$|             # Exclude '.secrets' files
-\.starship.toml$|         # Exclude '.starship.toml'
-\.dockerignore$|          # Exclude '.dockerignore'
-\.gitignore$|             # Exclude '.gitignore'
-\.githooks$|            # Exclude '.githooks' files
-\.editorconfig$|          # Exclude '.editorconfig'
-.*\.formatter.exs$|       # Exclude '.formatter.exs' files
-\.iex.exs$|               # Exclude '.iex.exs'
-Dockerfile$|              # Exclude 'Dockerfile'
-\.env$|                 # Exclude '.env' files
-\.dot$|                 # Exclude '.dot' files
-\.txt$|                 # Exclude '.txt' files
-^rel/|                    # Exclude 'rel/' directory
-^bin/|                    # Exclude 'bin/' directory
-^deps/|                   # Exclude 'deps/' directory
-^basic-ad\.conf$|          # Exclude 'basic-ad.conf'
-\.md$|                  # Exclude '.md' files
-\(^assets/css/.*&!assets/css/app.css\)| # Exclude 'assets/css/' except 'app.css'
-\(^assets/js/.*&!assets/js/app.js\)|    # Exclude 'assets/js/' except 'app.js'
-^test/support/fixtures/|  # Exclude 'test/support/fixtures/' directory
-^assets/vendor/          # Exclude 'assets/vendor/' directory
-\)
-EOF
 
-  # Use the pattern in the git ls-files | grep -vE pipeline
-  git ls-files | grep -vE "$exclusion_pattern" | while read -r file; do
+  # Define exclusion patterns directly for ripgrep
+  # Note: Ripgrep's -g option is used for globbing, which can include or exclude files.
+  #       Prepend a '!' to exclude files matching the pattern.
+  #       We'll need to split the inclusion/exclusion logic more explicitly than in the combined regex.
+  
+  # Start by excluding everything that should not be checked
+  exclude_patterns=(
+    '!.git/*'
+    '!.envrc'
+    '!priv/static/*'
+    '!priv/gettext/*'
+    '!*.lock'
+    '!*.gpg'
+    '!*.secrets'
+    '!*.starship.toml'
+    '!*.dockerignore'
+    '!*.gitignore'
+    '!*.githooks'
+    '!*.editorconfig'
+    '!*.formatter.exs'
+    '!*.iex.exs'
+    '!Dockerfile'
+    '!Library/*'
+    '!*.env'
+    '!*.dot'
+    '!*.txt'
+    '!rel/*'
+    '!*.plist'
+    '!*.wflow'
+    '!deps/*'
+    '!README*'
+    '!basic-ad.conf'
+    '!*.md'
+    '!assets/css/*'
+    '!assets/js/*'
+    '!assets/vendor/*'
+    '!test/support/fixtures/*'
+    '!bin/functions/randompass.*'
+    '!bin/git*'
+    '!bin/functions/git*'
+    '!bin/functions/warhammer_quote.*'
+    '!bin/functions/grandfather_clock_chime.*'
+    '!bin/functions/clock.*'
+    '!bin/functions/bashorg_quote.*'
+  )
 
-    # Check if the file is a binary file
+  # Then, include exceptions. Note: ripgrep applies '--include' patterns after '--exclude' patterns,
+  # so exceptions (inclusions) are effectively handled.
+  include_patterns=(
+    'assets/css/app.css'
+    'assets/js/app.js'
+    '.github/*'
+    '.githooks/*'
+  )
+
+  # Construct the ripgrep command
+  rg_cmd="rg --files --hidden"
+  
+  # Append exclusion patterns
+  for pattern in "${exclude_patterns[@]}"; do
+    rg_cmd+=" -g '$pattern'"
+  done
+
+  rg_cmd="$rg_cmd && rg --files"
+
+  # Append inclusion patterns
+  for pattern in "${include_patterns[@]}"; do
+    rg_cmd+=" -g '$pattern'"
+  done
+
+  # Execute the constructed command and process each file
+  eval "$rg_cmd" | sort | while read -r file; do
     if [[ -f "$file" && ! $(file --mime "$file") =~ binary ]]; then
-      # Check if the first argument is "--filenames" or "-f"
       if [[ "$1" == "--filenames" || "$1" == "-f" ]]; then
         echo "$file"
       else
-        # add a separator between files
         echo -n "────────── "
         echo "📄 $file:"
-        # Output the file contents (possibly excluding comments)
-        if [[ -v SKIP_COMMENTS ]]; then # requires Bash 4.2+
-          # If SKIP_COMMENTS is set, exclude comments
-          grep -vE '^\s*(//|#)' "$file"
+        if [[ -v SKIP_COMMENTS ]]; then
+          rg --no-filename --no-messages --hidden --no-line-number -v '^\s*(//|#)|^\s*$' "$file"
         else
-          # If SKIP_COMMENTS is unset, just output the file as is
           cat "$file"
         fi
         echo
@@ -63,11 +96,8 @@ EOF
   done
 }
 
-# Run the function, passing along any args, if this file was run directly (such as via sudo) instead of as an include
-# Sometimes, $0 contains a leading dash to indicate an interactive (or is it login?) shell,
-# which is apparently an old convention (which also broke the basename call on OS X)
 _me=$(basename "${0##\-}")
 if [ "$_me" = "output_user_generated_code" ]; then
-  output_user_generated_code $*
+  output_user_generated_code "$@"
 fi
 unset _me
