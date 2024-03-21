@@ -132,7 +132,7 @@ function git_commit_ai() {
 
 function git_commit_ai_local() {
   [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-  OPENAI_MODEL="dolphin-mixtral:latest" \
+  OPENAI_MODEL="dolphincoder" \
   OPENAI_HOST="localhost:11434" \
   OPENAI_PATH="/api/chat" \
   OPENAI_PROTOCOL="http" \

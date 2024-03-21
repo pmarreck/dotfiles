@@ -57,8 +57,15 @@ alias t='btop'
 alias bye='logout'
 
 # The current thing(s) I'm working on
-alias mpnetwork='cd ~/Documents/mpnetwork*'
-alias addigence='cd ~/Documents/addigence-ex*'
+# on macos, iCloud backup was interfering with git, so I moved git repos
+# to a "Documents-CloudManaged" folder
+if [ "$PLATFORM" = "osx" ]; then
+  alias mpnetwork='cd ~/Documents-CloudManaged/mpnetwork'
+  alias addigence='cd ~/Documents-CloudManaged/addigence-ex'
+else
+  alias mpnetwork='cd ~/Documents/mpnetwork'
+  alias addigence='cd ~/Documents/addigence-ex'
+fi
 # alias simpaticio='cd ~/Documents/simpaticio'
 alias work=addigence
 

@@ -24,6 +24,7 @@ output_user_generated_code() {
     '!*.starship.toml'
     '!*.dockerignore'
     '!*.gitignore'
+    '!*.cursorignore'
     '!*.githooks'
     '!*.editorconfig'
     '!*.formatter.exs'
