@@ -9,6 +9,14 @@ needs() {
   command -v $bin >/dev/null 2>&1 || { echo >&2 "I require $bin but it's not installed or in PATH; $*"; return 1; }
 }
 
+# alerting in yellow to stderr
+# do not redefine if already defined
+# currently defined in .envconfig
+>/dev/null declare -F note || note() {
+  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  >&2 printf "\e[0;33m%s\e[0;39m\n" "$@"
+}
+
 # deterministic random number generator
 # Usage: [DRANDOM_SEED=<whatever>] drandom [-h|--hex|--help]
 # Outputs an integer between 0 and 2^256-1 or an equivalent hex string if -h|--hex is specified
@@ -58,7 +66,7 @@ nrandom() {
   start=${1:-0}
   end=${2:-100}
   if [[ $# -eq 0 ]]; then
-    echo "(with a start of $start and an end of $end)" >&2
+    note "(with a start of $start and an end of $end)"
   fi
   range=$(echo "$end - $start" | bc -l)
 
@@ -178,17 +186,20 @@ randompassdict() {
   poolsize=${poolsize##* }
   local words=$(echo -n "$dict" | shuf --random-source=$random_source -r -n "$numwords" | tr '\n' ' ' | xargs)
   local combinations_with_thousands_sep=$(printf "%'.0f" $(calc ${poolsize}^${numwords}))
-  echo "$words"
-  echo "(out of a possible $poolsize available words in the dictionary that suit the requested length range [$minlen-$maxlen]" >&2
+  echo -n "$words"
+  echo >&2
+  echo >&2
+  note "(out of a possible $poolsize available words in the dictionary that suit the requested length range [$minlen-$maxlen]"
   if [ -v FILTERPROPERNOUNS ]; then
-    echo "and that do not start with a capital letter," >&2
+    note "and that do not start with a capital letter,"
   fi
-  echo "for a total of ($poolsize ** $numwords) or $combinations_with_thousands_sep possible combinations)" >&2
+  note "for a total of ($poolsize ** $numwords) or $combinations_with_thousands_sep possible combinations)"
   # a former attempt that worked but was less flexible:
   #cat /dev/urandom | LC_ALL=C tr -dc 'a-zA-Z0-9\!\@\#\$\%\&\*\?' | fold -w $1 | head -n $2 | tr '\n' ' '
 }
 
 alias randompassphrase='FILTERPROPERNOUNS=true randompassdict 5'
+alias passtoclip='rtrim "$(randompassphrase 2>/dev/null)" | clip'
 
 assert "$(randompass --help)" =~ "Usage:"
 # For some reason, the following line is either 10 C's or 10 a's, depending on... nondeterministic things?
