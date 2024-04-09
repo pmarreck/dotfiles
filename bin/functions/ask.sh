@@ -16,7 +16,7 @@ _generate_curl_api_request_for_ask() {
   needs jq
   local request args timeout model curl openai_host json_encoded_text
   curl=${CURL:-curl}
-  model=${OPENAI_MODEL:-gpt-4-1106-preview} # other options: gpt-3.5-turbo, gpt-3.5-turbo-1106, gpt-4, gpt-4-0314, gpt-4-32k, gpt-4-32k-0314
+  model=${OPENAI_MODEL:-gpt-4} # other options: gpt-3.5-turbo, gpt-3.5-turbo-1106, gpt-4, gpt-4-0314, gpt-4-32k, gpt-4-32k-0314
   timeout=${OPENAI_TIMEOUT:-60}
   openai_host=${OPENAI_HOST:-api.openai.com}
   args="$*"
@@ -24,7 +24,7 @@ _generate_curl_api_request_for_ask() {
     jq --null-input \
     --arg model "$model" \
     --arg text "$*" \
-    '{"model": $model, "messages": [{"role": "user", "content": $text}], "top_p": 0.1}'
+    '{"model": $model, "messages": [{"role": "user", "content": $text}], "top_p": 0.3}'
   )
   # args=$(printf "%b" "$args" | sed 's/\\/\\\\/g; s/"/\\"/g;') # This is just a narsty sed to escape single quotes.  
   # (Piping to "jq -sRr '@json'" was not working correctly, so I had to take control of the escaping myself.)

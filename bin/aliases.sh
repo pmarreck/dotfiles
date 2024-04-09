@@ -106,7 +106,15 @@ alias beep='tput bel'
 
 # forget curl vs wget; just get a URL, follow any redirects, and output it to stdout, reliably
 alias get='wget --xattr --show-progress -c -q -O - --'
+# but also sometimes just download a file as-is
 alias getfile='wget --xattr --show-progress -c -q --'
+# wanted to add the ability to handle multiple files...
+getfiles() {
+  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  for url in "$@"; do
+    getfile "$url"
+  done
+}
 
 alias consoleconfig='code $WEZTERM_CONFIG_FILE'
 
