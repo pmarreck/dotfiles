@@ -234,6 +234,12 @@ needs code "please install VSCode"
 # for git paging:
 needs delta "cargo install git-delta"
 
+# ble.sh
+# Uncomment when the following fix makes it to mainstream branches:
+# https://github.com/jeffkreeftmeijer/system/commit/e54f0755f3b5c9f8888ac06bd1bb92d9ff52e709
+# needs blesh-share "please install ble.sh > v0.4"
+# source `blesh-share`/ble.sh
+
 # environment vars config
 source_relative_once .envconfig
 

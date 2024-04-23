@@ -129,11 +129,13 @@ function git_commit_ai() {
   echo "Commit command copied to clipboard:" >&2
   echo -ne "$commit_message"
 }
+export DEFAULT_LOCAL_AI_MODEL="llama3:70b"
+export DEFAULT_LOCAL_AI_HOST="localhost:11434"
 
 function git_commit_ai_local() {
   [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-  OPENAI_MODEL="dolphincoder" \
-  OPENAI_HOST="localhost:11434" \
+  OPENAI_MODEL="$DEFAULT_LOCAL_AI_MODEL" \
+  OPENAI_HOST="$DEFAULT_LOCAL_AI_HOST" \
   OPENAI_PATH="/api/chat" \
   OPENAI_PROTOCOL="http" \
   OPENAI_API_KEY="fake" \

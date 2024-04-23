@@ -47,6 +47,48 @@ prepend_path() {
   $stdout && echo "$newpath" || export ${var}="$newpath"
 }
 
+exclude_path() {
+  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  function docs() {
+    echo "Usage: exclude_path [-o|-h|--help] <path_to_exclude> [name_of_path_var, defaults to PATH]" >&2
+    echo "Setting -o will print the new path to stdout instead of exporting it" >&2
+  }
+  local stdout=false
+  local IGNORE_EXCLUDE_PATH_WARNINGS=${IGNORE_EXCLUDE_PATH_WARNINGS:-false}
+  case "$1" in
+    -h|--help)
+      docs
+      return 0
+      ;;
+    -o)
+      stdout=true
+      shift
+      ;;
+    *)
+      ;;
+  esac
+  local dir="${1%/}"  # discard trailing slash
+  local var="${2:-PATH}"
+  if [ -z "$dir" ]; then
+    docs
+    return 2  # incorrect usage return code
+  fi
+  case "$dir" in
+    /*) :;;  # absolute path, do nothing
+    *) $IGNORE_EXCLUDE_PATH_WARNINGS || echo "exclude_path warning: '$dir' is not an absolute path, which may be unexpected" >&2;;
+  esac
+  local paths=${!var}
+  if [ -z "$paths" ]; then
+    $stdout || $IGNORE_EXCLUDE_PATH_WARNINGS || echo "exclude_path warning: $var is empty, nothing to exclude" >&2
+    return
+  fi
+  # Filter out the specified directory
+  local newpath=$(echo "$paths" | awk -v RS=: -v ORS=: -v path="$dir" '$0 != path')
+  # Remove trailing colon
+  newpath=${newpath%:}
+  $stdout && echo "$newpath" || export ${var}="$newpath"
+}
+
 # INLINE RUNTIME TEST SUITE
 export _FAKEPATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 export _FAKEPATHDUPES="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"

@@ -186,14 +186,18 @@ randompassdict() {
   poolsize=${poolsize##* }
   local words=$(echo -n "$dict" | shuf --random-source=$random_source -r -n "$numwords" | tr '\n' ' ' | xargs)
   local combinations_with_thousands_sep=$(printf "%'.0f" $(calc ${poolsize}^${numwords}))
-  echo -n "$words"
-  echo >&2
-  echo >&2
-  note "(out of a possible $poolsize available words in the dictionary that suit the requested length range [$minlen-$maxlen]"
-  if [ -v FILTERPROPERNOUNS ]; then
-    note "and that do not start with a capital letter,"
+  if [ -v JUST_OUTPUT_DICTIONARY ]; then
+    echo "$dict"
+  else
+    echo -n "$words"
+    echo >&2
+    echo >&2
+    note "(out of a possible $poolsize available words in the dictionary that suit the requested length range [$minlen-$maxlen]"
+    if [ -v FILTERPROPERNOUNS ]; then
+      note "and that do not start with a capital letter,"
+    fi
+    note "for a total of ($poolsize ** $numwords) or $combinations_with_thousands_sep possible combinations)"
   fi
-  note "for a total of ($poolsize ** $numwords) or $combinations_with_thousands_sep possible combinations)"
   # a former attempt that worked but was less flexible:
   #cat /dev/urandom | LC_ALL=C tr -dc 'a-zA-Z0-9\!\@\#\$\%\&\*\?' | fold -w $1 | head -n $2 | tr '\n' ' '
 }
