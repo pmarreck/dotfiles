@@ -134,8 +134,8 @@ alias gb='git branch'
 alias gc='EDITOR="subl" git commit -v'
 alias push='git push'
 # alias pushforce='git push -f'
-alias pull='git pull'
-alias puff='git puff' # pull --ff-only
+alias pull='git pull --rebase'
+alias puff='git pull --ff-only'
 # alias fetch='git fetch'
 # alias co='git checkout' # NOTE: overwrites a builtin for RCS (wtf? really? RCS?)
 # alias checkout='git checkout'
@@ -146,10 +146,12 @@ alias ga='git add -v'
 alias gs='git status'
 alias gd='git diff'
 alias gcb='git checkout -b'
+alias gcob='git checkout -b'
 alias gitrollback='git reset --hard; git clean -f'
 alias gunadd='git reset HEAD'
 alias grc='git rebase --continue'
 alias fetch='git fetch' # --all --prune'
+alias fetchall='git fetch --all --prune'
 
 # lines of code counter
 # brew install tokei

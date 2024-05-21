@@ -150,6 +150,18 @@ else
   precmd_functions+=(__wezterm_osc7_home)
 fi
 
+# _writehist() {
+#   # echo "writing history..."
+#   history -a
+# }
+
+# # add "history -a" to make all terminal windows use the same history
+# if array_contains_element precmd_functions _writehist; then
+#   :
+# else
+#   precmd_functions+=(_writehist)
+# fi
+
 # Just setting them declaratively here to avoid a lot of nondeterministic garbage with these hooks
 # unset PROMPT_COMMAND
 # unset precmd_functions
