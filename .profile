@@ -248,6 +248,8 @@ source_relative_once bin/functions/roll_a_die.sh
 
 source_relative_once bin/functions/repeat_command.bash
 
+source_relative_once bin/functions/uuidv7.sh
+
 source_relative_once bin/functions/kill-steam-proton-pids.bash
 
 # command prompt

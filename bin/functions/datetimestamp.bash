@@ -5,7 +5,7 @@ datetimestamp() {
   local datebin="date"
   $datebin --resolution >/dev/null 2>&1 || datebin="gdate"
   $datebin --resolution >/dev/null 2>&1 || datebin="date"
-  local format=${DATETIMESTAMPFORMAT:-'+%Y%m%d%H%M%S'}
+  local format=${DATETIMESTAMPFORMAT:-'+%Y%m%d%H%M%S.%3N'}
   # if there is a --date argument
   case "$1" in
     --date=*|-d=*)
@@ -32,6 +32,6 @@ datetimestamp() {
 }
 source_relative_once assert.bash
 
-assert "$(datetimestamp --date='@2147483640')" == 20380118221400 "datetimestamp should work as expected and pad zeroes"
+assert "$(datetimestamp --date='@2147483640')" == 20380118221400.000 "datetimestamp should work as expected and pad zeroes"
 assert "$(DATETIMESTAMPFORMAT='+%Y-%m-%d %H:%M:%S' datetimestamp --date='@2147483640')" == \
        "2038-01-18 22:14:00" "datetimestamp should take an env format string with a space"

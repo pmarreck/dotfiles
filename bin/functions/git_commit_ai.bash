@@ -129,7 +129,8 @@ function git_commit_ai() {
   echo "Commit command copied to clipboard:" >&2
   echo -ne "$commit_message"
 }
-export DEFAULT_LOCAL_AI_MODEL="llama3:70b"
+# export DEFAULT_LOCAL_AI_MODEL="llama3:70b"
+export DEFAULT_LOCAL_AI_MODEL="codestral"
 export DEFAULT_LOCAL_AI_HOST="localhost:11434"
 
 function git_commit_ai_local() {
