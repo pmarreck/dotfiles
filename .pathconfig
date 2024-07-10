@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 [[ -v DEBUG_SHELLCONFIG ]] && echo "Entering $(echo "${BASH_SOURCE[0]}" | sed "s|^$HOME|~|")" # || printf "#"
-[[ -v DEBUG_PATHCONFIG ]] && echo $PATH
+[[ -v DEBUG_PATHCONFIG ]] && echo "PATH is: $PATH"
 # echo "Current PATH is $PATH"
 
 # All path configs here should replace any existing version of themselves in the PATH before appending

@@ -20,6 +20,8 @@
 # set -o pipefail
 # set -x
 
+source_relative_once functions/utility_functions.bash # to get array_contains_element
+
 needs() {
   [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   local bin="$1"

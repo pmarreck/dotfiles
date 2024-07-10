@@ -6,7 +6,7 @@
 # debug switches that are just set to false.
 # But note that that only works in Bash 4+!
 # For all other configs, just set to true/false as appropriate (but never blank!)
-# export _TRACE_SOURCING=false
+# export _TRACE_SOURCING=true
 # export DEBUG_SHELLCONFIG=true
 # export DEBUG_PATHCONFIG=true
 
