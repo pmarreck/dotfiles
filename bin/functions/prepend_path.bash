@@ -51,7 +51,7 @@ prepend_path() {
 
 exclude_path() {
   [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-  local AWK=$(/run/current-system/sw/bin/which awk || echo -n "/run/current-system/sw/bin/awk") # in case you accidentally exclude the path that has awk...
+  local AWK=$(which awk || echo -n "/run/current-system/sw/bin/awk") # in case you accidentally exclude the path that has awk...
   function docs() {
     echo "Usage: exclude_path [-o|-h|--help] <path_to_exclude> [name_of_path_var, defaults to PATH]" >&2
     echo "Setting -o will print the new path to stdout instead of exporting it" >&2
