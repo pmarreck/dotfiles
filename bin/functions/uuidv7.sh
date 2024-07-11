@@ -16,7 +16,7 @@ _uuidv7_sequencer() {
     _uuidv7_sequence_counter=$(_uuidv7_sequence_init) # Reset and randomize within first half of the sequence space
   else
     _uuidv7_sequence_counter=$((_uuidv7_sequence_counter + 1))
-    if [ "$_uuidv7_sequence_counter" -gt 0xFFFF ]; then
+    if [ $_uuidv7_sequence_counter -gt 0xFFFF ]; then
         _uuidv7_sequence_counter=0
     fi
   fi
