@@ -1,5 +1,26 @@
 source_relative_once assert.bash
 
+# function to find necessary binaries in common locations in case PATH is borked
+find_binary() {
+  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  if [ -f "/run/current-system/sw/bin/$1" ]; then
+    echo -n "/run/current-system/sw/bin/$1"
+  elif [ -f "/usr/local/bin/$1" ]; then
+    echo -n "/usr/local/bin/$1"
+  elif [ -f "/usr/sbin/$1" ]; then
+    echo -n "/usr/sbin/$1"
+  elif [ -f "/usr/bin/$1" ]; then
+    echo -n "/usr/bin/$1"
+  elif [ -f "/bin/$1" ]; then
+    echo -n "/bin/$1"
+  elif [ -f "/sbin/$1" ]; then
+    echo -n "/sbin/$1"
+  else
+    echo "ERROR: Could not find $1 without PATH" >&2
+    return 1
+  fi
+}
+
 # function to prepend paths in an idempotent way
 prepend_path() {
   [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return

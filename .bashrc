@@ -143,7 +143,8 @@ if [ "$pf" = "Darwin" ]; then
     version=$(sw_vers -productVersion)
     # Map macOS version to distribution name
     case $version in
-      15.*) distribution="<Please Update Me At ${BASH_SOURCE}:${LINENO}>" ;;
+      16.*) distribution="<Please Update Me At ${BASH_SOURCE}:${LINENO}>" ;;
+      15.*) distribution="Sequoia" ;;
       14.*) distribution="Sonoma" ;;
       13.*) distribution="Ventura" ;;
       12.*) distribution="Monterey" ;;
