@@ -1,0 +1,26 @@
+whatismyip() {
+    [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+    needs awk "Please install awk"
+    if command -v ifconfig >/dev/null 2>&1; then
+        if [[ "$(uname)" == "Darwin" ]]; then
+            # macOS
+            ip=$(ifconfig | grep "inet " | grep -v 127.0.0.1 | awk '{print $2}')
+        else
+            # Linux
+            ip=$(ifconfig | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v 127.0.0.1)
+        fi
+    elif command -v ip >/dev/null 2>&1; then
+        # Modern Linux systems
+        ip=$(ip addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v 127.0.0.1)
+    else
+        echo "Neither ifconfig nor ip command is available."
+        return 1
+    fi
+
+    if [[ -z "$ip" ]]; then
+        echo "Could not determine local IP address." >&2
+        return 1
+    else
+        echo "$ip"
+    fi
+}

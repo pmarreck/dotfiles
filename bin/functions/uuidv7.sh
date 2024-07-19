@@ -59,7 +59,7 @@ uuidv7() {
     value_15=${rand_bytes:30:2}
 
     case "$1" in
-      --hyphen|--hyphens|-h)
+      --hyphen|--hyphens|-)
         echo "$value_0$value_1$value_2$value_3-$value_4$value_5-$value_6$value_7-$value_8$value_9-$value_10$value_11$value_12$value_13$value_14$value_15"
         ;;
       *)

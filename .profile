@@ -252,6 +252,8 @@ source_relative_once bin/functions/uuidv7.sh
 
 source_relative_once bin/functions/kill-steam-proton-pids.bash
 
+source_relative_once bin/functions/whatismyip.sh
+
 # command prompt
 # NOTE: Now configured via starship in apply-hooks
 # $INTERACTIVE_SHELL && . $HOME/.commandpromptconfig
