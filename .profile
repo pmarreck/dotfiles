@@ -266,7 +266,7 @@ source_relative_once .pathconfig
 
 inthebeginning() {
   [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-  needs convert please install imagemagick && convert "$HOME/inthebeginning.jpg" -geometry 400x240 sixel:-
+  needs magick please install imagemagick && magick "$HOME/inthebeginning.jpg" -geometry 400x240 sixel:-
 }
 
 just_one_taoup() {
