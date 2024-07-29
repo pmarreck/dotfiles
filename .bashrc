@@ -21,8 +21,8 @@ else
   echo "Warning: Couldn't parse Bash version: $BASH_VERSION"
 fi
 
-[[ -v DEBUG_SHELLCONFIG ]] && echo "Entering $(echo "${BASH_SOURCE[0]}" | sed "s|^$HOME|~|")" || printf "#"
-[[ -v DEBUG_PATHCONFIG ]] && echo "$PATH"
+[ "${DEBUG_SHELLCONFIG+set}" = "set" ] && echo "Entering $(echo "${BASH_SOURCE[0]}" | sed "s|^$HOME|~|")" || printf "#"
+[ "${DEBUG_PATHCONFIG+set}" = "set" ] && echo "$PATH"
 
 # mute direnv constantly telling me what it's loading
 export DIRENV_LOG_FORMAT=

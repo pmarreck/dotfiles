@@ -18,13 +18,23 @@ else
   echo "Warning: Couldn't parse Bash version: $BASH_VERSION" >&2
 fi
 
-[[ -v DEBUG_SHELLCONFIG ]] && echo "Entering $(echo "${BASH_SOURCE[0]}" | sed "s|^$HOME|~|")" || printf "#"
-[[ -v DEBUG_PATHCONFIG ]] && echo "$PATH"
+[ "${DEBUG_SHELLCONFIG+set}" = "set" ] && echo "Entering $(echo "${BASH_SOURCE[0]}" | sed "s|^$HOME|~|")" || printf "#"
+[ "${DEBUG_PATHCONFIG+set}" = "set" ] && echo "$PATH"
 # since .bash_profile is usually only included for non-login shells
 # (note: OS X Terminal ALWAYS runs as a login shell but still ALWAYS includes this file, but it's nonstandard)
 export LOGIN_SHELL=false
 
+# enable timing debugging
+# PS4='+ \D{%s} \011 '
+# PS4='+ $(/Users/pmarreck/.nix-profile/bin/date "+%s.%N")\011 '
+# exec 3>&2 2>/tmp/bashstart.$$.log
+# set -x
+
 [[ -s "$HOME/.bashrc" ]] && source "$HOME/.bashrc"
 
-[[ -v DEBUG_SHELLCONFIG ]] && echo "Exiting $(echo "${BASH_SOURCE[0]}" | sed "s|^$HOME|~|")"
-[[ -v DEBUG_PATHCONFIG ]] && echo "$PATH" || :
+# disable timing debugging
+# set +x
+# exec 2>&3 3>&-
+
+[ "${DEBUG_SHELLCONFIG+set}" = "set" ] && echo "Exiting $(echo "${BASH_SOURCE[0]}" | sed "s|^$HOME|~|")"
+[ "${DEBUG_PATHCONFIG+set}" = "set" ] && echo "$PATH" || :

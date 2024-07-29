@@ -19,7 +19,7 @@ function git_commit_ai() {
     return 1
   fi
 
-  model=${OPENAI_MODEL:-gpt-4-1106-preview}
+  model=${OPENAI_MODEL:-gpt-4o}
   timeout=${OPENAI_TIMEOUT:-1200}
   openai_host=${OPENAI_HOST:-api.openai.com}
   openai_path=${OPENAI_PATH:-/v1/chat/completions}
@@ -33,7 +33,7 @@ function git_commit_ai() {
   temp_json=$(mktemp -t git_commit_ai.XXXXXX --tmpdir)
   temp_json_out=$(mktemp -t git_commit_ai.XXXXXX --tmpdir)
   system_prompt="You are a helpful coding AI assistant. You always output plaintext without markdown."
-  user_prompt="Output only the git commit command for the following git diff. Do not include any markdown formatting, triple backticks, discussion, or description. Provide the command in plain text, exactly as it should be entered in a command-line interface. If multiple lines of commit messages are required, use separate '-m' arguments to git. If no diff data is present, state 'No diff data'."
+  user_prompt="Output only the git commit command for the following git diff. Do not include any markdown formatting, triple backticks, discussion, or description. Provide the command in plain text, exactly as it should be entered in a command-line interface. If multiple lines of commit messages are required, use separate '-m' arguments to git. If no diff data is present, just state 'No diff data'."
   # trap 'rm -f "$temp_json" && rm -f "$temp_json_out' EXIT # ensure temp file is cleaned up on exit
 
   local_llm=false
@@ -130,7 +130,7 @@ function git_commit_ai() {
   echo -ne "$commit_message"
 }
 # export DEFAULT_LOCAL_AI_MODEL="llama3:70b"
-export DEFAULT_LOCAL_AI_MODEL="codestral"
+export DEFAULT_LOCAL_AI_MODEL="llama3.1:70b"
 export DEFAULT_LOCAL_AI_HOST="localhost:11434"
 
 function git_commit_ai_local() {

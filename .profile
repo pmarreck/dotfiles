@@ -10,6 +10,8 @@ $INTERACTIVE_SHELL && echo " $DISTRO_PRETTY"
 # most things should be sourced via source_relative... except source_relative itself
 source $HOME/dotfiles/bin/functions/source_relative.bash
 
+source_relative_once bin/functions/truthy.bash
+
 # The only functions defined here should be the ones that are needed everywhere
 # and are not specific to a particular shell (e.g. bash, zsh, etc.)
 
