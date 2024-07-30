@@ -47,9 +47,11 @@ drandom() {
   esac
 }
 
-# well, this should be easy to test...
-assert "$(DRANDOM_SEED=0 drandom)" == "7433709304730572777"
-assert "$(DRANDOM_SEED=1 drandom --hex)" == "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b"
+if [ "$RUN_DOTFILE_TESTS" == "true" ]; then
+  # well, this should be easy to test...
+  assert "$(DRANDOM_SEED=0 drandom)" == "7433709304730572777"
+  assert "$(DRANDOM_SEED=1 drandom --hex)" == "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b"
+fi
 
 # Normally-distributed random numbers using the Box-Muller transform
 # Usage: nrandom start end
@@ -205,10 +207,12 @@ randompassdict() {
 alias randompassphrase='FILTERPROPERNOUNS=true randompassdict 5'
 alias passtoclip='rtrim "$(randompassphrase 2>/dev/null)" | clip'
 
-assert "$(randompass --help)" =~ "Usage:"
-# For some reason, the following line is either 10 C's or 10 a's, depending on... nondeterministic things?
-assert "$(RANDOM_SOURCE=/dev/zero randompass 10 2>/dev/null)" =~ "^[Ca]{10}$"
-assert "$(RANDOM_SOURCE=/dev/zero randompassdict 5 5 5 2>/dev/null)" = "Aaron Aaron Aaron Aaron Aaron"
+if [ "$RUN_DOTFILE_TESTS" == "true" ]; then
+  assert "$(randompass --help)" =~ "Usage:"
+  # For some reason, the following line is either 10 C's or 10 a's, depending on... nondeterministic things?
+  assert "$(RANDOM_SOURCE=/dev/zero randompass 10 2>/dev/null)" =~ "^[Ca]{10}$"
+  assert "$(RANDOM_SOURCE=/dev/zero randompassdict 5 5 5 2>/dev/null)" = "Aaron Aaron Aaron Aaron Aaron"
+fi
 
 # if this script is sourced, return; otherwise it will error, and exit
 return 0 2>/dev/null || exit 0

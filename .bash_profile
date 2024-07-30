@@ -30,6 +30,9 @@ export LOGIN_SHELL=false
 # exec 3>&2 2>/tmp/bashstart.$$.log
 # set -x
 
+# enable tests if any script modification times are different
+source "${HOME}/dotfiles/run_tests_on_change.sh"
+
 [[ -s "$HOME/.bashrc" ]] && source "$HOME/.bashrc"
 
 # disable timing debugging

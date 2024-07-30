@@ -15,8 +15,10 @@ roll_a_die() {
   echo $((1 + candidate % diesides))
 }
 
-source_relative_once assert.bash
+if [ "$RUN_DOTFILE_TESTS" == "true" ]; then
+  source_relative_once assert.bash
 
-assert $(RANDOM=5 roll_a_die) == "6"
-assert $(RANDOM=6 roll_a_die) == "1"
-assert $(RANDOM=7 roll_a_die 20) == "8"
+  assert $(RANDOM=5 roll_a_die) == "6"
+  assert $(RANDOM=6 roll_a_die) == "1"
+  assert $(RANDOM=7 roll_a_die 20) == "8"
+fi

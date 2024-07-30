@@ -38,33 +38,35 @@ ff() {
   esac
 }
 
-source_relative_once assert.bash
-source_relative_once randompass.sh
-# inline ff test
-_fftest() {
-  local - # scant docs on this but this apparently automatically resets shellopts when the function exits
-  set -o errexit
-  local _testlocname=$(randompass 10)
-  assert "${#_testlocname}" == "10" "Generated test location name for ff test is not working: ${BASH_SOURCE[0]}:${BASH_LINENO[0]}"
-  if [ $? -eq 0 ]; then
-    local _testloc="/tmp/$_testlocname"
-    # the point of [ 1 == 0 ] below is to fail the line and trigger errexit IF errexit is set
-    mkdir -p $_testloc >/dev/null 2>&1 || ( echo "Cannot create test directory '$_testloc' in ff test: ${BASH_SOURCE[0]}:${BASH_LINENO[0]}"; [ 1 == 0 ] )
-    touch $_testloc/$_testlocname
-    pushd $_testloc >/dev/null
-    assert $(ff $_testlocname 2>/dev/null) == "$_testloc/$_testlocname"
-    assert $(ff 2>/dev/null) == "$_testloc/$_testlocname"
-    popd >/dev/null
-    pushd $HOME >/dev/null
-    assert $(ff $_testloc $_testlocname 2>/dev/null) == "$_testloc/$_testlocname"
-    assert $(ff $_testlocname $_testloc 2>/dev/null) == "$_testloc/$_testlocname"
-    popd >/dev/null
-    rm $_testloc/$_testlocname
-    rm -d $_testloc
-  fi
-}
-_fftest # why the frick is this taking a half second to run??
-# ...EDIT: Turns out to be an fd bug, I put in a workaround: https://github.com/sharkdp/fd/issues/1131
-assert $- !=~ e "errexit shellopt is still set after function exit: ${BASH_SOURCE[0]}:${BASH_LINENO[0]}"
-unset _fftest
-# end inline ff test
+if [ "$RUN_DOTFILE_TESTS" == "true" ]; then
+  source_relative_once assert.bash
+  source_relative_once randompass.sh
+  # inline ff test
+  _fftest() {
+    local - # scant docs on this but this apparently automatically resets shellopts when the function exits
+    set -o errexit
+    local _testlocname=$(randompass 10)
+    assert "${#_testlocname}" == "10" "Generated test location name for ff test is not working: ${BASH_SOURCE[0]}:${BASH_LINENO[0]}"
+    if [ $? -eq 0 ]; then
+      local _testloc="/tmp/$_testlocname"
+      # the point of [ 1 == 0 ] below is to fail the line and trigger errexit IF errexit is set
+      mkdir -p $_testloc >/dev/null 2>&1 || ( echo "Cannot create test directory '$_testloc' in ff test: ${BASH_SOURCE[0]}:${BASH_LINENO[0]}"; [ 1 == 0 ] )
+      touch $_testloc/$_testlocname
+      pushd $_testloc >/dev/null
+      assert $(ff $_testlocname 2>/dev/null) == "$_testloc/$_testlocname"
+      assert $(ff 2>/dev/null) == "$_testloc/$_testlocname"
+      popd >/dev/null
+      pushd $HOME >/dev/null
+      assert $(ff $_testloc $_testlocname 2>/dev/null) == "$_testloc/$_testlocname"
+      assert $(ff $_testlocname $_testloc 2>/dev/null) == "$_testloc/$_testlocname"
+      popd >/dev/null
+      rm $_testloc/$_testlocname
+      rm -d $_testloc
+    fi
+  }
+  _fftest # why the frick is this taking a half second to run??
+  # ...EDIT: Turns out to be an fd bug, I put in a workaround: https://github.com/sharkdp/fd/issues/1131
+  assert $- !=~ e "errexit shellopt is still set after function exit: ${BASH_SOURCE[0]}:${BASH_LINENO[0]}"
+  unset _fftest
+  # end inline ff test
+fi

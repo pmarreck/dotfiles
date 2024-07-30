@@ -9,7 +9,9 @@ needs() {
   command -v "$bin" >/dev/null 2>&1 || { echo >&2 "I require $bin but it's not installed or in PATH; $*"; return 1; }
 }
 
-source_relative_once assert.bash
+if [ "$RUN_DOTFILE_TESTS" == "true" ]; then
+  source_relative_once assert.bash
+fi
 
 # the following utility functions are duplicated from tinytestlib
 save_shellenv() {
@@ -159,7 +161,9 @@ trim_leading_heredoc_whitespace() {
   ${AWK:-awk} 'BEGIN { shortest = 99999 } /^[[:space:]]+/ { match($0, /[^[:space:]]/); shortest = shortest < RSTART - 1 ? shortest : RSTART - 1 } END { OFS=""; } { gsub("^" substr($0, 1, shortest), ""); print }'
 }
 
-assert "$(echo -e "  This\n  is a\n  multiline\n  string." | trim_leading_heredoc_whitespace)" == "This\nis a\nmultiline\nstring."
+if [ "$RUN_DOTFILE_TESTS" == "true" ]; then
+  assert "$(echo -e "  This\n  is a\n  multiline\n  string." | trim_leading_heredoc_whitespace)" == "This\nis a\nmultiline\nstring."
+fi
 
 collapse_whitespace_containing_newline_to_single_space() {
   [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
@@ -169,7 +173,9 @@ collapse_whitespace_containing_newline_to_single_space() {
   $sed -e ':a' -e 'N' -e '$!ba' -e 's/\s\n/ /g' -e 's/\n\s/ /g' -e 's/\s+/ /g'
 }
 
-assert "$(echo -e "This\nis a \nmultiline\n string." | collapse_whitespace_containing_newline_to_single_space)" == "This\nis a multiline string."
+if [ "$RUN_DOTFILE_TESTS" == "true" ]; then
+  assert "$(echo -e "This\nis a \nmultiline\n string." | collapse_whitespace_containing_newline_to_single_space)" == "This\nis a multiline string."
+fi
 
 # Is this a color TTY? Or, is one (or the lack of one) being faked for testing reasons?
 isacolortty() {
@@ -320,9 +326,11 @@ trim() {
   printf '%s' "$var"
 }
 
-assert "$(ltrim "  foo  ")" == "foo  "
-assert "$(rtrim "  foo  ")" == "  foo"
-assert "$(trim "  foo  ")" == "foo"
+if [ "$RUN_DOTFILE_TESTS" == "true" ]; then
+  assert "$(ltrim "  foo  ")" == "foo  "
+  assert "$(rtrim "  foo  ")" == "  foo"
+  assert "$(trim "  foo  ")" == "foo"
+fi
 
 image_convert_to_heif() {
   [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return

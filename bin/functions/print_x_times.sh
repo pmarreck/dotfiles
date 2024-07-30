@@ -14,5 +14,7 @@ xn() {
   [[ "$1" == "${1%$'\n'}" ]] && echo
 }
 
-assert $(x a 3) == aaa "x function should repeat a string"
-assert "$(xn "a\n" 2)" == "a\na\n" "xn function should repeat a string with a newline"
+if [ "$RUN_DOTFILE_TESTS" == "true" ]; then
+  assert $(x a 3) == aaa "x function should repeat a string"
+  assert "$(xn "a\n" 2)" == "a\na\n" "xn function should repeat a string with a newline"
+fi

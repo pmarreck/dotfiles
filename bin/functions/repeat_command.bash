@@ -12,8 +12,10 @@ repeat() {
   return $retcodes
 }
 
-source_relative_once assert.bash
+if [ "$RUN_DOTFILE_TESTS" == "true" ]; then
+  source_relative_once assert.bash
 
-assert "$(repeat 3 "echo -n \"hi \"")" == 'hi hi hi '
-# ensure return code is summed up from failed commands
-assert "$(repeat 3 false; echo $?)" == "3"
+  assert "$(repeat 3 "echo -n \"hi \"")" == 'hi hi hi '
+  # ensure return code is summed up from failed commands
+  assert "$(repeat 3 false; echo $?)" == "3"
+fi

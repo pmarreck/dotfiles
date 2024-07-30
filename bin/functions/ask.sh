@@ -164,54 +164,56 @@ imagine() {
   echo "This image is currently stored temporarily at: $filename" >&2
 }
 
-# IMPORTANT!
-# how do we even test this function? Pass in a mocked curl somehow?
-source_relative_once assert.bash
-source_relative_once utility_functions.bash
+if [ "$RUN_DOTFILE_TESTS" == "true" ]; then
+  # IMPORTANT!
+  # how do we even test this function? Pass in a mocked curl somehow?
+  source_relative_once assert.bash
+  source_relative_once utility_functions.bash
 
-# TEST SETUP
-shopt -q extglob && extglob_set=true || extglob_set=false
-shopt -s extglob
+  # TEST SETUP
+  shopt -q extglob && extglob_set=true || extglob_set=false
+  shopt -s extglob
 
-# mock out curl
-mocked_curl() {
-  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-    # http_status=$($curl -w "%{http_code}" -s -o "$temp_json_out" -X POST $openai_url \
-    # -H "Content-Type: application/json" \
-    # -H "Authorization: Bearer $OPENAI_API_KEY" \
-    # --silent \
-    # --max-time $timeout \
-    # -d "@$temp_json")
-  local output_file
-  while getopts ":o:w:X:H:d:s" opt; do
-    case ${opt} in
-    o )
-      output_file=$OPTARG
-      # echo "output_file: $output_file" >&2
-      ;;
-    ? ) 
-      ;;
-    : )
-    echo "Option -$OPTARG requires an argument." >&2
-      ;;
-    esac
-  done
-  cat <<EOF | trim_leading_heredoc_whitespace | collapse_whitespace_containing_newline_to_single_space > "$output_file"
-    {"id":"chatcmpl-6q7qCBoIJGlRldK97GQrLAcfOqXwS","object":"chat.completion",
-    "created":1677881216,"model":"test-model","usage":{"prompt_tokens":29,
-    "completion_tokens":96,"total_tokens":125},"choices":[{"message":{"role":"assistant",
-    "content":"\n\nThere is no direct connection between \"The Last Question\" and\n\"The Last Answer\" by Isaac Asimov. \"The Last Answer\" is a short story about\na man who searches for the meaning of life and death, while \"The Last Question\"\nis a science fiction story that explores the concept of the end of the universe and\nthe possibility of creating a new one. However, both stories deal with philosophical\nthemes about the nature of existence and the ultimate fate of humanity."},
-    "finish_reason":null,"index":0}]}
+  # mock out curl
+  mocked_curl() {
+    [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+      # http_status=$($curl -w "%{http_code}" -s -o "$temp_json_out" -X POST $openai_url \
+      # -H "Content-Type: application/json" \
+      # -H "Authorization: Bearer $OPENAI_API_KEY" \
+      # --silent \
+      # --max-time $timeout \
+      # -d "@$temp_json")
+    local output_file
+    while getopts ":o:w:X:H:d:s" opt; do
+      case ${opt} in
+      o )
+        output_file=$OPTARG
+        # echo "output_file: $output_file" >&2
+        ;;
+      ? )
+        ;;
+      : )
+      echo "Option -$OPTARG requires an argument." >&2
+        ;;
+      esac
+    done
+    cat <<EOF | trim_leading_heredoc_whitespace | collapse_whitespace_containing_newline_to_single_space > "$output_file"
+      {"id":"chatcmpl-6q7qCBoIJGlRldK97GQrLAcfOqXwS","object":"chat.completion",
+      "created":1677881216,"model":"test-model","usage":{"prompt_tokens":29,
+      "completion_tokens":96,"total_tokens":125},"choices":[{"message":{"role":"assistant",
+      "content":"\n\nThere is no direct connection between \"The Last Question\" and\n\"The Last Answer\" by Isaac Asimov. \"The Last Answer\" is a short story about\na man who searches for the meaning of life and death, while \"The Last Question\"\nis a science fiction story that explores the concept of the end of the universe and\nthe possibility of creating a new one. However, both stories deal with philosophical\nthemes about the nature of existence and the ultimate fate of humanity."},
+      "finish_reason":null,"index":0}]}
 EOF
-  echo 200 # assumes http_code was the curl format parameter
-}
+    echo 200 # assumes http_code was the curl format parameter
+  }
 
-# TESTS
-resp=$(CURL=mocked_curl ask "What is the connection between \"The Last Question\" and \"The Last Answer\" by Isaac Asimov?")
-# echo "response in test: '$resp'"
-assert "$resp" =~ "connection"
+  # TESTS
+  resp=$(CURL=mocked_curl ask "What is the connection between \"The Last Question\" and \"The Last Answer\" by Isaac Asimov?")
+  # echo "response in test: '$resp'"
+  assert "$resp" =~ "connection"
 
-# TEST TEARDOWN
-unset -f mocked_curl # unmock curl
-$extglob_set || shopt -u extglob # restore extglob setting
-unset extglob_set
+  # TEST TEARDOWN
+  unset -f mocked_curl # unmock curl
+  $extglob_set || shopt -u extglob # restore extglob setting
+  unset extglob_set
+fi

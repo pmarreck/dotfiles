@@ -32,14 +32,16 @@ hexbin() {
   fi
 }
 
-# this is at the bottom because assert depends on binhex/hexbin
-source_relative_once assert.bash
-assert "$(binhex "Peter")" == "5065746572" "binhex function should encode binary strings to hex"
-assert "$(hexbin "5065746572")" == "Peter" "hexbin function should decode binary from hex"
-assert "$(binhex "Peter" | hexbin)" == "Peter" "hexbin function should accept a pipe"
-assert "$(hexbin "5065746572" | binhex)" == "5065746572" "binhex function should accept a pipe"
-# TODO: the following is not easy to make pass so tabled for now. just be aware of it
-# POSIX standard literally says that linefeeds after command substitution should be removed, sigh
-# Consider appending a formfeed character (\f) to plaintext or "0a" to the hex to work around this,
-# which is what I did here
-assert "$(hexbin "50657465720a0c")" == "Peter\n\f" "hexbin function shouldn't eat hex-encoded end-of-line newlines"
+if [ "$RUN_DOTFILE_TESTS" == "true" ]; then
+  # this is at the bottom because assert depends on binhex/hexbin
+  source_relative_once assert.bash
+  assert "$(binhex "Peter")" == "5065746572" "binhex function should encode binary strings to hex"
+  assert "$(hexbin "5065746572")" == "Peter" "hexbin function should decode binary from hex"
+  assert "$(binhex "Peter" | hexbin)" == "Peter" "hexbin function should accept a pipe"
+  assert "$(hexbin "5065746572" | binhex)" == "5065746572" "binhex function should accept a pipe"
+  # TODO: the following is not easy to make pass so tabled for now. just be aware of it
+  # POSIX standard literally says that linefeeds after command substitution should be removed, sigh
+  # Consider appending a formfeed character (\f) to plaintext or "0a" to the hex to work around this,
+  # which is what I did here
+  assert "$(hexbin "50657465720a0c")" == "Peter\n\f" "hexbin function shouldn't eat hex-encoded end-of-line newlines"
+fi

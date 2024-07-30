@@ -23,29 +23,31 @@ falsey() {
 }
 
 # tests
-source_relative_once assert.bash
-_a=1
-_b=true
-_d=0
-_e=false
-truthy _a
-assert "$?" == "0"
-truthy _b
-assert "$?" == "0"
-truthy _c
-assert "$?" == "1"
-truthy _d
-assert "$?" == "1"
-truthy _e
-assert "$?" == "1"
-falsey _a
-assert "$?" == "1"
-falsey _b
-assert "$?" == "1"
-falsey _c
-assert "$?" == "0"
-falsey _d
-assert "$?" == "0"
-falsey _e
-assert "$?" == "0"
-unset _a _b _c _d _e
+if [ "$RUN_DOTFILE_TESTS" == "true" ]; then
+  source_relative_once assert.bash
+  _a=1
+  _b=true
+  _d=0
+  _e=false
+  truthy _a
+  assert "$?" == "0"
+  truthy _b
+  assert "$?" == "0"
+  truthy _c
+  assert "$?" == "1"
+  truthy _d
+  assert "$?" == "1"
+  truthy _e
+  assert "$?" == "1"
+  falsey _a
+  assert "$?" == "1"
+  falsey _b
+  assert "$?" == "1"
+  falsey _c
+  assert "$?" == "0"
+  falsey _d
+  assert "$?" == "0"
+  falsey _e
+  assert "$?" == "0"
+  unset _a _b _c _d _e
+fi

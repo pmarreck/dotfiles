@@ -115,30 +115,32 @@ exclude_path() {
   $stdout && echo "$newpath" || export ${var}="$newpath"
 }
 
-# INLINE RUNTIME TEST SUITE
-export _FAKEPATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-export _FAKEPATHDUPES="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-export _FAKEPATHCONSECUTIVEDUPES="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-export _FAKEPATH1="/usr/bin"
-export _FAKEPATHBLANK=""
-assert $(prepend_path -o /usr/local/bin _FAKEPATH) == "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
-  "prepend_path failed when the path was already in front"
-assert $(prepend_path -o /usr/sbin _FAKEPATH) == "/usr/sbin:/usr/local/bin:/usr/bin:/bin:/sbin" \
-  "prepend_path failed when the path was already in the middle"
-assert $(prepend_path -o /sbin _FAKEPATH) == "/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin" \
-  "prepend_path failed when the path was already at the end"
-assert $(prepend_path -o /usr/local/bin _FAKEPATHBLANK) == "/usr/local/bin" \
-  "prepend_path failed when the path was blank"
-assert $(prepend_path -o /usr/local/bin _FAKEPATH1) == "/usr/local/bin:/usr/bin" \
-  "prepend_path failed when the path just had 1 value"
-assert $(prepend_path -o /usr/bin _FAKEPATH1) == "/usr/bin" \
-  "prepend_path failed when the path just had 1 value and it's the same"
-assert $(prepend_path -o /usr/bin _FAKEPATHDUPES) == "/usr/bin:/usr/local/bin:/bin:/usr/sbin:/sbin" \
-  "prepend_path failed when there were multiple copies of it already in the path"
-assert $(prepend_path -o /usr/local/bin _FAKEPATHCONSECUTIVEDUPES) == "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
-  "prepend_path failed when there were multiple consecutive copies of it already in the path and it is also already in front"
-unset _FAKEPATH
-unset _FAKEPATHDUPES
-unset _FAKEPATHCONSECUTIVEDUPES
-unset _FAKEPATH1
-unset _FAKEPATHBLANK
+if [ "$RUN_DOTFILE_TESTS" == "true" ]; then
+  # INLINE RUNTIME TEST SUITE
+  export _FAKEPATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+  export _FAKEPATHDUPES="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+  export _FAKEPATHCONSECUTIVEDUPES="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+  export _FAKEPATH1="/usr/bin"
+  export _FAKEPATHBLANK=""
+  assert $(prepend_path -o /usr/local/bin _FAKEPATH) == "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+    "prepend_path failed when the path was already in front"
+  assert $(prepend_path -o /usr/sbin _FAKEPATH) == "/usr/sbin:/usr/local/bin:/usr/bin:/bin:/sbin" \
+    "prepend_path failed when the path was already in the middle"
+  assert $(prepend_path -o /sbin _FAKEPATH) == "/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin" \
+    "prepend_path failed when the path was already at the end"
+  assert $(prepend_path -o /usr/local/bin _FAKEPATHBLANK) == "/usr/local/bin" \
+    "prepend_path failed when the path was blank"
+  assert $(prepend_path -o /usr/local/bin _FAKEPATH1) == "/usr/local/bin:/usr/bin" \
+    "prepend_path failed when the path just had 1 value"
+  assert $(prepend_path -o /usr/bin _FAKEPATH1) == "/usr/bin" \
+    "prepend_path failed when the path just had 1 value and it's the same"
+  assert $(prepend_path -o /usr/bin _FAKEPATHDUPES) == "/usr/bin:/usr/local/bin:/bin:/usr/sbin:/sbin" \
+    "prepend_path failed when there were multiple copies of it already in the path"
+  assert $(prepend_path -o /usr/local/bin _FAKEPATHCONSECUTIVEDUPES) == "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+    "prepend_path failed when there were multiple consecutive copies of it already in the path and it is also already in front"
+  unset _FAKEPATH
+  unset _FAKEPATHDUPES
+  unset _FAKEPATHCONSECUTIVEDUPES
+  unset _FAKEPATH1
+  unset _FAKEPATHBLANK
+fi
