@@ -1,0 +1,12 @@
+#!/usr/bin/env sh
+
+. $HOME/dotfiles/Scripts/freeze # makes a path assumption
+
+# Run the function, passing along any args, if this file was run directly instead of as an include.
+# Sometimes, $0 contains a leading dash to indicate an interactive (or is it login?) shell,
+# which is apparently an old convention (which also broke the basename call on OS X)
+_me=$(basename "${0##\-}")
+if [ "$_me" = "unfreeze" ]; then
+	$_me "$@"
+fi
+unset _me
