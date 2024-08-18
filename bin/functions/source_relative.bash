@@ -30,6 +30,9 @@ source_relative_once() {
   [[ -v _TRACE_SOURCING ]] && echo "source_relative_once invocation #${_debug_id}: _dir is $_dir"
   # Convert the relative path to an absolute path
   local _abs_path="$_dir/$_file"
+  # now resolve any symlinks in the path
+  _abs_path=`readlink -f "$_abs_path"`
+  [[ -v _TRACE_SOURCING ]] && echo "source_relative_once invocation #${_debug_id}: _abs_path after realpath is $_abs_path"
   [[ -v _TRACE_SOURCING ]] && echo "source_relative_once invocation #${_debug_id}: _abs_path is $_abs_path"
   local _abs_temp_dirname=`dirname "$_abs_path"`
   [[ -v _TRACE_SOURCING ]] && echo "source_relative_once invocation #${_debug_id}: _abs_temp_dirname is $_abs_temp_dirname"

@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 
 datetimestamp() {
   [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
@@ -31,9 +32,21 @@ datetimestamp() {
   esac
 }
 if [ "$RUN_DOTFILE_TESTS" == "true" ]; then
-  source_relative_once assert.bash
+  source_relative_once functions/assert.bash
 
   assert "$(datetimestamp --date='@2147483640')" == 20380118221400.000 "datetimestamp should work as expected and pad zeroes"
   assert "$(DATETIMESTAMPFORMAT='+%Y-%m-%d %H:%M:%S' datetimestamp --date='@2147483640')" == \
         "2038-01-18 22:14:00" "datetimestamp should take an env format string with a space"
 fi
+
+# Export the function so it can be used by find -exec
+export -f datetimestamp
+
+# Run the function, passing along any args, if this file was run directly (such as via sudo) instead of as an include
+# Sometimes, $0 contains a leading dash to indicate an interactive (or is it login?) shell,
+# which is apparently an old convention (which also broke the basename call on OS X)
+_me=$(basename "${0##\-}")
+if [ "$_me" = "datetimestamp" ]; then
+	$_me "$@"
+fi
+unset _me

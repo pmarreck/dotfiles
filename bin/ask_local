@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+
+source_relative_once "ask"
+
+export DEFAULT_LOCAL_AI_MODEL="llama3.1:70b"
+export DEFAULT_LOCAL_AI_HOST="localhost:11434"
+
+function ask_local() {
+  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  OPENAI_MODEL="$DEFAULT_LOCAL_AI_MODEL" \
+  OPENAI_HOST="$DEFAULT_LOCAL_AI_HOST" \
+  OPENAI_PATH="/api/chat" \
+  OPENAI_PROTOCOL="http" \
+  OPENAI_API_KEY="fake" \
+  OPENAI_TIMEOUT=600 \
+  ask "$@"
+}
+
+# Export the function so it can be used by find -exec
+export -f ask_local
+
+# Run the function, passing along any args, if this file was run directly (such as via sudo) instead of as an include
+# Sometimes, $0 contains a leading dash to indicate an interactive (or is it login?) shell,
+# which is apparently an old convention (which also broke the basename call on OS X)
+_me=$(basename "${0##\-}")
+if [ "$_me" = "ask_local" ]; then
+	$_me "$@"
+fi
+unset _me

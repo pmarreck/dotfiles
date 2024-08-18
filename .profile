@@ -101,8 +101,6 @@ source_relative_once bin/functions/executables.bash
 # }
 # Note: Superseded by "show" function below
 
-source_relative_once bin/functions/datetimestamp.bash
-
 source_relative_once bin/functions/show.sh
 alias d=show # "view" goes to vim, "s" usually launches a search or server, so "d" (for "define") is a good alias for show IMHO
 
@@ -113,8 +111,6 @@ source_relative_once bin/functions/ds_bore.sh
 source_relative_once bin/functions/warhammer_quote.bash
 
 source_relative_once bin/functions/bashorg_quote.bash
-
-source_relative_once bin/functions/ask.sh
 
 source_relative_once bin/functions/mandelbrot.sh
 

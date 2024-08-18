@@ -1,7 +1,7 @@
 # graceful dependency enforcement
 # Usage: needs <executable> [provided by <packagename>]
 # only redefines it here if it's not already defined
-# >/dev/null declare -F needs || \
+>/dev/null declare -F needs || \
 needs() {
   [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   local bin=$1

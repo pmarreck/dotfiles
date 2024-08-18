@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+
+# Set the SteamAppId environment variable
+export SteamAppId=1086940
+
+# Launch the game with the specified arguments
+~/Library/Application\ Support/Steam/steamapps/common/Baldurs\ Gate\ 3/Baldur\'s\ Gate\ 3.app/Contents/MacOS/Baldur\'s\ Gate\ 3 --skip-launcher -continueGame launch param
