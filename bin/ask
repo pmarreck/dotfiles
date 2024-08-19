@@ -22,7 +22,8 @@ ask() {
     openai_host openai_path openai_protocol openai_url local_llm \
     top_k top_p temperature system_prompt user_prompt repeat_penalty num_ctx \
     history_file history_temp timestamp continue_conversation discard_history
-  model=${OPENAI_MODEL:-chatgpt-4o-latest} # see openai docs for other models
+  # model=${OPENAI_MODEL:-chatgpt-4o-latest} # see openai docs for other models
+  model=${OPENAI_MODEL:-gpt-4o-2024-08-06} # see openai docs for other models
   timeout=${OPENAI_TIMEOUT:-60}
   openai_host=${OPENAI_HOST:-api.openai.com}
   openai_path=${OPENAI_PATH:-/v1/chat/completions}
@@ -35,7 +36,7 @@ ask() {
   num_ctx=${NUM_CTX:-32000}
   temp_json=$(mktemp -t ask.XXXXXX --tmpdir)
   temp_json_out=$(mktemp -t ask.XXXXXX --tmpdir)
-  system_prompt="You are a helpful AI assistant named ChatGPT. My name is Peter Marreck & I live in Port Washington, New York. I was born on April 5, 1972. I'm a software developer & the Director of Engineering for a company called Addigence that is in the financial services space. My computing preferences are NixOS, macOS, Elixir, Bash, PostgreSQL. Avoid Python, PHP or Go (or most mutable/OOP languages). I strongly prefer solutions using functional languages (except Scala). I enjoy electronic music, PC computer games (mainly action-RPG's), sailing, wine, whiskey, debating online, learning new things, socializing. I do not like sports unless I'm at a live game. I served in the USAF from 1993-1997 working on the KC-10A aircraft as an electrician. I enjoy science fiction & fantasy media. My domestic partner is named Stephanie Pilipie. We aren't married because marriage is for suckers. We have a son named Samson who was born on June 25, 2021; he has long blond hair and is very playful, inquisitive & outgoing. You address me with a teasing name and avoid purple prose. No yapping. I like double entendres and clever wit in concise, erudite, literate responses. You sound like a witty, sarcastic, grad student that snubs appeals to popularity, authority or trendiness. Poking fun at me will be perceived as friendly! Especially if it's regarding cognitive dissonance, irrationality or hypocrisy.  I speak German reasonably well and don’t mind practicing it here and there if you feel inclined to do so (or just make references to German culture or idioms). Most of the response should be English, however. Think spice, not main entrée. You should have well-defended opinions that lean centrist, rational, humanistic, and which prioritize critical thinking. You should always be looking for an opportunity to poke holes in any claim I make; I enjoy a little debate and intellectual challenge. If I ask any question that requires a precise answer (these usually, but not always, begin with 'How many' or 'How much'), do NOT guess the answer: Instead, output an Elixir script to determine the answer. Don't apologize for anything; I understand you are an AI model with imperfect knowledge, there is no need to apologize about anything, and I am impossible to offend! Never give me hypothetical, invented data. Skip the introductory sentences in your responses and cut straight to the chase. If you're asked for code, keep the overly literate editorializing down to a minimum & just produce the code."
+  system_prompt="${LLM_SYSTEM_PROMPT:-You are a helpful AI assistant named ChatGPT.}"
   user_prompt="$*"
   curl=${CURL:-curl}
   local_llm=false
@@ -62,14 +63,45 @@ ask() {
 
   mv "$history_temp" "$history_file"
 
+  tools='[
+    {
+      "type": "function",
+      "function": {
+        "name": "get_location",
+        "description": "Get the user location. Call this whenever you need to know their location, for example when they ask for the local weather but you need their precise location first.",
+        "parameters": {
+          "type": "object",
+          "properties": {}
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "get_weather",
+        "description": "Get the weather at the user location.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "zip_code": {
+              "type": "string",
+              "description": "The user zip code."
+            }
+          }
+        }
+      }
+    }
+  ]'
   jq -n --arg model "$model" \
         --argjson temperature "$temperature" \
+        --argjson tools "$tools" \
         --slurpfile messages "$history_file" \
     '{
     model: $model,
     messages: $messages[0].messages,
     temperature: $temperature,
     max_tokens: 1000,
+    tools: $tools,
     stream: false
   }' > "$temp_json"
 
@@ -113,6 +145,11 @@ if [ "$RUN_DOTFILE_TESTS" == "true" ]; then
   source_relative_once functions/utility_functions.bash
 
   # TEST SETUP
+  history_file="${XDG_DATA_HOME:-$HOME/.local/share}/ask_history.json"
+  # back up conversation file
+  if [[ -f "$history_file" ]]; then
+    cp "$history_file" "${history_file%.json}_backup.json"
+  fi
   shopt -q extglob && extglob_set=true || extglob_set=false
   shopt -s extglob
 
@@ -158,6 +195,11 @@ EOF
   unset -f mocked_curl # unmock curl
   $extglob_set || shopt -u extglob # restore extglob setting
   unset extglob_set
+  # restore original history file after removing the test one
+  if [[ -f "${history_file%.json}_backup.json" ]]; then
+    rm -f "$history_file"
+    mv "${history_file%.json}_backup.json" "$history_file"
+  fi
 fi
 
 # Export the function so it can be used by find -exec
