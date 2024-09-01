@@ -3,14 +3,14 @@
 # graceful dependency enforcement
 # Usage: needs <executable> ["provided by <packagename>"]
 [[ $(type -t needs) == "function" ]] || needs() {
-  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   local bin=$1
   shift
   command -v $bin >/dev/null 2>&1 || { echo >&2 "I require $bin but it's not installed or in PATH; $*"; return 1; }
 }
 
 ds_bore() {
-  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   needs rg "ripgrep is not installed. Please install it and try again." || return 1
   case $1 in
     -h|--help)

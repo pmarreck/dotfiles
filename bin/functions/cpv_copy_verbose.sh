@@ -2,7 +2,7 @@
 # example: cpv ~/Documents /mnt/Backup
 # This copies the entire ~/Documents directory to /mnt/Backup/Documents, showing progress
 cpv() {
-  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   local real_source_path="$(realpath "$1")"
   # ensure real_source_path is a real directory or file
   if [ ! -e "$real_source_path" ]; then

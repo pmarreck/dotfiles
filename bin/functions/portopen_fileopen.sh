@@ -2,7 +2,7 @@
 # usage: portopen 3000
 # May only work on OS X and need tweaking for Linux!
 portopen() {
-  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   case $PLATFORM in
     "osx")
       >&2 echo -e "${ANSI}${TXTYLW}sudo lsof -P -i \":${1}\"${ANSI}${TXTDFT}"
@@ -15,7 +15,7 @@ portopen() {
   esac
 }
 fileopen() {
-  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   case $PLATFORM in
     "osx")
       >&2 echo -e "${ANSI}${TXTYLW}sudo lsof \"${1}\"${ANSI}${TXTDFT}"
@@ -28,7 +28,7 @@ fileopen() {
   esac
 }
 fileopen_offenders() {
-  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   # list top 10 file-open offenders
   >&2 echo -e "${ANSI}${TXTYLW}sudo lsof | awk '{print \$1}' | sort | uniq -c | sort -nr | head${ANSI}${TXTDFT}"
   sudo lsof | awk '{print $1}' | sort | uniq -c | sort -nr | head

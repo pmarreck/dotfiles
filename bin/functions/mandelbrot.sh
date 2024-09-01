@@ -2,7 +2,7 @@
 # from https://bruxy.regnet.cz/web/linux/EN/mandelbrot-set-in-bash/
 # (fixed point version for speed. also because fuck floating point math)
 mandelbrot() {
-  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   p=\>\>14 e=echo\ -ne\  S=(B A S H) I=-16384 t=/tmp/m$$; for x in {1..13}; do \
   R=-32768; for y in {1..80}; do B=0 r=0 s=0 j=0 i=0; while [ $((B++)) -lt 32 -a \
   $(($s*$j)) -le 1073741824 ];do s=$(($r*$r$p)) j=$(($i*$i$p)) t=$(($s-$j+$R));

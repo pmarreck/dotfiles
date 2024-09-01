@@ -8,7 +8,7 @@
 # ... more commands ...
 # note_time_diff --end
 note_time_diff() {
-  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   case $1 in
   --start)
     _start_time=$(Time.now.to_f)

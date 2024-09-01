@@ -5,7 +5,7 @@
 # as a single unified output.
 
 output_user_generated_code() {
-  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 
   # Define exclusion patterns directly for ripgrep
   # Note: Ripgrep's -g option is used for globbing, which can include or exclude files.
@@ -86,7 +86,7 @@ output_user_generated_code() {
       else
         echo -n "────────── "
         echo "📄 $file:"
-        if [[ -v SKIP_COMMENTS ]]; then
+        if [[ -n "${SKIP_COMMENTS}" ]]; then
           rg --no-filename --no-messages --hidden --no-line-number -v '^\s*(//|#)|^\s*$' "$file"
         else
           cat "$file"

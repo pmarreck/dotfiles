@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
-[[ -v DEBUG_SHELLCONFIG ]] && echo "Entering $(echo "${BASH_SOURCE[0]}" | sed "s|^$HOME|~|")" || printf "#"
-[[ -v DEBUG_PATHCONFIG ]] && echo $PATH
+[ -n "${DEBUG_SHELLCONFIG}" ] && echo "Entering $(echo "${BASH_SOURCE[0]}" | sed "s|^$HOME|~|")" || printf "#"
+[ -n "${DEBUG_PATHCONFIG}" ] && echo $PATH
 # canonical gcc tweaks for OS X's homebrew gcc; Linux shouldn't need these
 # if [ "$PLATFORM" = "osx" ]; then
   # needs brew
@@ -110,7 +110,7 @@ export GPG_TTY=`tty`
 # see: https://wezfurlong.org/wezterm/hyperlinks.html
 # example: hyperlink http://google.com "this is a test"
 hyperlink() {
-  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   printf '\e]8;;'
   printf "$1"
   printf '\e\\'
@@ -120,13 +120,13 @@ hyperlink() {
 
 # alerting in yellow to stderr
 note() {
-  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   >&2 printf "$ANSI$TXTYLW%s$ANSI$TXTDFT\n" "$@"
 }
 
 # warning in red to stderr
 warn() {
-  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   >&2 printf "$ANSI$TXTRED%s$ANSI$TXTDFT\n" "$@"
 }
 
@@ -185,5 +185,5 @@ export ERL_FLAGS="+P 2000000";
 [ -f $HOME/.secrets ] && source $HOME/.secrets
 [ -f $HOME/.secrets ] && export $(cat $HOME/.secrets | grep -v -s -e '^\s*#' | cut -d "=" -f 1 | xargs -L 1)
 
-[[ -v DEBUG_SHELLCONFIG ]] && echo "Exiting $(echo "${BASH_SOURCE[0]}" | sed "s|^$HOME|~|")"
-[[ -v DEBUG_PATHCONFIG ]] && echo $PATH || :
+[ -n "${DEBUG_SHELLCONFIG}" ] && echo "Exiting $(echo "${BASH_SOURCE[0]}" | sed "s|^$HOME|~|")"
+[ -n "${DEBUG_PATHCONFIG}" ] && echo $PATH || :

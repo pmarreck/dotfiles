@@ -3,7 +3,7 @@
 # graceful dependency enforcement
 # Usage: needs <executable> ["provided by <packagename>"]
 needs() {
-  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   local bin=$1
   shift
   command -v $bin >/dev/null 2>&1 || { echo >&2 "I require $bin but it's not installed or in PATH; $*"; return 1; }
@@ -13,7 +13,7 @@ needs() {
 # do not redefine if already defined
 # currently defined in .envconfig
 >/dev/null declare -F note || note() {
-  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   >&2 printf "\e[0;33m%s\e[0;39m\n" "$@"
 }
 
@@ -21,7 +21,7 @@ needs() {
 # Usage: [DRANDOM_SEED=<whatever>] drandom [-h|--hex|--help]
 # Outputs an integer between 0 and 2^256-1 or an equivalent hex string if -h|--hex is specified
 drandom() {
-  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   needs sha256sum || return 1
   # if unset, initialize to hash of nanoseconds since epoch,
   # otherwise, set to hash of previous seed
@@ -56,7 +56,7 @@ fi
 # Normally-distributed random numbers using the Box-Muller transform
 # Usage: nrandom start end
 nrandom() {
-  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   if [[ "$1" == "--help" || "$1" == "-h" ]]; then
     echo "Usage: nrandom <start> <end>"
     echo "This function is defined in $BASH_SOURCE"
@@ -107,7 +107,7 @@ export CHARSET_PUNC='!@#$%^&*'
 export CHARSET_HEX="${CHARSET_NUM}abcdef"
 
 randompass() {
-  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   if [[ $# -eq 0 || "$1" == "--help" ]]; then
     echo "Usage: randompass <length>"
     echo "This function is defined in $BASH_SOURCE"
@@ -117,7 +117,7 @@ randompass() {
     [ $# -eq 0 ] && return 1 # only error if insufficient input
     return 0
   fi
-  needs shuf || return 1
+  needs shuf "please install coreutils" || return 1
   RANDOM_SOURCE="${RANDOM_SOURCE:-/dev/random}"
   # globbing & history expansion here is a pain, so we store its state, temp turn it off & restore it later
   local maybeglob="$(shopt -po noglob histexpand)"
@@ -144,7 +144,7 @@ randompass() {
 
 # expects a minlen as first argument and a maxlen as second argument
 load_and_filter_dict() {
-  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   # local dict_loc="${WORDLIST:-"/usr/share/dict/words"}"
   # [ -f "$dict_loc" ] || { echo "$dict_loc missing. May need to install 'words' package (or just pass in a WORDLIST env var that paths to a file of words). Exiting."; return 1; }
   # local dict=$(sed '0,/^__DICT__$/d' "${BASH_SOURCE[0]}")
@@ -154,7 +154,7 @@ load_and_filter_dict() {
   # take the dict, filter out anything not within the min/max length
   # optionally filter out anything that starts with a capital letter (e.g. proper nouns)
   local pool;
-  if [ -v FILTERPROPERNOUNS ]; then
+  if [[ -n "${FILTERPROPERNOUNS}" ]]; then
     pool=$(LC_ALL=C printf "%s" "$dict" | awk 'length($0) >= '$1' && length($0) <= '$2' && !/^[[:upper:]]/')
   else
     pool=$(LC_ALL=C printf "%s" "$dict" | awk 'length($0) >= '$1' && length($0) <= '$2)
@@ -166,7 +166,7 @@ load_and_filter_dict() {
 # First argument is number of words to generate
 # Second argument is minimum word length
 randompassdict() {
-  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   needs shuf || return 1
   local random_source="${RANDOM_SOURCE:-/dev/random}"
   if [ $# -eq 0 ]; then
@@ -188,14 +188,14 @@ randompassdict() {
   poolsize=${poolsize##* }
   local words=$(echo -n "$dict" | shuf --random-source=$random_source -r -n "$numwords" | tr '\n' ' ' | xargs)
   local combinations_with_thousands_sep=$(printf "%'.0f" $(calc ${poolsize}^${numwords}))
-  if [ -v JUST_OUTPUT_DICTIONARY ]; then
+  if [[ -n "${JUST_OUTPUT_DICTIONARY}" ]]; then
     echo "$dict"
   else
     echo -n "$words"
     echo >&2
     echo >&2
     note "(out of a possible $poolsize available words in the dictionary that suit the requested length range [$minlen-$maxlen]"
-    if [ -v FILTERPROPERNOUNS ]; then
+    if [[ -n "${FILTERPROPERNOUNS}" ]]; then
       note "and that do not start with a capital letter,"
     fi
     note "for a total of ($poolsize ** $numwords) or $combinations_with_thousands_sep possible combinations)"

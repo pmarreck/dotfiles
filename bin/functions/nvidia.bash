@@ -1,7 +1,7 @@
 # get nvidia driver version on linux
 if [ "$PLATFORM" = "linux" ]; then
   nvidia() {
-    [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+    [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
     needs nvidia-smi from nvidia-cuda-toolkit
     needs rg get ripgrep
     nv_version=$(nvidia-smi | rg -r '$1' -o --color never 'Driver Version: ([0-9]{3}\.[0-9]{1,3}(?:\.[0-9]{1,3})?)')

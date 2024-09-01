@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 String.split() {
-  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   # peek at stdin to see if it's not empty
   if ! [ -t 0 ]; then
     # echo "There is stdin"

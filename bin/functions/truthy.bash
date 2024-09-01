@@ -1,26 +1,32 @@
-# Define the truthy function
+# Define the truthy function; keep it POSIX-compatible
 truthy() {
-  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-  local var_name="$1"
-  local value="${!var_name}"  # Indirect expansion to get the value of the variable; depends on Bash
-  # value=$(eval echo \$$var_name)  # POSIX-compatible way to get the value of the variable
+  # Check if EDIT is set and not empty, then unset and call edit_function
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 
-  if [[ "$value" == "1" || "$value" == "true" ]]; then
-    true
-  else
-    false
+  var_name="$1"
+
+  # 1. Make sure the argument looks like a valid shell variable name
+  if ! echo "$var_name" | grep -Eq '^[a-zA-Z_][a-zA-Z0-9_]*$'; then
+    echo "Error: '$var_name' is not a valid shell variable name" >&2
+    return 2
   fi
+
+  # 2. Check if the variable exists; if not, always false
+  eval "test -n \"\${$var_name+set}\"" || return 1
+
+  # 3. POSIX-compatible way to get the value of the variable
+  value=$(eval echo \$$var_name)
+
+  [ "$value" = "true" ] ||[ "$value" = "1" ]
 }
 
-# Define the falsey function
+# Define the falsey function in terms of the truthy function
 falsey() {
-  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-  if truthy "$1"; then
-    false
-  else
-    true
-  fi
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "$0" "$0" && return
+
+  truthy "$1" && return 1 || return 0
 }
+
 
 # tests
 if [ "$RUN_DOTFILE_TESTS" == "true" ]; then

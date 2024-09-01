@@ -43,13 +43,13 @@ if [ "${PLATFORM}" = "linux" ]; then
   source_relative_once bin/functions/fsattr.bash
   # provide a universal "open" on linux to open a path in the file manager
   open() {
-    [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+    [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
     # if no args, open current dir
     xdg-open "${1:-.}"
   }
   # list network interface names. Why is this so hard on linux?
   list-nics() {
-    [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+    [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
     # ip -o link show | awk -F': ' '{print $2}' | sed 's/@.*//'
     # the above was missing altnames.
     # this is a bit hacky but there are many ways to skin this cat
@@ -57,7 +57,7 @@ if [ "${PLATFORM}" = "linux" ]; then
   }
   # list processes with optional filter argument
   list-procs() {
-    [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+    [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
     PS_PERSONALITY=linux ps -ewwo pid,%cpu,%mem,nice,pri,rtprio,args --sort=-pcpu,-pid | awk -v filter="$1" 'NR==1 || tolower($0) ~ tolower(filter)' | less -e --header=1
   }
   alias procs=list-procs
@@ -70,13 +70,13 @@ source_relative_once bin/functions/compsavings.bash
 
 # because I always forget how to do this...
 dd_example() {
-  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   echo "sudo dd if=/home/pmarreck/Downloads/TrueNAS-SCALE-22.02.4.iso of=/dev/sdf bs=1M oflag=sync status=progress"
 }
 
 # make it easier to write ISO's to a USB key:
 write_iso() {
-  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   sudo dd if="$1" of="$2" bs=1M oflag=sync status=progress
 }
 
@@ -124,26 +124,26 @@ source_relative_once bin/functions/grandfather_clock_chime.sh
 
 # crypto market data. can pass a symbol in or just get the current overall market data
 crypto() {
-  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   curl rate.sx/$1
 }
 
 # am I the only one who constantly forgets the correct order of arguments to `ln`?
 lnwtf() {
-  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   echo 'ln -s path_of_thing_to_link_to [name_of_link]'
   echo '(If you omit the latter, it puts a basename-named link in the current directory)'
   echo "This function is defined in $0"
 }
 
 up() {
-  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   uptime | $AWK '{split($0,a,"  up ");split(a[2],b,", ");print"["b[1]", "b[2]"]"}'
 }
 
 # browse a CSV file as a scrollable table
 csv() {
-  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   needs column
   if [ -e "$1" ]; then
     column -s, -t < "$1" | less -#2 -N -S --header 1
@@ -263,12 +263,12 @@ source_relative_once .pathconfig
 # silliness
 
 inthebeginning() {
-  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   needs magick please install imagemagick && magick "$HOME/inthebeginning.jpg" -geometry 400x240 sixel:-
 }
 
 just_one_taoup() {
-  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   # ChatGPT4 wrote 99% of this. I preserved the conversation with it about it: https://gist.github.com/pmarreck/339fb955a74caed692b439038c9c1c9d
   needs taoup please install taoup && \
   taoup | $AWK -v seed=`date +%N` '
@@ -292,7 +292,7 @@ just_one_taoup() {
 
 if [ "$INTERACTIVE_SHELL" = "true" ]; then
   fun_intro() {
-    [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+    [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
     _fun_things="fortune inthebeginning warhammer_quote bashorg_quote chuck mandelbrot asciidragon just_one_taoup"
     _count=0
     for _item in $_fun_things; do

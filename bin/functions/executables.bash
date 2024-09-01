@@ -2,7 +2,7 @@
 
 # Print out the names of all executables available in your PATH
 executables() {
-  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   # Use newline as delimiter for PATH directories
   pathdirs="${PATH//:/$'\n'}"
 
@@ -38,7 +38,7 @@ executables() {
 
 # Print out the names of all defined functions
 functions() {
-  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   # declare -F | awk '{print $NF}'
   compgen -A function
 }

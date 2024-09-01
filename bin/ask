@@ -5,15 +5,42 @@
 # only redefines it here if it's not already defined
 >/dev/null declare -F needs || \
 needs() {
-  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   local bin=$1
   shift
   command -v "$bin" >/dev/null 2>&1 || { echo >&2 "I require $bin but it's not installed or in PATH; $*"; return 1; }
 }
 
-# Command line access to the ChatGPT API with conversation history
+>/dev/null declare -F debug || \
+debug() {
+  local debug_value="$1"
+  if [[ "$debug_value" == "1" || "$debug_value" == "true" ]]; then
+    return 0
+  else
+    return 1
+  fi
+}
+
+# Function to get location information
+get_location() {
+  echo -e "\033[3;33mCalling get_location...\033[0m" >&2 # Italic and yellow text
+  curl -s ipinfo.io | sed ':a;N;$!ba;s/\n/ /g;s/  */ /g;s/{ /{/g;s/ }/}/g' # Cleaned up JSON output
+}
+
+# Function to get weather information using OpenWeatherMap API
+get_weather() {
+  local postal_code=$1
+#   local postal_code_hopefully_filtered==$(echo "$postal_code" | sed 's/\\"/"/g')
+  debug "$DEBUG" && echo "DEBUG: postal_code_hopefully_filtered=$postal_code_hopefully_filtered"
+#   postal_code=$(echo "$postal_code" | sed 's/\\"/"/g' | jq -r '.zip_code')
+  debug "$DEBUG" && echo "DEBUG: postal_code=$postal_code"
+  local appid=${OPENWEATHERMAP_APPID}  # Use your API key from the environment
+  echo -e "\033[3;33mCalling get_weather for postal code $postal_code...\033[0m" >&2 # Italic and yellow text
+  curl -s "https://api.openweathermap.org/data/2.5/weather?zip=$postal_code&appid=$appid"
+}
+# Command line access to the ChatGPT API with conversation history and tool calls
 ask() {
-  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   needs curl
   needs jq
   needs glow see https://github.com/charmbracelet/glow
@@ -22,7 +49,6 @@ ask() {
     openai_host openai_path openai_protocol openai_url local_llm \
     top_k top_p temperature system_prompt user_prompt repeat_penalty num_ctx \
     history_file history_temp timestamp continue_conversation discard_history
-  # model=${OPENAI_MODEL:-chatgpt-4o-latest} # see openai docs for other models
   model=${OPENAI_MODEL:-gpt-4o-2024-08-06} # see openai docs for other models
   timeout=${OPENAI_TIMEOUT:-60}
   openai_host=${OPENAI_HOST:-api.openai.com}
@@ -119,9 +145,99 @@ ask() {
     return 1
   fi
 
-  response=$(jq -r '.choices[0].message.content' < "$temp_json_out" 2>/dev/null | sed 's/^[ \t]*//;s/[ \t]*$//')
-  if [[ "$response" == "null" ]]; then
-    response=$(jq -r '.message.content' < "$temp_json_out" | sed 's/^[ \t]*//;s/[ \t]*$//')
+  # Check if there is a tool call in the response
+  debug "$DEBUG" && echo "DEBUG: temp_json_out:"
+  debug "$DEBUG" && cat $temp_json_out
+  tool_calls=$(jq -r '.choices[0].message.tool_calls // empty' < "$temp_json_out")
+  debug "$DEBUG" && echo "DEBUG: tool_calls: $tool_calls"
+  if [[ -n "$tool_calls" ]]; then
+    tool_results=""
+
+    # Collect all tool results
+    debug "$DEBUG" && echo "DEBUG: raw tool_calls: $tool_calls"
+    tool_calls=$(echo "$tool_calls" | jq -c '.[]')
+    debug "$DEBUG" && echo "DEBUG: tool_calls: $tool_calls"
+    for tool_call in $tool_calls; do
+      debug "$DEBUG" && echo "DEBUG: tool_call: $tool_call"
+      tool_name=$(echo "$tool_call" | jq -r '.function.name')
+      debug "$DEBUG" && echo "DEBUG: tool_name: $tool_name"
+      tool_arguments=$(echo "$tool_call" | jq -c '.function.arguments')
+      debug "$DEBUG" && echo "DEBUG: tool_arguments: $tool_arguments"
+      case "$tool_name" in
+        "get_location")
+          # Perform the get_location tool call
+          tool_result=$(get_location)
+          debug "$DEBUG" && echo "DEBUG: tool_result for get_location: $tool_result"
+          # replace real linefeeds with actual \n
+          # tool_result=$(echo "$tool_result" | sed ':a;N;$!ba;s/\n/\\n/g')
+          if [[ -n "$tool_results" ]]; then
+            tool_results+=","
+          fi
+          tool_results+="{\"role\": \"function\", \"name\": \"$tool_name\", \"content\": \"$(echo $tool_result | sed 's/"/\\"/g')\"}"
+          ;;
+        "get_weather")
+          # Perform the get_weather tool call
+          local zip=$(echo "$tool_arguments" | jq -r 'fromjson | .zip_code')
+          debug "$DEBUG" && echo "DEBUG: zip: $zip"
+          tool_result=$(get_weather "$zip")
+          debug "$DEBUG" && echo "DEBUG: tool_result for get_weather: $tool_result"
+          # replace real linefeeds with actual \n
+          # tool_result=$(echo "$tool_result" | sed ':a;N;$!ba;s/\n/\\n/g')
+          if [[ -n "$tool_results" ]]; then
+            tool_results+=","
+          fi
+          tool_results+="{\"role\": \"function\", \"name\": \"$tool_name\", \"content\": \"$(echo $tool_result | jq -Rs .)\"}"
+          debug "$DEBUG" && echo "DEBUG: tool_results: $tool_results"
+          ;;
+        "multi_tool_use.parallel")
+          echo "Parallel multi-tool use is not supported in this script (yet)." >&2
+          echo "The tool_call was: $tool_call" >&2
+          return 1
+          ;;
+        *)
+          echo "Unknown tool: $tool_name" >&2
+          return 1
+          ;;
+      esac
+    done
+
+    # Wrap the collected results in a JSON array
+    # but first escape all newlines
+    tool_results=$(echo -n "$tool_results" | sed ':a;N;$!ba;s/\n/\\n/g')
+    tool_results="[$tool_results]"
+    debug "$DEBUG" && echo "DEBUG: messages: $(cat $history_file | sed ':a;N;$!ba;s/\n/\\n/g')"
+    debug "$DEBUG" && echo "DEBUG: Tool results: $tool_results" # | sed ':a;N;$!ba;s/\n/\\n/g'
+    debug "$DEBUG" && echo "DEBUG: jq '.' $history_file"
+    debug "$DEBUG" && jq '.' "$history_file"
+    # Send the combined results back to ChatGPT
+    jq -n --arg model "$model" \
+          --argjson results "$tool_results" \
+          --slurpfile messages "$history_file" \
+      '{
+        model: $model,
+        messages: (($messages[0].messages // []) + $results),
+        max_tokens: 1000,
+        stream: false
+      }' > "$temp_json"
+
+    http_status=$($curl -w "%{http_code}" -s -o "$temp_json_out" -X POST $openai_url \
+      -H "Content-Type: application/json" \
+      -H "Authorization: Bearer $OPENAI_API_KEY" \
+      --silent \
+      --max-time $timeout \
+      -d "@$temp_json")
+
+    if [[ "$http_status" -ne 200 ]]; then
+      echo "Error: API request failed with status code $http_status." >&2
+      echo "Response:" >&2
+      cat "$temp_json_out" >&2
+      return 1
+    fi
+
+    response=$(jq -r '.choices[0].message.content' < "$temp_json_out" 2>/dev/null | sed 's/^[ \t]*//;s/[ \t]*$//')
+  else
+    # No tool call, just process the response
+    response=$(jq -r '.choices[0].message.content' < "$temp_json_out" 2>/dev/null | sed 's/^[ \t]*//;s/[ \t]*$//')
   fi
 
   if [[ "$response" == "null" || "$?" != "0" ]]; then
@@ -138,7 +254,7 @@ ask() {
 }
 
 
-if [ "$RUN_DOTFILE_TESTS" == "true" ]; then
+if truthy RUN_DOTFILE_TESTS; then
   # IMPORTANT!
   # how do we even test this function? Pass in a mocked curl somehow?
   source_relative_once functions/assert.bash
@@ -155,7 +271,7 @@ if [ "$RUN_DOTFILE_TESTS" == "true" ]; then
 
   # mock out curl
   mocked_curl() {
-    [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+    [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
       # http_status=$($curl -w "%{http_code}" -s -o "$temp_json_out" -X POST $openai_url \
       # -H "Content-Type: application/json" \
       # -H "Authorization: Bearer $OPENAI_API_KEY" \

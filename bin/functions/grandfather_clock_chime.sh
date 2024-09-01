@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 grandfather_gong() {
-  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   function needs() {
     local bin=$1;
     shift;

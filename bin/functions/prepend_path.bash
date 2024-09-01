@@ -2,7 +2,7 @@ source_relative_once assert.bash
 
 # function to find necessary binaries in common locations in case PATH is borked
 find_binary() {
-  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   if [ -f "/run/current-system/sw/bin/$1" ]; then
     echo -n "/run/current-system/sw/bin/$1"
   elif [ -f "/usr/local/bin/$1" ]; then
@@ -23,7 +23,7 @@ find_binary() {
 
 # function to prepend paths in an idempotent way
 prepend_path() {
-  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   function docs() {
     echo "Usage: prepend_path [-o|-h|--help] <path_to_prepend> [name_of_path_var, defaults to PATH]" >&2
     echo "Setting -o will print the new path to stdout instead of exporting it" >&2
@@ -54,7 +54,7 @@ prepend_path() {
     *) $IGNORE_PREPEND_PATH_WARNINGS || echo "prepend_path warning: '$dir' is not an absolute path, which may be unexpected" >&2;;
   esac
   local newpath=${!var}
-  [[ -v DEBUG_PATHCONFIG ]] && echo "Upon entry to prepend_path($dir), ${var} is ${!var}" >&2
+  [ -n "${DEBUG_PATHCONFIG}" ] && echo "Upon entry to prepend_path($dir), ${var} is ${!var}" >&2
   if [ -z "$newpath" ]; then
     $stdout || $IGNORE_PREPEND_PATH_WARNINGS || echo "prepend_path warning: $var was empty, which may be unexpected: setting to $dir" >&2
     $stdout && echo "$dir" || export ${var}="$dir"
@@ -66,12 +66,12 @@ prepend_path() {
   newpath=$(echo -n $newpath | awk -v RS=: -v ORS=: '!($0 in a) {a[$0]; print}')
   # remove trailing colon (awk's ORS (output record separator) adds a trailing colon)
   newpath=${newpath%:}
-  [[ -v DEBUG_PATHCONFIG ]] && echo "After prepend_path($dir), ${var} is now $newpath" >&2
+  [ -n "${DEBUG_PATHCONFIG}" ] && echo "After prepend_path($dir), ${var} is now $newpath" >&2
   $stdout && echo "$newpath" || export ${var}="$newpath"
 }
 
 exclude_path() {
-  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   local AWK=$(which awk || echo -n "/run/current-system/sw/bin/awk") # in case you accidentally exclude the path that has awk...
   function docs() {
     echo "Usage: exclude_path [-o|-h|--help] <path_to_exclude> [name_of_path_var, defaults to PATH]" >&2
@@ -102,7 +102,7 @@ exclude_path() {
     *) $IGNORE_EXCLUDE_PATH_WARNINGS || echo "exclude_path warning: '$dir' is not an absolute path, which may be unexpected" >&2;;
   esac
   local paths=${!var}
-  [[ -v DEBUG_PATHCONFIG ]] && echo "Upon entry to exclude_path($dir), ${var} is ${!var}" >&2
+  [ -n "${DEBUG_PATHCONFIG}" ] && echo "Upon entry to exclude_path($dir), ${var} is ${!var}" >&2
   if [ -z "$paths" ]; then
     $stdout || $IGNORE_EXCLUDE_PATH_WARNINGS || echo "exclude_path warning: $var is empty, nothing to exclude" >&2
     return
@@ -111,7 +111,7 @@ exclude_path() {
   local newpath=$(echo -n "$paths" | $AWK -v RS=: -v ORS=: -v path="$dir" '$0 != path')
   # Remove trailing colon (awk's ORS (output record separator) adds a trailing colon)
   newpath=${newpath%:}
-  [[ -v DEBUG_PATHCONFIG ]] && echo "After exclude_path($dir), ${var} is now $newpath" >&2
+  [ -n "${DEBUG_PATHCONFIG}" ] && echo "After exclude_path($dir), ${var} is now $newpath" >&2
   $stdout && echo "$newpath" || export ${var}="$newpath"
 }
 

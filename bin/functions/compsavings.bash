@@ -23,7 +23,7 @@
 # First function written by GPT-4/ChatGPT, worked on the first try with only minor edits!
 # ...Aaaand still gives wonky-looking results sometimes. No time to investigate.
 compsavings() {
-  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   if [ -z "$1" ]; then
     echo "Usage: compsavings /path/to/directory"
     return 2

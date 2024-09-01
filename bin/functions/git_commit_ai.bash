@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 function git_commit_ai() {
-  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   if [[ -z "$OPENAI_API_KEY" ]]; then
     echo "OPENAI_API_KEY is not defined." >&2
     return 1
@@ -134,7 +134,7 @@ export DEFAULT_LOCAL_AI_MODEL="llama3.1:70b"
 export DEFAULT_LOCAL_AI_HOST="localhost:11434"
 
 function git_commit_ai_local() {
-  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   OPENAI_MODEL="$DEFAULT_LOCAL_AI_MODEL" \
   OPENAI_HOST="$DEFAULT_LOCAL_AI_HOST" \
   OPENAI_PATH="/api/chat" \

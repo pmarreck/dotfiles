@@ -47,7 +47,7 @@ fi
 # graceful dependency enforcement
 # Usage: needs <executable> ["provided by <packagename>"]
 needs() {
-  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   local bin="$1"
   shift
   command -v "$bin" >/dev/null 2>&1 || {
@@ -73,12 +73,20 @@ fi
 
 # go directly to edit of function source
 edit_function() {
-  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   needs rg "please install ripgrep!"
   local function_name="$1"
   # escape any question marks in the function name, some of mine end in one
   local function_name="${function_name//\?/\\?}"
   local file="$2"
+  if [ -z "$function_name" ] || [ -z "$file" ]; then
+    # Warn only once if not in Bash
+    if [ -z "$EDIT_WARNED" ]; then
+      echo "Warning: Edit functionality is only available in Bash, or invalid function/source reference." >&2
+      EDIT_WARNED=1
+    fi
+    return 1
+  fi
   # *** The following docs provided by ChatGPT4 ***
   # This line searches for Bash function definitions in the provided file using two potential patterns.
   # It then returns the line number of the last matched function definition.
@@ -136,7 +144,7 @@ is_gnu_awk=$($AWK --version | grep -q -m 1 'GNU Awk' && echo true || echo false)
 pf="$(uname)"
 if [ "$pf" = "Darwin" ]; then
   mac_os_version_number_to_name() {
-    [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+    [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
     # Get macOS version
     local version
     local distribution
@@ -175,19 +183,19 @@ elif [ "${pf:0:5}" = "Linux" ]; then
   # (edit: I converted the ripgrep to awk)
   # You could also just source the file and then use the variable directly, but that pollutes the env
   function distro() {
-    [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+    [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
     $AWK -F'=' '/^NAME=/{gsub(/"/, "", $2); print $2}' ${1:-/etc/os-release}
   }
   DISTRO=$(distro)
   export DISTRO
   function distro_pretty() {
-    [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+    [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
     $AWK -F'=' '/^PRETTY_NAME=/{gsub(/"/, "", $2); print $2}' ${1:-/etc/os-release}
   }
   DISTRO_PRETTY=$(distro_pretty)
   export DISTRO_PRETTY
   function distro_version() {
-    [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+    [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
     # shellcheck disable=SC2016
     $AWK -F= '$1=="VERSION_ID"{gsub(/(^["]|["]$)/,"",$2);print$2}' ${1:-/etc/os-release}
   }
@@ -220,9 +228,12 @@ fi
 
 # who am I? (should work even when sourced from elsewhere, but only in Bash)
 me() {
-  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   basename "${BASH_SOURCE[0]}"
 }
+
+# zoxide integration
+needs zoxide "get zoxide via cargo or your package manager" && eval "$(zoxide init --cmd cd --hook pwd bash)"
 
 # Pull in path configuration
 source_relative_once .pathconfig
@@ -251,5 +262,5 @@ source_relative_once .envconfig
 source $HOME/bin/apply-hooks || echo "Problem when sourcing $HOME/bin/apply-hooks"
 
 
-[[ -v DEBUG_SHELLCONFIG ]] && echo "Exiting $(echo "${BASH_SOURCE[0]}" | sed "s|^$HOME|~|")"
-[[ -v DEBUG_PATHCONFIG ]] && echo "$PATH" || :
+[ -n "${DEBUG_SHELLCONFIG}" ] && echo "Exiting $(echo "${BASH_SOURCE[0]}" | sed "s|^$HOME|~|")"
+[ -n "${DEBUG_PATHCONFIG}" ] && echo "$PATH" || :

@@ -2,7 +2,7 @@
 # usage: echo "peter" | binhex
 # or: binhex peter
 binhex() {
-  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   if [ -z "$1" ]; then # if no arguments
     if [ ! -t 0 ]; then
       xxd -pu  # receive piped input from stdin
@@ -18,7 +18,7 @@ binhex() {
 
 # convert hex back to binary
 hexbin() {
-  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   if [ -z "$1" ]; then # if no arguments
     if [ ! -t 0 ]; then
       xxd -r -p   # receive piped input from stdin

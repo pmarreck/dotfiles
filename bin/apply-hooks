@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
-[[ -v DEBUG_SHELLCONFIG ]] && echo "Entering $(echo "${BASH_SOURCE[0]}" | sed "s|^$HOME|~|")"
-[[ -v DEBUG_PATHCONFIG ]] && echo "$PATH"
+[ -n "${DEBUG_SHELLCONFIG}" ] && echo "Entering $(echo "${BASH_SOURCE[0]}" | sed "s|^$HOME|~|")"
+[ -n "${DEBUG_PATHCONFIG}" ] && echo "$PATH"
 
 # We start with a clean PROMPT_COMMAND and precmd_functions slate in the event we rehash (which used to screw this up)
 # unset PROMPT_COMMAND
@@ -23,7 +23,7 @@
 source_relative_once functions/utility_functions.bash # to get array_contains_element
 
 needs() {
-  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   local bin="$1"
   shift
   command -v "$bin" >/dev/null 2>&1 || {
@@ -108,7 +108,7 @@ fi
 # Pull down our file from GitHub and write it to your home directory as a hidden file.
 export BASH_PREEXEC_LOCATION="$HOME/dotfiles/lib/bash-preexec.sh"
 update_bash_preexec() {
-  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   mkdir -p ~/dotfiles/lib
   curl https://raw.githubusercontent.com/rcaloras/bash-preexec/master/bash-preexec.sh -o "$BASH_PREEXEC_LOCATION"
 }
@@ -173,5 +173,5 @@ fi
 # echo "after bash_preexsuck:"
 # declare -p PROMPT_COMMAND; declare -p precmd_functions; declare -p preexec_functions
 
-[[ -v DEBUG_SHELLCONFIG ]] && echo "Exiting $(echo "${BASH_SOURCE[0]}" | sed "s|^$HOME|~|")"
-[[ -v DEBUG_PATHCONFIG ]] && echo "$PATH" || :
+[ -n "${DEBUG_SHELLCONFIG}" ] && echo "Exiting $(echo "${BASH_SOURCE[0]}" | sed "s|^$HOME|~|")"
+[ -n "${DEBUG_PATHCONFIG}" ] && echo "$PATH" || :

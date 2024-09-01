@@ -26,7 +26,7 @@ _clock_font_bin() {
 # digital clock
 # not sure why it updates so slowly; all the subshells and evals?
 clock() {
-  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   F=($(_clock_font_bin | hexdump -v -e'1/1 "%x\n"'))
   e=echo\ -e;$e "\033[2J\033[?25l"; while true; do A=''  T=`date +" "%H:%M:%S`
   $e "\033[0;0H" ; for c in `eval $e {0..$[${#T}-1]}`; do a=`$e -n ${T:$c:1}|\

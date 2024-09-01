@@ -2,7 +2,7 @@
 # For the Ruby fans.
 # Floating point seconds since epoch, to nanosecond resolution.
 Time.now.to_f() {
-  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   # set the date bin to gdate (or one that recognizes --resolution) if available
   local datebin="date"
   $datebin --resolution >/dev/null 2>&1 || datebin="gdate"
@@ -22,7 +22,7 @@ Time.now.to_f() {
 # Nanoseconds since unix epoch.
 # Might be cheap just to strip the decimal, but there's always a fixed number of digits to the right of the decimal
 now_in_ns() {
-  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   local now=$(Time.now.to_f)
   echo ${now//.}
 }

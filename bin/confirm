@@ -5,7 +5,7 @@
 #  or
 #  curl "some URL with raw code" | confirm | bash
 confirm() {
-  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   tmpfile=$(mktemp)
   # use tee to split stdin to stderr and the temporary file
   tee "$tmpfile" >&2

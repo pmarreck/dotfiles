@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 function kill-steam-proton-pids() {
-  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   # This bash one-liner performs the following tasks:
   # 1. It sets the PS_PERSONALITY environment variable to 'linux' which standardizes the output format of the 'ps' command.
   # 2. Runs the 'ps' command with the following options:

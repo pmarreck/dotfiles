@@ -2,12 +2,12 @@
 
 if [[ "$(uname)" == "Darwin" ]]; then
   clip() {
-    [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+    [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
     [ -t 0 ] && pbpaste || pbcopy
   }
 else # assume linux if not macos
   clip() {
-    [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+    [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
     [ -t 0 ] && xclip -o -selection clipboard || xclip -selection clipboard
   }
 fi

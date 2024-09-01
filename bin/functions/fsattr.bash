@@ -1,5 +1,5 @@
 fsattr() {
-  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   needs attr "The 'attr' binary must be available to this OS for this function to work."
   local orig_attr name value file
   orig_attr=$(which attr);

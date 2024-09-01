@@ -5,7 +5,7 @@
 # only redefines it here if it's not already defined
 >/dev/null declare -F needs || \
 needs() {
-  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   local bin=$1
   shift
   command -v "$bin" >/dev/null 2>&1 || { echo >&2 "I require $bin but it's not installed or in PATH; $*"; return 1; }
@@ -16,7 +16,7 @@ source_relative_once datetimestamp
 # and output it to the terminal via the sixel protocol.
 # Example usage: imagine a cow jumping over the moon
 imagine() {
-  [ -v EDIT ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   needs convert Please install ImageCraptastick I mean ImageMagick
   local prompt geometry create_img url rand_num stamp filename response maybe_error
   prompt="$@"
