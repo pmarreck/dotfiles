@@ -122,6 +122,8 @@ source_relative_once bin/functions/please.bash
 
 source_relative_once bin/functions/grandfather_clock_chime.sh
 
+source_relative_once bin/ask
+
 # crypto market data. can pass a symbol in or just get the current overall market data
 crypto() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return

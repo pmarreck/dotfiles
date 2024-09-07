@@ -36,6 +36,7 @@ warn() {
 
 # Function to get location information
 get_location() {
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return;
   echo -e "\033[3;33mCalling get_location...\033[0m" >&2 # Italic and yellow text
   # Call `get_location` and parse the output with jq to extract required fields
   local ip city region country postal timezone
@@ -49,6 +50,7 @@ get_location() {
 
 # Function to convert temperature from Kelvin to Fahrenheit or Celsius
 convert_temp() {
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return;
   local temp_in_k="$1"
   local scale="$2"
 
@@ -63,12 +65,14 @@ convert_temp() {
 
 # Function to convert wind speed from m/s to knots and round to 2 decimal places
 convert_wind_speed_from_mps_to_knots() {
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return;
   local speed_in_mps="$1"
   printf "%.2f" $(bc -e "scale=4; $speed_in_mps * 1.94384")
 }
 
 # Function to convert wind direction from degrees to cardinal direction
 convert_wind_direction() {
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return;
   local degrees="$1"
   # Add 22.5 to ensure proper rounding before integer division
   local index=$(( ( (degrees * 2 + 45) % 720) / 45 ))
@@ -82,6 +86,7 @@ convert_wind_direction() {
 
 # Function to get weather information using OpenWeatherMap API
 get_weather() {
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return;
   local postal_code=$1
   # bail if there is no postal code
   if [ -z "$postal_code" ]; then
