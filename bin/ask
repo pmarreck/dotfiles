@@ -37,7 +37,7 @@ warn() {
 # Function to get location information
 get_location() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return;
-  echo -e "\033[3;33mCalling get_location...\033[0m" >&2 # Italic and yellow text
+  note "Calling get_location..." # Italic and yellow text
   # Call `get_location` and parse the output with jq to extract required fields
   local ip city region country postal timezone
   IFS=$'\t' read -r ip city region country postal timezone <<< $(
@@ -67,7 +67,12 @@ convert_temp() {
 convert_wind_speed_from_mps_to_knots() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return;
   local speed_in_mps="$1"
-  printf "%.2f" $(bc -e "scale=4; $speed_in_mps * 1.94384")
+  # skip conversion if the speed is not a number
+  if ! [[ "$speed_in_mps" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+    echo -n "$speed_in_mps"
+    return
+  fi
+  printf "%.2fkts" $(bc -e "scale=4; $speed_in_mps * 1.94384")
 }
 
 # Function to convert wind direction from degrees to cardinal direction
@@ -87,6 +92,7 @@ convert_wind_direction() {
 # Function to get weather information using OpenWeatherMap API
 get_weather() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return;
+  # note "Calling get_weather..." # Italic and yellow text
   local postal_code=$1
   # bail if there is no postal code
   if [ -z "$postal_code" ]; then
@@ -94,7 +100,7 @@ get_weather() {
     return 1
   fi
 #   local postal_code_hopefully_filtered==$(echo "$postal_code" | sed 's/\\"/"/g')
-#   debug "$DEBUG" && echo "DEBUG: postal_code_hopefully_filtered=$postal_code_hopefully_filtered"
+#   debug "$DEBUG" && note "DEBUG: postal_code_hopefully_filtered=$postal_code_hopefully_filtered"
 #   postal_code=$(echo "$postal_code" | sed 's/\\"/"/g' | jq -r '.zip_code')
   debug "$DEBUG" && note "DEBUG: postal_code=$postal_code"
   local appid=${OPENWEATHERMAP_APPID}  # Use your API key from the environment
@@ -103,22 +109,25 @@ get_weather() {
   local openweathermap_api_output
   openweathermap_api_output=$(curl -s "https://api.openweathermap.org/data/2.5/weather?zip=$postal_code&appid=$appid")
   debug "$DEBUG" && note "DEBUG: openweathermap_api_output=$openweathermap_api_output"
-  IFS=$'\t' read -r town weather_desc temp feels_like temp_min temp_max humidity visibility wind_speed wind_deg wind_gust <<< $(
+  local town weather_desc temp feels_like temp_min temp_max humidity visibility wind_speed wind_dir wind_gust
+  IFS=$'\t' read -r town weather_desc temp feels_like temp_min temp_max humidity visibility wind_speed wind_dir wind_gust <<< $(
     echo "$openweathermap_api_output" | jq -r '[.name, .weather[0].description, .main.temp, .main.feels_like, .main.temp_min, .main.temp_max, .main.humidity, .visibility, .wind.speed, .wind.deg, (.wind.gust // "N/A")] | @tsv'
   )
-  debug "$DEBUG" && note "DEBUG: town=$town, weather_desc=$weather_desc, temp=$temp, feels_like=$feels_like, temp_min=$temp_min, temp_max=$temp_max, humidity=$humidity, visibility=$visibility, wind_speed=$wind_speed, wind_deg=$wind_deg, wind_gust=$wind_gust"
+  debug "$DEBUG" && note "DEBUG: town=$town, weather_desc=$weather_desc, temp=$temp, feels_like=$feels_like, temp_min=$temp_min, temp_max=$temp_max, humidity=$humidity, visibility=$visibility, wind_speed=$wind_speed, wind_dir=$wind_dir, wind_gust=$wind_gust"
 
-  # Apply conversions
-  local temp=$(convert_temp "$temp" F)
-  local feels_like=$(convert_temp "$feels_like" F)
-  local temp_min=$(convert_temp "$temp_min" F)
-  local temp_max=$(convert_temp "$temp_max" F)
-  local wind_speed=$(convert_wind_speed_from_mps_to_knots "$wind_speed")
-  local wind_dir=$(convert_wind_direction "$wind_deg")
-  local wind_gust=$(convert_wind_speed_from_mps_to_knots "$wind_gust")
+  # Apply conversions and formatting for units
+  temp=$(convert_temp "$temp" F)
+  feels_like=$(convert_temp "$feels_like" F)
+  temp_min=$(convert_temp "$temp_min" F)
+  temp_max=$(convert_temp "$temp_max" F)
+  humidity="${humidity}%"
+  visibility="${visibility}m"
+  wind_speed=$(convert_wind_speed_from_mps_to_knots "$wind_speed")
+  wind_dir=$(convert_wind_direction "$wind_dir")
+  wind_gust=$(convert_wind_speed_from_mps_to_knots "$wind_gust")
 
   # Output as comma-delimited human-readable values
-  echo -n "town: $town, weather: $weather_desc, temp: ${temp}, feels like: ${feels_like}, low: ${temp_min}, high: ${temp_max}, humidity: ${humidity}%, visibility: ${visibility}m, wind speed: ${wind_speed} knots, wind direction: $wind_dir, wind gust: ${wind_gust} knots"
+  echo -n "town: ${town}, weather: ${weather_desc}, temp: ${temp}, feels like: ${feels_like}, low: ${temp_min}, high: ${temp_max}, humidity: ${humidity}, visibility: ${visibility}, wind speed: ${wind_speed}, wind direction: ${wind_dir}, wind gust: ${wind_gust}"
 }
 
 # Command line access to the ChatGPT API with conversation history and tool calls
@@ -222,35 +231,35 @@ ask() {
     -d "@$temp_json")
 
   if [[ "$http_status" -ne 200 ]]; then
-    echo "Error: API request failed with status code $http_status." >&2
-    echo "Response:" >&2
+    warn "Error: API request failed with status code $http_status."
+    warn "Response:"
     cat "$temp_json_out" >&2
     return 1
   fi
 
   # Check if there is a tool call in the response
-  debug "$DEBUG" && echo "DEBUG: temp_json_out:"
+  debug "$DEBUG" && note "DEBUG: temp_json_out:"
   debug "$DEBUG" && cat $temp_json_out
   tool_calls=$(jq -r '.choices[0].message.tool_calls // empty' < "$temp_json_out")
-  debug "$DEBUG" && echo "DEBUG: tool_calls: $tool_calls"
+  debug "$DEBUG" && note "DEBUG: tool_calls (initial): $tool_calls"
   if [[ -n "$tool_calls" ]]; then
     tool_results=""
 
     # Collect all tool results
-    debug "$DEBUG" && echo "DEBUG: raw tool_calls: $tool_calls"
+    debug "$DEBUG" && note "DEBUG: raw tool_calls: $tool_calls"
     tool_calls=$(echo "$tool_calls" | jq -c '.[]')
-    debug "$DEBUG" && echo "DEBUG: tool_calls: $tool_calls"
+    debug "$DEBUG" && note "DEBUG: tool_calls (parsed): $tool_calls"
     for tool_call in $tool_calls; do
-      debug "$DEBUG" && echo "DEBUG: tool_call: $tool_call"
+      debug "$DEBUG" && note "DEBUG: tool_call: $tool_call"
       tool_name=$(echo "$tool_call" | jq -r '.function.name')
-      debug "$DEBUG" && echo "DEBUG: tool_name: $tool_name"
+      debug "$DEBUG" && note "DEBUG: tool_name: $tool_name"
       tool_arguments=$(echo "$tool_call" | jq -c '.function.arguments')
-      debug "$DEBUG" && echo "DEBUG: tool_arguments: $tool_arguments"
+      debug "$DEBUG" && note "DEBUG: tool_arguments: $tool_arguments"
       case "$tool_name" in
         "get_location")
           # Perform the get_location tool call
           tool_result=$(get_location)
-          debug "$DEBUG" && echo "DEBUG: tool_result for get_location: $tool_result"
+          debug "$DEBUG" && note "DEBUG: tool_result for get_location: $tool_result"
           # replace real linefeeds with actual \n
           # tool_result=$(echo "$tool_result" | sed ':a;N;$!ba;s/\n/\\n/g')
           if [[ -n "$tool_results" ]]; then
@@ -261,24 +270,24 @@ ask() {
         "get_weather")
           # Perform the get_weather tool call
           local zip=$(echo "$tool_arguments" | jq -r 'fromjson | .zip_code')
-          debug "$DEBUG" && echo "DEBUG: zip: $zip"
+          debug "$DEBUG" && note "DEBUG: zip: $zip"
           tool_result=$(get_weather "$zip")
-          debug "$DEBUG" && echo "DEBUG: tool_result for get_weather: $tool_result"
+          debug "$DEBUG" && note "DEBUG: tool_result for get_weather: $tool_result"
           # replace real linefeeds with actual \n
           # tool_result=$(echo "$tool_result" | sed ':a;N;$!ba;s/\n/\\n/g')
           if [[ -n "$tool_results" ]]; then
             tool_results+=","
           fi
           tool_results+="{\"role\":\"function\",\"name\":\"$tool_name\",\"content\":\"$tool_result\"}"
-          debug "$DEBUG" && echo "DEBUG: tool_results: $tool_results"
+          debug "$DEBUG" && note "DEBUG: tool_results: $tool_results"
           ;;
         "multi_tool_use.parallel")
-          echo "Parallel multi-tool use is not supported in this script (yet)." >&2
-          echo "The tool_call was: $tool_call" >&2
+          note "Parallel multi-tool use is not supported in this script (yet)."
+          note "The tool_call was: $tool_call"
           return 1
           ;;
         *)
-          echo "Unknown tool: $tool_name" >&2
+          warn "Unknown tool: $tool_name"
           return 1
           ;;
       esac
@@ -290,7 +299,7 @@ ask() {
     tool_results="[$tool_results]"
     debug "$DEBUG" && note "DEBUG: messages: $(cat $history_file | sed ':a;N;$!ba;s/\n/\\n/g')"
     debug "$DEBUG" && note "DEBUG: Tool results: $tool_results" # | sed ':a;N;$!ba;s/\n/\\n/g'
-    # debug "$DEBUG" && echo "DEBUG: jq '.' $history_file"
+    # debug "$DEBUG" && note "DEBUG: jq '.' $history_file"
     # debug "$DEBUG" && jq '.' "$history_file"
     # Send the combined results back to ChatGPT
     jq -n --arg model "$model" \
@@ -311,8 +320,8 @@ ask() {
       -d "@$temp_json")
 
     if [[ "$http_status" -ne 200 ]]; then
-      echo "Error: API request failed with status code $http_status." >&2
-      echo "Response:" >&2
+      warn "Error: API request failed with status code $http_status."
+      warn "Response:"
       cat "$temp_json_out" >&2
       return 1
     fi
@@ -324,7 +333,7 @@ ask() {
   fi
 
   if [[ "$response" == "null" || "$?" != "0" ]]; then
-    printf "Error:\n" >&2
+    warn "Error:"
     printf "%b" "$response" >&2
   else
     printf "%s" "$response" | sed -e 's/^[\\n]\+//' -e 's/^[\n]\+//' | glow -
