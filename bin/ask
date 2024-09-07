@@ -2,7 +2,8 @@
 
 # graceful dependency enforcement
 # Usage: needs <executable> [provided by <packagename>]
-# only redefines it here if it's not already defined
+
+# only redefines these here if they're not already defined in my env
 >/dev/null declare -F needs || \
 needs() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
@@ -21,23 +22,100 @@ debug() {
   fi
 }
 
+>/dev/null declare -F note || \
+note() {
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return;
+  printf "$ANSI$TXTYLW%s$ANSI$TXTDFT\n" "$@" 1>&2
+}
+
+>/dev/null declare -F warn || \
+warn() {
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return;
+  printf "$ANSI$TXTRED%s$ANSI$TXTDFT\n" "$@" 1>&2
+}
+
 # Function to get location information
 get_location() {
   echo -e "\033[3;33mCalling get_location...\033[0m" >&2 # Italic and yellow text
-  curl -s ipinfo.io | sed ':a;N;$!ba;s/\n/ /g;s/  */ /g;s/{ /{/g;s/ }/}/g' # Cleaned up JSON output
+  # Call `get_location` and parse the output with jq to extract required fields
+  local ip city region country postal timezone
+  IFS=$'\t' read -r ip city region country postal timezone <<< $(
+    curl -s ipinfo.io | jq -r '[.ip, .city, .region, .country, .postal, .timezone] | @tsv'
+  )
+
+  # Output in a human-readable, comma-delimited format
+  echo -n "ip: $ip, city: $city, state: $region, country: $country, zip: $postal, tz: $timezone"
+}
+
+# Function to convert temperature from Kelvin to Fahrenheit or Celsius
+convert_temp() {
+  local temp_in_k="$1"
+  local scale="$2"
+
+  if [ "$scale" = "C" ]; then
+    echo -n $(bc -e "scale=2; $temp_in_k - 273.15")
+  else
+    scale="F"
+    echo -n $(bc -e "scale=2; ($temp_in_k - 273.15) * 9/5 + 32")
+  fi
+  echo -n "$scale"
+}
+
+# Function to convert wind speed from m/s to knots and round to 2 decimal places
+convert_wind_speed_from_mps_to_knots() {
+  local speed_in_mps="$1"
+  printf "%.2f" $(bc -e "scale=4; $speed_in_mps * 1.94384")
+}
+
+# Function to convert wind direction from degrees to cardinal direction
+convert_wind_direction() {
+  local degrees="$1"
+  # Add 22.5 to ensure proper rounding before integer division
+  local index=$(( ( (degrees * 2 + 45) % 720) / 45 ))
+
+  # Array of cardinal directions
+  local directions=("N" "NNE" "NE" "ENE" "E" "ESE" "SE" "SSE" "S" "SSW" "SW" "WSW" "W" "WNW" "NW" "NNW")
+
+  # Output the direction
+  echo "${directions[$index]}"
 }
 
 # Function to get weather information using OpenWeatherMap API
 get_weather() {
   local postal_code=$1
+  # bail if there is no postal code
+  if [ -z "$postal_code" ]; then
+    warn "No postal code provided to ${FUNCNAME[0]}"
+    return 1
+  fi
 #   local postal_code_hopefully_filtered==$(echo "$postal_code" | sed 's/\\"/"/g')
-  debug "$DEBUG" && echo "DEBUG: postal_code_hopefully_filtered=$postal_code_hopefully_filtered"
+#   debug "$DEBUG" && echo "DEBUG: postal_code_hopefully_filtered=$postal_code_hopefully_filtered"
 #   postal_code=$(echo "$postal_code" | sed 's/\\"/"/g' | jq -r '.zip_code')
-  debug "$DEBUG" && echo "DEBUG: postal_code=$postal_code"
+  debug "$DEBUG" && note "DEBUG: postal_code=$postal_code"
   local appid=${OPENWEATHERMAP_APPID}  # Use your API key from the environment
-  echo -e "\033[3;33mCalling get_weather for postal code $postal_code...\033[0m" >&2 # Italic and yellow text
-  curl -s "https://api.openweathermap.org/data/2.5/weather?zip=$postal_code&appid=$appid"
+  note "Calling get_weather for postal code ${postal_code}..." # Italic and yellow text
+  # Fetch weather data via curl and parse using jq
+  local openweathermap_api_output
+  openweathermap_api_output=$(curl -s "https://api.openweathermap.org/data/2.5/weather?zip=$postal_code&appid=$appid")
+  debug "$DEBUG" && note "DEBUG: openweathermap_api_output=$openweathermap_api_output"
+  IFS=$'\t' read -r town weather_desc temp feels_like temp_min temp_max humidity visibility wind_speed wind_deg wind_gust <<< $(
+    echo "$openweathermap_api_output" | jq -r '[.name, .weather[0].description, .main.temp, .main.feels_like, .main.temp_min, .main.temp_max, .main.humidity, .visibility, .wind.speed, .wind.deg, (.wind.gust // "N/A")] | @tsv'
+  )
+  debug "$DEBUG" && note "DEBUG: town=$town, weather_desc=$weather_desc, temp=$temp, feels_like=$feels_like, temp_min=$temp_min, temp_max=$temp_max, humidity=$humidity, visibility=$visibility, wind_speed=$wind_speed, wind_deg=$wind_deg, wind_gust=$wind_gust"
+
+  # Apply conversions
+  local temp=$(convert_temp "$temp" F)
+  local feels_like=$(convert_temp "$feels_like" F)
+  local temp_min=$(convert_temp "$temp_min" F)
+  local temp_max=$(convert_temp "$temp_max" F)
+  local wind_speed=$(convert_wind_speed_from_mps_to_knots "$wind_speed")
+  local wind_dir=$(convert_wind_direction "$wind_deg")
+  local wind_gust=$(convert_wind_speed_from_mps_to_knots "$wind_gust")
+
+  # Output as comma-delimited human-readable values
+  echo -n "town: $town, weather: $weather_desc, temp: ${temp}, feels like: ${feels_like}, low: ${temp_min}, high: ${temp_max}, humidity: ${humidity}%, visibility: ${visibility}m, wind speed: ${wind_speed} knots, wind direction: $wind_dir, wind gust: ${wind_gust} knots"
 }
+
 # Command line access to the ChatGPT API with conversation history and tool calls
 ask() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
@@ -173,7 +251,7 @@ ask() {
           if [[ -n "$tool_results" ]]; then
             tool_results+=","
           fi
-          tool_results+="{\"role\": \"function\", \"name\": \"$tool_name\", \"content\": \"$(echo $tool_result | sed 's/"/\\"/g')\"}"
+          tool_results+="{\"role\":\"function\",\"name\":\"$tool_name\",\"content\":\"$tool_result\"}"
           ;;
         "get_weather")
           # Perform the get_weather tool call
@@ -186,7 +264,7 @@ ask() {
           if [[ -n "$tool_results" ]]; then
             tool_results+=","
           fi
-          tool_results+="{\"role\": \"function\", \"name\": \"$tool_name\", \"content\": \"$(echo $tool_result | jq -Rs .)\"}"
+          tool_results+="{\"role\":\"function\",\"name\":\"$tool_name\",\"content\":\"$tool_result\"}"
           debug "$DEBUG" && echo "DEBUG: tool_results: $tool_results"
           ;;
         "multi_tool_use.parallel")
@@ -203,12 +281,12 @@ ask() {
 
     # Wrap the collected results in a JSON array
     # but first escape all newlines
-    tool_results=$(echo -n "$tool_results" | sed ':a;N;$!ba;s/\n/\\n/g')
+    # tool_results=$(echo -n "$tool_results" | sed ':a;N;$!ba;s/\n/\\n/g')
     tool_results="[$tool_results]"
-    debug "$DEBUG" && echo "DEBUG: messages: $(cat $history_file | sed ':a;N;$!ba;s/\n/\\n/g')"
-    debug "$DEBUG" && echo "DEBUG: Tool results: $tool_results" # | sed ':a;N;$!ba;s/\n/\\n/g'
-    debug "$DEBUG" && echo "DEBUG: jq '.' $history_file"
-    debug "$DEBUG" && jq '.' "$history_file"
+    debug "$DEBUG" && note "DEBUG: messages: $(cat $history_file | sed ':a;N;$!ba;s/\n/\\n/g')"
+    debug "$DEBUG" && note "DEBUG: Tool results: $tool_results" # | sed ':a;N;$!ba;s/\n/\\n/g'
+    # debug "$DEBUG" && echo "DEBUG: jq '.' $history_file"
+    # debug "$DEBUG" && jq '.' "$history_file"
     # Send the combined results back to ChatGPT
     jq -n --arg model "$model" \
           --argjson results "$tool_results" \
