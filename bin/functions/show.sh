@@ -3,7 +3,7 @@
 record_console_settings() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   __oldhistcontrol="$HISTCONTROL"
-  __oldstate=$(set +o)
+  __oldstate=$(set +o | sed 's/^/ /g')
 }
 
 restore_console_settings() {

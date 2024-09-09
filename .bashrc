@@ -56,6 +56,15 @@ needs() {
   }
 }
 
+# blesh (ble.sh) config
+# needs the system stty softlinked from ~/bin (or ~/dotfiles/bin) to temporarily be ahead of PATH for ble.sh to work
+_OLD_PATH="$PATH"
+PATH="$HOME/bin:$PATH"
+needs blesh-share "please install blesh" && source `blesh-share`/ble.sh
+$INTERACTIVE_SHELL && source `blesh-share`/ble.sh --noattach
+PATH="$_OLD_PATH"
+unset _OLD_PATH
+
 # User configuration
 # export MANPATH="/usr/local/man:$MANPATH"
 
@@ -261,6 +270,8 @@ source_relative_once .envconfig
 # Load hooks
 source $HOME/bin/apply-hooks || echo "Problem when sourcing $HOME/bin/apply-hooks"
 
+# activate ble.sh
+[[ ! ${BLE_VERSION-} ]] || ble-attach
 
 [ -n "${DEBUG_SHELLCONFIG}" ] && echo "Exiting $(echo "${BASH_SOURCE[0]}" | sed "s|^$HOME|~|")"
 [ -n "${DEBUG_PATHCONFIG}" ] && echo "$PATH" || :

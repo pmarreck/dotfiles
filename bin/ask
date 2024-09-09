@@ -34,7 +34,21 @@ warn() {
   printf "$ANSI$TXTRED%s$ANSI$TXTDFT\n" "$@" 1>&2
 }
 
-# Function to get location information
+# Function to get local zip code
+get_zip() {
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return;
+  note "Calling get_zip..." # Italic and yellow text
+  # Call `get_location` and parse the output with jq to extract required fields
+  local postal
+  # IFS=$'\t' read -r ip city region country postal timezone <<< $(
+  #   curl -s ipinfo.io | jq -r '[.ip, .city, .region, .country, .postal, .timezone] | @tsv'
+  # )
+  postal=$(curl -s ipinfo.io | jq -r '.postal')
+
+  echo -n "$postal"
+}
+
+# Function to get detailed location information
 get_location() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return;
   note "Calling get_location..." # Italic and yellow text
@@ -181,12 +195,23 @@ ask() {
 
   mv "$history_temp" "$history_file"
 
+  # {
+  #   "type": "function",
+  #   "function": {
+  #     "name": "get_location",
+  #     "description": "Get the detailed user location. Call this whenever you need to know their location, for example when they ask for the local weather but you need their precise location first.",
+  #     "parameters": {
+  #       "type": "object",
+  #       "properties": {}
+  #     }
+  #   }
+  # },
   tools='[
     {
       "type": "function",
       "function": {
-        "name": "get_location",
-        "description": "Get the user location. Call this whenever you need to know their location, for example when they ask for the local weather but you need their precise location first.",
+        "name": "get_zip",
+        "description": "Get the user zip code. Call this whenever you just need to know their zip code, for example when they ask for the local weather but you need the zip first.",
         "parameters": {
           "type": "object",
           "properties": {}
@@ -256,10 +281,10 @@ ask() {
       tool_arguments=$(echo "$tool_call" | jq -c '.function.arguments')
       debug "$DEBUG" && note "DEBUG: tool_arguments: $tool_arguments"
       case "$tool_name" in
-        "get_location")
+        "get_zip")
           # Perform the get_location tool call
-          tool_result=$(get_location)
-          debug "$DEBUG" && note "DEBUG: tool_result for get_location: $tool_result"
+          tool_result=$(get_zip)
+          debug "$DEBUG" && note "DEBUG: tool_result for get_zip: $tool_result"
           # replace real linefeeds with actual \n
           # tool_result=$(echo "$tool_result" | sed ':a;N;$!ba;s/\n/\\n/g')
           if [[ -n "$tool_results" ]]; then
@@ -267,6 +292,17 @@ ask() {
           fi
           tool_results+="{\"role\":\"function\",\"name\":\"$tool_name\",\"content\":\"$tool_result\"}"
           ;;
+        # "get_location")
+        #   # Perform the get_location tool call
+        #   tool_result=$(get_location)
+        #   debug "$DEBUG" && note "DEBUG: tool_result for get_location: $tool_result"
+        #   # replace real linefeeds with actual \n
+        #   # tool_result=$(echo "$tool_result" | sed ':a;N;$!ba;s/\n/\\n/g')
+        #   if [[ -n "$tool_results" ]]; then
+        #     tool_results+=","
+        #   fi
+        #   tool_results+="{\"role\":\"function\",\"name\":\"$tool_name\",\"content\":\"$tool_result\"}"
+        #   ;;
         "get_weather")
           # Perform the get_weather tool call
           local zip=$(echo "$tool_arguments" | jq -r 'fromjson | .zip_code')
@@ -345,6 +381,7 @@ ask() {
   fi
 }
 
+source_relative_once functions/truthy.bash
 
 if truthy RUN_DOTFILE_TESTS; then
   # IMPORTANT!
