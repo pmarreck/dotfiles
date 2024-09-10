@@ -292,10 +292,70 @@ just_one_taoup() {
   '
 }
 
+check_sixel_support() {
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  # Check if the terminal supports Sixel via infocmp
+  if infocmp -1 | grep -q "sixel"; then
+    [ -n "$DEBUG_SHELLCONFIG" ] && echo "Sixel support detected via terminfo." >&2
+    return 0
+  fi
+  # Check for known Sixel-capable terminals
+  case "$TERM" in
+    xterm-256color|xterm-kitty|mlterm|yaft|wezterm)
+      [ -n "$DEBUG_SHELLCONFIG" ] && echo "Terminal ($TERM) likely supports Sixel graphics." >&2
+      return 0
+      ;;
+  esac
+  # Check specific terminals that might not report via infocmp
+  if [[ "$TERM_PROGRAM" == "WezTerm" ]]; then
+    [ -n "$DEBUG_SHELLCONFIG" ] && echo "WezTerm detected, which supports Sixel." >&2
+    return 0
+  fi
+  if [[ "$TERM_PROGRAM" == "Apple_Terminal" ]]; then
+    [ -n "$DEBUG_SHELLCONFIG" ] && echo "Apple Terminal detected, which does not support Sixel." >&2
+    return 1
+  fi
+  if [[ "$WSLENV" ]]; then
+    [ -n "$DEBUG_SHELLCONFIG" ] && echo "WSL detected. Sixel support depends on the Windows terminal used." >&2
+    return 2
+  fi
+  if [[ "$ALACRITTY_LOG" || "$ALACRITTY_WINDOW_ID" ]]; then
+    [ -n "$DEBUG_SHELLCONFIG" ] && echo "Alacritty detected, which does not support Sixel as of 2024." >&2
+    return 1
+  fi
+  if [[ "$TERM" == "xterm-256color" ]]; then
+    parent_process=$(ps -p $PPID -o comm=)
+    if [[ "$parent_process" == *"cool-retro-term"* ]]; then
+      [ -n "$DEBUG_SHELLCONFIG" ] && echo "cool-retro-term detected, which does not support Sixel." >&2
+      return 1
+    fi
+  fi
+  if [[ "$TERM_PROGRAM" == "WarpTerminal" ]]; then
+    [ -n "$DEBUG_SHELLCONFIG" ] && echo "Warp terminal detected, which does not support Sixel as of 2024." >&2
+    return 1
+  fi
+  echo "Unable to determine Sixel support. Terminal: $TERM, TERM_PROGRAM: $TERM_PROGRAM" >&2
+  return 2
+}
+SIXEL_ENV=$(DEBUG_SHELLCONFIG=1 check_sixel_support 2>&1)
+SIXEL_CAPABLE=$?
+# if retcode is 0 then set SIXEL_CAPABLE to "true" else "false"
+if [ "$SIXEL_CAPABLE" -eq 0 ]; then
+  SIXEL_CAPABLE="true"
+else
+  SIXEL_CAPABLE="false"
+fi
+export SIXEL_ENV SIXEL_CAPABLE
+
 if [ "$INTERACTIVE_SHELL" = "true" ]; then
   fun_intro() {
     [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+    # how to detect whether we're in a sixel-capable terminal?
     _fun_things="fortune inthebeginning warhammer_quote bashorg_quote chuck mandelbrot asciidragon just_one_taoup"
+    if ! $SIXEL_CAPABLE; then
+      # remove sixel-capable items from _fun_things such as inthebeginning
+      _fun_things=$(echo "$_fun_things" | tr ' ' '\n' | grep -v 'inthebeginning' | tr '\n' ' ')
+    fi
     _count=0
     for _item in $_fun_things; do
       _count=$(( _count + 1 ))

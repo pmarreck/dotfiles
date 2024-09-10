@@ -26,11 +26,11 @@ tileheight=$((tilesize * 2 / 3))
 [ -n "$DEBUG" ] && echo "tileheight: $tileheight"
 
 # If you get questionmarks for Unicode filenames, try using a different font.
-# You can list fonts available using `convert -list font`.
+# You can list fonts available using `magick -list font`.
 #fontfamily=Droid-Sans-Fallback		# Great Asian font coverage
 #fontfamily=Dejavu-Sans			# Wide coverage, comes with GNU/Linux
 #fontfamily=Mincho			# Wide coverage, comes with MS Windows
-fontfamily="Helvetica-World"
+fontfamily="DejaVu-Sans"
 [ -n "$DEBUG" ] && echo "fontfamily: $fontfamily"
 # Default font size is based on width of each tile in montage.
 fontsize=$((tilewidth/20))
@@ -72,35 +72,35 @@ autodetect() {
 
     # Increase colors, if needed
     if [[ $numcolors -lt 256 ]]; then
-	# Attempt to set the number of colors to 256.
-	# This will work for xterm, but fail on a real vt340.
-	IFS=";"  read -a REPLY -s -t ${timeout} -d "S" -p $'\e[?1;3;256S' >&2
-	[[ ${REPLY[1]} == "0" ]] && numcolors=${REPLY[2]}
+    # Attempt to set the number of colors to 256.
+    # This will work for xterm, but fail on a real vt340.
+    IFS=";"  read -a REPLY -s -t ${timeout} -d "S" -p $'\e[?1;3;256S' >&2
+    [[ ${REPLY[1]} == "0" ]] && numcolors=${REPLY[2]}
     fi
 
     # Query the terminal background and foreground colors.
     IFS=";:/"  read -a REPLY -r -s -t ${timeout} -d "\\" -p $'\e]11;?\e\\' >&2
     if [[ ${REPLY[1]} =~ ^rgb ]]; then
-	# Return value format: $'\e]11;rgb:ffff/0000/ffff\e\\'.
-	# ImageMagick wants colors formatted as #ffff0000ffff.
-	background='#'${REPLY[2]}${REPLY[3]}${REPLY[4]%%$'\e'*}
-	IFS=";:/"  read -a REPLY -r -s -t ${timeout} -d "\\" -p $'\e]10;?\e\\' >&2
-	if [[ ${REPLY[1]} =~ ^rgb ]]; then
-	    foreground='#'${REPLY[2]}${REPLY[3]}${REPLY[4]%%$'\e'*}
-	    # Check for "Reverse Video".
-	    IFS=";?$"  read -a REPLY -s -t ${timeout} -d "y" -p $'\e[?5$p'
-	    if [[ ${REPLY[2]} == 1 || ${REPLY[2]} == 3 ]]; then
-		temp=$foreground
-		foreground=$background
-		background=$temp
-	    fi
-	fi
+    # Return value format: $'\e]11;rgb:ffff/0000/ffff\e\\'.
+    # ImageMagick wants colors formatted as #ffff0000ffff.
+    background='#'${REPLY[2]}${REPLY[3]}${REPLY[4]%%$'\e'*}
+    IFS=";:/"  read -a REPLY -r -s -t ${timeout} -d "\\" -p $'\e]10;?\e\\' >&2
+    if [[ ${REPLY[1]} =~ ^rgb ]]; then
+        foreground='#'${REPLY[2]}${REPLY[3]}${REPLY[4]%%$'\e'*}
+        # Check for "Reverse Video".
+        IFS=";?$"  read -a REPLY -s -t ${timeout} -d "y" -p $'\e[?5$p'
+        if [[ ${REPLY[2]} == 1 || ${REPLY[2]} == 3 ]]; then
+        temp=$foreground
+        foreground=$background
+        background=$temp
+        fi
+    fi
     fi
 
     # Try dtterm WindowOps to find out the window size.
     IFS=";" read -a REPLY -s -t ${timeout} -d "t" -p $'\e[14t' >&2
     if [[ $? == 0  &&  ${REPLY[2]} -gt 0 ]]; then
-	width=${REPLY[2]}
+    width=${REPLY[2]}
     fi
 
     # BUG WORKAROUND: XTerm cannot show images wider than 1000px.
@@ -123,19 +123,19 @@ main() {
     autodetect
 
     if [[ $# == 0 ]]; then
-	# No command line args? Use a sorted list of image files in CWD.
-	shopt -s nullglob nocaseglob nocasematch
-	set - *{jpg,jpeg,png,gif,tiff,tif,p?m,x[pb]m,bmp,ico,svg,eps}
-	[[ $# != 0 ]] || exit
-	mapfile -t < <(printf "%s\n" "$@" | sort)
+    # No command line args? Use a sorted list of image files in CWD.
+    shopt -s nullglob nocaseglob nocasematch
+    set - *{jpg,jpeg,png,gif,tiff,tif,p?m,x[pb]m,bmp,ico,svg,eps}
+    [[ $# != 0 ]] || exit
+    mapfile -t < <(printf "%s\n" "$@" | sort)
 
-	# Only show first frame of animated GIFs if filename not specified.
-	for x in ${!MAPFILE[@]}; do
-	    if [[ ${MAPFILE[$x]} =~ gif$ ]]; then
-		MAPFILE[$x]+="[0]"
-	    fi
-	done
-	set - "${MAPFILE[@]}"
+    # Only show first frame of animated GIFs if filename not specified.
+    for x in ${!MAPFILE[@]}; do
+        if [[ ${MAPFILE[$x]} =~ gif$ ]]; then
+        MAPFILE[$x]+="[0]"
+        fi
+    done
+    set - "${MAPFILE[@]}"
     fi
 
     # Resize on load: Save memory by appending this suffix to every filename.
@@ -147,7 +147,7 @@ main() {
     imoptions+=" -background $background -fill $foreground" # Use terminal's colors
     imoptions+=" -auto-orient "	# Properly rotate JPEGs from cameras
     if [[ $numcolors -gt 16 ]]; then
-	imoptions+=" -shadow "		# Just for fun :-)
+    imoptions+=" -shadow "		# Just for fun :-)
     fi
 
     # See top of this file to change fontfamily and fontsize.
@@ -157,17 +157,17 @@ main() {
     # Create and display montages one row at a time.
     while [ $# -gt 0 ]; do
         # While we still have images to process...
-	onerow=()
-	goal=$(($# - numtiles)) # How many tiles left after this row
-	while [ $# -gt 0  -a  $# -gt $goal ]; do
-	    len=${#onerow[@]}
-	    onerow[len++]="-label"
-	    onerow[len++]=$(processlabel "$1")
-	    onerow[len++]="$1"
-	    shift
-	done
-	montage "${onerow[@]}"  $imoptions gif:-  \
-	    | convert - -colors $numcolors sixel:-
+    onerow=()
+    goal=$(($# - numtiles)) # How many tiles left after this row
+    while [ $# -gt 0  -a  $# -gt $goal ]; do
+        len=${#onerow[@]}
+        onerow[len++]="-label"
+        onerow[len++]=$(processlabel "$1")
+        onerow[len++]="$1"
+        shift
+    done
+    montage "${onerow[@]}"  $imoptions gif:-  \
+        | magick - -colors $numcolors sixel:-
     done
 }
 
@@ -179,19 +179,19 @@ processlabel() {
     # 4. Split long filenames with newlines (recursively)
     span=45			# filenames longer than span will be split
     echo -n "$1" |
-	sed 's|\[0]$||;' | tr '[:cntrl:]' '?' |
-	awk -v span=$span -v ORS=""  '
-	function halve(s,      l,h) { 	# l and h are locals
-	    l=length(s);  h=int(l/2);
-	    if (l <= span) { return s; }
-	    return halve(substr(s, 1, h))  "\n"  halve(substr(s, h+1));
-	}
-	{
-	  if ( length($0) > span ) gsub(/\..?.?.?.?$/, "");
-	  print halve($0);
+    sed 's|\[0]$||;' | tr '[:cntrl:]' '?' |
+    awk -v span=$span -v ORS=""  '
+    function halve(s,      l,h) { 	# l and h are locals
+        l=length(s);  h=int(l/2);
+        if (l <= span) { return s; }
+        return halve(substr(s, 1, h))  "\n"  halve(substr(s, h+1));
+    }
+    {
+      if ( length($0) > span ) gsub(/\..?.?.?.?$/, "");
+      print halve($0);
         }
         ' |
-	sed 's|%|%%|g; s|\\|\\\\|g; s|@|\\@|g;'
+    sed 's|%|%%|g; s|\\|\\\\|g; s|@|\\@|g;'
 }
 
 ####
@@ -236,7 +236,7 @@ read -s -t 60 -d "c" -p $'\e[c' >&2
 
 # * To make vt340 be the default xterm type, set this in .Xresources:
 #
-#     ! Allow sixel graphics. (Try: "convert -colors 16 foo.jpg sixel:-").
+#     ! Allow sixel graphics. (Try: "magick -colors 16 foo.jpg sixel:-").
 #     xterm*decTerminalID	:	vt340
 
 # * Xterm does not support reporting the screen size in pixels unless

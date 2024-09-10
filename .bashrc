@@ -58,12 +58,12 @@ needs() {
 
 # blesh (ble.sh) config
 # needs the system stty softlinked from ~/bin (or ~/dotfiles/bin) to temporarily be ahead of PATH for ble.sh to work
-_OLD_PATH="$PATH"
-PATH="$HOME/bin:$PATH"
-needs blesh-share "please install blesh" && source `blesh-share`/ble.sh
-$INTERACTIVE_SHELL && source `blesh-share`/ble.sh --noattach
-PATH="$_OLD_PATH"
-unset _OLD_PATH
+# _OLD_PATH="$PATH"
+# PATH="$HOME/bin:$PATH"
+# needs blesh-share "please install blesh" && source `blesh-share`/ble.sh
+# $INTERACTIVE_SHELL && source `blesh-share`/ble.sh --noattach
+# PATH="$_OLD_PATH"
+# unset _OLD_PATH
 
 # User configuration
 # export MANPATH="/usr/local/man:$MANPATH"
@@ -73,12 +73,29 @@ export LANG=en_US.UTF-8
 
 # Preferred editor for local and remote sessions
 if [[ -n $SSH_CONNECTION ]]; then
-  export EDITOR='micro'
+  needs micro "please install the micro editor" && export EDITOR='micro' || export EDITOR='nano'
   unset VISUAL
 else
-  export EDITOR='code -g'
-  export VISUAL='code -g'
+  needs micro "please install the micro editor" && export EDITOR='micro' || export EDITOR='nano'
+  needs cursor "please install the Cursor.sh editor" && export VISUAL='cursor -g' || export VISUAL="$EDITOR"
+  export EDITOR='micro'
+  export VISUAL='cursor -g'
 fi
+
+choose_editor() {
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  if [[ -n "$VISUAL" && -t 1 ]]; then
+    # If VISUAL is set and the terminal is interactive
+    $VISUAL $*
+  elif [[ -n "$EDITOR" ]]; then
+    # Otherwise, fall back to EDITOR if it's set
+    $EDITOR $*
+  else
+    # Fallback to a sensible default, like vi or nano
+    nano $*
+  fi
+}
+
 
 # go directly to edit of function source
 edit_function() {
@@ -121,7 +138,7 @@ edit_function() {
   #    ripgrep's output is of the form "linenumber:matched_line" due to the `-n` flag,
   #    so cutting on the colon in this way, gets the line number.
   local fl=$(rg -n -e "${function_name} *\(\) *\{" -e "function +${function_name}(?: *\(\))? *\{" "$file" | tail -n1 | cut -d: -f1)
-  $EDITOR "$file":$fl
+  choose_editor "${file}:${fl}"
 }
 
 # Compilation flags
@@ -270,8 +287,8 @@ source_relative_once .envconfig
 # Load hooks
 source $HOME/bin/apply-hooks || echo "Problem when sourcing $HOME/bin/apply-hooks"
 
-# activate ble.sh
-[[ ! ${BLE_VERSION-} ]] || ble-attach
+# activate ble.sh/blesh
+# [[ ! ${BLE_VERSION-} ]] || ble-attach
 
 [ -n "${DEBUG_SHELLCONFIG}" ] && echo "Exiting $(echo "${BASH_SOURCE[0]}" | sed "s|^$HOME|~|")"
 [ -n "${DEBUG_PATHCONFIG}" ] && echo "$PATH" || :

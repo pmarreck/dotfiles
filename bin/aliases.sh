@@ -39,7 +39,7 @@ if [ "${PLATFORM}-${DISTRO}" = "linux-NixOS" ]; then
     [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
     echo "$(datetimestamp) generation $(nix-gen-num); nvidia version $(nvidia --version); kernel version $(uname -r)" >> ~/nix-genstamp.txt
   }
-  alias nixos="$EDITOR /etc/nixos"
+  alias nixos="choose_editor /etc/nixos"
   function abbrev-nix-store-paths(){
     [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
     sed -E 's|/nix/store/[a-z0-9]{32}-|/⌘/|g'
@@ -119,7 +119,8 @@ getfiles() {
 alias consoleconfig='code $WEZTERM_CONFIG_FILE'
 
 # quick CLI editor shortcut
-alias e='micro'
+needs micro "please install the micro editor"
+alias e='choose_editor'
 
 # why is grep dumb?
 # alias grep='egrep'
@@ -128,10 +129,11 @@ alias e='micro'
 # alias forkbomb=':(){ :|:& };:'
 
 # GIT shortcuts
+needs git "please install git"
 alias gb='git branch'
 # alias gbnotes='git branch --edit-description'
 # alias gba='git branch -a'
-alias gc='EDITOR="subl" git commit -v'
+alias gc='git commit -v'
 alias push='git push'
 # alias pushforce='git push -f'
 alias pull='git pull --rebase'
@@ -155,6 +157,7 @@ alias fetchall='git fetch --all --prune'
 
 # lines of code counter
 # brew install tokei
+needs tokei "please install tokei"
 alias loc='tokei'
 
 # homebrew utils

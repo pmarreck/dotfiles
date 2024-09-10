@@ -302,14 +302,14 @@ edit() {
   if contains "$(functions)" $1; then
     EDIT=1 $1
   else
-    $EDITOR "$@"
+    choose_editor "$@"
   fi
 }
 
 # gem opener, if you have not yet moved on from Ruby to Elixir :)
 open_gem() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-  $EDITOR "$(bundle show "$1")"
+  choose_editor "$(bundle show "$1")"
 }
 
 ltrim() {

@@ -89,12 +89,14 @@ show() {
     # if it's an image file, display it
     if file "$word" | grep -q image; then
       note "$word is an image file"
-      convert "$word" -resize 100% -geometry +0+0 -compress none -type truecolor sixel:-
+      needs magick "please install imagemagick" && \
+      magick "$word" -resize 100% -geometry +0+0 -compress none -type truecolor sixel:-
       return 0
     else
       note "$word is a file on disk"
       # pygmentize will error if it's not a format it doesn't understand;
       # in that case, just cat it
+      needs pygmentize "please install pygmentize" && \
       pygmentize -O style=$PYGMENTIZE_STYLE "$word" 2>/dev/null
       if [ $? -eq 0 ]; then
         return 0
