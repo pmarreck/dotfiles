@@ -1,0 +1,136 @@
+#!/usr/bin/env bash
+
+# Configuration
+ELEVENLABS_VOICE_ID="7n4aUIud2w28FzG1rK1m" # Raphael (Baldurs Gate 3)
+MESSAGES_DIR="$HOME/goodnight_messages"
+LOG_FILE="$MESSAGES_DIR/goodnight_script.log"
+# Error if the env hasn't provided ANTHROPIC_API_KEY or ELEVENLABS_API_KEY
+if [ -z "$ANTHROPIC_API_KEY" ] || [ -z "$ELEVENLABS_API_KEY" ]; then
+    echo "Error: ANTHROPIC_API_KEY or ELEVENLABS_API_KEY is not set"
+    exit 1
+fi
+# NOTE: Please check https://docs.anthropic.com for the latest API version
+# and update the 'anthropic-version' header below if necessary.
+ANTHROPIC_API_VERSION="2023-06-01"
+
+# ElevenLabs voice settings
+STABILITY="0.5"
+SIMILARITY_BOOST="0.75"
+STYLE="0.3"
+SPEAKER_BOOST="true"
+
+# Ensure the messages directory exists
+mkdir -p "$MESSAGES_DIR"
+
+# Logging function
+log() {
+    echo "$(date): $1" >> "$LOG_FILE"
+}
+
+# Function to generate message using Anthropic API
+generate_message() {
+    local prompt="I need a nudge to go to sleep at 11pm. Write me an encouraging reminder to head to bed, tailored to me, that perhaps mentions an advantage of sleep, and teasingly jokes me about saving the game or putting down the tech project in the functional language I am working on. I will be voicing what you say using the Raphael voice from Baldurs Gate 3 (Andrew Wincott) so make sure to say something in his fancy-yet-doom-and-gloom conversational style."
+    log "Sending request to Anthropic API with prompt:\n$prompt"
+    local response=$(curl -s -X POST "https://api.anthropic.com/v1/messages" \
+        -H "Content-Type: application/json" \
+        -H "x-api-key: $ANTHROPIC_API_KEY" \
+        -H "anthropic-version: $ANTHROPIC_API_VERSION" \
+        -d '{
+            "model": "claude-3-sonnet-20240229",
+            "max_tokens": 300,
+            "messages": [{"role": "user", "content": "'"$prompt"'"}]
+        }')
+    log "Received response from Anthropic API: $response"
+    
+    if [ -z "$response" ]; then
+        log "Error: Empty response from Anthropic API"
+        return 1
+    fi
+    
+    local message=$(echo "$response" | jq -r '.content[0].text')
+    if [ "$message" = "null" ] || [ -z "$message" ]; then
+        log "Error: Failed to extract message from Anthropic API response"
+        return 1
+    fi
+
+    # Remove newlines and escape special characters
+    message=$(echo "$message" | tr '\n' ' ' | sed 's/"/\\"/g' | sed "s/'/\\'/g")
+    
+    echo "$message"
+}
+
+# Function to generate audio using ElevenLabs API
+generate_audio() {
+    local text="$1"
+    log "Sending request to ElevenLabs API"
+    local response=$(curl -s -X POST "https://api.elevenlabs.io/v1/text-to-speech/$ELEVENLABS_VOICE_ID" \
+        -H "Content-Type: application/json" \
+        -H "xi-api-key: $ELEVENLABS_API_KEY" \
+        -d "{
+              \"text\": \"$text\",
+              \"model_id\": \"eleven_multilingual_v2\",
+              \"voice_settings\": {
+                  \"stability\": $STABILITY,
+                  \"similarity_boost\": $SIMILARITY_BOOST,
+                  \"style\": $STYLE,
+                  \"use_speaker_boost\": $SPEAKER_BOOST
+              }
+            }" \
+        --output "$MESSAGES_DIR/goodnight_message.mp3")
+    # if the file type of the response is not audio/mpeg, then log the response and exit with error
+    if [ "$(file -b --mime-type "$MESSAGES_DIR/goodnight_message.mp3")" != "audio/mpeg" ]; then
+        log "Error: Failed to generate audio file. Response:\n$(cat $MESSAGES_DIR/goodnight_message.mp3)"
+        return 1
+    else
+        log "Successfully generated audio file"
+    fi
+}
+
+# Function to play audio and send notification
+play_audio_and_notify() {
+    local message="$1"
+    
+    # Play audio
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        afplay "$MESSAGES_DIR/goodnight_message.mp3"
+    else
+        mpg123 "$MESSAGES_DIR/goodnight_message.mp3"
+    fi
+    
+    # Send notification
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        osascript -e "display notification \"$message\" with title \"Goodnight Message\""
+    else
+        notify-send "Goodnight Message" "$message"
+    fi
+    
+    log "Played audio and sent notification"
+}
+
+# Main script
+log "Script started"
+
+message=$(generate_message)
+if [ $? -ne 0 ]; then
+    log "Failed to generate message. Exiting."
+    exit 1
+fi
+
+echo "Generated message: $message"
+log "Generated message: $message"
+
+# Move existing file if it exists
+if [ -f "$MESSAGES_DIR/goodnight_message.mp3" ]; then
+    mv "$MESSAGES_DIR/goodnight_message.mp3" "$MESSAGES_DIR/goodnight_message_$(date -r "$MESSAGES_DIR/goodnight_message.mp3" +%Y%m%d).mp3"
+    log "Moved existing audio file"
+fi
+
+generate_audio "$message"
+if [ $? -ne 0 ]; then
+    log "Failed to generate audio. Exiting."
+    exit 1
+fi
+
+play_audio_and_notify "$message"
+
+log "Script completed successfully"

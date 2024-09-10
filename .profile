@@ -299,13 +299,6 @@ check_sixel_support() {
     [ -n "$DEBUG_SHELLCONFIG" ] && echo "Sixel support detected via terminfo." >&2
     return 0
   fi
-  # Check for known Sixel-capable terminals
-  case "$TERM" in
-    xterm-256color|xterm-kitty|mlterm|yaft|wezterm)
-      [ -n "$DEBUG_SHELLCONFIG" ] && echo "Terminal ($TERM) likely supports Sixel graphics." >&2
-      return 0
-      ;;
-  esac
   # Check specific terminals that might not report via infocmp
   if [[ "$TERM_PROGRAM" == "WezTerm" ]]; then
     [ -n "$DEBUG_SHELLCONFIG" ] && echo "WezTerm detected, which supports Sixel." >&2
@@ -334,6 +327,13 @@ check_sixel_support() {
     [ -n "$DEBUG_SHELLCONFIG" ] && echo "Warp terminal detected, which does not support Sixel as of 2024." >&2
     return 1
   fi
+  # Fall back on the assumption that these might work
+  case "$TERM" in
+    xterm-256color|xterm-kitty|mlterm|yaft|wezterm)
+      [ -n "$DEBUG_SHELLCONFIG" ] && echo "Terminal ($TERM) likely supports Sixel graphics." >&2
+      return 0
+      ;;
+  esac
   echo "Unable to determine Sixel support. Terminal: $TERM, TERM_PROGRAM: $TERM_PROGRAM" >&2
   return 2
 }
