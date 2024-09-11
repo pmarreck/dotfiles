@@ -172,28 +172,37 @@ trim_leading_heredoc_whitespace() {
 }
 
 if [ "$RUN_DOTFILE_TESTS" == "true" ]; then
-  assert "$(echo -e "  This\n  is a\n  multiline\n  string." | trim_leading_heredoc_whitespace)" == "This\nis a\nmultiline\nstring."
+  assert "$(echo -e "  This\n  is a\n    multiline\n  string." | trim_leading_heredoc_whitespace)" == "This\nis a\n  multiline\nstring."
 fi
 
-collapse_whitespace_containing_newline_to_single_space() {
+# The point of this function is to unwrap word-wrapped (which should
+# really be called "line-wrapped") text that has had newlines inserted,
+# but leave intentional newlines (those without surrounding whitespace)
+# alone.
+line_unwrap() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   # this expects contents to be piped in via stdin
-  local sed=$(command -v gsed || command -v sed)
-  [ "${PLATFORM}${sed}" == "osxsed" ] && echo "WARNING: function collapse_whitespace_containing_newline_to_single_space: The sed on PATH is not GNU sed on macOS, which may cause problems" >&2
-  $sed -e ':a' -e 'N' -e '$!ba' -e 's/\s\n/ /g' -e 's/\n\s/ /g' -e 's/\s+/ /g'
+  [[ "$(sed --version | head -1)" =~ .*GNU.* ]] || echo "WARNING: function line_unwrap: The sed on PATH is not GNU sed, which may cause problems" >&2
+  sed -E -e ':a;N;$!ba' -e 's/(\s+\n\s+|\s+\n|\n\s+)/ /g'
 }
+alias word_unwrap=line_unwrap
 
 if [ "$RUN_DOTFILE_TESTS" == "true" ]; then
-  assert "$(echo -e "This\nis a \nmultiline\n string." | collapse_whitespace_containing_newline_to_single_space)" == "This\nis a multiline string."
+  assert "$(echo -e "This\nis a \nmultiline\n string." | line_unwrap)" == "This\nis a multiline string."
 fi
 
 # Is this a color TTY? Or, is one (or the lack of one) being faked for testing reasons?
 isacolortty() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-  [[ -n "${FAKE_COLORTTY}" ]] && return 0
-  [[ -n "${FAKE_NOCOLORTTY}" ]] && return 1
   [[ "$TERM" =~ 'color' ]] && return 0 || return 1
 }
+
+if [ "$RUN_DOTFILE_TESTS" == "true" ]; then
+  TERM=xterm-256color isacolortty
+  assert "$?" == "0"
+  TERM=dumb isacolortty
+  assert "$?" == "1"
+fi
 
 # echo has nonstandard behavior, so...
 puts() {
@@ -267,16 +276,27 @@ fail() {
 
 strip_ansi() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-  local ansiregex="s/[\x1b\x9b]\[([0-9]{1,4}(;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]//g"
-  # Take stdin if it's there; otherwise expect arguments.
-  # The following exits code 0 if stdin not empty; 1 if empty; does not consume any bytes.
-  # This may only be a Bash-ism, FYI. Not sure if it's shell-portable.
-  if read -t 0; then # consume stdin
-    sed -E "$ansiregex"
+  local ansiregex="s/\x1b\[[0-9;]*[a-zA-Z]//g"
+
+  if [ -t 0 ] && [ "$#" -eq 0 ]; then
+    printf "Usage: strip_ansi [text]\n"
+    printf "   or: printf '%%s' text | strip_ansi\n"
+    return 1
+  fi
+
+  if [ -t 0 ]; then
+    # Input from arguments
+    printf '%b' "$*" | sed -E "$ansiregex"
   else
-    puts -en "${1}" | sed -E "$ansiregex"
+    # Input from pipe
+    sed -E "$ansiregex"
   fi
 }
+
+if [ "$RUN_DOTFILE_TESTS" == "true" ]; then
+  assert "$(printf '\e[31mRed text\e[0m' | strip_ansi)" == "Red text"
+  assert "$(strip_ansi '\e[93mYellow text\e[0m')" == "Yellow text"
+fi
 
 # elixir and js lines of code count
 # removes blank lines and commented-out lines
@@ -295,6 +315,14 @@ contains() {
   done
   return 1
 }
+
+if [ "$RUN_DOTFILE_TESTS" == "true" ]; then
+  contains "foo bar baz" "bar"
+  assert "$?" == "0"
+  contains "foo bar" "quux"
+  assert "$?" == "1"
+fi
+
 # universal edit command, points back to your defined $EDITOR
 # note that there is an "edit" command in Ubuntu that I told to fuck off basically
 edit() {

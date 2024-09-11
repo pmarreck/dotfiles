@@ -421,7 +421,7 @@ if truthy RUN_DOTFILE_TESTS; then
         ;;
       esac
     done
-    cat <<EOF | trim_leading_heredoc_whitespace | collapse_whitespace_containing_newline_to_single_space > "$output_file"
+    cat <<EOF | trim_leading_heredoc_whitespace | line_unwrap > "$output_file"
       {"id":"chatcmpl-6q7qCBoIJGlRldK97GQrLAcfOqXwS","object":"chat.completion",
       "created":1677881216,"model":"test-model","usage":{"prompt_tokens":29,
       "completion_tokens":96,"total_tokens":125},"choices":[{"message":{"role":"assistant",
