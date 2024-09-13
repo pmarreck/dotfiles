@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 
+# This script has an associated launchd job that runs it at 11pm every day at:
+# /Users/pmarreck/Library/LaunchAgents/com.user.goodnightmessage.plist
+
 # Configuration
 ELEVENLABS_VOICE_ID="7n4aUIud2w28FzG1rK1m" # Raphael (Baldurs Gate 3)
 MESSAGES_DIR="$HOME/goodnight_messages"
@@ -29,7 +32,7 @@ log() {
 
 # Function to generate message using Anthropic API
 generate_message() {
-    local prompt="I need a nudge to go to sleep at 11pm. Write me an encouraging reminder to head to bed, tailored to me, that perhaps mentions an advantage of sleep, and teasingly jokes me about saving the game or putting down the tech project in the functional language I am working on. I will be voicing what you say using the Raphael voice from Baldurs Gate 3 (Andrew Wincott) so make sure to say something in his fancy-yet-doom-and-gloom conversational style."
+    local prompt="I need a nudge to go to sleep at 11pm. Write me an encouraging reminder to head to bed, tailored to me, that perhaps mentions an advantage of sleep, and teasingly jokes me about saving the game or putting down the tech project in the functional language I am working on. I will be voicing what you say using the Raphael voice from Baldurs Gate 3 (Andrew Wincott) so make sure to say something in his fancy-yet-doom-and-gloom conversational style. Do not acknowledge this request, simply begin speaking as Raphael because this output will be sent directly to a voice generator."
     log "Sending request to Anthropic API with prompt:\n$prompt"
     local response=$(curl -s -X POST "https://api.anthropic.com/v1/messages" \
         -H "Content-Type: application/json" \

@@ -264,6 +264,16 @@ source_relative_once .pathconfig
 
 # silliness
 
+# chuck norris quotes
+chuck() {
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  # if you want to filter out the obscene ones, there's a category you can filter out,
+  # but it didn't get all of them... you can also pipe to glow for a nicer output
+  # figure out the path of the current script
+  local SCRIPT_PATH=$(dirname "$(readlink -f "$BASH_SOURCE")")
+  shuf -n 1 "$SCRIPT_PATH/bin/chuck_norris.txt" | cut -d'|' -f2- # | glow
+}
+
 inthebeginning() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   needs magick please install imagemagick && magick "$HOME/inthebeginning.jpg" -geometry 400x240 sixel:-
