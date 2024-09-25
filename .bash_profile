@@ -41,3 +41,7 @@ source "${HOME}/dotfiles/run_tests_on_change.sh"
 
 [ "${DEBUG_SHELLCONFIG+set}" = "set" ] && echo "Exiting $(echo "${BASH_SOURCE[0]}" | sed "s|^$HOME|~|")"
 [ "${DEBUG_PATHCONFIG+set}" = "set" ] && echo "$PATH" || :
+
+# Added by OrbStack: command-line tools and integration
+# Comment this line if you don't want it to be added again.
+source ~/.orbstack/shell/init.bash 2>/dev/null || :

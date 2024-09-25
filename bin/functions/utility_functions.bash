@@ -9,6 +9,9 @@ needs() {
   command -v "$bin" >/dev/null 2>&1 || { echo >&2 "I require $bin but it's not installed or in PATH; $*"; return 1; }
 }
 
+# check if the AWK environment variable is already set and if not, set it to frawk, gawk, or awk
+[ -z "${AWK}" ] && export AWK=$(command -v frawk || command -v gawk || command -v awk)
+
 if [ "$RUN_DOTFILE_TESTS" == "true" ]; then
   source_relative_once assert.bash
 fi
@@ -29,9 +32,6 @@ restore_shellenv() {
   export HISTIGNORE=$OLDHISTIGNORE
   unset OLDHISTIGNORE
 }
-
-# check if the AWK environment variable is already set and if not, set it to gawk or awk
-[ -z "${AWK}" ] && export AWK=$(command -v gawk || command -v awk)
 
 uniquify_array() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
@@ -167,8 +167,42 @@ __wezterm_osc7_home() {
 
 trim_leading_heredoc_whitespace() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-  # this expects heredoc contents to be piped in via stdin
-  ${AWK:-awk} 'BEGIN { shortest = 99999 } /^[[:space:]]+/ { match($0, /[^[:space:]]/); shortest = shortest < RSTART - 1 ? shortest : RSTART - 1 } END { OFS=""; } { gsub("^" substr($0, 1, shortest), ""); print }'
+  #  echo "Debug: Function started" >&2
+  # For some reason, frawk screws this up. No time to troubleshoot.
+  needs gawk "please install gawk to run this function" && \
+  gawk '
+  BEGIN { shortest = -1 }
+  {
+    lines[NR] = $0
+    #  print "Debug: Processing line: [" $0 "]" > "/dev/stderr"
+    #  print "Debug: Line length: " length($0) > "/dev/stderr"
+    match($0, /[^[:space:]]/);
+    #  print "Debug: RSTART = " RSTART > "/dev/stderr"
+    if (RSTART > 0) {
+      if (shortest == -1 || RSTART - 1 < shortest) {
+        shortest = RSTART - 1
+      #  print "Debug: shortest updated to " shortest > "/dev/stderr"
+    }
+  } else {
+    #  print "Debug: No match found in this line" > "/dev/stderr"
+  }
+}
+END {
+  #  print "Debug: END block reached, shortest = " shortest > "/dev/stderr"
+  if (shortest >= 0) {
+    for (i=1; i<=NR; i++) {
+      if (length(lines[i]) > shortest) {
+        print substr(lines[i], shortest + 1)
+      } else {
+        print ""
+      }
+    }
+  } else {
+    #  print "Debug: No processing done (shortest < 0)" > "/dev/stderr"
+  }
+}
+'
+#  echo "Debug: Function ended" >&2
 }
 
 if [ "$RUN_DOTFILE_TESTS" == "true" ]; then

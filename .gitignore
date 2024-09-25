@@ -4,4 +4,9 @@
 .netrc
 .bash_history
 bin/direnv
-
+bin/docker
+bin/docker-compose
+bin/docker-credential-osxkeychain
+bin/kubectl
+bin/orb
+bin/orbctl

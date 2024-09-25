@@ -7,11 +7,14 @@
 # To set the default tab width on your terminal (which unfortunately defaults to 8),
 # run: `tabs -2` (or whatever width you want), possibly in your dotfiles.
 
+# is AWK set to anything? If not, prefer frawk, then gawk, then awk
+[ -z "${AWK}" ] && export AWK=$(command -v frawk || command -v gawk || command -v awk)
+
 reformat_spaces_to_tabs() {
 	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	local file="$1"
 	function determine_tab_size_in_spaces() {
-		awk '
+		$AWK '
 			{
 				# Match the leading spaces and count the occurrences
 				match($0, /^ */);
@@ -59,7 +62,7 @@ reformat_spaces_to_tabs() {
 	if (( indent > 0 )); then
 		# >&2 echo "Indent size: $indent"
 		indent_spaces=$(printf "%${indent}s")
-		awk -v indent="$indent_spaces" '
+		$AWK -v indent="$indent_spaces" '
 		{
 			while (match($0, "^\t*"indent)) {
 				$0 = gensub("^(\t*)"indent, "\\1\t", "g");

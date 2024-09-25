@@ -58,7 +58,7 @@ if [ "${PLATFORM}" = "linux" ]; then
   # list processes with optional filter argument
   list-procs() {
     [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-    PS_PERSONALITY=linux ps -ewwo pid,%cpu,%mem,nice,pri,rtprio,args --sort=-pcpu,-pid | awk -v filter="$1" 'NR==1 || tolower($0) ~ tolower(filter)' | less -e --header=1
+    PS_PERSONALITY=linux ps -ewwo pid,%cpu,%mem,nice,pri,rtprio,args --sort=-pcpu,-pid | $AWK -v filter="$1" 'NR==1 || tolower($0) ~ tolower(filter)' | less -e --header=1
   }
   alias procs=list-procs
   source_relative_once bin/functions/nvidia.bash
@@ -81,6 +81,8 @@ write_iso() {
 }
 
 source_relative_once bin/functions/cpv_copy_verbose.sh
+
+source_relative_once bin/functions/date_difference_days.bash
 
 source_relative_once bin/functions/calc.bash
 
@@ -302,6 +304,12 @@ just_one_taoup() {
   '
 }
 
+times_older_than_samson() {
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  echo "Peter, you are $(times_older_than "1972-04-05" "2021-06-25") times older than Samson."
+}
+
+
 check_sixel_support() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   # Check if the terminal supports Sixel via infocmp
@@ -360,37 +368,22 @@ export SIXEL_ENV SIXEL_CAPABLE
 if [ "$INTERACTIVE_SHELL" = "true" ]; then
   fun_intro() {
     [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-    # how to detect whether we're in a sixel-capable terminal?
-    _fun_things="fortune inthebeginning warhammer_quote bashorg_quote chuck mandelbrot asciidragon just_one_taoup"
+    sixel_less="fortune warhammer_quote bashorg_quote chuck mandelbrot asciidragon just_one_taoup times_older_than_samson"
+    # This one requires a Sixel-capable terminal
+    sixel_ful="inthebeginning"
     if ! $SIXEL_CAPABLE; then
-      # remove sixel-capable items from _fun_things such as inthebeginning
-      _fun_things=$(echo "$_fun_things" | tr ' ' '\n' | grep -v 'inthebeginning' | tr '\n' ' ')
+      _fun_things="$sixel_less"
+    else
+      _fun_things="$sixel_less $sixel_ful"
     fi
-    _count=0
-    for _item in $_fun_things; do
-      _count=$(( _count + 1 ))
-    done
-
-    _random_seed=`date +%N`
-    _random_number=`$AWK -v seed="$_random_seed" 'BEGIN { srand(seed); print int(rand() * 32768) }'`
-    _idx=$(( _random_number % _count ))
-
-    _current_idx=0
-    _selected_fun_thing=""
-    for _item in $_fun_things; do
-      if [ $_current_idx -eq $_idx ]; then
-        _selected_fun_thing="$_item"
-        break
-      fi
-      _current_idx=$(( _current_idx + 1 ))
-    done
+    _selected_fun_thing=$(echo "$_fun_things" | tr ' ' '\n' | shuf -n 1)
 
     if command -v "$_selected_fun_thing" >/dev/null 2>&1; then
       eval "$_selected_fun_thing"
     else
       echo "Tried to call '$_selected_fun_thing', but it was not defined" >&2
     fi
-    unset _fun_things _count _random_seed _random_number _idx _current_idx _selected_fun_thing _item
+    unset _fun_things sixel_less sixel_ful _selected_fun_thing
   }
   fun_intro
 fi

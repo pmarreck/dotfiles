@@ -157,7 +157,7 @@ source "$HOME/dotfiles/bin/functions/source_relative.bash"
 [[ -s "$HOME/.guix-profile/etc/profile" ]] && source $HOME/.guix-profile/etc/profile
 
 # Awk-ward! (see note below about "using the right awk"...)
-AWK=$(command -v gawk || command -v awk)
+AWK=$(command -v frawk || command -v gawk || command -v awk)
 export AWK
 
 # using the right awk is a PITA on macOS vs. Linux so let's ensure GNU Awk everywhere
