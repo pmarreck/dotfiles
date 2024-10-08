@@ -304,6 +304,8 @@ just_one_taoup() {
   '
 }
 
+source_relative_once bin/times_older_than
+
 times_older_than_samson() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   echo "Peter, you are $(times_older_than "1972-04-05" "2021-06-25") times older than Samson."

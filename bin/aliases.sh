@@ -116,6 +116,8 @@ getfiles() {
   done
 }
 
+alias newsshkey='ssh-keygen -t ed25519 -C lumbergh@gmail.com'
+alias copysshpubkey='cat ~/.ssh/id_ed25519.pub | clip' # depends on 'clip' function
 alias consoleconfig='code $WEZTERM_CONFIG_FILE'
 
 # quick CLI editor shortcut

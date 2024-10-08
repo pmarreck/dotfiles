@@ -32,7 +32,7 @@ log() {
 
 # Function to generate message using Anthropic API
 generate_message() {
-    local prompt="I need a nudge to go to sleep at 11pm. Write me an encouraging reminder to head to bed, tailored to me, that perhaps mentions an advantage of sleep, and teasingly jokes me about saving the game or putting down the tech project in the functional language I am working on. I will be voicing what you say using the Raphael voice from Baldurs Gate 3 (Andrew Wincott) so make sure to say something in his fancy-yet-doom-and-gloom conversational style. Do not acknowledge this request, simply begin speaking as Raphael because this output will be sent directly to a voice generator."
+    local prompt="I need a nudge to go to sleep at 11pm. Write me an encouraging but urgent reminder to head to bed, tailored to me, that perhaps mentions an advantage of sleep, and teasingly jokes me about saving the game or putting down the tech project in whatever functional language I am working on. I will be voicing what you say using the Raphael voice from Baldurs Gate 3 (Andrew Wincott) so make sure to say something in his fancy-yet-doom-and-gloom conversational style. Do not acknowledge this request, do not incluce stage direction or action lines, provide only the dialogue as Raphael would speak it, because this output will be sent directly to a voice generator."
     log "Sending request to Anthropic API with prompt:\n$prompt"
     local response=$(curl -s -X POST "https://api.anthropic.com/v1/messages" \
         -H "Content-Type: application/json" \
