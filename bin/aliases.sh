@@ -15,11 +15,25 @@ alias files='find \!:1 -type f -print'      # files x => list files in x
 # alias line='sed -n '\''\!:1 p'\'' \!:2'    # line 5 file => show line 5 of file
 # alias l='ls -lGaph'
 # brew install exa
-alias l='eza --long --header --sort=name --all'
-alias l1='l --git -@ --icons'
-alias l2='l1 --tree --level=2'
-alias l3='l1 --tree --level=3' #--extended
-alias l4='l1 --tree --level=4'
+alias _ldefault='eza --long --header --all --icons --git --sort'
+alias l='_ldefault name'
+alias le='l -@'
+alias lsize='_ldefault size --total-size -r'
+alias l0='l --git-ignore --tree'
+alias le0='le --git-ignore --tree'
+alias lsize0='lsize --git-ignore --tree'
+alias l1='l0 --level=1'
+alias le1='le0 --level=1'
+alias lsize1='lsize0 --level=1'
+alias l2='l0 --level=2'
+alias le2='le0 --level=2'
+alias lsize2='lsize0 --level=2'
+alias l3='l0 --level=3'
+alias le3='le0 --level=3'
+alias lsize3='lsize0 --level=3'
+alias l4='l0 --level=4'
+alias le4='le0 --level=4'
+alias lsize4='lsize0 --level=4'
 # alias ll='ls -lagG \!* | more'
 # alias term='set noglob; unset TERMCAP; eval `tset -s -I -Q - \!*`'
 # alias rehash='hash -r'
@@ -61,13 +75,11 @@ alias bye='logout'
 # to a "Documents-CloudManaged" folder
 if [ "$PLATFORM" = "osx" ]; then
   alias mpnetwork='cd ~/Documents-CloudManaged/mpnetwork'
-  alias addigence='cd ~/Documents-CloudManaged/addigence-ex'
 else
   alias mpnetwork='cd ~/Documents/mpnetwork'
-  alias addigence='cd ~/Documents/addigence-ex'
 fi
 # alias simpaticio='cd ~/Documents/simpaticio'
-alias work=addigence
+alias work=dotfiles
 
 alias dotfiles='cd ~/dotfiles'
 
