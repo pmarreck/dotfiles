@@ -3,9 +3,9 @@
 <plist version="1.0">
 <dict>
 	<key>AMApplicationBuild</key>
-	<string>381</string>
+	<string>526</string>
 	<key>AMApplicationVersion</key>
-	<string>2.4</string>
+	<string>2.10</string>
 	<key>AMDocumentVersion</key>
 	<string>2</string>
 	<key>actions</key>
@@ -59,7 +59,7 @@
 				<key>ActionParameters</key>
 				<dict>
 					<key>COMMAND_STRING</key>
-					<string>pbz=/usr/local/bin/pbzip2
+					<string>pbz="/Users/pmarreck/.nix-profile/bin/pbzip2"
 
 for f in "$@"
 do
@@ -69,10 +69,10 @@ do
 	filename=${fout##/*/}  # deletes entire path before last filename, hopefully
 	if [ -f "$f" -a ! -e "$f/..namedfork/rsrc" ]; then # if it's a file and has no resource fork, treat it like a file
 		$pbz -k "./$filename"
-		echo "$f &gt; $filename.bz2" &gt;&gt; $HOME/pbzip2compressedfiles.log
+		echo "$f &gt; $filename.bz2" &gt;&gt; /Users/pmarreck/pbzip2compressedfiles.log
 	else  # assume it's a directory or app package or wonky old mac resource forked file or whatever
 		tar cfp --use-compress-prog=$pbz "$filename.tar.bz2" "./$filename/"
-		echo "$f/ &gt; $filename.tar.bz2" &gt;&gt; $HOME/pbzip2compressedfiles.log
+		echo "$f/ &gt; $filename.tar.bz2" &gt;&gt; /Users/pmarreck/pbzip2compressedfiles.log
 	fi
 done
 </string>
@@ -137,9 +137,9 @@ done
 					<key>1</key>
 					<dict>
 						<key>default value</key>
-						<string></string>
+						<false/>
 						<key>name</key>
-						<string>source</string>
+						<string>CheckedForUserDefaultShell</string>
 						<key>required</key>
 						<string>0</string>
 						<key>type</key>
@@ -150,9 +150,9 @@ done
 					<key>2</key>
 					<dict>
 						<key>default value</key>
-						<false/>
+						<string></string>
 						<key>name</key>
-						<string>CheckedForUserDefaultShell</string>
+						<string>source</string>
 						<key>required</key>
 						<string>0</string>
 						<key>type</key>
@@ -190,9 +190,9 @@ done
 				<key>isViewVisible</key>
 				<true/>
 				<key>location</key>
-				<string>523.500000:554.000000</string>
+				<string>376.000000:305.000000</string>
 				<key>nibPath</key>
-				<string>/System/Library/Automator/Run Shell Script.action/Contents/Resources/English.lproj/main.nib</string>
+				<string>/System/Library/Automator/Run Shell Script.action/Contents/Resources/Base.lproj/main.nib</string>
 			</dict>
 			<key>isViewVisible</key>
 			<true/>
@@ -274,12 +274,28 @@ done
 	</dict>
 	<key>workflowMetaData</key>
 	<dict>
+		<key>applicationBundleIDsByPath</key>
+		<dict/>
+		<key>applicationPaths</key>
+		<array/>
+		<key>inputTypeIdentifier</key>
+		<string>com.apple.Automator.fileSystemObject</string>
+		<key>outputTypeIdentifier</key>
+		<string>com.apple.Automator.nothing</string>
+		<key>presentationMode</key>
+		<integer>15</integer>
+		<key>processesInput</key>
+		<false/>
 		<key>serviceInputTypeIdentifier</key>
 		<string>com.apple.Automator.fileSystemObject</string>
 		<key>serviceOutputTypeIdentifier</key>
 		<string>com.apple.Automator.nothing</string>
 		<key>serviceProcessesInput</key>
-		<integer>0</integer>
+		<false/>
+		<key>systemImageName</key>
+		<string>NSActionTemplate</string>
+		<key>useAutomaticInputType</key>
+		<false/>
 		<key>workflowTypeIdentifier</key>
 		<string>com.apple.Automator.servicesMenu</string>
 	</dict>

@@ -3,9 +3,9 @@
 <plist version="1.0">
 <dict>
 	<key>AMApplicationBuild</key>
-	<string>246</string>
+	<string>523</string>
 	<key>AMApplicationVersion</key>
-	<string>2.1</string>
+	<string>2.10</string>
 	<key>AMDocumentVersion</key>
 	<string>2</string>
 	<key>actions</key>
@@ -25,7 +25,11 @@
 					</array>
 				</dict>
 				<key>AMActionVersion</key>
-				<string>2.0.1</string>
+				<string>2.0.3</string>
+				<key>AMApplication</key>
+				<array>
+					<string>Automator</string>
+				</array>
 				<key>AMParameterProperties</key>
 				<dict>
 					<key>COMMAND_STRING</key>
@@ -55,15 +59,72 @@
 				<key>ActionParameters</key>
 				<dict>
 					<key>COMMAND_STRING</key>
-					<string>for f in "$@"
-do
-	fout=${f%/}  # strip trailing slash
-	path=${fout%/*} # strip everything after the last slash which includes the filename
-	cd "$path/"
-	filename=${fout##/*/}  # deletes entire path before last filename, hopefully
-	authenticatedASaction="do shell script \"ditto --hfsCompression --zlibCompressionLevel=9 '$filename' '$filename.tmp'; rm -rf '$filename'; mv '$filename.tmp' '$filename'\" with administrator privileges"
-	osascript -e "$authenticatedASaction"
-	echo "$f &gt; $filename (internallycompressed)" &gt;&gt; $HOME/snowleopardcompressedfiles.log
+					<string>for f in "$@"; do
+    # Check if the file exists and is a regular file
+    if [[ -f "$f" || -d "$f" ]]; then
+        logfile_path="$HOME/snowleopardcompressedfiles.log"
+
+        filename=$(basename -- "$f")
+        filepath=$(dirname -- "$f")
+
+        # Echo paths for debugging
+        # echo "Filepath: $filepath" &gt;&gt; $logfile_path
+        # echo "Filename: $filename" &gt;&gt; $logfile_path
+
+        # Store original modification date
+        original_mod_date=$(stat -f "%Sm" -t "%Y%m%d%H%M.%S" "$f")
+
+        # Calculate original size (different methods for files and directories)
+        if [[ -f "$f" ]]; then
+            original_size=$(stat -f%z "$f")
+        elif [[ -d "$f" ]]; then
+            original_size=$(du -sk "$f" | cut -f1)  # Size in kilobytes
+        fi
+
+        # Prepare the AppleScript command
+        authenticatedASaction="do shell script \"ditto --hfsCompression --zlibCompressionLevel=9 \\\"$filepath/$filename\\\" \\\"$filepath/$filename.tmp\\\" &amp;&amp; rm -rf \\\"$filepath/$filename\\\" &amp;&amp; mv \\\"$filepath/$filename.tmp\\\" \\\"$filepath/$filename\\\" &amp;&amp; touch -t \\\"$original_mod_date\\\" \\\"$filepath/$filename\\\"\"" # with administrator privileges"
+        # Add administrator privileges if the user doesn't have write access
+        needAdmin=false
+        # Check permission for the topmost directory (if it's a directory)
+        if [[ -d "$f" ]] &amp;&amp; [[ ! -w "$f" ]]; then
+            needAdmin=true
+        fi
+        # Check permissions recursively for directories
+        if [[ -d "$f" ]] &amp;&amp; find "$f" -mindepth 1 ! -writable -exec false {} +; then
+            needAdmin=true
+        fi
+        # Check permission for a single file (if it's a file)
+        if [[ -f "$f" ]] &amp;&amp; [[ ! -w "$f" ]]; then
+            needAdmin=true
+        fi
+        if $needAdmin; then
+			authenticatedASaction="${authenticatedASaction} with administrator privileges"
+		fi
+# echo "$authenticatedASaction" &gt;&gt; $logfile_path
+        # Execute the AppleScript command and capture any errors
+        if osascript -e "$authenticatedASaction" 2&gt;/tmp/compression_error.log; then
+            # Calculate compressed size (different methods for files and directories)
+            if [[ -f "$f" ]]; then
+                compressed_size=$(stat -f%z "$f")
+            elif [[ -d "$f" ]]; then
+                compressed_size=$(du -sk "$f" | cut -f1)  # Size in kilobytes
+            fi
+            # Calculate savings and percentage saved
+            savings=$((original_size - compressed_size))
+            if [ $original_size -ne 0 ]; then
+                percent_saved=$(echo "scale=2; ($savings / $original_size) * 100" | bc)
+            else
+                percent_saved=0
+            fi
+            # Log successful compression with timestamp and percent saved
+            echo -e "$(date '+%Y%m%d%H%M%S')\t${f}\t${percent_saved}%" &gt;&gt; $logfile_path
+        else
+            # Log any errors that occurred
+            echo -e "$(date '+%Y%m%d%H%M%S')\tERROR compressing $f, $(cat /tmp/compression_error.log)" &gt;&gt; $logfile_path
+        fi
+    else
+        echo "$(date '+%Y%m%d%H%M%S') - $f is not a file or directory or does not exist" &gt;&gt; $logfile_path
+    fi
 done
 </string>
 					<key>CheckedForUserDefaultShell</key>
@@ -75,14 +136,10 @@ done
 					<key>source</key>
 					<string></string>
 				</dict>
-				<key>Application</key>
-				<array>
-					<string>Automator</string>
-				</array>
 				<key>BundleIdentifier</key>
 				<string>com.apple.RunShellScript</string>
 				<key>CFBundleVersion</key>
-				<string>2.0.1</string>
+				<string>2.0.3</string>
 				<key>CanShowSelectedItemsWhenRun</key>
 				<false/>
 				<key>CanShowWhenRun</key>
@@ -129,9 +186,9 @@ done
 					<key>1</key>
 					<dict>
 						<key>default value</key>
-						<string></string>
+						<false/>
 						<key>name</key>
-						<string>source</string>
+						<string>CheckedForUserDefaultShell</string>
 						<key>required</key>
 						<string>0</string>
 						<key>type</key>
@@ -142,9 +199,9 @@ done
 					<key>2</key>
 					<dict>
 						<key>default value</key>
-						<false/>
+						<string></string>
 						<key>name</key>
-						<string>CheckedForUserDefaultShell</string>
+						<string>source</string>
 						<key>required</key>
 						<string>0</string>
 						<key>type</key>
@@ -182,9 +239,9 @@ done
 				<key>isViewVisible</key>
 				<true/>
 				<key>location</key>
-				<string>576.500000:632.000000</string>
+				<string>376.000000:652.000000</string>
 				<key>nibPath</key>
-				<string>/System/Library/Automator/Run Shell Script.action/Contents/Resources/English.lproj/main.nib</string>
+				<string>/System/Library/Automator/Run Shell Script.action/Contents/Resources/Base.lproj/main.nib</string>
 			</dict>
 			<key>isViewVisible</key>
 			<true/>
@@ -266,10 +323,28 @@ done
 	</dict>
 	<key>workflowMetaData</key>
 	<dict>
+		<key>applicationBundleIDsByPath</key>
+		<dict/>
+		<key>applicationPaths</key>
+		<array/>
+		<key>inputTypeIdentifier</key>
+		<string>com.apple.Automator.fileSystemObject</string>
+		<key>outputTypeIdentifier</key>
+		<string>com.apple.Automator.nothing</string>
+		<key>presentationMode</key>
+		<integer>15</integer>
+		<key>processesInput</key>
+		<false/>
 		<key>serviceInputTypeIdentifier</key>
 		<string>com.apple.Automator.fileSystemObject</string>
 		<key>serviceOutputTypeIdentifier</key>
 		<string>com.apple.Automator.nothing</string>
+		<key>serviceProcessesInput</key>
+		<false/>
+		<key>systemImageName</key>
+		<string>NSActionTemplate</string>
+		<key>useAutomaticInputType</key>
+		<false/>
 		<key>workflowTypeIdentifier</key>
 		<string>com.apple.Automator.servicesMenu</string>
 	</dict>

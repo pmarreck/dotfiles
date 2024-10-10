@@ -3,9 +3,9 @@
 <plist version="1.0">
 <dict>
 	<key>AMApplicationBuild</key>
-	<string>246</string>
+	<string>526</string>
 	<key>AMApplicationVersion</key>
-	<string>2.1</string>
+	<string>2.10</string>
 	<key>AMDocumentVersion</key>
 	<string>2</string>
 	<key>actions</key>
@@ -25,7 +25,11 @@
 					</array>
 				</dict>
 				<key>AMActionVersion</key>
-				<string>2.0.1</string>
+				<string>2.0.3</string>
+				<key>AMApplication</key>
+				<array>
+					<string>Automator</string>
+				</array>
 				<key>AMParameterProperties</key>
 				<dict>
 					<key>COMMAND_STRING</key>
@@ -55,22 +59,25 @@
 				<key>ActionParameters</key>
 				<dict>
 					<key>COMMAND_STRING</key>
-					<string>pbz=/usr/local/bin/7za
+					<string>pbz="/Users/pmarreck/.nix-profile/bin/7za"
 
 for f in "$@"
 do
 	fout=${f%/}  # strip trailing slash
 	path=${fout%/*} # strip everything after the last slash which includes the filename
-	cd "$path/"
+	# cd into the path if it is a directory
+	if [ -d "$path" ]; then
+		cd "$path"
+	fi
 	filename=${fout##/*/}  # deletes entire path before last filename, hopefully
 	if [ -f "$f" -a ! -e "$f/..namedfork/rsrc" ]; then # if it's a file and has no resource fork, treat it like a file
-		$pbz a -t7z "$filename.7z" "./$filename" -bd -mx=9
-		echo "$f &gt; $filename.7z" &gt;&gt; $HOME/7zipcompressedfiles.log
+		$pbz a -t7z -bd -mx=9 "$filename.7z" "./$filename"
+		echo "$f &gt; $filename.7z" &gt;&gt; /Users/pmarreck/7zipcompressedfiles.log
 	else  # assume it's a directory or app package or wonky old mac resource forked file or whatever
 		tar cf "$filename.tar" "./$filename"
-		$pbz a -t7z "$filename.tar.7z" "./$filename.tar" -bd -mx=9
+		$pbz a -t7z -bd -mx=9 "$filename.tar.7z" "./$filename.tar"
 		rm "$filename.tar"
-		echo "$f/ &gt; $filename.tar.7z" &gt;&gt; $HOME/7zipcompressedfiles.log
+		echo "$f/ &gt; $filename.tar.7z" &gt;&gt; /Users/pmarreck/7zipcompressedfiles.log
 	fi
 done
 </string>
@@ -83,14 +90,10 @@ done
 					<key>source</key>
 					<string></string>
 				</dict>
-				<key>Application</key>
-				<array>
-					<string>Automator</string>
-				</array>
 				<key>BundleIdentifier</key>
 				<string>com.apple.RunShellScript</string>
 				<key>CFBundleVersion</key>
-				<string>2.0.1</string>
+				<string>2.0.3</string>
 				<key>CanShowSelectedItemsWhenRun</key>
 				<false/>
 				<key>CanShowWhenRun</key>
@@ -137,9 +140,9 @@ done
 					<key>1</key>
 					<dict>
 						<key>default value</key>
-						<string></string>
+						<false/>
 						<key>name</key>
-						<string>source</string>
+						<string>CheckedForUserDefaultShell</string>
 						<key>required</key>
 						<string>0</string>
 						<key>type</key>
@@ -150,9 +153,9 @@ done
 					<key>2</key>
 					<dict>
 						<key>default value</key>
-						<false/>
+						<string></string>
 						<key>name</key>
-						<string>CheckedForUserDefaultShell</string>
+						<string>source</string>
 						<key>required</key>
 						<string>0</string>
 						<key>type</key>
@@ -190,9 +193,9 @@ done
 				<key>isViewVisible</key>
 				<true/>
 				<key>location</key>
-				<string>421.000000:556.000000</string>
+				<string>376.000000:305.000000</string>
 				<key>nibPath</key>
-				<string>/System/Library/Automator/Run Shell Script.action/Contents/Resources/English.lproj/main.nib</string>
+				<string>/System/Library/Automator/Run Shell Script.action/Contents/Resources/Base.lproj/main.nib</string>
 			</dict>
 			<key>isViewVisible</key>
 			<true/>
@@ -274,10 +277,28 @@ done
 	</dict>
 	<key>workflowMetaData</key>
 	<dict>
+		<key>applicationBundleIDsByPath</key>
+		<dict/>
+		<key>applicationPaths</key>
+		<array/>
+		<key>inputTypeIdentifier</key>
+		<string>com.apple.Automator.fileSystemObject</string>
+		<key>outputTypeIdentifier</key>
+		<string>com.apple.Automator.nothing</string>
+		<key>presentationMode</key>
+		<integer>15</integer>
+		<key>processesInput</key>
+		<false/>
 		<key>serviceInputTypeIdentifier</key>
 		<string>com.apple.Automator.fileSystemObject</string>
 		<key>serviceOutputTypeIdentifier</key>
 		<string>com.apple.Automator.nothing</string>
+		<key>serviceProcessesInput</key>
+		<false/>
+		<key>systemImageName</key>
+		<string>NSActionTemplate</string>
+		<key>useAutomaticInputType</key>
+		<false/>
 		<key>workflowTypeIdentifier</key>
 		<string>com.apple.Automator.servicesMenu</string>
 	</dict>
