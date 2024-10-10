@@ -273,7 +273,7 @@ chuck() {
   # but it didn't get all of them... you can also pipe to glow for a nicer output
   # figure out the path of the current script
   local SCRIPT_PATH=$(dirname "$(readlink -f "$BASH_SOURCE")")
-  shuf -n 1 "$SCRIPT_PATH/bin/chuck_norris.txt" | cut -d'|' -f2- # | glow
+  shuf -n 1 "$SCRIPT_PATH/bin/chuck_norris.txt" | cut -d'|' -f2- | wrap
 }
 
 inthebeginning() {

@@ -54,7 +54,7 @@ uniquify_array() {
   eval "$1=(\"\${unique_arr[@]}\")"
 }
 
-function array_contains_element() {
+array_contains_element() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   # declare -n array=$1
   # We can't use nameref, so use eval to indirectly reference the array
@@ -221,8 +221,22 @@ line_unwrap() {
 }
 alias word_unwrap=line_unwrap
 
+# Wraps text to the current width of the terminal, or to a specified width.
+# Expects input via stdin
+# For already-wrapped text, consider using line_unwrap first
+wrap() {
+  # take an argument of colwidth but default to current terminal width
+  local colwidth=${1:-$(tput cols)}
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  # this expects contents to be piped in via stdin
+  fold -s -w $colwidth
+}
+
 if [ "$RUN_DOTFILE_TESTS" == "true" ]; then
+  # test line_unwrap
   assert "$(echo -e "This\nis a \nmultiline\n string." | line_unwrap)" == "This\nis a multiline string."
+  # test wrap
+  assert "$(echo -e "This is a long line that should be wrapped to width 16." | wrap 16)" == "This is a long \nline that \nshould be \nwrapped to \nwidth 16."
 fi
 
 # Is this a color TTY? Or, is one (or the lack of one) being faked for testing reasons?
@@ -286,7 +300,7 @@ yellow_text() {
   puts --yellow -en "$*"
 }
 
-echo_command() {
+echo_eval() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   yellow_text "$*\n" >&2
   eval "$*"
@@ -412,7 +426,7 @@ image_convert_to_heif() {
 
   # lossless conversion, FYI
   needs heif-enc "please install libheif" && \
-  echo_command "heif-enc -L -p chroma=444 --matrix_coefficients=0 \"$1\""
+  echo_eval "heif-enc -L -p chroma=444 --matrix_coefficients=0 \"$1\""
 }
 
 image_convert_to_jpegxl() {
@@ -423,5 +437,5 @@ image_convert_to_jpegxl() {
   local e="${JXL_EFFORT:-7}" # 0-9 where 9 is extremely slow but smallest; default 7
 
   needs cjxl "please install the libjxl package to get the cjxl executable" && \
-  echo_command "cjxl -d $d -e $e --lossless_jpeg=0 \"$1\" \"${bn}.jxl\""
+  echo_eval "cjxl -d $d -e $e --lossless_jpeg=0 \"$1\" \"${bn}.jxl\""
 }
