@@ -284,8 +284,10 @@ inthebeginning() {
 just_one_taoup() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   # ChatGPT4 wrote 99% of this. I preserved the conversation with it about it: https://gist.github.com/pmarreck/339fb955a74caed692b439038c9c1c9d
-  needs taoup please install taoup && \
-  taoup | $AWK -v seed=`date +%N` '
+  # needs taoup please install taoup && taoup \
+  # Refresh the taoup.ansi file occasionally via taoup > taoup.ansi. Last updated 2024-10-12.
+  # Caching it this way avoids needing either taoup OR ruby and saves on ruby processing.
+  $AWK -v seed=`date +%N` '
     BEGIN{
       srand(seed)
     }
@@ -301,7 +303,7 @@ just_one_taoup() {
       print headers[randIndex];
       print lines[randIndex];
     }
-  '
+  ' $HOME/dotfiles/bin/taoup.ansi
 }
 
 source_relative_once bin/times_older_than

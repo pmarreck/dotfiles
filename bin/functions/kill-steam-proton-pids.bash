@@ -15,7 +15,7 @@ function kill-steam-proton-pids() {
   # 5. Pipes the output to another 'awk' command which prints only the first column (the process ID).
   # 6. Finally, it pipes these process IDs to 'xargs' which executes the 'kill' command for each ID, terminating the processes.
   function killit() {
-    PS_PERSONALITY=linux ps -eo pid,args --no-headers | awk -v filter="steam" 'tolower($0) ~ filter && $0 !~ " awk "' | tee /dev/stderr | awk '{print $1}' | xargs -I {} kill $1 {}
+    PS_PERSONALITY=linux ps -eo pid,args | tail -n +2 | awk -v filter="steam" 'tolower($0) ~ filter && $0 !~ " awk "' | tee /dev/stderr | awk '{print $1}' | xargs -I {} kill $1 {}
   }
   killit
   sleep 2 # give it a chance to seppuku
