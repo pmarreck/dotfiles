@@ -418,6 +418,16 @@ if [ "$RUN_DOTFILE_TESTS" == "true" ]; then
   assert "$(trim "  foo  ")" == "foo"
 fi
 
+datetime() {
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  date "+%Y-%m-%d %H:%M:%S"
+}
+
+datetime-human() {
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  date +"%A, %B %d, %Y %I:%M %p"
+}
+
 image_convert_to_heif() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   # base name of argument 1

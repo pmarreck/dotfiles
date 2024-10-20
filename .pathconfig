@@ -18,6 +18,9 @@ source_relative_once bin/functions/prepend_path.bash
 # rust/cargo
 [ -d $HOME/.cargo/bin ] && prepend_path $HOME/.cargo/bin
 
+# LM Studio
+[ -d $HOME/.cache/lm-studio/bin ] && prepend_path $HOME/.cache/lm-studio/bin
+
 # where is this garbage in my PATH coming from?
 IGNORE_EXCLUDE_PATH_WARNINGS=true exclude_path '~/.dotnet/tools'
 exclude_path '/usr/local/share/dotnet'

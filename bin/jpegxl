@@ -11,47 +11,57 @@ needs() {
   command -v "$bin" >/dev/null 2>&1 || { echo >&2 "I require $bin but it's not installed or in PATH; $*"; return 1; }
 }
 
+>/dev/null declare -F debug || \
+debug() {
+  [ -n "$DEBUG" ] && echo "DEBUG: $*" >&2
+}
+
 jpegxl() {
-  # JXL_DEBUG=true
+  # DEBUG=true
   needs cjxl provided by jpeg-xl
 
   JPEGXL_DEFAULT_EFFORT=${JPEGXL_DEFAULT_EFFORT:-10}
-  [ -n "$JXL_DEBUG" ] && echo "Default effort JPEGXL_DEFAULT_EFFORT set to: $JPEGXL_DEFAULT_EFFORT"
+  debug "Default effort JPEGXL_DEFAULT_EFFORT set to: $JPEGXL_DEFAULT_EFFORT"
   JPEGXL_DEFAULT_DISTANCE=${JPEGXL_DEFAULT_DISTANCE:-1}
-  [ -n "$JXL_DEBUG" ] && echo "Default distance JPEGXL_DEFAULT_DISTANCE set to: $JPEGXL_DEFAULT_DISTANCE"
+  debug "Default distance JPEGXL_DEFAULT_DISTANCE set to: $JPEGXL_DEFAULT_DISTANCE"
 
   for filepath in "$@"; do
     if [[ -f "$filepath" ]]; then
       extension="${filepath##*.}"
       extension="${extension,,}"  # Convert to lowercase
-      [ -n "$JXL_DEBUG" ] && echo "File extension: $extension"
+      debug "File extension: $extension"
       output="${filepath%.*}.jxl"
-      [ -n "$JXL_DEBUG" ] && echo "Output file: $output"
+      debug "Output file: $output"
       if [[ "$extension" == "png" || "$extension" == "gif" ]]; then
-        [ -n "$JXL_DEBUG" ] && echo "Extension is png or gif. Converting $filepath to $output"
+        debug "Extension is png or gif. Converting $filepath to $output"
+        debug "cjxl -e $JPEGXL_DEFAULT_EFFORT -d $JPEGXL_DEFAULT_DISTANCE \"$filepath\" \"$output\"" >&2
         cjxl -e $JPEGXL_DEFAULT_EFFORT -d $JPEGXL_DEFAULT_DISTANCE "$filepath" "$output"
       elif [[ "$extension" == "jpg" || "$extension" == "jpeg" ]]; then
-        [ -n "$JXL_DEBUG" ] && echo "Extension is jpg or jpeg. Converting $filepath to $output"
+        debug "Extension is jpg or jpeg. Converting $filepath to $output"
         # let jpegs recompress losslessly; this is the default, but if you remove this param, it complains
+        debug "cjxl -e $JPEGXL_DEFAULT_EFFORT --lossless_jpeg=1 \"$filepath\" \"$output\""
         cjxl -e $JPEGXL_DEFAULT_EFFORT --lossless_jpeg=1 "$filepath" "$output"
       elif [[ "$extension" == "webp" ]]; then
-        [ -n "$JXL_DEBUG" ] && echo "Extension is webp. Converting $filepath to $output"
+        debug "Extension is webp. Converting $filepath to $output"
         needs cwebp provided by libwebp
         temp_png=$(mktemp --suffix=.png)
+        debug "cwebp -o \"$temp_png\" \"$filepath\""
         cwebp -o "$temp_png" "$filepath"
         # since webp is already lossy-compressed, we can use a little lower distance
         cjxl -e $JPEGXL_DEFAULT_EFFORT -d $(( JPEGXL_DEFAULT_DISTANCE + 1 )) "$temp_png" "$output"
         rm "$temp_png"
       elif [[ "$extension" == "heic" ]]; then
-        [ -n "$JXL_DEBUG" ] && echo "Extension is heic. Converting $filepath to $output"
+        debug "Extension is heic. Converting $filepath to $output"
         needs heif-dec provided by libheif
         temp_png=$(mktemp --suffix=.png)
-        [ -n "$JXL_DEBUG" ] && echo "temp_png: $temp_png"
+        debug "temp_png: $temp_png"
         # note that rotation when converting heic to png is often not respected; out of scope for this script
+        debug "heif-dec \"$filepath\" \"$temp_png\""
         heif-dec "$filepath" "$temp_png"
         # since heic is already lossy-compressed, we can use a little lower distance
+        debug "cjxl -e $JPEGXL_DEFAULT_EFFORT -d $(( JPEGXL_DEFAULT_DISTANCE + 1 )) \"$temp_png\" \"$output\""
         cjxl -e $JPEGXL_DEFAULT_EFFORT -d $(( JPEGXL_DEFAULT_DISTANCE + 1 )) "$temp_png" "$output"
-        [ -n "$JXL_DEBUG" ] || rm "$temp_png"
+        [ -n "$DEBUG" ] || rm "$temp_png"
       else
         echo "Unsupported file type: $filepath"
       fi
