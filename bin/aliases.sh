@@ -53,7 +53,7 @@ if [ "${PLATFORM}-${DISTRO}" = "linux-NixOS" ]; then
     [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
     echo "$(datetimestamp) generation $(nix-gen-num); nvidia version $(nvidia --version); kernel version $(uname -r)" >> ~/nix-genstamp.txt
   }
-  alias nixos="choose_editor /etc/nixos"
+  alias nixos="choose_editor /etc/nixos &"
   function abbrev-nix-store-paths(){
     [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
     sed -E 's|/nix/store/[a-z0-9]{32}-|/⌘/|g'
