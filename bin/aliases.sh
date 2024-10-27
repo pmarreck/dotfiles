@@ -74,8 +74,10 @@ alias bye='logout'
 # on macos, iCloud backup was interfering with git, so I moved git repos
 # to a "Documents-CloudManaged" folder
 if [ "$PLATFORM" = "osx" ]; then
+  alias dcm='cd ~/Documents-CloudManaged'
   alias mpnetwork='cd ~/Documents-CloudManaged/mpnetwork'
 else
+  alias dcm='cd ~/Documents'
   alias mpnetwork='cd ~/Documents/mpnetwork'
 fi
 # alias simpaticio='cd ~/Documents/simpaticio'

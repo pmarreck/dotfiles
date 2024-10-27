@@ -22,35 +22,28 @@ declare -a dotfiles=(
     .secrets.gpg
     .tool-versions
     .wezterm.lua
-    Brewfile
-    Tapfile
     inthebeginning.jpg
     manual_configuration_changelog.txt
 )
 echo "List of dotfiles to install:"
 echo "${dotfiles[@]}"
 
-curdir=$(pwd)
-
 # Get the directory of this script and cd to it
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-cd $DIR
+pushd $DIR
 
 declare -a scriptfiles=$(ls -d Scripts/*)
 echo "List of script files to install:"
 echo "${scriptfiles[@]}"
 
-cd ~
+popd # $DIR
 
-# symlink the bin and lib directories
 pushd $HOME
+# symlink the bin and lib directories
 ln -sfv dotfiles/bin # this assumes your dotfiles repo is in $HOME
 ln -sfv dotfiles/lib
-popd
 
-# make a Scripts directory if it doesn't exist
-mkdir -p Scripts
-
+# symlink the dotfiles
 for dotfile in ${dotfiles[@]}; do
     if [[ ! -L $dotfile ]]; then
         if [ -f "$dotfile" ]; then
@@ -61,6 +54,10 @@ for dotfile in ${dotfiles[@]}; do
     ln -sfv "dotfiles/$dotfile"
 done
 
+# make a Scripts directory if it doesn't exist
+mkdir -p ~/Scripts
+
+# symlink the script files
 for scriptfile in ${scriptfiles[@]}; do
     if [[ ! -L $scriptfile ]]; then
         if [ -f "$scriptfile" ]; then
@@ -69,10 +66,10 @@ for scriptfile in ${scriptfiles[@]}; do
         fi
     fi
     echo "Linking $scriptfile"
-    ln -sfv ../dotfiles/$scriptfile $scriptfile
+    ln -sfv dotfiles/$scriptfile $scriptfile
 done
 
-cd $curdir
+popd # $HOME
 
 echo
 echo "note: Library/Application Support and Library/Services are not installed by default"
