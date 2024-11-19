@@ -13,8 +13,14 @@ if command -v xxhsum &> /dev/null; then
   hasher="xxhsum"
 fi
 # echo "Using hasher: $hasher"
+# Use GNU stat installed via nix-darwin or nixos if it exists, otherwise use BSD stat
+if [ -f /run/current-system/sw/bin/stat ]; then
+  statter="/run/current-system/sw/bin/stat -c %Y"
+else
+  statter="/usr/bin/stat -f %m"
+fi
 # Get the hash of all text files in the dotfiles directory
-CURRENT_HASH=$(stat -c "%Y" $(file --separator " :" $(fd --type f --no-hidden --exclude .git --exclude "Library/" . $SCRIPT_DIR) | grep text | cut -d':' -f1 | sort) | $hasher | cut -d' ' -f1)
+CURRENT_HASH=$($statter $(file --separator " :" $(fd --type f --no-hidden --exclude .git --exclude "Library/" . $SCRIPT_DIR) | grep text | cut -d':' -f1 | sort) | $hasher | cut -d' ' -f1)
 # echo "Current hash: $CURRENT_HASH"
 # Check if the hash file exists
 if [ -f "$HASH_FILE" ]; then
