@@ -130,8 +130,9 @@ function git_commit_ai() {
   echo -ne "$commit_message"
 }
 # export DEFAULT_LOCAL_AI_MODEL="llama3:70b"
-export DEFAULT_LOCAL_AI_MODEL="llama3.1:70b"
-export DEFAULT_LOCAL_AI_HOST="localhost:11434"
+# export DEFAULT_LOCAL_AI_MODEL="x/llama3.2-vision:latest"
+export DEFAULT_LOCAL_AI_MODEL=${DEFAULT_LOCAL_AI_MODEL:-qwen2.5-coder:32b}
+export DEFAULT_LOCAL_AI_HOST=${DEFAULT_LOCAL_AI_HOST:-localhost:11434}
 
 function git_commit_ai_local() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return

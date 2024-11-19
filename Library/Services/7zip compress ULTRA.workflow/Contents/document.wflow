@@ -59,7 +59,12 @@
 				<key>ActionParameters</key>
 				<dict>
 					<key>COMMAND_STRING</key>
-					<string>pbz="/Users/pmarreck/.nix-profile/bin/7za"
+					<string>which_7za() {
+  [ -f "/run/current-system/sw/bin/7za" ] &amp;&amp; echo "/run/current-system/sw/bin/7za" &amp;&amp; return 0
+  [ -f "$HOME/.nix-profile/bin/7za" ] &amp;&amp; echo "$HOME/.nix-profile/bin/7za" &amp;&amp; return 0
+}
+
+pbz=$(which_7za)
 
 for f in "$@"
 do
@@ -193,7 +198,7 @@ done
 				<key>isViewVisible</key>
 				<true/>
 				<key>location</key>
-				<string>376.000000:305.000000</string>
+				<string>376.000000:519.000000</string>
 				<key>nibPath</key>
 				<string>/System/Library/Automator/Run Shell Script.action/Contents/Resources/Base.lproj/main.nib</string>
 			</dict>

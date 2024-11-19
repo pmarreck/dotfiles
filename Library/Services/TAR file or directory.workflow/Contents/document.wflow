@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>AMApplicationBuild</key>
-	<string>512</string>
+	<string>526</string>
 	<key>AMApplicationVersion</key>
 	<string>2.10</string>
 	<key>AMDocumentVersion</key>
@@ -68,7 +68,7 @@ do
 		cd "$path"
 	fi
 	filename=${fout##/*/}  # deletes entire path before last filename, hopefully
-    echo tar cf "$filename.tar" "$filename"
+    # echo tar cf "$filename.tar" "$filename"
 	tar cf "$filename.tar" "$filename"
 done
 </string>
@@ -184,7 +184,7 @@ done
 				<key>isViewVisible</key>
 				<true/>
 				<key>location</key>
-				<string>309.000000:497.000000</string>
+				<string>376.000000:527.000000</string>
 				<key>nibPath</key>
 				<string>/System/Library/Automator/Run Shell Script.action/Contents/Resources/Base.lproj/main.nib</string>
 			</dict>

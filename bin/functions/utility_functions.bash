@@ -169,7 +169,7 @@ trim_leading_heredoc_whitespace() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   #  echo "Debug: Function started" >&2
   # For some reason, frawk screws this up. No time to troubleshoot.
-  needs gawk "please install gawk to run this function" && \
+  needs gawk "please install gawk (GNU awk) to run this function" && \
   gawk '
   BEGIN { shortest = -1 }
   {
@@ -213,17 +213,17 @@ fi
 # really be called "line-wrapped") text that has had newlines inserted,
 # but leave intentional newlines (those without surrounding whitespace)
 # alone.
-line_unwrap() {
+unwrap() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   # this expects contents to be piped in via stdin
-  [[ "$(sed --version | head -1)" =~ .*GNU.* ]] || echo "WARNING: function line_unwrap: The sed on PATH is not GNU sed, which may cause problems" >&2
-  sed -E -e ':a;N;$!ba' -e 's/(\s+\n\s+|\s+\n|\n\s+)/ /g'
+  [[ "$(sed --version | head -1)" =~ .*GNU.* ]] || echo "WARNING: function unwrap: The sed on PATH is not GNU sed, which may cause problems" >&2
+  # sed -E -e ':a;N;$!ba' -e 's/( \n | \n|\n )/ /g'
+  sed -E ':a;N;$!ba;s/( +\n +| *\n +| +\n *)/ /g'
 }
-alias word_unwrap=line_unwrap
 
 # Wraps text to the current width of the terminal, or to a specified width.
 # Expects input via stdin
-# For already-wrapped text, consider using line_unwrap first
+# For already-wrapped text, consider using unwrap first
 wrap() {
   # take an argument of colwidth but default to current terminal width
   local colwidth=${1:-$(tput cols)}
@@ -233,8 +233,10 @@ wrap() {
 }
 
 if [ "$RUN_DOTFILE_TESTS" == "true" ]; then
-  # test line_unwrap
-  assert "$(echo -e "This\nis a \nmultiline\n string." | line_unwrap)" == "This\nis a multiline string."
+  # test unwrap
+  assert "$(echo -e "This\nis a \nmultiline\n string." | unwrap)" == "This\nis a multiline string."
+  # test unwrap preserving double newlines
+  assert "$(echo -e "This\nis a\n\nmultiline\n string." | unwrap)" == "This\nis a\n\nmultiline string."
   # test wrap
   assert "$(echo -e "This is a long line that should be wrapped to width 16." | wrap 16)" == "This is a long \nline that \nshould be \nwrapped to \nwidth 16."
 fi

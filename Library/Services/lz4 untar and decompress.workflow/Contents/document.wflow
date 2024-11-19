@@ -59,7 +59,12 @@
 				<key>ActionParameters</key>
 				<dict>
 					<key>COMMAND_STRING</key>
-					<string>compressor="/Users/pmarreck/.nix-profile/bin/lz4"
+					<string>which_lz4() {
+  [ -f "/run/current-system/sw/bin/lz4" ] &amp;&amp; echo "/run/current-system/sw/bin/lz4" &amp;&amp; return 0
+  [ -f "$HOME/.nix-profile/bin/lz4" ] &amp;&amp; echo "$HOME/.nix-profile/bin/lz4" &amp;&amp; return 0
+}
+
+compressor=$(which_lz4)
 
 for f in "$@"
 do
@@ -182,7 +187,7 @@ done
 				<key>isViewVisible</key>
 				<true/>
 				<key>location</key>
-				<string>376.000000:305.000000</string>
+				<string>376.000000:514.000000</string>
 				<key>nibPath</key>
 				<string>/System/Library/Automator/Run Shell Script.action/Contents/Resources/Base.lproj/main.nib</string>
 			</dict>
