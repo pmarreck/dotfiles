@@ -114,9 +114,9 @@ function git_commit_ai() {
     return 1
   fi
 
-  response=$(jq -r '.choices[0].message.content' < "$temp_json_out" 2>/dev/null | sed 's/^[ \t]*//;s/[ \t]*$//')
+  response=$(jq -r '.choices[0].message.content' < "$temp_json_out" 2>/dev/null | $SED 's/^[ \t]*//;s/[ \t]*$//')
   if [[ "$response" == "null" ]]; then
-    response=$(jq -r '.message.content' < "$temp_json_out" | sed 's/^[ \t]*//;s/[ \t]*$//')
+    response=$(jq -r '.message.content' < "$temp_json_out" | $SED 's/^[ \t]*//;s/[ \t]*$//')
   fi
   commit_message="$response"
 

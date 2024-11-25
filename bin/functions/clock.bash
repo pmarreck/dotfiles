@@ -2,7 +2,7 @@
 
 _read_clock_font_data() {
   # reads everything in this file below __DATA__
-  sed '0,/^__DATA__$/d' "$BASH_SOURCE"
+  $SED '0,/^__DATA__$/d' "$BASH_SOURCE"
 }
 
 _decode_data() {

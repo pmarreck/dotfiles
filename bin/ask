@@ -113,9 +113,9 @@ get_weather() {
     warn "No postal code provided to ${FUNCNAME[0]}"
     return 1
   fi
-#   local postal_code_hopefully_filtered==$(echo "$postal_code" | sed 's/\\"/"/g')
+#   local postal_code_hopefully_filtered==$(echo "$postal_code" | $SED 's/\\"/"/g')
 #   debug "$DEBUG" && note "DEBUG: postal_code_hopefully_filtered=$postal_code_hopefully_filtered"
-#   postal_code=$(echo "$postal_code" | sed 's/\\"/"/g' | jq -r '.zip_code')
+#   postal_code=$(echo "$postal_code" | $SED 's/\\"/"/g' | jq -r '.zip_code')
   debug "$DEBUG" && note "DEBUG: postal_code=$postal_code"
   local appid=${OPENWEATHERMAP_APPID}  # Use your API key from the environment
   note "Calling get_weather for postal code ${postal_code}..." # Italic and yellow text
@@ -286,7 +286,7 @@ ask() {
           tool_result=$(get_zip)
           debug "$DEBUG" && note "DEBUG: tool_result for get_zip: $tool_result"
           # replace real linefeeds with actual \n
-          # tool_result=$(echo "$tool_result" | sed ':a;N;$!ba;s/\n/\\n/g')
+          # tool_result=$(echo "$tool_result" | $SED ':a;N;$!ba;s/\n/\\n/g')
           if [[ -n "$tool_results" ]]; then
             tool_results+=","
           fi
@@ -333,8 +333,8 @@ ask() {
     # but first escape all newlines
     # tool_results=$(echo -n "$tool_results" | sed ':a;N;$!ba;s/\n/\\n/g')
     tool_results="[$tool_results]"
-    debug "$DEBUG" && note "DEBUG: messages: $(cat $history_file | sed ':a;N;$!ba;s/\n/\\n/g')"
-    debug "$DEBUG" && note "DEBUG: Tool results: $tool_results" # | sed ':a;N;$!ba;s/\n/\\n/g'
+    debug "$DEBUG" && note "DEBUG: messages: $(cat $history_file | $SED ':a;N;$!ba;s/\n/\\n/g')"
+    debug "$DEBUG" && note "DEBUG: Tool results: $tool_results" # | $SED ':a;N;$!ba;s/\n/\\n/g'
     # debug "$DEBUG" && note "DEBUG: jq '.' $history_file"
     # debug "$DEBUG" && jq '.' "$history_file"
     # Send the combined results back to ChatGPT
@@ -362,17 +362,17 @@ ask() {
       return 1
     fi
 
-    response=$(jq -r '.choices[0].message.content' < "$temp_json_out" 2>/dev/null | sed 's/^[ \t]*//;s/[ \t]*$//')
+    response=$(jq -r '.choices[0].message.content' < "$temp_json_out" 2>/dev/null | $SED 's/^[ \t]*//;s/[ \t]*$//')
   else
     # No tool call, just process the response
-    response=$(jq -r '.choices[0].message.content' < "$temp_json_out" 2>/dev/null | sed 's/^[ \t]*//;s/[ \t]*$//')
+    response=$(jq -r '.choices[0].message.content' < "$temp_json_out" 2>/dev/null | $SED 's/^[ \t]*//;s/[ \t]*$//')
   fi
 
   if [[ "$response" == "null" || "$?" != "0" ]]; then
     warn "Error:"
     printf "%b" "$response" >&2
   else
-    printf "%s" "$response" | sed -e 's/^[\\n]\+//' -e 's/^[\n]\+//' | glow -
+    printf "%s" "$response" | $SED -e 's/^[\\n]\+//' -e 's/^[\n]\+//' | glow -
 
     # Append the assistant's response to the conversation history
     jq --arg response "$response" \
@@ -393,7 +393,7 @@ if truthy RUN_DOTFILE_TESTS; then
   history_file="${XDG_DATA_HOME:-$HOME/.local/share}/ask_history.json"
   # back up conversation file
   if [[ -f "$history_file" ]]; then
-    cp "$history_file" "${history_file%.json}_backup.json"
+    cp "$history_file" "${history_file%.json}_backup$$.json"
   fi
   shopt -q extglob && extglob_set=true || extglob_set=false
   shopt -s extglob
@@ -441,9 +441,9 @@ EOF
   $extglob_set || shopt -u extglob # restore extglob setting
   unset extglob_set
   # restore original history file after removing the test one
-  if [[ -f "${history_file%.json}_backup.json" ]]; then
+  if [ -f "${history_file%.json}_backup$$.json" ]; then
     rm -f "$history_file"
-    mv "${history_file%.json}_backup.json" "$history_file"
+    mv "${history_file%.json}_backup$$.json" "$history_file"
   fi
 fi
 

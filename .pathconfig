@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 
-[ -n "${DEBUG_SHELLCONFIG}" ] && echo "Entering $(echo "${BASH_SOURCE[0]}" | sed "s|^$HOME|~|")" # || printf "#"
+[ -n "${DEBUG_SHELLCONFIG}" ] && echo "Entering $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")" # || printf "#"
 [ -n "${DEBUG_PATHCONFIG}" ] && echo "PATH is: $PATH"
-# echo "Current PATH is $PATH"
 
 # All path configs here should replace any existing version of themselves in the PATH before appending
 # (idempotent)
@@ -43,6 +42,7 @@ if [ "$PLATFORM" = "osx" ]; then
   # we have to redo its PATH edits to make sure it's only there once
   [ -d /nix/var/nix/profiles/default/bin ] && prepend_path /nix/var/nix/profiles/default/bin
   [ -d $HOME/.nix-profile/bin ] && prepend_path $HOME/.nix-profile/bin
+  [ -d /run/current-system/sw/bin ] && prepend_path /run/current-system/sw/bin
 fi
 
 # BINSTUBS
@@ -55,5 +55,5 @@ fi
 prepend_path $HOME/bin
 
 # echo "PATH after config is $PATH"
-[ -n "${DEBUG_SHELLCONFIG}" ] && echo "Exiting $(echo "${BASH_SOURCE[0]}" | sed "s|^$HOME|~|")"
+[ -n "${DEBUG_SHELLCONFIG}" ] && echo "Exiting $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")"
 [ -n "${DEBUG_PATHCONFIG}" ] && echo $PATH || :

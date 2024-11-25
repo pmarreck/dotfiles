@@ -60,7 +60,7 @@ generate_message() {
     fi
 
     # Remove newlines and escape special characters
-    message=$(echo "$message" | tr '\n' ' ' | sed 's/"/\\"/g' | sed "s/'/\\'/g")
+    message=$(echo "$message" | tr '\n' ' ' | $SED 's/"/\\"/g' | $SED "s/'/\\'/g")
 
     echo "$message"
 }

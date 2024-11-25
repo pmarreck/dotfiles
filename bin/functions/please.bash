@@ -34,7 +34,7 @@ _generate_curl_api_request_for_please() {
   model=${OPENAI_MODEL:-gpt-4-1106-preview} # other options: gpt-4, gpt-4-0314, gpt-4-32k, gpt-4-32k-0314, gpt-3.5-turbo, gpt-3.5-turbo-0301
   timeout=${OPENAI_TIMEOUT:-30}
   args="$@"
-  args=$(printf "%b" "$args" | sed "s/'/'\\\\''/g") # This is just a narsty sed to escape single quotes.
+  args=$(printf "%b" "$args" | $SED "s/'/'\\\\''/g") # This is just a narsty sed to escape single quotes.
   # (Piping to "jq -sRr '@json'" was not working correctly, so I had to take control of the escaping myself.)
 # printf "escaped args: %b\n" "$args" >&2
   # note that gpt-3.5-turbo-0301 is the very latest model as of 2021-03-01 but will only be supported for a few weeks
@@ -57,7 +57,7 @@ please() {
   local request response response_parsed response_parsed_cleaned args
   local plat=$(platform)
   request=$(_generate_curl_api_request_for_please "What is the $plat bash command to $@? Only return the command to run itself, do not describe anything. Only use commands and executables that are common on most $plat systems. Do not quote the response and do not use markdown.")
-# printf "request: %s\n" "$request" >&2 
+# printf "request: %s\n" "$request" >&2
   response=$(eval "gum spin --show-output -s line --title \"Figuring out how to do this...\" -- $request")
 # printf "response: %s\n" "$response" >&2
   response_parsed=$(printf "%s" "$response" | jq --raw-output '.choices[0].message.content')

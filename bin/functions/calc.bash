@@ -29,7 +29,7 @@ if needs bc ; then
     # format function definitions per bc requirements
     # ok so bc *requires* a newline after an open brace, but it *doesn't* require a newline before a close brace
     # so we have to do this weird thing where we replace all newlines with spaces, then replace all spaces after an open brace with a newline
-    bcscript=$(echo -e "$bcscript" | sed -e 's/\n+/ /g' -e 's/{\s*/{\n/g' -e 's/} *;?/}\n/g' -e 's/;/\n/g')
+    bcscript=$(echo -e "$bcscript" | $SED -e 's/\n+/ /g' -e 's/{\s*/{\n/g' -e 's/} *;?/}\n/g' -e 's/;/\n/g')
     [ -n "$DEBUG" ] && puts -e --stderr "string received by calc:\n'$bcscript'"
     echo -e "scale=${scale}\n$bcscript" | bc -l
     local retcode=$?

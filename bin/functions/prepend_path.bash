@@ -21,6 +21,9 @@ find_binary() {
   fi
 }
 
+export AWK=$(find_binary awk)
+export SED=$(find_binary sed)
+
 # function to prepend paths in an idempotent way
 prepend_path() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
@@ -76,7 +79,7 @@ prepend_path() {
 #   export PATH="$(ppp /usr/local/bin PATH)"
 #   LD_LIBRARY_PATH=$(ppp /usr/local/lib LD_LIBRARY_PATH)
 # Does anyone actually still use or need histexpand? Opinion: Unexpected behavior in strings that may occasionally contain '!' is not worth the functionality. So I turn it off here, because it caused a bug with the ${!plv} dereferencing expression, and I don't bother restoring it.
-ppp() { set +H; local plv="${2:-PATH}"; echo -n "${1%/}:${!plv}" | awk -v RS=: -v ORS=: '!($0 in a) {a[$0]; print}' | sed 's/:$//'; }
+ppp() { set +H; local plv="${2:-PATH}"; echo -n "${1%/}:${!plv}" | awk -v RS=: -v ORS=: '!($0 in a) {a[$0]; print}' | $SED 's/:$//'; }
 
 exclude_path() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return

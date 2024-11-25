@@ -2,7 +2,7 @@
 
 # Get the directory of the script
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# echo "Script directory: $SCRIPT_DIR"
+[ -n "${DEBUG_SHELLCONFIG}" ] && echo "Script directory for run_tests_on_change: $SCRIPT_DIR"
 # Path to store the hash
 HASH_FILE="$HOME/.dotfile_hash"
 
@@ -12,16 +12,17 @@ hasher="md5sum"
 if command -v xxhsum &> /dev/null; then
   hasher="xxhsum"
 fi
-# echo "Using hasher: $hasher"
+[ -n "${DEBUG_SHELLCONFIG}" ] && echo "Using hasher: $hasher"
 # Use GNU stat installed via nix-darwin or nixos if it exists, otherwise use BSD stat
 if [ -f /run/current-system/sw/bin/stat ]; then
   statter="/run/current-system/sw/bin/stat -c %Y"
 else
   statter="/usr/bin/stat -f %m"
 fi
+[ -n "${DEBUG_SHELLCONFIG}" ] && echo "Using statter: $statter"
 # Get the hash of all text files in the dotfiles directory
 CURRENT_HASH=$($statter $(file --separator " :" $(fd --type f --no-hidden --exclude .git --exclude "Library/" . $SCRIPT_DIR) | grep text | cut -d':' -f1 | sort) | $hasher | cut -d' ' -f1)
-# echo "Current hash: $CURRENT_HASH"
+[ -n "${DEBUG_SHELLCONFIG}" ] && echo "Current hash: $CURRENT_HASH"
 # Check if the hash file exists
 if [ -f "$HASH_FILE" ]; then
   # Read the stored hash
@@ -30,11 +31,14 @@ else
   # If hash file doesn't exist, initialize it
   STORED_HASH=""
 fi
+[ -n "${DEBUG_SHELLCONFIG}" ] && echo "Stored hash: $STORED_HASH"
 
 # Compare the current hash with the stored hash
-if [ "$CURRENT_HASH" != "$STORED_HASH" ] || [ "$RUN_DOTFILE_TESTS" = "true" ]; then
-  [ "$CURRENT_HASH" != "$STORED_HASH" ] && echo -n "Files have changed. "
-  echo "Enabling dotfile runtime tests..."
-  RUN_DOTFILE_TESTS=true
-  echo "$CURRENT_HASH" > "$HASH_FILE"
+if [ "$CURRENT_HASH" != "$STORED_HASH" ]; then
+  echo -n "Files have changed. "
+  export RUN_DOTFILE_TESTS=true
+  echo -n "$CURRENT_HASH" > "$HASH_FILE"
+fi
+if [ "$RUN_DOTFILE_TESTS" = "true" ]; then
+  echo "Enabling dotfile tests..."
 fi

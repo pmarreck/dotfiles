@@ -31,7 +31,10 @@ datetimestamp() {
       ;;
   esac
 }
-if [ "$RUN_DOTFILE_TESTS" == "true" ]; then
+
+source_relative_once functions/truthy.bash
+
+if truthy RUN_DOTFILE_TESTS; then
   source_relative_once functions/assert.bash
 
   assert "$(datetimestamp --date='@2147483640')" == 20380118221400.000 "datetimestamp should work as expected and pad zeroes"

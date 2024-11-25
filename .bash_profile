@@ -18,7 +18,20 @@ else
   echo "Warning: Couldn't parse Bash version: $BASH_VERSION" >&2
 fi
 
-[ "${DEBUG_SHELLCONFIG+set}" = "set" ] && echo "Entering $(echo "${BASH_SOURCE[0]}" | sed "s|^$HOME|~|")" || printf "#"
+# most things should be sourced via source_relative... except source_relative itself
+# if the function is not already defined, define it. use posix syntax for portability
+# shellcheck disable=SC1090
+[ "`type -t source_relative_once`" = "function" ] || . "$HOME/dotfiles/bin/functions/source_relative.bash"
+
+# Pull in path configuration
+source_relative_once .pathconfig
+
+# prefer gnu sed installed via nix, otherwise warn
+SED=$(command -v gsed 2>/dev/null || command -v sed)
+[[ "$($SED --version | head -1)" =~ .*GNU.* ]] || echo "WARNING from .bash_profile: The sed on PATH is not GNU sed, which may cause problems" >&2 && SED="/run/current-system/sw/bin/sed"
+export SED
+
+[ "${DEBUG_SHELLCONFIG+set}" = "set" ] && echo "Entering $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")" || printf "#"
 [ "${DEBUG_PATHCONFIG+set}" = "set" ] && echo "$PATH"
 # since .bash_profile is usually only included for non-login shells
 # (note: OS X Terminal ALWAYS runs as a login shell but still ALWAYS includes this file, but it's nonstandard)
@@ -39,7 +52,7 @@ source "${HOME}/dotfiles/run_tests_on_change.sh"
 # set +x
 # exec 2>&3 3>&-
 
-[ "${DEBUG_SHELLCONFIG+set}" = "set" ] && echo "Exiting $(echo "${BASH_SOURCE[0]}" | sed "s|^$HOME|~|")"
+[ "${DEBUG_SHELLCONFIG+set}" = "set" ] && echo "Exiting $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")"
 [ "${DEBUG_PATHCONFIG+set}" = "set" ] && echo "$PATH" || :
 
 # Added by OrbStack: command-line tools and integration

@@ -75,7 +75,6 @@ show() {
   # I set PLATFORM elsewhere in my env config
   # [ "$PLATFORM" = "osx" ] && local -r sed="gsed" || local -r sed="sed"
   # screw homebrew, all in on nix now; this is always gnused; YMMV
-  local -r sed="sed"
   local word="$1"
   shift
   if [ -z "$word" ] && [ -z "$1" ]; then
@@ -145,9 +144,9 @@ show() {
           # replace runs of 2 spaces with 1 space
           # and format the function definition the way I like it
           declare -f "$word" |\
-            $sed -z 's/\n{/ {/' |\
-            $sed 's/  / /g' |\
-            $sed -E 's/^([_[:alpha:]][_[:alnum:]]*)\s\(\)/\1()/'
+            sed -z 's/\n{/ {/' |\
+            sed 's/  / /g' |\
+            sed -E 's/^([_[:alpha:]][_[:alnum:]]*)\s\(\)/\1()/'
           ;;
         alias)
           note "$word is an alias"

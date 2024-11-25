@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-[ -n "${DEBUG_SHELLCONFIG}" ] && echo "Entering $(echo "${BASH_SOURCE[0]}" | sed "s|^$HOME|~|")" || printf "#"
+[ -n "${DEBUG_SHELLCONFIG}" ] && echo "Entering $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")" || printf "#"
 [ -n "${DEBUG_PATHCONFIG}" ] && echo $PATH
 # canonical gcc tweaks for OS X's homebrew gcc; Linux shouldn't need these
 # if [ "$PLATFORM" = "osx" ]; then
@@ -185,5 +185,5 @@ export ERL_FLAGS="+P 2000000";
 [ -f $HOME/.secrets ] && source $HOME/.secrets
 [ -f $HOME/.secrets ] && export $(cat $HOME/.secrets | grep -v -s -e '^\s*#' | cut -d "=" -f 1 | xargs -L 1)
 
-[ -n "${DEBUG_SHELLCONFIG}" ] && echo "Exiting $(echo "${BASH_SOURCE[0]}" | sed "s|^$HOME|~|")"
+[ -n "${DEBUG_SHELLCONFIG}" ] && echo "Exiting $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")"
 [ -n "${DEBUG_PATHCONFIG}" ] && echo $PATH || :

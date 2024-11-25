@@ -2,21 +2,25 @@
 # .profile must remain POSIX-compliant, use shellcheck to verify
 # There is currently 1 exception to this rule: the use of ${BASH_SOURCE[0]} in source_relative[_once]
 
-[ -n "$DEBUG_SHELLCONFIG" ] && echo "Entering $(echo "${BASH_SOURCE[0]}" | sed "s|^$HOME|~|")" || printf "#"
+[ -n "$DEBUG_SHELLCONFIG" ] && echo "Entering $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")" || printf "#"
 [ -n "$DEBUG_PATHCONFIG" ] && echo $PATH
 
 $INTERACTIVE_SHELL && echo " $DISTRO_PRETTY"
 
 # most things should be sourced via source_relative... except source_relative itself
-source $HOME/dotfiles/bin/functions/source_relative.bash
-
+# if the function is not already defined, define it. use posix syntax for portability
+# shellcheck disable=SC1090
+[ "`type -t source_relative_once`" = "function" ] || . "$HOME/dotfiles/bin/functions/source_relative.bash"
+# [ -n "$DEBUG_SHELLCONFIG" ] && ! [ "`type -t source_relative_once`" = "function" ] && echo "sourced source_relative.bash"
 source_relative_once bin/functions/truthy.bash
-
+# [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced truthy.bash"
 # The only functions defined here should be the ones that are needed everywhere
 # and are not specific to a particular shell (e.g. bash, zsh, etc.)
 
 source_relative_once bin/functions/utility_functions.bash
+# [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced utility_functions.bash"
 source_relative_once bin/functions/binhex.bash
+# [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced binhex.bash"
 
 # config for Visual Studio Code
 # if [ "$PLATFORM" = "osx" ]; then
@@ -29,6 +33,7 @@ source_relative_once bin/functions/binhex.bash
 # set default tab stops to 2 spaces
 # Note that this may mess up ncurses code that might assume 8 spaces
 tabs -2
+# [ -n "$DEBUG_SHELLCONFIG" ] && echo "set tabs to 2 spaces"
 
 # If you hate noise
 # set bell-style visible
@@ -37,10 +42,13 @@ tabs -2
 # ulimit -n 10000
 
 source_relative_once bin/aliases.sh
+# [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced aliases.sh"
 
 # Linux-specific stuff
 if [ "${PLATFORM}" = "linux" ]; then
+  [ -n "$DEBUG_SHELLCONFIG" ] && echo "linux platform detected"
   source_relative_once bin/functions/fsattr.bash
+  # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced fsattr.bash"
   # provide a universal "open" on linux to open a path in the file manager
   open() {
     [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
@@ -53,7 +61,7 @@ if [ "${PLATFORM}" = "linux" ]; then
     # ip -o link show | awk -F': ' '{print $2}' | sed 's/@.*//'
     # the above was missing altnames.
     # this is a bit hacky but there are many ways to skin this cat
-    ip link show | $AWK '{print $2}' | sed 's/://' | grep -E '^(lo|en|wl)'
+    ip link show | $AWK '{print $2}' | $SED 's/://' | grep -E '^(lo|en|wl)'
   }
   # list processes with optional filter argument
   list-procs() {
@@ -62,11 +70,14 @@ if [ "${PLATFORM}" = "linux" ]; then
   }
   alias procs=list-procs
   source_relative_once bin/functions/nvidia.bash
+  # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced nvidia.bash"
 fi
 
 source_relative_once bin/functions/get_all_git_stati.sh
+# [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced get_all_git_stati.sh"
 
 source_relative_once bin/functions/compsavings.bash
+# [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced compsavings.bash"
 
 # because I always forget how to do this...
 dd_example() {
@@ -81,16 +92,22 @@ write_iso() {
 }
 
 source_relative_once bin/functions/cpv_copy_verbose.sh
+# [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced cpv_copy_verbose.sh"
 
 source_relative_once bin/functions/date_difference_days.bash
+# [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced date_difference_days.bash"
 
 source_relative_once bin/functions/calc.bash
+[ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced calc.bash"
 
 source_relative_once bin/functions/encrypt_decrypt.sh
+# [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced encrypt_decrypt.sh"
 
 source_relative_once bin/functions/randompass.sh
+# [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced randompass.sh"
 
 source_relative_once bin/functions/executables.bash
+# [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced executables.bash"
 
 # which hack, so it also shows defined aliases and functions that match
 # where() {
@@ -104,27 +121,38 @@ source_relative_once bin/functions/executables.bash
 # Note: Superseded by "show" function below
 
 source_relative_once bin/functions/show.sh
+# [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced show.sh"
 alias d=show # "view" goes to vim, "s" usually launches a search or server, so "d" (for "define") is a good alias for show IMHO
 
 source_relative_once bin/functions/dragon.sh
+# [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced dragon.sh"
 
 source_relative_once bin/functions/ds_bore.sh
+# [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced ds_bore.sh"
 
 source_relative_once bin/functions/warhammer_quote.bash
+# [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced warhammer_quote.bash"
 
 source_relative_once bin/functions/bashorg_quote.bash
+# [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced bashorg_quote.bash"
 
 source_relative_once bin/functions/mandelbrot.sh
+# [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced mandelbrot.sh"
 
 source_relative_once bin/functions/clock.bash
+# [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced clock.bash"
 
 source_relative_once bin/functions/weather.bash
+# [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced weather.bash"
 
 source_relative_once bin/functions/please.bash
+# [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced please.bash"
 
 source_relative_once bin/functions/grandfather_clock_chime.sh
+# [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced grandfather_clock_chime.sh"
 
 source_relative_once bin/ask
+# [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced ask"
 
 # crypto market data. can pass a symbol in or just get the current overall market data
 crypto() {
@@ -141,8 +169,11 @@ lnwtf() {
 }
 
 up() {
+  local nounset_was_set=$(set -o | rg -q 'nounset *on'; echo $?)
+  set -u
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   uptime | $AWK '{split($0,a,"  up ");split(a[2],b,", ");print"["b[1]", "b[2]"]"}'
+  if [ "$nounset_was_set" -eq 0 ]; then set -u; else set +u; fi
 }
 
 # browse a CSV file as a scrollable table
@@ -157,12 +188,16 @@ csv() {
 }
 
 source_relative_once bin/functions/otp_version.sh
+# [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced otp_version.sh"
 
 source_relative_once bin/functions/pman_nice_man_pages.sh
+# [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced pman_nice_man_pages.sh"
 
 source_relative_once bin/functions/portopen_fileopen.sh
+# [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced portopen_fileopen.sh"
 
 source_relative_once bin/functions/print_x_times.sh
+# [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced print_x_times.sh"
 
 # only enable this on arch somehow
 # source ~/bin/pac
@@ -231,30 +266,43 @@ source_relative_once bin/functions/print_x_times.sh
 # }
 
 source_relative_once bin/functions/pg_postgres_wrapper.sh
+# [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced pg_postgres_wrapper.sh"
 
 source_relative_once bin/functions/notify.sh
+# [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced notify.sh"
 
 source_relative_once bin/functions/ff_fast_find.sh
+# [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced ff_fast_find.sh"
 
 source_relative_once bin/functions/git_commit_ai.bash
+# [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced git_commit_ai.bash"
 
 source_relative_once bin/functions/Time.now.to_f.sh
+# [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced Time.now.to_f.sh"
 
 source_relative_once bin/functions/note_time_diff.sh
+# [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced note_time_diff.sh"
 
 source_relative_once bin/functions/div.sh
+# [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced div.sh"
 
 source_relative_once bin/functions/flip_a_coin.sh
+# [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced flip_a_coin.sh"
 
 source_relative_once bin/functions/roll_a_die.sh
+# [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced roll_a_die.sh"
 
 source_relative_once bin/functions/repeat_command.bash
+# [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced repeat_command.bash"
 
 source_relative_once bin/functions/uuidv7.sh
+# [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced uuidv7.sh"
 
 source_relative_once bin/functions/kill-steam-proton-pids.bash
+# [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced kill-steam-proton-pids.bash"
 
 source_relative_once bin/functions/whatismyip.sh
+# [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced whatismyip.sh"
 
 # command prompt
 # NOTE: Now configured via starship in apply-hooks
@@ -263,6 +311,7 @@ source_relative_once bin/functions/whatismyip.sh
 # Pull in path configuration AGAIN because macos keeps mangling it
 # (also did it in .bashrc)
 source_relative_once .pathconfig
+# [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced .pathconfig"
 
 # silliness
 
@@ -307,6 +356,7 @@ just_one_taoup() {
 }
 
 source_relative_once bin/times_older_than
+# [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced times_older_than"
 
 times_older_than_samson() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
@@ -392,5 +442,5 @@ if [ "$INTERACTIVE_SHELL" = "true" ]; then
   fun_intro
 fi
 
-[ -n "$DEBUG_SHELLCONFIG" ] && echo "Exiting $(echo "${BASH_SOURCE[0]}" | sed "s|^$HOME|~|")"
+[ -n "$DEBUG_SHELLCONFIG" ] && echo "Exiting $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")"
 [ -n "$DEBUG_PATHCONFIG" ] && echo $PATH || :

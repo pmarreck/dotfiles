@@ -56,7 +56,7 @@ if [ "${PLATFORM}-${DISTRO}" = "linux-NixOS" ]; then
   alias nixos="choose_editor /etc/nixos &"
   function abbrev-nix-store-paths(){
     [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-    sed -E 's|/nix/store/[a-z0-9]{32}-|/⌘/|g'
+    $SED -E 's|/nix/store/[a-z0-9]{32}-|/⌘/|g'
   }
 fi
 
@@ -66,7 +66,6 @@ fi
 alias scr='screen -r'
 alias p='ping www.yahoo.com'
 alias pp='ping -A -i 5 8.8.4.4' #Ping the root google nameserver every 5 seconds and beep if no route
-alias t='btop'
 # alias tu='top -ocpu -Otime'
 alias bye='logout'
 

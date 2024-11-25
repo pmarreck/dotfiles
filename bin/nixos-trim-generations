@@ -87,7 +87,7 @@ choose () {
 
 
 ## Query nix-env for generations list
-IFS=$'\n' nixGens=( $(nix-env --list-generations -p $profile | sed 's:^\s*::; s:\s*$::' | tr '\t' ' ' | tr -s ' ') )
+IFS=$'\n' nixGens=( $(nix-env --list-generations -p $profile | $SED 's:^\s*::; s:\s*$::' | tr '\t' ' ' | tr -s ' ') )
 timeNow=$(date +%s)
 
 ## Get info on oldest generation

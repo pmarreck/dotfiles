@@ -179,7 +179,7 @@ processlabel() {
     # 4. Split long filenames with newlines (recursively)
     span=45			# filenames longer than span will be split
     echo -n "$1" |
-    sed 's|\[0]$||;' | tr '[:cntrl:]' '?' |
+    $SED 's|\[0]$||;' | tr '[:cntrl:]' '?' |
     awk -v span=$span -v ORS=""  '
     function halve(s,      l,h) { 	# l and h are locals
         l=length(s);  h=int(l/2);
@@ -191,7 +191,7 @@ processlabel() {
       print halve($0);
         }
         ' |
-    sed 's|%|%%|g; s|\\|\\\\|g; s|@|\\@|g;'
+    $SED 's|%|%%|g; s|\\|\\\\|g; s|@|\\@|g;'
 }
 
 ####

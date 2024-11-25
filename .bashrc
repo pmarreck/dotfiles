@@ -21,7 +21,20 @@ else
   echo "Warning: Couldn't parse Bash version: $BASH_VERSION"
 fi
 
-[ "${DEBUG_SHELLCONFIG+set}" = "set" ] && echo "Entering $(echo "${BASH_SOURCE[0]}" | sed "s|^$HOME|~|")" || printf "#"
+# most things should be sourced via source_relative... except source_relative itself
+# if the function is not already defined, define it. use posix syntax for portability
+# shellcheck disable=SC1090
+[ "`type -t source_relative_once`" = "function" ] || . "$HOME/dotfiles/bin/functions/source_relative.bash"
+
+# Pull in path configuration
+source_relative_once .pathconfig
+
+# prefer gnu sed installed via nix, otherwise warn
+SED=$(command -v gsed 2>/dev/null || command -v sed)
+[[ "$($SED --version | head -1)" =~ .*GNU.* ]] || echo "WARNING from .bashrc: The sed on PATH is not GNU sed, which may cause problems" >&2 && SED="/run/current-system/sw/bin/sed"
+export SED
+
+[ "${DEBUG_SHELLCONFIG+set}" = "set" ] && echo "Entering $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")" || printf "#"
 [ "${DEBUG_PATHCONFIG+set}" = "set" ] && echo "$PATH"
 
 # mute direnv constantly telling me what it's loading
@@ -150,9 +163,6 @@ export ARCHFLAGS
 # ssh
 export SSH_KEY_PATH="$HOME/.ssh/id_ed25519"
 
-# most things should be sourced via source_relative... except source_relative itself
-source "$HOME/dotfiles/bin/functions/source_relative.bash"
-
 # Guix integration
 [[ -s "$HOME/.guix-profile/etc/profile" ]] && source $HOME/.guix-profile/etc/profile
 
@@ -264,9 +274,6 @@ me() {
 # zoxide integration
 needs zoxide "get zoxide via cargo or your package manager" && eval "$(zoxide init --cmd cd --hook pwd bash)"
 
-# Pull in path configuration
-source_relative_once .pathconfig
-
 needs eza "cargo install eza, or your package manager"
 needs tokei "cargo install --git https://github.com/XAMPPRocky/tokei.git tokei, or your package manager"
 needs micro "please install the micro terminal editor"
@@ -293,5 +300,5 @@ source $HOME/bin/apply-hooks || echo "Problem when sourcing $HOME/bin/apply-hook
 # activate ble.sh/blesh
 # [[ ! ${BLE_VERSION-} ]] || ble-attach
 
-[ -n "${DEBUG_SHELLCONFIG}" ] && echo "Exiting $(echo "${BASH_SOURCE[0]}" | sed "s|^$HOME|~|")"
+[ -n "${DEBUG_SHELLCONFIG}" ] && echo "Exiting $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")"
 [ -n "${DEBUG_PATHCONFIG}" ] && echo "$PATH" || :

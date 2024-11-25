@@ -214,11 +214,12 @@ fi
 # but leave intentional newlines (those without surrounding whitespace)
 # alone.
 unwrap() {
+  local SED=`which sed`
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   # this expects contents to be piped in via stdin
-  [[ "$(sed --version | head -1)" =~ .*GNU.* ]] || echo "WARNING: function unwrap: The sed on PATH is not GNU sed, which may cause problems" >&2
+  [[ "$(sed --version | head -1)" =~ .*GNU.* ]] || echo "WARNING: function unwrap: The sed on PATH is not GNU sed, which may cause problems" >&2 && SED="/run/current-system/sw/bin/sed"
   # sed -E -e ':a;N;$!ba' -e 's/( \n | \n|\n )/ /g'
-  sed -E ':a;N;$!ba;s/( +\n +| *\n +| +\n *)/ /g'
+  $SED -E ':a;N;$!ba;s/( +\n +| *\n +| +\n *)/ /g'
 }
 
 # Wraps text to the current width of the terminal, or to a specified width.
@@ -336,10 +337,10 @@ strip_ansi() {
 
   if [ -t 0 ]; then
     # Input from arguments
-    printf '%b' "$*" | sed -E "$ansiregex"
+    printf '%b' "$*" | $SED -E "$ansiregex"
   else
     # Input from pipe
-    sed -E "$ansiregex"
+    $SED -E "$ansiregex"
   fi
 }
 
@@ -352,7 +353,7 @@ fi
 # removes blank lines and commented-out lines
 elixir_js_loc() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-  git ls-files | grep -E '\.erl|\.exs?|\.js$' | xargs cat | sed -e '/^$/d' -e '/^ *#/d' -e '/^ *\/\//d' | wc -l
+  git ls-files | grep -E '\.erl|\.exs?|\.js$' | xargs cat | $SED -e '/^$/d' -e '/^ *#/d' -e '/^ *\/\//d' | wc -l
 }
 
 contains() {
@@ -451,3 +452,31 @@ image_convert_to_jpegxl() {
   needs cjxl "please install the libjxl package to get the cjxl executable" && \
   echo_eval "cjxl -d $d -e $e --lossless_jpeg=0 \"$1\" \"${bn}.jxl\""
 }
+
+# supertop: open htop and btop at the same time in a tmux split
+# requires btop and htop to be installed
+supertop() {
+  # Check if btop++ is installed
+  if ! command -v nix &> /dev/null; then
+    echo "nix is not installed. Please install it first, along with btop and htop."
+    return
+  fi
+
+  # randomize the name of split_session by adding the shell pid
+  local session_name
+  session_name="split_session_$$"
+
+  # Start a new tmux session with two vertical panes
+  tmux new-session -d -s ${session_name}  # Create a new detached session named 'split_session_$$'
+
+  # Run htop in the first pane
+  tmux send-keys -t ${session_name}:0 'htop' C-m
+
+  # Split the window horizontally and run btop++ in the second pane
+  tmux split-window -h  # Split the window horizontally
+  tmux send-keys -t ${session_name}:0.1 'btop' C-m
+
+  # Attach to the session
+  tmux attach-session -t ${session_name}  # Attach to the created session
+}
+alias t='supertop'

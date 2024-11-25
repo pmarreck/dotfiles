@@ -9,13 +9,13 @@ Lines.join() {
     # read from stdin and join on first argument
     # default to joining on first char of default IFS which is space
     local sep="${1:-$default_ifs_first_char}"
-    tr '\n' "$sep" | sed -e "s/${sep}\$//g"
+    tr '\n' "$sep" | $SED -e "s/${sep}\$//g"
   else
     # echo "There is no stdin"
     # read input from 1st argument and split on 2nd argument
     # default to splitting on default IFS which is space, tab, newline
     local sep="${2:-$default_ifs_first_char}"
-    printf "%s" "$1" | tr '\n' "$sep" | sed -e "s/${sep}\$//"
+    printf "%s" "$1" | tr '\n' "$sep" | $SED -e "s/${sep}\$//"
   fi
 }
 
