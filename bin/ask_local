@@ -2,7 +2,7 @@
 
 source_relative_once "ask"
 
-export DEFAULT_LOCAL_AI_MODEL="llama3.1:70b"
+export DEFAULT_LOCAL_AI_MODEL="llama3.2-vision:90b"
 export DEFAULT_LOCAL_AI_HOST="localhost:11434"
 
 function ask_local() {

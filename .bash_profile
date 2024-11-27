@@ -18,6 +18,25 @@ else
   echo "Warning: Couldn't parse Bash version: $BASH_VERSION" >&2
 fi
 
+# since .bash_profile is usually only included for non-login shells
+# (note: OS X Terminal ALWAYS runs as a login shell but still ALWAYS includes this file, but it's nonstandard)
+# set LOGIN_SHELL and INTERACTIVE_SHELL here but only if it wasn't already set
+shopt -q login_shell && LOGIN_SHELL=true || LOGIN_SHELL=false
+[[ $- == *i* ]] && INTERACTIVE_SHELL=true || INTERACTIVE_SHELL=false
+
+[ "${DEBUG_SHELLCONFIG+set}" = "set" ] && echo "Entering $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")" || $INTERACTIVE_SHELL && $LOGIN_SHELL && printf "bp"
+[ "${DEBUG_PATHCONFIG+set}" = "set" ] && echo "$PATH"
+
+# subtle shell characteristics indication, but only if interactive
+if $INTERACTIVE_SHELL; then
+  printf "i"
+  if $LOGIN_SHELL; then
+    printf "l"
+  else
+    printf "L"
+  fi
+fi
+
 # most things should be sourced via source_relative... except source_relative itself
 # if the function is not already defined, define it. use posix syntax for portability
 # shellcheck disable=SC1090
@@ -31,12 +50,6 @@ SED=$(command -v gsed 2>/dev/null || command -v sed)
 [[ "$($SED --version | head -1)" =~ .*GNU.* ]] || echo "WARNING from .bash_profile: The sed on PATH is not GNU sed, which may cause problems" >&2 && SED="/run/current-system/sw/bin/sed"
 export SED
 
-[ "${DEBUG_SHELLCONFIG+set}" = "set" ] && echo "Entering $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")" || printf "#"
-[ "${DEBUG_PATHCONFIG+set}" = "set" ] && echo "$PATH"
-# since .bash_profile is usually only included for non-login shells
-# (note: OS X Terminal ALWAYS runs as a login shell but still ALWAYS includes this file, but it's nonstandard)
-export LOGIN_SHELL=false
-
 # enable timing debugging
 # PS4='+ \D{%s} \011 '
 # PS4='+ $(/Users/pmarreck/.nix-profile/bin/date "+%s.%N")\011 '
@@ -44,7 +57,7 @@ export LOGIN_SHELL=false
 # set -x
 
 # enable tests if any script modification times are different
-source "${HOME}/dotfiles/run_tests_on_change.sh"
+source_relative_once "${HOME}/dotfiles/run_tests_on_change.sh"
 
 [[ -s "$HOME/.bashrc" ]] && source "$HOME/.bashrc"
 
@@ -52,9 +65,9 @@ source "${HOME}/dotfiles/run_tests_on_change.sh"
 # set +x
 # exec 2>&3 3>&-
 
-[ "${DEBUG_SHELLCONFIG+set}" = "set" ] && echo "Exiting $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")"
-[ "${DEBUG_PATHCONFIG+set}" = "set" ] && echo "$PATH" || :
-
 # Added by OrbStack: command-line tools and integration
 # Comment this line if you don't want it to be added again.
-source ~/.orbstack/shell/init.bash 2>/dev/null || :
+# source ~/.orbstack/shell/init.bash 2>/dev/null || :
+
+[ "${DEBUG_SHELLCONFIG+set}" = "set" ] && echo "Exiting $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")"
+[ "${DEBUG_PATHCONFIG+set}" = "set" ] && echo "$PATH" || :

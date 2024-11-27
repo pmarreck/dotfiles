@@ -36,9 +36,11 @@ fi
 # Compare the current hash with the stored hash
 if [ "$CURRENT_HASH" != "$STORED_HASH" ]; then
   echo -n "Files have changed. "
-  export RUN_DOTFILE_TESTS=true
+  RUN_DOTFILE_TESTS=true
   echo -n "$CURRENT_HASH" > "$HASH_FILE"
+else
+  RUN_DOTFILE_TESTS=false
 fi
-if [ "$RUN_DOTFILE_TESTS" = "true" ]; then
+if $RUN_DOTFILE_TESTS; then
   echo "Enabling dotfile tests..."
 fi

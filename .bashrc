@@ -21,6 +21,12 @@ else
   echo "Warning: Couldn't parse Bash version: $BASH_VERSION"
 fi
 
+# determine shell characteristics
+# is this an interactive shell? login shell?
+# set LOGIN_SHELL and INTERACTIVE_SHELL here
+shopt -q login_shell && LOGIN_SHELL=true || LOGIN_SHELL=false
+[[ $- == *i* ]] && INTERACTIVE_SHELL=true || INTERACTIVE_SHELL=false
+
 # most things should be sourced via source_relative... except source_relative itself
 # if the function is not already defined, define it. use posix syntax for portability
 # shellcheck disable=SC1090
@@ -30,32 +36,19 @@ fi
 source_relative_once .pathconfig
 
 # prefer gnu sed installed via nix, otherwise warn
-SED=$(command -v gsed 2>/dev/null || command -v sed)
+[ "${SED+set}" = "set" ] && \
+  export SED=$(command -v gsed 2>/dev/null || command -v sed)
 [[ "$($SED --version | head -1)" =~ .*GNU.* ]] || echo "WARNING from .bashrc: The sed on PATH is not GNU sed, which may cause problems" >&2 && SED="/run/current-system/sw/bin/sed"
-export SED
 
-[ "${DEBUG_SHELLCONFIG+set}" = "set" ] && echo "Entering $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")" || printf "#"
+# Awk-ward! (see note below about "using the right awk"...)
+[ "${AWK+set}" = "set" ] && \
+  export AWK=$(command -v frawk || command -v gawk || command -v awk)
+
+[ "${DEBUG_SHELLCONFIG+set}" = "set" ] && echo "Entering $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")" || $INTERACTIVE_SHELL && $LOGIN_SHELL && printf "br"
 [ "${DEBUG_PATHCONFIG+set}" = "set" ] && echo "$PATH"
 
 # mute direnv constantly telling me what it's loading
 export DIRENV_LOG_FORMAT=
-
-# determine shell characteristics
-# is this an interactive shell?
-case "$-" in
-  *i*)	export INTERACTIVE_SHELL=true ;;
-  *)	export INTERACTIVE_SHELL=false ;;
-esac
-# is this a login shell?
-# this is already set to false if .bash_profile ran (which implies it's a non-login shell)
-export LOGIN_SHELL=${LOGIN_SHELL:-true};
-
-if $INTERACTIVE_SHELL; then
-  printf "i"
-fi
-if $LOGIN_SHELL; then
-  printf "l"
-fi
 
 # graceful dependency enforcement
 # Usage: needs <executable> ["provided by <packagename>"]
@@ -166,16 +159,6 @@ export SSH_KEY_PATH="$HOME/.ssh/id_ed25519"
 # Guix integration
 [[ -s "$HOME/.guix-profile/etc/profile" ]] && source $HOME/.guix-profile/etc/profile
 
-# Awk-ward! (see note below about "using the right awk"...)
-AWK=$(command -v frawk || command -v gawk || command -v awk)
-export AWK
-
-# using the right awk is a PITA on macOS vs. Linux so let's ensure GNU Awk everywhere
-is_gnu_awk=$($AWK --version | grep -q -m 1 'GNU Awk' && echo true || echo false)
-[ "${PLATFORM}${AWK}" == "osxawk" ] && \
-  [ "$is_gnu_awk" = "false" ] && \
-  echo "WARNING: The awk on PATH is not GNU Awk on macOS, which may cause problems" >&2
-
 # platform info
 case $OSTYPE in
   darwin*)
@@ -248,6 +231,12 @@ case $OSTYPE in
     export PLATFORM="$OSTYPE"
     ;;
 esac
+
+# using the right awk is a PITA on macOS vs. Linux so let's ensure GNU Awk everywhere
+is_gnu_awk=$($AWK --version | grep -q -m 1 'GNU Awk' && echo true || echo false)
+[ "${PLATFORM}$(basename $AWK)" == "osxawk" ] && \
+  [ "$is_gnu_awk" = "false" ] && \
+  echo "WARNING: The awk on PATH is not GNU Awk on macOS, which may cause problems" >&2
 
 # # asdf config
 # [[ -s "$HOME/.asdf/asdf.sh" ]] && source "$HOME/.asdf/asdf.sh"

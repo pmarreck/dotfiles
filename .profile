@@ -2,10 +2,10 @@
 # .profile must remain POSIX-compliant, use shellcheck to verify
 # There is currently 1 exception to this rule: the use of ${BASH_SOURCE[0]} in source_relative[_once]
 
-[ -n "$DEBUG_SHELLCONFIG" ] && echo "Entering $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")" || printf "#"
+[ -n "$DEBUG_SHELLCONFIG" ] && echo "Entering $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")" || $INTERACTIVE_SHELL && $LOGIN_SHELL && printf "pr"
 [ -n "$DEBUG_PATHCONFIG" ] && echo $PATH
 
-$INTERACTIVE_SHELL && echo " $DISTRO_PRETTY"
+$INTERACTIVE_SHELL && $LOGIN_SHELL && echo " $DISTRO_PRETTY"
 
 # most things should be sourced via source_relative... except source_relative itself
 # if the function is not already defined, define it. use posix syntax for portability
@@ -399,6 +399,11 @@ check_sixel_support() {
     [ -n "$DEBUG_SHELLCONFIG" ] && echo "Warp terminal detected, which does not support Sixel as of 2024." >&2
     return 1
   fi
+  if [[ "$TERM_PROGRAM" == "Hyper" ]]; then
+    [ -n "$DEBUG_SHELLCONFIG" ] && echo "Hyper terminal detected, which does not support Sixel as of 2024,\
+ but check again soon because sixel support was added to xterm.js, which Hyper uses." >&2
+    return 1
+  fi
   # Fall back on the assumption that these might work
   case "$TERM" in
     xterm-256color|xterm-kitty|mlterm|yaft|wezterm)
@@ -419,28 +424,32 @@ else
 fi
 export SIXEL_ENV SIXEL_CAPABLE
 
-if [ "$INTERACTIVE_SHELL" = "true" ]; then
-  fun_intro() {
-    [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-    sixel_less="fortune warhammer_quote bashorg_quote chuck mandelbrot asciidragon just_one_taoup times_older_than_samson"
-    # This one requires a Sixel-capable terminal
-    sixel_ful="inthebeginning"
-    if ! $SIXEL_CAPABLE; then
-      _fun_things="$sixel_less"
-    else
-      _fun_things="$sixel_less $sixel_ful"
-    fi
-    _selected_fun_thing=$(echo "$_fun_things" | tr ' ' '\n' | shuf -n 1)
 
-    if command -v "$_selected_fun_thing" >/dev/null 2>&1; then
-      eval "$_selected_fun_thing"
-    else
-      echo "Tried to call '$_selected_fun_thing', but it was not defined" >&2
-    fi
-    unset _fun_things sixel_less sixel_ful _selected_fun_thing
-  }
-  fun_intro
-fi
+fun_intro() {
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  sixel_less="fortune warhammer_quote bashorg_quote chuck mandelbrot asciidragon just_one_taoup times_older_than_samson"
+  # This one requires a Sixel-capable terminal
+  sixel_ful="inthebeginning"
+  if ! $SIXEL_CAPABLE; then
+    _fun_things="$sixel_less"
+  else
+    _fun_things="$sixel_less $sixel_ful"
+  fi
+  _selected_fun_thing=$(echo "$_fun_things" | tr ' ' '\n' | shuf -n 1)
+
+  if [ -n "$DEBUG_SHELLCONFIG" ]; then
+    echo "Running '$_selected_fun_thing' from fun_intro"
+  fi
+
+  if command -v "$_selected_fun_thing" >/dev/null 2>&1; then
+    eval "$_selected_fun_thing"
+  else
+    echo "Tried to call '$_selected_fun_thing', but it was not defined" >&2
+  fi
+  unset _fun_things sixel_less sixel_ful _selected_fun_thing
+}
+${INTERACTIVE_SHELL:-false} && ${LOGIN_SHELL:-false} && fun_intro
+
 
 [ -n "$DEBUG_SHELLCONFIG" ] && echo "Exiting $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")"
 [ -n "$DEBUG_PATHCONFIG" ] && echo $PATH || :

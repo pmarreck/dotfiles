@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-[ -n "${DEBUG_SHELLCONFIG}" ] && echo "Entering $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")" # || printf "#"
+[ -n "${DEBUG_SHELLCONFIG}" ] && echo "Entering $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")" || $INTERACTIVE_SHELL && $LOGIN_SHELL && printf "pc"
 [ -n "${DEBUG_PATHCONFIG}" ] && echo "PATH is: $PATH"
 
 # All path configs here should replace any existing version of themselves in the PATH before appending

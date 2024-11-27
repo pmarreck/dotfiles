@@ -456,27 +456,18 @@ image_convert_to_jpegxl() {
 # supertop: open htop and btop at the same time in a tmux split
 # requires btop and htop to be installed
 supertop() {
-  # Check if btop++ is installed
   if ! command -v nix &> /dev/null; then
-    echo "nix is not installed. Please install it first, along with btop and htop."
-    return
-  fi
+    echo "nix is not installed. Please install it first, along with btop and htop.";
+    return;
+  fi;
 
-  # randomize the name of split_session by adding the shell pid
-  local session_name
-  session_name="split_session_$$"
+  local session_name;
+  session_name="split_session_$$";
 
-  # Start a new tmux session with two vertical panes
-  tmux new-session -d -s ${session_name}  # Create a new detached session named 'split_session_$$'
-
-  # Run htop in the first pane
-  tmux send-keys -t ${session_name}:0 'htop' C-m
-
-  # Split the window horizontally and run btop++ in the second pane
-  tmux split-window -h  # Split the window horizontally
-  tmux send-keys -t ${session_name}:0.1 'btop' C-m
-
-  # Attach to the session
-  tmux attach-session -t ${session_name}  # Attach to the created session
+  # Create the tmux session
+  tmux new-session -d -s "${session_name}" 'bash --norc --noprofile -c htop';
+  tmux split-window -h 'bash --norc --noprofile -c btop';
+  tmux attach-session -t "${session_name}";
 }
+
 alias t='supertop'

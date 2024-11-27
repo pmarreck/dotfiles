@@ -22,14 +22,21 @@ source_relative_once() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   [[ -n "${_TRACE_SOURCING}" ]] && local _debug_id=$RANDOM
   local _file="$1"
-  [[ -n "${_TRACE_SOURCING}" ]] && echo "source_relative_once invocation #${_debug_id}: _file is $_file"
-  # Get the directory of the currently executing script
-  # _dir=`dirname "$0"` # doesn't work reliably
-  [[ -n "${_TRACE_SOURCING}" ]] && echo "source_relative_once invocation #${_debug_id}: BASH_SOURCE[1] is ${BASH_SOURCE[1]}"
-  local _dir=`dirname "${BASH_SOURCE[1]}"` # works in bash but not POSIX compliant sh
-  [[ -n "${_TRACE_SOURCING}" ]] && echo "source_relative_once invocation #${_debug_id}: _dir is $_dir"
-  # Convert the relative path to an absolute path
-  local _abs_path="$_dir/$_file"
+  # check if it is already an absolute path
+  if [[ "$_file" != /* ]]; then
+    [[ -n "${_TRACE_SOURCING}" ]] && echo "source_relative_once invocation #${_debug_id}: _file is $_file"
+    # Get the directory of the currently executing script
+    # _dir=`dirname "$0"` # doesn't work reliably
+    [[ -n "${_TRACE_SOURCING}" ]] && echo "source_relative_once invocation #${_debug_id}: BASH_SOURCE[1] is ${BASH_SOURCE[1]}"
+    local _dir=`dirname "${BASH_SOURCE[1]}"` # works in bash but not POSIX compliant sh
+    [[ -n "${_TRACE_SOURCING}" ]] && echo "source_relative_once invocation #${_debug_id}: _dir is $_dir"
+    # Convert the relative path to an absolute path
+    local _abs_path="$_dir/$_file"
+  else
+    local _abs_path="$_file"
+    [[ -n "${_TRACE_SOURCING}" ]] && echo "source_relative_once invocation #${_debug_id}: _file is already an absolute path" >&2
+  fi
+  [[ -n "${_TRACE_SOURCING}" ]] && echo "source_relative_once invocation #${_debug_id}: _abs_path is $_abs_path"
   # now resolve any symlinks in the path
   _abs_path=`readlink -f "$_abs_path"`
   [[ -n "${_TRACE_SOURCING}" ]] && echo "source_relative_once invocation #${_debug_id}: _abs_path after realpath is $_abs_path"

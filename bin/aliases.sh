@@ -15,7 +15,7 @@ alias files='find \!:1 -type f -print'      # files x => list files in x
 # alias line='sed -n '\''\!:1 p'\'' \!:2'    # line 5 file => show line 5 of file
 # alias l='ls -lGaph'
 # brew install exa
-alias _ldefault='eza --long --header --all --icons --git --sort'
+alias _ldefault='eza --long --hyperlink --header --all --icons --git --sort'
 alias l='_ldefault name'
 alias le='l -@'
 alias lsize='_ldefault size --total-size -r'
