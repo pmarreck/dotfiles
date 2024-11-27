@@ -465,8 +465,8 @@ supertop() {
   session_name="split_session_$$";
 
   # Create the tmux session
-  tmux new-session -d -s "${session_name}" 'bash --norc --noprofile -c htop';
-  tmux split-window -h 'bash --norc --noprofile -c btop';
+  tmux new-session -d -s "${session_name}" 'htop';
+  tmux split-window -h 'btop';
   tmux attach-session -t "${session_name}";
 }
 
