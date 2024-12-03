@@ -15,6 +15,7 @@ binhex() {
     printf "%b" "$1" | xxd -pu # pipe all arguments to xxd
   fi
 }
+export -f binhex
 
 # convert hex back to binary
 hexbin() {
@@ -31,6 +32,7 @@ hexbin() {
     printf "%b" "$1" | xxd -r -p  # pipe all arguments to xxd
   fi
 }
+export -f hexbin
 
 if [ "$RUN_DOTFILE_TESTS" == "true" ]; then
   # this is at the bottom because assert depends on binhex/hexbin

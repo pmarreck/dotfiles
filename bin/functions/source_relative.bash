@@ -14,6 +14,7 @@ source_relative() {
   [[ -n "${_TRACE_SOURCING}" ]] && echo "Sourcing $temp_path/$1" >&2
   . "$_temp_path/$1"
 }
+export -f source_relative
 
 # Define the source_relative_once function
 # export _TRACE_SOURCING=true
@@ -84,7 +85,9 @@ source_relative_once() {
   else
     _SOURCED_FILES="$_abs_path $_SOURCED_FILES"
   fi
+  export _SOURCED_FILES
   source "$_abs_path" || echo "Problem when sourcing $_abs_path" >&2
   [[ -n "${_TRACE_SOURCING}" ]] && echo "source_relative_once invocation #${_debug_id}: after sourcing \"$_abs_path\", _SOURCED_FILES is now $(wc -w <<< "$_SOURCED_FILES") long" >&2
   return 0 # or else this exits nonzero and breaks other things
 }
+export -f source_relative_once

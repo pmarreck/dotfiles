@@ -22,4 +22,5 @@ if [ "$PLATFORM" = "linux" ]; then
         ;;
     esac
   }
+  export -f nvidia
 fi

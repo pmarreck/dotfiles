@@ -199,3 +199,4 @@ warhammer_quote() {
   # select a random item from the whquotes array
   echo "${whquotes[$RANDOM % ${#whquotes[@]}]}!"
 }
+export -f warhammer_quote

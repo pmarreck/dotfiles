@@ -24,3 +24,4 @@ cpv() {
   tar cf - "$filename" | pv -c -s $size_total | tar xf - -C "$destdir"
   popd > /dev/null
 }
+export -f cpv

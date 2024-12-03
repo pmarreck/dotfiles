@@ -3,7 +3,7 @@
 # graceful dependency enforcement
 # Usage: needs <executable> [provided by <packagename>]
 # only redefines it here if it's not already defined
-# >/dev/null declare -F needs || \
+>/dev/null declare -F needs || \
 needs() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   local bin=$1
@@ -25,6 +25,7 @@ platform() {
   esac
   printf "%s" "$machine"
 }
+export -f platform
 
 _generate_curl_api_request_for_please() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
@@ -48,6 +49,7 @@ _generate_curl_api_request_for_please() {
 EOF
   printf "%b" "$request"
 }
+export -f _generate_curl_api_request_for_please
 
 please() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
@@ -77,3 +79,4 @@ please() {
     fi
   fi
 }
+export -f please

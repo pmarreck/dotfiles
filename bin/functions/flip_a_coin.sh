@@ -2,6 +2,7 @@ flip_a_coin() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   (( RANDOM % 2 )) && echo "heads" || echo "tails"
 }
+export -f flip_a_coin
 if [ "$RUN_DOTFILE_TESTS" == "true" ]; then
   source_relative_once assert.bash
 

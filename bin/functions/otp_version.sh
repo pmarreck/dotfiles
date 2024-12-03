@@ -12,3 +12,4 @@ otp() {
       ;;
   esac
 }
+export -f otp

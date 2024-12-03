@@ -34,7 +34,7 @@ executables() {
   printf "%s\n" "${all_executables[@]}" | sort -uf
   note "${nonexistent_paths[@]}"
 }
-
+export -f executables
 
 # Print out the names of all defined functions
 functions() {
@@ -42,3 +42,4 @@ functions() {
   # declare -F | awk '{print $NF}'
   compgen -A function
 }
+export -f functions

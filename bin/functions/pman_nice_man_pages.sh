@@ -14,3 +14,4 @@ elif [ "$PLATFORM" = "linux" ]; then
     evince $tmpfile
   }
 fi
+export -f pman

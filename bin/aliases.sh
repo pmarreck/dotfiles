@@ -175,5 +175,14 @@ alias fetchall='git fetch --all --prune'
 needs tokei "please install tokei"
 alias loc='tokei'
 
+alias procs=list-procs
+
+alias gcai=git_commit_ai
+alias gcail=git_commit_ai_local
+
 # homebrew utils
 # alias bubu='brew update && brew upgrade'
+
+alias d=show # "view" goes to vim, "s" usually launches a search or server, so "d" (for "define") is a good alias for show IMHO
+
+alias t='supertop'

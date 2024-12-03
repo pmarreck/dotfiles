@@ -28,26 +28,32 @@ record_console_settings
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   >&2 printf "\e[0;33m%s\e[0;39m\n" "$@"
 }
+export -f note
+
 # warning in red to stderr
 >/dev/null declare -F warn || warn() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   >&2 printf "\e[0;31m%s\e[0;39m\n" "$@"
 }
+export -f warn
 
 function var_defined? {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   declare -p "$1" >/dev/null 2>&1
 }
+export -f var_defined?
 
 function func_defined? {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   declare -F "$1" >/dev/null
 }
+export -f func_defined?
 
 function alias_defined? {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   alias "$1" >/dev/null 2>&1
 }
+export -f alias_defined?
 
 function defined? {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
@@ -61,6 +67,7 @@ function defined? {
   fi
   ( "var_defined?" "$word" || >/dev/null type -t "$word" ) && ( [ -z "$1" ] || "defined?" "$@" )
 }
+export -f defined?
 
 # "show": spit out the definition of any name
 # usage: show <function or alias or variable or builtin or file or executable-in-PATH name> [...function|alias] ...
@@ -168,5 +175,6 @@ show() {
   # Note that any undefined term will return 1 and stop evaluating the rest.
   [ -z "$1" ] || show "$@"
 }
+export -f show
 
 restore_console_settings

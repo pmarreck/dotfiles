@@ -25,6 +25,8 @@ encrypt() {
     ;;
   esac
 }
+export -f encrypt
+
 # note: will decrypt to STDOUT by default, for security reasons.
 decrypt() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
@@ -47,3 +49,4 @@ decrypt() {
     ;;
   esac
 }
+export -f decrypt

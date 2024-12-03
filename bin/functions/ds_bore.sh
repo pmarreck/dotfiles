@@ -31,3 +31,4 @@ ds_bore() {
       ;;
   esac  
 }
+export -f ds_bore

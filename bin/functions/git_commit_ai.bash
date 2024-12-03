@@ -129,6 +129,7 @@ function git_commit_ai() {
   echo "Commit command copied to clipboard:" >&2
   echo -ne "$commit_message"
 }
+export -f git_commit_ai
 # export DEFAULT_LOCAL_AI_MODEL="llama3:70b"
 # export DEFAULT_LOCAL_AI_MODEL="x/llama3.2-vision:latest"
 export DEFAULT_LOCAL_AI_MODEL=${DEFAULT_LOCAL_AI_MODEL:-qwen2.5-coder:32b}
@@ -143,6 +144,4 @@ function git_commit_ai_local() {
   OPENAI_API_KEY="fake" \
   git_commit_ai
 }
-
-alias gcai=git_commit_ai
-alias gcail=git_commit_ai_local
+export -f git_commit_ai_local

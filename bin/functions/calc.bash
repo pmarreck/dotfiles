@@ -40,6 +40,8 @@ if needs bc ; then
     fi
     return $retcode
   }
+  export -f calc
+
   if ${RUN_DOTFILE_TESTS:-false}; then
     source_relative_once assert.bash
 

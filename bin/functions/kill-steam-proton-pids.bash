@@ -3,15 +3,18 @@
 steam-procs() {
   PS_PERSONALITY=linux ps -eo pid,args | tail -n +2 | awk -v filter="steam" 'tolower($0) ~ filter && $0 !~ " awk " && $0 !~ "/ipcserver"' | sort -nr
 }
+export -f steam-procs
 
 steam-pids() {
   steam-procs | cut -d ' ' -f 1
 }
+export -f steam-pids
 
 steam-kill() {
   steam-procs > /dev/stderr
   steam-pids | xargs -I {} kill $1 {}
 }
+export -f steam-kill
 
 kill-steam-proton-pids() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
@@ -34,3 +37,4 @@ kill-steam-proton-pids() {
   steam-kill -9
   echo "Steam is now fragged."
 }
+export -f kill-steam-proton-pids

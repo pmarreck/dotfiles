@@ -19,6 +19,7 @@ truthy() {
 
   [ "$value" = "true" ] ||[ "$value" = "1" ]
 }
+export -f truthy
 
 # Define the falsey function in terms of the truthy function
 falsey() {
@@ -26,7 +27,7 @@ falsey() {
 
   truthy "$1" && return 1 || return 0
 }
-
+export -f falsey
 
 # tests
 if [ "$RUN_DOTFILE_TESTS" == "true" ]; then

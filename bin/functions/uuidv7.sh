@@ -4,10 +4,12 @@
 _uuidv7_sequence_init() {
   od -An -N2 -i /dev/urandom | awk '{printf "%d", $1 % 32768}'
 }
-_uuidv7_sequence_counter=$(_uuidv7_sequence_init)
+export -f _uuidv7_sequence_init
+
+export _uuidv7_sequence_counter=$(_uuidv7_sequence_init)
 # Initialize _uuidv7_last_time_ms and _uuidv7_current_time_ms variables
-_uuidv7_last_time_ms=$(date +%s%3N)
-_uuidv7_current_time_ms=_uuidv7_last_time_ms
+export _uuidv7_last_time_ms=$(date +%s%3N)
+export _uuidv7_current_time_ms=_uuidv7_last_time_ms
 _uuidv7_sequencer() {
   # Get current timestamp in milliseconds
   _uuidv7_current_time_ms=$(date +%s%3N)
@@ -23,6 +25,7 @@ _uuidv7_sequencer() {
   _uuidv7_last_time_ms=$current_time_ms
   echo $_uuidv7_sequence_counter
 }
+export -f _uuidv7_sequencer
 
 uuidv7() {
     # random bytes
@@ -67,3 +70,4 @@ uuidv7() {
         ;;
     esac
 }
+export -f uuidv7

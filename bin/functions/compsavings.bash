@@ -22,17 +22,18 @@
 
 # First function written by GPT-4/ChatGPT, worked on the first try with only minor edits!
 # ...Aaaand still gives wonky-looking results sometimes. No time to investigate.
-compsavings() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-  if [ -z "$1" ]; then
-    echo "Usage: compsavings /path/to/directory"
-    return 2
-  fi
-  directory_path=$1
-  real_size=$(du -s --block-size=1 --apparent-size "$directory_path" 2>/dev/null | awk '{print $1}')
-  compressed_size=$(du -s --block-size=1 "$directory_path" 2>/dev/null | awk '{print $1}')
-  percentage_saved=$(echo "scale=2; (($real_size - $compressed_size) * 100) / $real_size" | bc)
-  echo "Real size:        $real_size bytes"
-  echo "Compressed size:  $compressed_size bytes"
-  echo "Percentage saved: ${percentage_saved}%"
-}
+# compsavings() {
+#   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+#   if [ -z "$1" ]; then
+#     echo "Usage: compsavings /path/to/directory"
+#     return 2
+#   fi
+#   directory_path=$1
+#   real_size=$(du -s --block-size=1 --apparent-size "$directory_path" 2>/dev/null | awk '{print $1}')
+#   compressed_size=$(du -s --block-size=1 "$directory_path" 2>/dev/null | awk '{print $1}')
+#   percentage_saved=$(echo "scale=2; (($real_size - $compressed_size) * 100) / $real_size" | bc)
+#   echo "Real size:        $real_size bytes"
+#   echo "Compressed size:  $compressed_size bytes"
+#   echo "Percentage saved: ${percentage_saved}%"
+# }
+# export -f compsavings

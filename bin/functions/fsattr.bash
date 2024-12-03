@@ -50,6 +50,7 @@ fsattr() {
       ;;
   esac
 }
+export -f fsattr
 
 if [ "$RUN_DOTFILE_TESTS" == "true" ]; then
   source_relative_once assert.bash

@@ -10,3 +10,4 @@ notify() {
   -F "message=$1" https://api.pushover.net/1/messages.json
   # -F "title=YOUR_TITLE_HERE" \
 }
+export -f notify

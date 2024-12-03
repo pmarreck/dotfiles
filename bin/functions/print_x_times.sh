@@ -6,6 +6,8 @@ x() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   for i in $(seq 1 $2); do printf "%s" "$1"; done
 }
+export -f x
+
 # x with a newline after it
 xn() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
@@ -13,6 +15,7 @@ xn() {
   # print a newline only if the string does not end in a newline
   [[ "$1" == "${1%$'\n'}" ]] && echo
 }
+export -f xn
 
 if [ "$RUN_DOTFILE_TESTS" == "true" ]; then
   assert $(x a 3) == aaa "x function should repeat a string"

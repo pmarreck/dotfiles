@@ -18,6 +18,7 @@ div() {
     ;;
   esac
 }
+export -f div
 if [ "$RUN_DOTFILE_TESTS" == "true" ]; then
   source_relative_once assert.bash
 

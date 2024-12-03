@@ -16,6 +16,8 @@ weather() {
   temp=$(bc <<< "$temp*9/5-459.67") # convert from kelvin to F
   echo "$temp F" | figlet -kcf big
 }
+export -f weather
+
 # my openweathermap key did not work after I created it... time delay?
 # EDIT: Works now
 # But returns Kelvin. Don't have time to figure out F from K in Bash using formula F = K * 9/5 - 459.67
@@ -27,3 +29,4 @@ weatherfancy() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   curl wttr.in
 }
+export -f weatherfancy

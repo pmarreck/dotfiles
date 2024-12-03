@@ -12,6 +12,7 @@ date_difference_days() {
 
   echo "$diff_days"
 }
+export -f date_difference_days
 
 if [ "$RUN_DOTFILE_TESTS" == "true" ]; then
   source_relative_once assert.bash

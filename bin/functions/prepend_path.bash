@@ -20,6 +20,7 @@ find_binary() {
     return 1
   fi
 }
+export -f find_binary
 
 export AWK=$(find_binary awk)
 export SED=$(find_binary sed)
@@ -72,6 +73,7 @@ prepend_path() {
   [ -n "${DEBUG_PATHCONFIG}" ] && echo "After prepend_path($dir), ${var} is now $newpath" >&2
   $stdout && echo "$newpath" || export ${var}="$newpath"
 }
+export -f prepend_path
 
 # super compact prepend-path
 # Usage examples:
@@ -125,6 +127,7 @@ exclude_path() {
   [ -n "${DEBUG_PATHCONFIG}" ] && echo "After exclude_path($dir), ${var} is now $newpath" >&2
   $stdout && echo "$newpath" || export ${var}="$newpath"
 }
+export -f exclude_path
 
 if [ "$RUN_DOTFILE_TESTS" == "true" ]; then
   # INLINE RUNTIME TEST SUITE

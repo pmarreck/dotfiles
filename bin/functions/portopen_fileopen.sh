@@ -14,6 +14,8 @@ portopen() {
       ;;
   esac
 }
+export -f portopen
+
 fileopen() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   case $PLATFORM in
@@ -27,9 +29,12 @@ fileopen() {
       ;;
   esac
 }
+export -f fileopen
+
 fileopen_offenders() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   # list top 10 file-open offenders
   >&2 echo -e "${ANSI}${TXTYLW}sudo lsof | awk '{print \$1}' | sort | uniq -c | sort -nr | head${ANSI}${TXTDFT}"
   sudo lsof | awk '{print $1}' | sort | uniq -c | sort -nr | head
 }
+export -f fileopen_offenders

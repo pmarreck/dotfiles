@@ -37,6 +37,7 @@ ff() {
     ;;
   esac
 }
+export -f ff
 
 if [ "$RUN_DOTFILE_TESTS" == "true" ]; then
   source_relative_once assert.bash

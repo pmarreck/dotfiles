@@ -21,3 +21,4 @@ pg() {
     ;;
   esac
 }
+export -f pg

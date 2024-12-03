@@ -24,16 +24,16 @@ fi
 shopt -q login_shell && LOGIN_SHELL=true || LOGIN_SHELL=false
 [[ $- == *i* ]] && INTERACTIVE_SHELL=true || INTERACTIVE_SHELL=false
 
-[ "${DEBUG_SHELLCONFIG+set}" = "set" ] && echo "Entering $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")" || $INTERACTIVE_SHELL && $LOGIN_SHELL && printf "bp"
+[ "${DEBUG_SHELLCONFIG+set}" = "set" ] && echo "Entering $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")" || $INTERACTIVE_SHELL && $LOGIN_SHELL && printf "bp;"
 [ "${DEBUG_PATHCONFIG+set}" = "set" ] && echo "$PATH"
 
 # subtle shell characteristics indication, but only if interactive
 if $INTERACTIVE_SHELL; then
-  printf "i"
+  printf "i;"
   if $LOGIN_SHELL; then
-    printf "l"
+    printf "l;"
   else
-    printf "L"
+    printf "nl;"
   fi
 fi
 
@@ -56,9 +56,6 @@ export SED
 # exec 3>&2 2>/tmp/bashstart.$$.log
 # set -x
 
-# enable tests if any script modification times are different
-source_relative_once "${HOME}/dotfiles/run_tests_on_change.sh"
-
 [[ -s "$HOME/.bashrc" ]] && source "$HOME/.bashrc"
 
 # disable timing debugging
@@ -68,6 +65,9 @@ source_relative_once "${HOME}/dotfiles/run_tests_on_change.sh"
 # Added by OrbStack: command-line tools and integration
 # Comment this line if you don't want it to be added again.
 # source ~/.orbstack/shell/init.bash 2>/dev/null || :
+
+# enable tests if any script modification times are different
+source_relative_once "${HOME}/dotfiles/run_tests_on_change.sh"
 
 [ "${DEBUG_SHELLCONFIG+set}" = "set" ] && echo "Exiting $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")"
 [ "${DEBUG_PATHCONFIG+set}" = "set" ] && echo "$PATH" || :

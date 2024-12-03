@@ -70,6 +70,7 @@ assert() {
     return 1
   fi
 }
+export -f assert
 
 # this is at the bottom because it depends on assert
 source_relative_once binhex.bash

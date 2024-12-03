@@ -18,6 +18,7 @@ Time.now.to_f() {
     $datebin +'%s.%N'
   fi
 }
+export -f Time.now.to_f
 
 # Nanoseconds since unix epoch.
 # Might be cheap just to strip the decimal, but there's always a fixed number of digits to the right of the decimal
@@ -26,3 +27,4 @@ now_in_ns() {
   local now=$(Time.now.to_f)
   echo ${now//.}
 }
+export -f now_in_ns

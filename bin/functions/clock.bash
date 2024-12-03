@@ -1,32 +1,28 @@
 #!/usr/bin/env bash
 
-_read_clock_font_data() {
-  # reads everything in this file below __DATA__
-  $SED '0,/^__DATA__$/d' "$BASH_SOURCE"
-}
-
-_decode_data() {
-  # decodes base64-encoded data
-  base64 -d
-}
-
-_decompress_data() {
-  # extract 7zip data from stdin and ship to stdout
-  # note: in order to use both stdin and stdout, have to use xz format
-  # which has same compression as 7z but supports streaming
-  # (7z archives can only support "seek" operations)
-  7z e -txz -si -so
-}
-
-_clock_font_bin() {
-  # reads the data from this file, decodes it, and decompresses it
-  _read_clock_font_data | _decode_data | _decompress_data
-}
-
 # digital clock
 # not sure why it updates so slowly; all the subshells and evals?
 clock() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  _read_clock_font_data() {
+    # reads everything in this file below __DATA__
+    $SED '0,/^__DATA__$/d' "$BASH_SOURCE"
+  }
+  _decode_data() {
+    # decodes base64-encoded data
+    base64 -d
+  }
+  _decompress_data() {
+    # extract 7zip data from stdin and ship to stdout
+    # note: in order to use both stdin and stdout, have to use xz format
+    # which has same compression as 7z but supports streaming
+    # (7z archives can only support "seek" operations)
+    7z e -txz -si -so
+  }
+  _clock_font_bin() {
+    # reads the data from this file, decodes it, and decompresses it
+    _read_clock_font_data | _decode_data | _decompress_data
+  }
   F=($(_clock_font_bin | hexdump -v -e'1/1 "%x\n"'))
   e=echo\ -e;$e "\033[2J\033[?25l"; while true; do A=''  T=`date +" "%H:%M:%S`
   $e "\033[0;0H" ; for c in `eval $e {0..$[${#T}-1]}`; do a=`$e -n ${T:$c:1}|\
@@ -34,6 +30,7 @@ clock() {
   i in $A; do d=0x${F[$[i+j]]} m=$((0x80)); while [ $m -gt 0 ] ; do bit=$[d&m]
   $e -n $[bit/m]|sed -e 'y/01/ ▀/';: $[m>>=1];done;done;echo;done;done # BruXy
 }
+# export -f clock
 
 ###### END OF CODE ######
 ##### START OF DATA #####

@@ -24,3 +24,4 @@ asciidragon() {
 EOD
   echo -e "${esc}[0m"
 }
+export -f asciidragon

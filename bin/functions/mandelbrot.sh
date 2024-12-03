@@ -10,3 +10,4 @@ mandelbrot() {
   $e"\E[01;$(((B+3)%8+30))m${S[$((C++%4))]}"; fi;R=$((R+512));done;#----:::(c):::-
   $e "\E[m\E(\r\n";I=$((I+1311)); done|tee $t;head -n 12 $t| tac  #-----:2 O 1 O:-  
 }
+export -f mandelbrot

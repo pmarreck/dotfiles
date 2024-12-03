@@ -44,7 +44,7 @@ source_relative_once .pathconfig
 [ "${AWK+set}" = "set" ] && \
   export AWK=$(command -v frawk || command -v gawk || command -v awk)
 
-[ "${DEBUG_SHELLCONFIG+set}" = "set" ] && echo "Entering $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")" || $INTERACTIVE_SHELL && $LOGIN_SHELL && printf "br"
+[ "${DEBUG_SHELLCONFIG+set}" = "set" ] && echo "Entering $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")" || $INTERACTIVE_SHELL && $LOGIN_SHELL && printf "rc;"
 [ "${DEBUG_PATHCONFIG+set}" = "set" ] && echo "$PATH"
 
 # mute direnv constantly telling me what it's loading
@@ -285,6 +285,11 @@ source_relative_once .envconfig
 
 # Load hooks
 source $HOME/bin/apply-hooks || echo "Problem when sourcing $HOME/bin/apply-hooks"
+
+# aliases- source these on every interactive shell because they do not inherit
+$INTERACTIVE_SHELL && . "$HOME/dotfiles/bin/aliases.sh"
+
+# [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced aliases.sh"
 
 # activate ble.sh/blesh
 # [[ ! ${BLE_VERSION-} ]] || ble-attach

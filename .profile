@@ -2,10 +2,10 @@
 # .profile must remain POSIX-compliant, use shellcheck to verify
 # There is currently 1 exception to this rule: the use of ${BASH_SOURCE[0]} in source_relative[_once]
 
-[ -n "$DEBUG_SHELLCONFIG" ] && echo "Entering $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")" || $INTERACTIVE_SHELL && $LOGIN_SHELL && printf "pr"
+[ -n "$DEBUG_SHELLCONFIG" ] && echo "Entering $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")" || $INTERACTIVE_SHELL && $LOGIN_SHELL && printf "prof;"
 [ -n "$DEBUG_PATHCONFIG" ] && echo $PATH
 
-$INTERACTIVE_SHELL && $LOGIN_SHELL && echo " $DISTRO_PRETTY"
+$INTERACTIVE_SHELL && $LOGIN_SHELL && printf "\n$DISTRO_PRETTY\n"
 
 # most things should be sourced via source_relative... except source_relative itself
 # if the function is not already defined, define it. use posix syntax for portability
@@ -41,9 +41,6 @@ tabs -2
 # ulimit. to see all configs, run `ulimit -a`
 # ulimit -n 10000
 
-source_relative_once bin/aliases.sh
-# [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced aliases.sh"
-
 # Linux-specific stuff
 if [ "${PLATFORM}" = "linux" ]; then
   [ -n "$DEBUG_SHELLCONFIG" ] && echo "linux platform detected"
@@ -55,6 +52,7 @@ if [ "${PLATFORM}" = "linux" ]; then
     # if no args, open current dir
     xdg-open "${1:-.}"
   }
+  export -f open
   # list network interface names. Why is this so hard on linux?
   list-nics() {
     [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
@@ -63,12 +61,13 @@ if [ "${PLATFORM}" = "linux" ]; then
     # this is a bit hacky but there are many ways to skin this cat
     ip link show | $AWK '{print $2}' | $SED 's/://' | grep -E '^(lo|en|wl)'
   }
+  export -f list-nics
   # list processes with optional filter argument
   list-procs() {
     [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
     PS_PERSONALITY=linux ps -ewwo pid,%cpu,%mem,nice,pri,rtprio,args --sort=-pcpu,-pid | $AWK -v filter="$1" 'NR==1 || tolower($0) ~ tolower(filter)' | less -e --header=1
   }
-  alias procs=list-procs
+  export -f list-procs
   source_relative_once bin/functions/nvidia.bash
   # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced nvidia.bash"
 fi
@@ -84,12 +83,14 @@ dd_example() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   echo "sudo dd if=/home/pmarreck/Downloads/TrueNAS-SCALE-22.02.4.iso of=/dev/sdf bs=1M oflag=sync status=progress"
 }
+export -f dd_example
 
 # make it easier to write ISO's to a USB key:
 write_iso() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   sudo dd if="$1" of="$2" bs=1M oflag=sync status=progress
 }
+export -f write_iso
 
 source_relative_once bin/functions/cpv_copy_verbose.sh
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced cpv_copy_verbose.sh"
@@ -122,7 +123,6 @@ source_relative_once bin/functions/executables.bash
 
 source_relative_once bin/functions/show.sh
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced show.sh"
-alias d=show # "view" goes to vim, "s" usually launches a search or server, so "d" (for "define") is a good alias for show IMHO
 
 source_relative_once bin/functions/dragon.sh
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced dragon.sh"
@@ -154,11 +154,15 @@ source_relative_once bin/functions/grandfather_clock_chime.sh
 source_relative_once bin/ask
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced ask"
 
+source_relative_once bin/functions/rpn.bash
+# [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced rpn.bash"
+
 # crypto market data. can pass a symbol in or just get the current overall market data
 crypto() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   curl rate.sx/$1
 }
+export -f crypto
 
 # am I the only one who constantly forgets the correct order of arguments to `ln`?
 lnwtf() {
@@ -167,6 +171,7 @@ lnwtf() {
   echo '(If you omit the latter, it puts a basename-named link in the current directory)'
   echo "This function is defined in $0"
 }
+export -f lnwtf
 
 up() {
   local nounset_was_set=$(set -o | rg -q 'nounset *on'; echo $?)
@@ -175,6 +180,8 @@ up() {
   uptime | $AWK '{split($0,a,"  up ");split(a[2],b,", ");print"["b[1]", "b[2]"]"}'
   if [ "$nounset_was_set" -eq 0 ]; then set -u; else set +u; fi
 }
+export -f up
+
 
 # browse a CSV file as a scrollable table
 csv() {
@@ -186,6 +193,8 @@ csv() {
     echo "File argument nonexistent or file not found" >&2
   fi
 }
+export -f csv
+
 
 source_relative_once bin/functions/otp_version.sh
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced otp_version.sh"
@@ -324,11 +333,13 @@ chuck() {
   local SCRIPT_PATH=$(dirname "$(readlink -f "$BASH_SOURCE")")
   shuf -n 1 "$SCRIPT_PATH/bin/chuck_norris.txt" | cut -d'|' -f2- | wrap
 }
+export -f chuck
 
 inthebeginning() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   needs magick please install imagemagick && magick "$HOME/inthebeginning.jpg" -geometry 400x240 sixel:-
 }
+export -f inthebeginning
 
 just_one_taoup() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
@@ -354,6 +365,7 @@ just_one_taoup() {
     }
   ' $HOME/dotfiles/bin/taoup.ansi
 }
+export -f just_one_taoup
 
 source_relative_once bin/times_older_than
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced times_older_than"
@@ -362,7 +374,7 @@ times_older_than_samson() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   echo "Peter, you are $(times_older_than "1972-04-05" "2021-06-25") times older than Samson."
 }
-
+export -f times_older_than_samson
 
 check_sixel_support() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
@@ -414,6 +426,8 @@ check_sixel_support() {
   echo "Unable to determine Sixel support. Terminal: $TERM, TERM_PROGRAM: $TERM_PROGRAM" >&2
   return 2
 }
+export -f check_sixel_support
+
 SIXEL_ENV=$(DEBUG_SHELLCONFIG=1 check_sixel_support 2>&1)
 SIXEL_CAPABLE=$?
 # if retcode is 0 then set SIXEL_CAPABLE to "true" else "false"
@@ -448,6 +462,7 @@ fun_intro() {
   fi
   unset _fun_things sixel_less sixel_ful _selected_fun_thing
 }
+export -f fun_intro
 ${INTERACTIVE_SHELL:-false} && ${LOGIN_SHELL:-false} && fun_intro
 
 

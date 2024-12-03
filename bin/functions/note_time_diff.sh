@@ -33,3 +33,4 @@ note_time_diff() {
     ;;
   esac
 }
+export -f note_time_diff

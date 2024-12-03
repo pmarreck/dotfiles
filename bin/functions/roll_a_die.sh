@@ -14,6 +14,7 @@ roll_a_die() {
   done
   echo $((1 + candidate % diesides))
 }
+export -f roll_a_die
 
 if [ "$RUN_DOTFILE_TESTS" == "true" ]; then
   source_relative_once assert.bash

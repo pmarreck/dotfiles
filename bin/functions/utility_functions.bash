@@ -8,6 +8,7 @@ needs() {
   shift
   command -v "$bin" >/dev/null 2>&1 || { echo >&2 "I require $bin but it's not installed or in PATH; $*"; return 1; }
 }
+export -f needs
 
 # check if the AWK environment variable is already set and if not, set it to frawk, gawk, or awk
 [ -z "${AWK}" ] && export AWK=$(command -v frawk || command -v gawk || command -v awk)
@@ -23,6 +24,7 @@ save_shellenv() {
   export HISTIGNORE="shopt:set:eval"
   _prev_shell_opts=$(set +o; shopt -p;)
 }
+export -f save_shellenv
 
 restore_shellenv() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
@@ -32,6 +34,7 @@ restore_shellenv() {
   export HISTIGNORE=$OLDHISTIGNORE
   unset OLDHISTIGNORE
 }
+export -f restore_shellenv
 
 uniquify_array() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
@@ -53,6 +56,7 @@ uniquify_array() {
   # Assign unique values back to the original array using eval (grrr)
   eval "$1=(\"\${unique_arr[@]}\")"
 }
+export -f uniquify_array
 
 array_contains_element() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
@@ -72,6 +76,7 @@ array_contains_element() {
   # If we got here, the element was not found in the array, exit with 1
   return 1
 }
+export -f array_contains_element
 
 move_PROMPT_COMMAND_to_precmd_functions() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
@@ -95,6 +100,7 @@ move_PROMPT_COMMAND_to_precmd_functions() {
   # Then clear PROMPT_COMMAND
   PROMPT_COMMAND=''
 }
+export -f move_PROMPT_COMMAND_to_precmd_functions
 
 # OK, thanks to badly written hooks, this now has to be a function
 function rehash() {
@@ -144,6 +150,7 @@ function rehash() {
   #   # Do not need to uniquify this one at this time.
   # fi
 }
+export -f rehash
 
 # This function emits an OSC 7 sequence to inform the terminal
 # of the current working directory.  It prefers to use a helper
@@ -159,11 +166,13 @@ __wezterm_osc7() {
   fi
   printf "\033]7;file://%s%s\033\\" "${HOSTNAME}" "${default_directory}"
 }
+export -f __wezterm_osc7
 
 __wezterm_osc7_home() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   __wezterm_osc7 "$HOME"
 }
+export -f __wezterm_osc7_home
 
 trim_leading_heredoc_whitespace() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
@@ -189,21 +198,22 @@ trim_leading_heredoc_whitespace() {
 }
 END {
   #  print "Debug: END block reached, shortest = " shortest > "/dev/stderr"
-  if (shortest >= 0) {
-    for (i=1; i<=NR; i++) {
-      if (length(lines[i]) > shortest) {
-        print substr(lines[i], shortest + 1)
-      } else {
-        print ""
+    if (shortest >= 0) {
+      for (i=1; i<=NR; i++) {
+        if (length(lines[i]) > shortest) {
+          print substr(lines[i], shortest + 1)
+        } else {
+          print ""
+        }
       }
-    }
-  } else {
+    } else {
     #  print "Debug: No processing done (shortest < 0)" > "/dev/stderr"
   }
 }
 '
 #  echo "Debug: Function ended" >&2
 }
+export -f trim_leading_heredoc_whitespace
 
 if [ "$RUN_DOTFILE_TESTS" == "true" ]; then
   assert "$(echo -e "  This\n  is a\n    multiline\n  string." | trim_leading_heredoc_whitespace)" == "This\nis a\n  multiline\nstring."
@@ -221,6 +231,7 @@ unwrap() {
   # sed -E -e ':a;N;$!ba' -e 's/( \n | \n|\n )/ /g'
   $SED -E ':a;N;$!ba;s/( +\n +| *\n +| +\n *)/ /g'
 }
+export -f unwrap
 
 # Wraps text to the current width of the terminal, or to a specified width.
 # Expects input via stdin
@@ -232,6 +243,7 @@ wrap() {
   # this expects contents to be piped in via stdin
   fold -s -w $colwidth
 }
+export -f wrap
 
 if [ "$RUN_DOTFILE_TESTS" == "true" ]; then
   # test unwrap
@@ -247,6 +259,7 @@ isacolortty() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   [[ "$TERM" =~ 'color' ]] && return 0 || return 1
 }
+export -f isacolortty
 
 if [ "$RUN_DOTFILE_TESTS" == "true" ]; then
   TERM=xterm-256color isacolortty
@@ -286,28 +299,33 @@ puts() {
   # shellcheck disable=SC2059
   printf -- "${print_fmt}${print_spec}${end_fmt}${newline}" "${*}" >&$fd
 }
+export -f puts
 
 # ANSI color helpers
 red_text() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   puts --red -en "$*"
 }
+export -f red_text
 
 green_text() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   puts --green -en "$*"
 }
+export -f green_text
 
 yellow_text() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   puts --yellow -en "$*"
 }
+export -f yellow_text
 
 echo_eval() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   yellow_text "$*\n" >&2
   eval "$*"
 }
+export -f echo_eval
 
 # exit with red text to stderr, optional 2nd arg is error code
 die() {
@@ -316,6 +334,7 @@ die() {
   echo >&2
   exit ${2:-1}
 }
+export -f die
 
 # fail with red text to stderr, optional 2nd arg is return code
 fail() {
@@ -324,6 +343,7 @@ fail() {
   echo >&2
   return ${2:-1}
 }
+export -f fail
 
 strip_ansi() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
@@ -343,6 +363,7 @@ strip_ansi() {
     $SED -E "$ansiregex"
   fi
 }
+export -f strip_ansi
 
 if [ "$RUN_DOTFILE_TESTS" == "true" ]; then
   assert "$(printf '\e[31mRed text\e[0m' | strip_ansi)" == "Red text"
@@ -355,6 +376,13 @@ elixir_js_loc() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   git ls-files | grep -E '\.erl|\.exs?|\.js$' | xargs cat | $SED -e '/^$/d' -e '/^ *#/d' -e '/^ *\/\//d' | wc -l
 }
+export -f elixir_js_loc
+
+open_gem() {
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  choose_editor "$(bundle show "$1")"
+}
+export -f open_gem
 
 contains() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
@@ -366,6 +394,7 @@ contains() {
   done
   return 1
 }
+export -f contains
 
 if [ "$RUN_DOTFILE_TESTS" == "true" ]; then
   contains "foo bar baz" "bar"
@@ -384,12 +413,7 @@ edit() {
     choose_editor "$@"
   fi
 }
-
-# gem opener, if you have not yet moved on from Ruby to Elixir :)
-open_gem() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-  choose_editor "$(bundle show "$1")"
-}
+export -f edit
 
 ltrim() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
@@ -398,6 +422,7 @@ ltrim() {
   var="${var#"${var%%[![:space:]]*}"}"
   printf '%s' "$var"
 }
+export -f ltrim
 
 rtrim() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
@@ -406,6 +431,7 @@ rtrim() {
   var="${var%"${var##*[![:space:]]}"}"
   printf '%s' "$var"
 }
+export -f rtrim
 
 trim() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
@@ -414,6 +440,7 @@ trim() {
   var="$(rtrim "$var")"
   printf '%s' "$var"
 }
+export -f trim
 
 if [ "$RUN_DOTFILE_TESTS" == "true" ]; then
   assert "$(ltrim "  foo  ")" == "foo  "
@@ -425,11 +452,13 @@ datetime() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   date "+%Y-%m-%d %H:%M:%S"
 }
+export -f datetime
 
 datetime-human() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   date +"%A, %B %d, %Y %I:%M %p"
 }
+export -f datetime-human
 
 image_convert_to_heif() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
@@ -441,6 +470,7 @@ image_convert_to_heif() {
   needs heif-enc "please install libheif" && \
   echo_eval "heif-enc -L -p chroma=444 --matrix_coefficients=0 \"$1\""
 }
+export -f image_convert_to_heif
 
 image_convert_to_jpegxl() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
@@ -452,6 +482,7 @@ image_convert_to_jpegxl() {
   needs cjxl "please install the libjxl package to get the cjxl executable" && \
   echo_eval "cjxl -d $d -e $e --lossless_jpeg=0 \"$1\" \"${bn}.jxl\""
 }
+export -f image_convert_to_jpegxl
 
 # supertop: open htop and btop at the same time in a tmux split
 # requires btop and htop to be installed
@@ -469,5 +500,4 @@ supertop() {
   tmux split-window -h 'btop';
   tmux attach-session -t "${session_name}";
 }
-
-alias t='supertop'
+export -f supertop

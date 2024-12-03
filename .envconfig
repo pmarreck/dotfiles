@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-[ -n "${DEBUG_SHELLCONFIG}" ] && echo "Entering $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")" || $INTERACTIVE_SHELL && $LOGIN_SHELL && printf "ec"
+[ -n "${DEBUG_SHELLCONFIG}" ] && echo "Entering $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")" || $INTERACTIVE_SHELL && $LOGIN_SHELL && printf "env;"
 [ -n "${DEBUG_PATHCONFIG}" ] && echo $PATH
 # canonical gcc tweaks for OS X's homebrew gcc; Linux shouldn't need these
 # if [ "$PLATFORM" = "osx" ]; then
@@ -175,7 +175,7 @@ if [ "$PLATFORM" = "linux" ]; then
 fi
 
 # Nix config
-# IGNORE_PREPEND_PATH_WARNINGS=true prepend_path /nix/var/nix/profiles/per-user/root/channels NIX_PATH
+IGNORE_EXCLUDE_PATH_WARNINGS=true exclude_path '/nix/var/nix/profiles/per-user/root/channels' NIX_PATH
 
 # Fontconfig
 export FONTCONFIG_PATH="${XDG_CONFIG_HOME:-~/.config}/fontconfig"
