@@ -322,6 +322,54 @@ source_relative_once bin/functions/whatismyip.sh
 source_relative_once .pathconfig
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced .pathconfig"
 
+# The following are functions meant to override bsd equivalents
+# by preferring GNU versions if available
+
+shuf() {
+  local whichshuf
+  # prefer gshuf, fall back to shuf
+  if type -P gshuf &> /dev/null; then
+    whichshuf=gshuf
+  elif type -P shuf &> /dev/null; then
+    whichshuf=shuf
+  else
+    echo "Error: Neither gshuf nor shuf command is available." >&2
+    return 1
+  fi
+  $whichshuf "$@"
+}
+export -f shuf
+
+date() {
+  local whichdate
+  # prefer gdate, fall back to date
+  if type -P gdate &> /dev/null; then
+    whichdate=gdate
+  elif type -P date &> /dev/null; then
+    whichdate=date
+  else
+    echo "Error: Neither gdate nor date command is available." >&2
+    return 1
+  fi
+  $whichdate "$@"
+}
+export -f date
+
+tac() {
+  local whichtac
+  # prefer gtac, fall back to tac
+  if type -P gtac &> /dev/null; then
+    whichtac=gtac
+  elif type -P tac &> /dev/null; then
+    whichtac=tac
+  else
+    echo "Error: Neither gtac nor tac command is available." >&2
+    return 1
+  fi
+  $whichtac "$@"
+}
+export -f tac
+
 # silliness
 
 # chuck norris quotes
@@ -337,7 +385,7 @@ export -f chuck
 
 inthebeginning() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-  needs magick please install imagemagick && magick "$HOME/inthebeginning.jpg" -geometry 400x240 sixel:-
+  needs magick please install imagemagick && magick "$HOME/inthebeginning.jpg" -geometry 600x360 sixel:-
 }
 export -f inthebeginning
 
@@ -345,7 +393,7 @@ just_one_taoup() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   # ChatGPT4 wrote 99% of this. I preserved the conversation with it about it: https://gist.github.com/pmarreck/339fb955a74caed692b439038c9c1c9d
   # needs taoup please install taoup && taoup \
-  # Refresh the taoup.ansi file occasionally via taoup > taoup.ansi. Last updated 2024-10-12.
+  # Refresh the taoup.ansi file occasionally via taoup > ~/dotfiles/bin/taoup.ansi. Last updated 2024-10-12.
   # Caching it this way avoids needing either taoup OR ruby and saves on ruby processing.
   $AWK -v seed=`date +%N` '
     BEGIN{
@@ -441,6 +489,10 @@ export SIXEL_ENV SIXEL_CAPABLE
 
 fun_intro() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  local test_all
+  if [ "$1" == "test_all" ]; then
+    test_all=true
+  fi
   sixel_less="fortune warhammer_quote bashorg_quote chuck mandelbrot asciidragon just_one_taoup times_older_than_samson"
   # This one requires a Sixel-capable terminal
   sixel_ful="inthebeginning"
@@ -449,8 +501,24 @@ fun_intro() {
   else
     _fun_things="$sixel_less $sixel_ful"
   fi
+  if [ -n "$test_all" ]; then
+    local retcode
+    for _selected_fun_thing in $_fun_things; do
+      echo "Running '$_selected_fun_thing' from fun_intro:"
+      if command -v "$_selected_fun_thing" >/dev/null 2>&1; then
+        eval "$_selected_fun_thing"
+        retcode=$?
+      else
+        echo "Tried to call '$_selected_fun_thing', but it was not defined" >&2
+      fi
+      if ! [ "$retcode" -eq 0 ]; then
+        echo "Failed to run '$_selected_fun_thing' from fun_intro, return code was $retcode" >&2
+      fi
+      echo
+    done
+    return
+  fi
   _selected_fun_thing=$(echo "$_fun_things" | tr ' ' '\n' | shuf -n 1)
-
   if [ -n "$DEBUG_SHELLCONFIG" ]; then
     echo "Running '$_selected_fun_thing' from fun_intro"
   fi

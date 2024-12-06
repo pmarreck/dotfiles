@@ -42,20 +42,24 @@ send_signal() {
     echo "Signal $signal sent to process with PID $pids."
   fi
 }
+export -f send_signal
 
 # Function to freeze processes
 freeze() {
   send_signal STOP "$1"
 }
+export -f freeze
 
 # Function to unfreeze (defrost) processes
 unfreeze() {
   send_signal CONT "$1"
 }
+export -f unfreeze
 
-# Alias defrost to unfreeze
-alias defrost=unfreeze
-
+defrost() {
+  unfreeze "$1"
+}
+export -f defrost
 
 # Run the function, passing along any args, if this file was run directly instead of as an include.
 # Sometimes, $0 contains a leading dash to indicate an interactive (or is it login?) shell,
