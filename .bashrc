@@ -159,6 +159,9 @@ export SSH_KEY_PATH="$HOME/.ssh/id_ed25519"
 # Guix integration
 [[ -s "$HOME/.guix-profile/etc/profile" ]] && source $HOME/.guix-profile/etc/profile
 
+is_nix_darwin?() {
+  [ -f "/etc/nix/nix.conf" ] && [ "$(uname)" = "Darwin" ]
+} && export -f is_nix_darwin?
 # platform info
 case $OSTYPE in
   darwin*)

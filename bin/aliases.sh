@@ -1,4 +1,46 @@
 ####### Aliases
+
+alias_permanently() {
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  case "$1" in
+    *=*)
+      # split on the first '='
+      local name="${1%%=*}"
+      local value="${1#*=}"
+      # escape any single quotes in the value
+      value="${value//\'/\\\'}"
+      # if we have a value, then we're defining an alias
+      if [ -n "$value" ]; then
+        local comment=""
+        # if we have a comment, then add it
+        if [ -n "$2" ]; then
+          local comment="# $2"
+        fi
+        # check if the alias already exists
+        if [ -z "$(alias "$name" 2>/dev/null)" ]; then
+          # if it doesn't, then add it
+          local alias_definition="alias $name='$value'"
+          if [ -n "$comment" ]; then
+            echo "$comment" >> "$BASH_SOURCE"
+          fi
+          echo "$alias_definition" >> "$BASH_SOURCE"
+          echo "$alias_definition $comment"
+          eval "$alias_definition"
+        else
+          echo "Alias $name already exists"
+          return 1
+        fi
+      fi
+      ;;
+    *)
+      echo "Usage: alias_permanently alias_name='alias_definition' ['optional comment']"
+      ;;
+  esac
+} && export -f alias_permanently
+
+# get the list of defined aliases
+alias aliases='alias'
+
 #what most people want from od (hexdump)
 alias hd='od -Ax -tx1z -v'
 #just list directories
@@ -46,18 +88,18 @@ else # linux
 fi
 
 # NixOS-specific stuff
-if [ "${PLATFORM}-${DISTRO}" = "linux-NixOS" ]; then
+if [ "${PLATFORM}-${DISTRO}" = "linux-NixOS" ] || is_nix_darwin?; then
   alias nix-list-gens='sudo nix-env -p /nix/var/nix/profiles/system --list-generations'
   alias nix-gen-num='readlink /nix/var/nix/profiles/system | cut -d- -f2'
   nix-genstamp() {
     [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
     echo "$(datetimestamp) generation $(nix-gen-num); nvidia version $(nvidia --version); kernel version $(uname -r)" >> ~/nix-genstamp.txt
-  }
-  alias nixos="choose_editor /etc/nixos &"
+  } && export -f nix-genstamp
+  is_nix_darwin? || alias nixos="choose_editor /etc/nixos &"
   function abbrev-nix-store-paths(){
     [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-    $SED -E 's|/nix/store/[a-z0-9]{32}-|/⌘/|g'
-  }
+    $SED -E 's|(/nix/store/)?[a-z0-9]{32}-|/⌘/|g'
+  } && export -f abbrev-nix-store-paths
 fi
 
 #alias wordcount=(cat \!* | tr -s '\''  .,;:?\!()[]"'\'' '\''\012'\'' |' \
@@ -83,6 +125,8 @@ fi
 alias work=dotfiles
 
 alias dotfiles='cd ~/dotfiles'
+
+alias configs='cd ~/.config'
 
 # alias ss='script/server'
 # alias sc='script/console'
@@ -127,7 +171,7 @@ getfiles() {
   for url in "$@"; do
     getfile "$url"
   done
-}
+} && export -f getfiles
 
 alias newsshkey='ssh-keygen -t ed25519 -C lumbergh@gmail.com'
 alias copysshpubkey='cat ~/.ssh/id_ed25519.pub | clip' # depends on 'clip' function

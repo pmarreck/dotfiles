@@ -10,7 +10,7 @@ needs() {
   local bin=$1
   shift
   command -v "$bin" >/dev/null 2>&1 || { echo >&2 "I require $bin but it's not installed or in PATH; $*"; return 1; }
-}
+} && export -f needs
 
 >/dev/null declare -F debug || \
 debug() {
@@ -20,19 +20,19 @@ debug() {
   else
     return 1
   fi
-}
+} && export -f debug
 
 >/dev/null declare -F note || \
 note() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return;
   printf "$ANSI$TXTYLW%s$ANSI$TXTDFT\n" "$@" 1>&2
-}
+} && export -f note
 
 >/dev/null declare -F warn || \
 warn() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return;
   printf "$ANSI$TXTRED%s$ANSI$TXTDFT\n" "$@" 1>&2
-}
+} && export -f warn
 
 # Function to get local zip code
 get_zip() {
@@ -46,7 +46,7 @@ get_zip() {
   postal=$(curl -s ipinfo.io | jq -r '.postal')
 
   echo -n "$postal"
-}
+} && export -f get_zip
 
 # Function to get detailed location information
 get_location() {
@@ -60,7 +60,7 @@ get_location() {
 
   # Output in a human-readable, comma-delimited format
   echo -n "ip: $ip, city: $city, state: $region, country: $country, zip: $postal, tz: $timezone"
-}
+} && export -f get_location
 
 # Function to convert temperature from Kelvin to Fahrenheit or Celsius
 convert_temp() {
@@ -69,13 +69,13 @@ convert_temp() {
   local scale="$2"
 
   if [ "$scale" = "C" ]; then
-    echo -n $(bc -e "scale=2; $temp_in_k - 273.15")
+    echo -n $(echo "scale=2; $temp_in_k - 273.15" | bc)
   else
     scale="F"
-    echo -n $(bc -e "scale=2; ($temp_in_k - 273.15) * 9/5 + 32")
+    echo -n $(echo "scale=2; ($temp_in_k - 273.15) * 9/5 + 32" | bc)
   fi
   echo -n "$scale"
-}
+} && export -f convert_temp
 
 # Function to convert wind speed from m/s to knots and round to 2 decimal places
 convert_wind_speed_from_mps_to_knots() {
@@ -86,8 +86,8 @@ convert_wind_speed_from_mps_to_knots() {
     echo -n "$speed_in_mps"
     return
   fi
-  printf "%.2fkts" $(bc -e "scale=4; $speed_in_mps * 1.94384")
-}
+  echo -n $(echo "scale=2; $speed_in_mps * 1.94384" | bc | xargs printf "%.2fkts")
+} && export -f convert_wind_speed_from_mps_to_knots
 
 # Function to convert wind direction from degrees to cardinal direction
 convert_wind_direction() {
@@ -101,7 +101,7 @@ convert_wind_direction() {
 
   # Output the direction
   echo "${directions[$index]}"
-}
+} && export -f convert_wind_direction
 
 # Function to get weather information using OpenWeatherMap API
 get_weather() {
@@ -142,7 +142,7 @@ get_weather() {
 
   # Output as comma-delimited human-readable values
   echo -n "town: ${town}, weather: ${weather_desc}, temp: ${temp}, feels like: ${feels_like}, low: ${temp_min}, high: ${temp_max}, humidity: ${humidity}, visibility: ${visibility}, wind speed: ${wind_speed}, wind direction: ${wind_dir}, wind gust: ${wind_gust}"
-}
+} && export -f get_weather
 
 # Command line access to the ChatGPT API with conversation history and tool calls
 ask() {
@@ -379,7 +379,7 @@ ask() {
       '.messages += [{"role": "assistant", "content": $response}]' "$history_file" > "$history_temp"
     mv "$history_temp" "$history_file"
   fi
-}
+} && export -f ask
 
 source_relative_once functions/truthy.bash
 
