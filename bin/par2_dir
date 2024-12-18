@@ -1,0 +1,227 @@
+#!/usr/bin/env bash
+
+# Temporarily disable exit on error for debugging
+set +e
+
+# Restore previous settings after debugging
+trap 'set -euo pipefail' EXIT
+
+# Comment out original set command for debugging
+#set -euo pipefail
+
+IFS=$'\n\t'
+
+# Utility function to get corresponding par2 path
+get_par2_path() {
+	local orig_path="$1"
+	local base_dir=$(dirname "$orig_path")
+	local base_name=$(basename "$orig_path")
+	local par2_path="${base_dir}/.${base_name}.par2"
+	echo "$par2_path"
+}
+
+# Create par2 files recursively
+create_par2s() {
+	echo "Creating par2 files..." >&2
+	local src_dir="$1"
+	
+	# Ensure source directory exists
+	if [[ ! -d "$src_dir" ]]; then
+		echo "Error: Source directory '$src_dir' does not exist" >&2
+		return 1
+	fi
+	
+	local retcode=0
+	
+	# Process all files recursively
+	find "$src_dir" -type f -print0 | while IFS= read -r -d $'\0' file; do
+		# Skip if file is hidden or a par2 file
+		[[ $(basename "$file") =~ ^\. ]] && continue
+		[[ "$file" =~ \.par2$ ]] && continue
+		
+		# Generate par2 files with a period prefix and .par2 extension to make them hidden
+		local par2_file="$(get_par2_path "$file")"
+		# Debugging output
+		[ -n "${DEBUG}" ] && echo "Processing file: $file" >&2
+		[ -n "${DEBUG}" ] && echo "PAR2 command: par2 create -n1 -r5 \"$par2_file\" \"$file\"" >&2
+		par2_output=$(par2 create -n1 -r5 "$par2_file" "$file" 2>&1)
+		# Capture detailed error output
+		retcode=$?
+		if [[ $retcode -ne 0 ]]; then
+			echo "Warning: Failed to create par2 for '$file'. Return code: $retcode. Error: $par2_output" >&2
+			[ -n "${DEBUG}" ] && echo "Detailed error output: $par2_output" >&2
+		else
+			# Set modification time to match original
+			touch -r "$file" "$par2_file"
+			printf "." >&2
+		fi
+		[ -n "${DEBUG}" ] && echo "PAR2 output: $par2_output" >&2
+	done
+	echo >&2
+}
+
+# Verify par2 files recursively
+verify_par2s() {
+	local src_dir="$1"
+	local par2_base_dir="${src_dir}.par2"
+	
+	# Ensure directories exist
+	if [[ ! -d "$src_dir" ]] || [[ ! -d "$par2_base_dir" ]]; then
+		echo "Error: Source directory or par2 directory missing" >&2
+		return 1
+	fi
+	
+	# Process all files recursively
+	find "$src_dir" -type f -print0 | while IFS= read -r -d $'\0' file; do
+		# Skip hidden and par2 files
+		[[ $(basename "$file") =~ ^\. ]] && continue
+		[[ "$file" =~ \.par2$ ]] && continue
+		
+		local par2_file="$(get_par2_path "$file")"
+		
+		# Check if par2 exists
+		if [[ ! -f "$par2_file" ]]; then
+			echo "Warning: No par2 file found for '$file'" >&2
+			continue
+		fi
+		
+		# Check modification times
+		if [[ "$file" -nt "$par2_file" ]]; then
+			echo "Warning: File '$file' has been modified since par2 creation" >&2
+			continue
+		fi
+		
+		# Verify par2
+		if ! par2 verify -q "$par2_file" >/dev/null 2>&1; then
+			echo "Error: Verification failed for '$file'" >&2
+		else
+			printf "." >&2
+		fi
+	done
+	echo >&2
+}
+
+# Repair files using par2
+repair_par2s() {
+	local src_dir="$1"
+	local par2_base_dir="${src_dir}.par2"
+	
+	# Ensure directories exist
+	if [[ ! -d "$src_dir" ]] || [[ ! -d "$par2_base_dir" ]]; then
+		echo "Error: Source directory or par2 directory missing" >&2
+		return 1
+	fi
+	
+	# Process all files recursively
+	find "$src_dir" -type f -print0 | while IFS= read -r -d $'\0' file; do
+		# Skip hidden and par2 files
+		[[ $(basename "$file") =~ ^\. ]] && continue
+		[[ "$file" =~ \.par2$ ]] && continue
+		
+		local par2_file="$(get_par2_path "$file")"
+		
+		# Check if par2 exists
+		if [[ ! -f "$par2_file" ]]; then
+			echo "Warning: No par2 file found for '$file'" >&2
+			continue
+		fi
+		
+		# Check modification times
+		if [[ "$file" -nt "$par2_file" ]]; then
+			echo "Warning: File '$file' has been modified since par2 creation" >&2
+			continue
+		fi
+		
+		# Attempt repair if verification fails
+		if ! par2 verify -q "$par2_file" >/dev/null 2>&1; then
+			echo "Attempting repair of '$file'..." >&2
+			if par2 repair -q "$par2_file" >/dev/null 2>&1; then
+				echo "Successfully repaired '$file'" >&2
+			else
+				echo "Failed to repair '$file'" >&2
+			fi
+		fi
+	done
+}
+
+test() {
+	# remove any existing test directory from past test runs if it exists
+	[ -d /tmp/testpar2 ] && rm -rf /tmp/testpar2
+	mkdir /tmp/testpar2
+	mkdir /tmp/testpar2/testsubdirectory
+	echo "Hello World! This is a test file." > /tmp/testpar2/test.txt
+	echo "This is a test file with more content." > /tmp/testpar2/testsubdirectory/test2.txt
+	create_par2s /tmp/testpar2
+	verify_par2s /tmp/testpar2
+	# check for existence of hidden par2 files
+	if [[ ! -f /tmp/testpar2/.test.txt.par2 ]]; then
+		echo "test error: .test.txt.par2 not found"
+		return 1
+	fi
+	if [[ ! -f /tmp/testpar2/testsubdirectory/.test2.txt.par2 ]]; then
+		echo "test error: testsubdirectory/.test2.txt.par2 not found"
+		return 1
+	fi
+	
+	# Use gstat and gdate for GNU compatibility
+	local orig_mod_time_test=$(gstat -c %Y /tmp/testpar2/test.txt)
+	local orig_mod_time_test2=$(gstat -c %Y /tmp/testpar2/testsubdirectory/test2.txt)
+	
+	# Mutilate a file by changing a single character using GNU sed
+	sed -i 's/World!/Wxrld!/' /tmp/testpar2/test.txt
+	gdate -d "@${orig_mod_time_test}" +%Y%m%d%H%M.%S | xargs -I{} touch -t {} /tmp/testpar2/test.txt
+	
+	# Attempt repair
+	repair_par2s /tmp/testpar2
+	
+	# Verify file contents
+	if ! diff <(echo "Hello World! This is a test file.") /tmp/testpar2/test.txt; then
+		echo "Repair failed: test.txt contents do not match original"
+		return 1
+	fi
+	if ! diff <(echo "This is a test file with more content.") /tmp/testpar2/testsubdirectory/test2.txt; then
+		echo "Repair failed: test2.txt contents do not match original"
+		return 1
+	fi
+	
+	# cleanup
+	rm -rf /tmp/testpar2
+	return 0
+}
+
+# Main execution (if script is run directly)
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+	if [[ "$1" == "test" ]]; then
+		test
+		exit 0
+	fi
+	
+	if [[ $# -lt 2 ]]; then
+		echo "Usage: $0 <command> <directory>" >&2
+		echo "Commands: create, verify, repair, test" >&2
+		exit 1
+	fi
+	
+	command="$1"
+	directory="$2"
+	
+	case "$command" in
+		create)
+			create_par2s "$directory"
+			;;
+		verify)
+			verify_par2s "$directory"
+			;;
+		repair)
+			repair_par2s "$directory"
+			;;
+		test)
+			echo "Error: 'test' command does not require a directory argument" >&2
+			exit 1
+			;;
+		*)
+			echo "Invalid command. Use: create, verify, repair, or test" >&2
+			exit 1
+			;;
+	esac
+fi
