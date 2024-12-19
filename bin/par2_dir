@@ -129,21 +129,21 @@ create_par2s() {
 		remove_par2_files_for_file "$file"
 		
 		# Debugging output
-		[ -n "${DEBUG}" ] && echo "Processing file: $file" >&2
-		[ -n "${DEBUG}" ] && echo "File size: $file_size_bytes bytes, Block size: $block_size_bytes bytes" >&2
-		[ -n "${DEBUG}" ] && echo "PAR2 command: par2 create -s$block_size_bytes -r5 \"$par2_file\" \"$file\"" >&2
+		debug "Processing file: $file"
+		debug "File size: $file_size_bytes bytes, Block size: $block_size_bytes bytes"
+		debug "PAR2 command: par2 create -s$block_size_bytes -r5 \"$par2_file\" \"$file\""
 		par2_output=$(par2 create -s$block_size_bytes -r5 "$par2_file" "$file" 2>&1)
 		# Capture detailed error output
 		retcode=$?
 		if [[ $retcode -ne 0 ]]; then
 			echo "Warning: Failed to create par2 for '$file'. Return code: $retcode. Error: $par2_output" >&2
-			[ -n "${DEBUG}" ] && echo "Detailed error output: $par2_output" >&2
+			debug "Detailed error output: $par2_output"
 		else
 			# Set modification time to match original
 			gtouch -r "$file" "$par2_file"
 			[[ "$quiet" != "true" ]] && printf "." >&2
 		fi
-		[ -n "${DEBUG}" ] && echo "PAR2 output: $par2_output" >&2
+		debug "PAR2 output: $par2_output"
 	done
 	[[ "$quiet" != "true" ]] && echo >&2
 	return $retcode
@@ -215,11 +215,11 @@ update_par2s() {
 			local par2_time file_time
 			par2_time=$(gstat -c %Y "$par2_file")
 			file_time=$(gstat -c %Y "$file")
-			echo "Debug: Comparing times for $file" >&2
-			echo "Debug: Par2 file: $par2_file" >&2
-			echo "Debug: par2_time=$par2_time file_time=$file_time" >&2
+			debug "Comparing times for $file"
+			debug "Par2 file: $par2_file"
+			debug "par2_time=$par2_time file_time=$file_time"
 			if (( file_time > par2_time )); then
-				echo "Debug: File is newer, regenerating" >&2
+				debug "File is newer, regenerating"
 				echo "Regenerating par2 for modified file: '$file'" >&2
 				remove_par2_files_for_file "$file"
 				# Calculate optimal block size based on file size
@@ -227,7 +227,7 @@ update_par2s() {
 				file_size_bytes=$(gstat -c %s "$file")
 				block_size_bytes=$(calculate_block_size "$file_size_bytes")
 				
-				echo "Debug: File size: $file_size_bytes bytes, Block size: $block_size_bytes bytes" >&2
+				debug "File size: $file_size_bytes bytes, Block size: $block_size_bytes bytes"
 				# Use the same parameters as create_par2s
 				par2_output=$(par2 create -s$block_size_bytes -r5 "$par2_file" "$file" 2>&1)
 				if [[ $? -eq 0 ]]; then
@@ -387,20 +387,22 @@ test() {
 	test_dir=$(mktemp -d "/tmp/par2_test.$$_XXXXXX") || exit 1
 	local empty_dir
 	empty_dir=$(mktemp -d "/tmp/par2_empty.$$_XXXXXX") || exit 1
+
+	local test_fails=0
 	
 	# Ensure cleanup on exit
 	trap 'rm -rf "$test_dir" "$empty_dir"' EXIT
 	
 	# Test 1: Non-existent directory
 	if verify_par2s /tmp/nonexistent_directory 2>/dev/null; then
-		echo "test error: verify_par2s should fail on non-existent directory"
-		return 1
+		test_error "verify_par2s should fail on non-existent directory"	
+		((test_fails++))
 	fi
 
 	# Test 2: Empty directory
 	if ! verify_par2s "$empty_dir" >/dev/null 2>&1; then
-		echo "test error: verify_par2s should succeed on empty directory"
-		return 1
+		test_error "verify_par2s should succeed on empty directory"
+		((test_fails++))
 	fi
 
 	# Create test directory structure
@@ -409,26 +411,24 @@ test() {
 	echo "This is a test file with more content." > "$test_dir/testsubdirectory/test2.txt"
 	
 	# Test 3: Initial create
-	if ! create_par2s "$test_dir" > /dev/null; then
-		echo "test error: create_par2s failed on initial creation"
-		return 1
+	if ! create_par2s "$test_dir" >/dev/null 2>&1; then
+		test_error "create_par2s failed on initial creation"
+		((test_fails++))
 	fi
 	
 	# Test 4: Idempotent create - capture stderr to verify skip message
 	local skip_output
 	skip_output=$(create_par2s "$test_dir" 2>&1)
 	if ! echo "$skip_output" | grep -q "Skipping.*test.txt.*par2 file already exists"; then
-		echo "test error: create_par2s should indicate skipping existing par2 files"
-		return 1
+		test_error "create_par2s should indicate skipping existing par2 files"
+		((test_fails++))
 	fi
 	
 	# Test 5: Update functionality
 	# 5a. Create an orphaned par2 file
-	echo "Orphaned file" > "$test_dir/orphaned_file"
-	create_par2s "$test_dir" > /dev/null
-	rm "$test_dir/orphaned_file"
+	touch "$test_dir/.orphaned_file.par2"
 	
-	# 5b. Modify a file to be newer than its par2
+	# 5b. Modify a file and update its timestamp
 	local par2_time
 	par2_time=$(gstat -c %Y "$test_dir/.test.txt.par2")
 	echo "Modified content" > "$test_dir/test.txt"
@@ -436,8 +436,8 @@ test() {
 	gtouch -d "@$((par2_time + 1))" "$test_dir/test.txt"
 	
 	# Debug: Check modification times
-	echo "Debug: par2 time: $(gstat -c %Y "$test_dir/.test.txt.par2")" >&2
-	echo "Debug: file time: $(gstat -c %Y "$test_dir/test.txt")" >&2
+	debug "par2 time: $(gstat -c %Y "$test_dir/.test.txt.par2")"
+	debug "file time: $(gstat -c %Y "$test_dir/test.txt")"
 	
 	# 5c. Create a new file without par2
 	echo "New file" > "$test_dir/new_file.txt"
@@ -448,47 +448,46 @@ test() {
 	
 	# Verify orphaned par2 was removed
 	if [[ -f "$test_dir/.orphaned_file.par2" ]]; then
-		echo "test error: update_par2s should remove orphaned par2 files"
-		return 1
+		test_error "update_par2s should remove orphaned par2 files"
+		((test_fails++))
 	fi
 	
 	# Verify modified file's par2 was regenerated by checking both the message and the timestamp
 	if ! echo "$update_output" | grep -q "Regenerating par2 for modified file:.*test.txt"; then
-		echo "test error: update_par2s should regenerate par2 for modified files"
-		echo "Debug: Expected regeneration message for test.txt"
-		echo "Debug: Got output: $update_output"
-		return 1
+		debug "Expected regeneration message for test.txt"
+		debug "Got output: $update_output"
+		test_error "update_par2s should regenerate par2 for modified files"
+		((test_fails++))
 	fi
 	
 	# Also verify the par2 file was actually regenerated by checking its timestamp
 	local new_par2_time
 	new_par2_time=$(gstat -c %Y "$test_dir/.test.txt.par2")
 	if (( new_par2_time <= par2_time )); then
-		echo "test error: par2 file was not actually regenerated (timestamp not updated)"
-		echo "Debug: Original par2 time: $par2_time"
-		echo "Debug: New par2 time: $new_par2_time"
-		return 1
+		debug "Original par2 time: $par2_time"
+		debug "New par2 time: $new_par2_time"
+		test_error "par2 file was not actually regenerated (timestamp not updated)"
+		((test_fails++))
 	fi
 	
 	# Verify new file has par2
 	if [[ ! -f "$test_dir/.new_file.txt.par2" ]]; then
-		echo "test error: update_par2s should create par2 for new files"
-		echo "update output: $update_output"
-		return 1
+		test_error "update_par2s should create par2 for new files"
+		((test_fails++))
 	fi
 	
 	# Reset test.txt for repair test
 	echo "Hello World! This is a test file with enough content to ensure that a single character change is less than 5% of the total content. Testing par2 functionality." > "$test_dir/test.txt"
-	create_par2s "$test_dir" > /dev/null
+	create_par2s "$test_dir" >/dev/null 2>&1
 	
 	# check for existence of hidden par2 files
 	if [[ ! -f "$test_dir/.test.txt.par2" ]]; then
-		echo "test error: .test.txt.par2 not found"
-		return 1
+		test_error ".test.txt.par2 not found"
+		((test_fails++))
 	fi
 	if [[ ! -f "$test_dir/testsubdirectory/.test2.txt.par2" ]]; then
-		echo "test error: testsubdirectory/.test2.txt.par2 not found"
-		return 1
+		test_error "testsubdirectory/.test2.txt.par2 not found"
+		((test_fails++))
 	fi
 	
 	# Use gstat for GNU compatibility
@@ -508,7 +507,7 @@ test() {
 	remove_par2_files_for_file "$test_dir/test.txt"
 	
 	# Regenerate par2 file for the modified content
-	create_par2s "$test_dir" > /dev/null
+	create_par2s "$test_dir" >/dev/null 2>&1
 	
 	# Now restore the original content (simulating corruption)
 	echo "$orig_content" > "$test_dir/test.txt"
@@ -516,19 +515,19 @@ test() {
 	gtouch -d "@$((orig_mod_time_test + 1))" "$test_dir/test.txt"
 	
 	# Attempt repair
-	repair_par2s "$test_dir"
+	repair_par2s "$test_dir" >/dev/null 2>&1
 	
 	# Verify file contents - should match the modified version
 	if ! diff <(echo "Hello Wxrld! This is a test file with enough content to ensure that a single character change is less than 5% of the total content. Testing par2 functionality.") "$test_dir/test.txt"; then
-		echo "Repair failed: test.txt contents do not match modified"
-		return 1
+		test_error "Repair failed: test.txt contents do not match modified"
+		((test_fails++))
 	fi
 	
 	# Test 6: Clear functionality
 	# First verify we have par2 files
 	if [[ ! -f "$test_dir/.test.txt.par2" ]] || [[ ! -f "$test_dir/testsubdirectory/.test2.txt.par2" ]]; then
-		echo "test error: setup for clear test failed - par2 files not found"
-		return 1
+		test_error "setup for clear test failed - par2 files not found"
+		((test_fails++))
 	fi
 	
 	# Run clear and capture output
@@ -537,17 +536,34 @@ test() {
 	
 	# Verify output shows files being removed
 	if ! echo "$clear_output" | grep -q "Removing:.*\.par2"; then
-		echo "test error: clear_par2s should show which files it's removing"
-		return 1
+		test_error "clear_par2s should show which files it's removing"
+		((test_fails++))
 	fi
 	
 	# Verify all par2 files are gone
 	if find "$test_dir" -type f -name ".*.par2" | grep -q .; then
-		echo "test error: clear_par2s should remove all par2 files"
-		return 1
+		test_error "clear_par2s should remove all par2 files"
+		((test_fails++))
 	fi
 	
-	return 0
+	if ((test_fails > 0)); then
+		echo -e "\033[0;31mFAIL: Tests failed: $test_fails\033[0m" >&2
+		return $test_fails
+	else
+		echo -e "\033[0;32mPASS: All tests passed\033[0m" >&2
+		return 0
+	fi
+}
+
+# Debug output function
+debug() {
+	[ -n "${DEBUG}" ] && echo "DEBUG: $*" >&2
+}
+
+# Test output function
+test_error() {
+	echo "TEST ERROR: $*" >&2
+	return 1
 }
 
 # Print usage information
