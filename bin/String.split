@@ -24,6 +24,26 @@ String.split() {
   fi
 }
 
+String.split_head() {
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  String.split "$@" | head -n 1
+}
+
+String.split_tail() {
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  String.split "$@" | tail -n +2
+}
+
+String.split_first() {
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  String.split_head "$@"
+}
+
+String.split_last() {
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  String.split "$@" | tail -n 1
+}
+
 # Run the function, passing along any args, if this file was run directly (such as via sudo) instead of as an include
 # Sometimes, $0 contains a leading dash to indicate an interactive (or is it login?) shell,
 # which is apparently an old convention (which also broke the basename call on OS X)

@@ -11,3 +11,4 @@ bin/kubectl
 bin/orb
 bin/orbctl
 bin/steam
+bin/*launcher

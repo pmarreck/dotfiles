@@ -157,6 +157,9 @@ source_relative_once bin/ask
 source_relative_once bin/functions/rpn.bash
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced rpn.bash"
 
+source_relative_once bin/String.split
+# [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced String.split"
+
 # crypto market data. can pass a symbol in or just get the current overall market data
 crypto() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
