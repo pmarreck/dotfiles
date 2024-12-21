@@ -66,15 +66,18 @@ remove_par2_files_for_file() {
 # Calculate optimal block size for par2 based on file size
 calculate_block_size() {
 	local file_size="$1"
-	# Using bc -l for access to math functions (e and l for natural log)
-	# BlockSize = 10.5 * (FileSize^0.63)
-	# Since bc can't handle decimal exponents, we do it via scale=8 and functions e and l (natural log)
-	# I tried lowering the scale but rounding errors quickly became ridiculous
-	local block_size
-	block_size=$(echo "scale=8; 10.5 * e(0.63*l($file_size))" | bc -l)
-	# Convert to integer and ensure it's a multiple of 4
-	block_size=$(printf "%.0f" "$block_size")
-	# Ensure minimum block size of 4
+	local k=$(echo "scale=6; $file_size/1024" | bc -l)  # Convert to KB
+	
+	# Calculate block size percentage using double exponential decay:
+	# 1.2: Base percentage (asymptotic minimum)
+	# 2.8 * e^(-0.001 * k): Slow decay term for gradual reduction from 1MB to 10MB
+	# 20 * e^(-0.3 * k): Fast decay term for steep initial drop from 1KB to 100KB
+	local percent=$(echo "scale=6; 1.2 + 2.8 * e(-0.001 * $k) + 20 * e(-0.3 * $k)" | bc -l)
+	
+	# Calculate block size in bytes
+	local block_size=$(echo "scale=0; ($file_size * $percent) / 100" | bc)
+	
+	# Ensure minimum block size of 4 and round up to nearest multiple of 4
 	if [ "$block_size" -lt 4 ]; then
 		block_size=4
 	fi

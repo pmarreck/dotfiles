@@ -45,6 +45,9 @@ if [ "$PLATFORM" = "osx" ]; then
   [ -d /run/current-system/sw/bin ] && prepend_path /run/current-system/sw/bin
 fi
 
+# Added by Windsurf
+prepend_path "$HOME/.codeium/windsurf/bin"
+
 # BINSTUBS
 # add binstub to front of PATH which overrides everything
 # aaaand disabled for security and buggy reasons
