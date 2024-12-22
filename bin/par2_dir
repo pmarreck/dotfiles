@@ -17,6 +17,14 @@ get_cpu_cores() {
 # Set number of par2 threads, allowing override via environment variable
 : "${NUM_PAR2_THREADS:=$(get_cpu_cores)}"
 
+# Par2 redundancy percentage (5 means 5% extra data for recovery)
+PAR2_REDUNDANCY=${PAR2_REDUNDANCY:-5}
+
+# Warn if redundancy is set too high
+if ((PAR2_REDUNDANCY > 20)); then
+    echo "Warning: PAR2_REDUNDANCY is set to ${PAR2_REDUNDANCY}%. This tool is designed for protecting against small corruptions (bitrot, sector failures) and not for full file recovery. Consider using a lower value (5-20%) to save space." >&2
+fi
+
 check_dependencies() {
 	local dependencies=(gtouch gstat sed)
 	local missing=()
@@ -40,12 +48,20 @@ check_dependencies() {
 
 check_dependencies
 
+# Utility function to sanitize filenames for par2
+sanitize_filename() {
+	local filename="$1"
+	# Replace wildcards, question marks, and other problematic characters with underscores
+	echo "$filename" | sed -E 's/[*?]/_/g; s/:/_/g; s/\\/_/g'
+}
+
 # Utility function to get corresponding par2 path
 get_par2_path() {
 	local orig_path="$1"
 	local base_dir=$(dirname "$orig_path")
 	local base_name=$(basename "$orig_path")
-	local par2_path="${base_dir}/.${base_name}.par2"
+	local sanitized_name=$(sanitize_filename "$base_name")
+	local par2_path="${base_dir}/.${sanitized_name}.par2"
 	echo "$par2_path"
 }
 
@@ -66,13 +82,15 @@ remove_par2_files_for_file() {
 	local file="$1"
 	local dir_path=$(dirname "$file")
 	local basefilename=$(basename "$file")
+	local sanitized_name=$(sanitize_filename "$basefilename")
 	local files=()
 	# trying to glob while preserving spaces in paths is disgusting in Bash /shrug
 	shopt -s nullglob
-	files=($dir_path/.${basefilename}*.par2)
+	files=("$dir_path/.$sanitized_name"*.par2)
 	for file in "${files[@]}"; do
 		rm -f "$file" 2>/dev/null
 	done
+	shopt -u nullglob
 }
 
 # Calculate optimal block size for par2 based on file size
@@ -97,600 +115,356 @@ calculate_block_size() {
 	echo $(( (block_size + 3) & ~3 ))
 }
 
-# Create par2 files recursively
-create_par2s() {
-	local src_dir="$1"
-	local quiet="${2:-false}"  # Optional parameter for quiet mode
+# Process a single file for par2 operations
+process_single_file() {
+	local file="$1"
+	local operation="$2"  # create, verify, repair, clear, update, stats
+	local par2_file
+	local file_size_bytes
+	local block_size_bytes
+	local par2_output
+	local file_time
+	local par2_time
 	
-	[[ "$quiet" != "true" ]] && echo "Creating par2 files..." >&2
-	
-	local retcode=0
-
-	# Ensure source directory exists and is absolute
-	src_dir=$(get_abs_directory "$src_dir")
-	retcode=$?
-	if [[ $retcode -ne 0 ]]; then
-		echo "Error: Failed to get absolute path for '$src_dir', or it does not exist" >&2
-		return $retcode
+	# Skip if file doesn't exist or is a par2 file
+	if [[ ! -f "$file" ]] || [[ "$file" == *.par2 ]] || [[ "$file" == .*.par2 ]]; then
+		return 0
 	fi
-	
-	# Process all files recursively
-	find "$src_dir" -type f -print0 | while IFS= read -r -d $'\0' file; do
-		# Skip if file is hidden or a par2 file
-		[[ $(basename "$file") =~ ^\. ]] && continue
-		[[ "$file" =~ \.par2$ ]] && continue
-		
-		# Skip empty files
-		if [ ! -s "$file" ]; then
-			[[ "$quiet" != "true" ]] && echo "Skipping empty file: '$file'" >&2
-			continue
-		fi
-		
-		# Calculate optimal block size based on file size
-		local file_size_bytes block_size_bytes
-		file_size_bytes=$(gstat -c %s "$file")
-		block_size_bytes=$(calculate_block_size "$file_size_bytes")
-		
-		# Generate par2 files with a period prefix and .par2 extension to make them hidden
-		local par2_file="$(get_par2_path "$file")"
 
-		# Skip if par2 file already exists and is not older than source file
-		if [[ -f "$par2_file" ]] && ! [[ "$par2_file" -ot "$file" ]]; then
-			[[ "$quiet" != "true" ]] && echo "Skipping '$file' - par2 file already exists" >&2
-			continue
-		fi
-		
-		# Remove any existing par2 files before creating new ones
-		remove_par2_files_for_file "$file"
-		
-		# Debugging output
-		debug "Processing file: $file"
-		debug "File size: $file_size_bytes bytes, Block size: $block_size_bytes bytes"
-		debug "PAR2 command: par2 create -s$block_size_bytes -r5 -n1 -T\"$NUM_PAR2_THREADS\" \"$par2_file\" \"$file\""
-		par2_output=$(par2 create -s$block_size_bytes -r5 -n1 -T"$NUM_PAR2_THREADS" "$par2_file" "$file" 2>&1)
-		# Capture detailed error output
-		retcode=$?
-		if [[ $retcode -ne 0 ]]; then
-			echo "Warning: Failed to create par2 for '$file'. Return code: $retcode. Error: $par2_output" >&2
-			debug "Detailed error output: $par2_output"
-		else
-			# Set modification time to match original
-			gtouch -r "$file" "$par2_file"
-			[[ "$quiet" != "true" ]] && printf "." >&2
-		fi
-		debug "PAR2 output: $par2_output"
-	done
-	[[ "$quiet" != "true" ]] && echo >&2
-	return $retcode
-}
-
-# Update par2 files in a directory
-update_par2s() {
-	local src_dir="$1"
+	par2_file=$(get_par2_path "$file")
 	
-	echo "Updating par2 files..." >&2
-	
-	local retcode=0
-	# Ensure source directory exists and is absolute
-	src_dir=$(get_abs_directory "$src_dir")
-	retcode=$?
-	if [[ $retcode -ne 0 ]]; then
-		echo "Error: Failed to get absolute path for '$src_dir', or it does not exist" >&2
-		return $retcode
-	fi
-	
-	# 1. Create par2 files for files without them (quietly)
-	while IFS= read -r -d $'\0' file; do
-		basefilename=$(basename "$file")
-		# Skip if file is hidden or a par2 file
-		[[ "$basefilename" =~ ^\. ]] && continue
-		[[ "$basefilename" =~ \.par2$ ]] && continue
-		
-		# Skip empty files
-		[ ! -s "$file" ] && continue
-		
-		par2_file="$(get_par2_path "$file")"
-		
-		# Only create if par2 doesn't exist
-		if [[ ! -f "$par2_file" ]]; then
-			# Calculate optimal block size based on file size
-			local file_size_bytes block_size_bytes
+	case "$operation" in
+		create)
+			if [[ -f "$par2_file" ]]; then
+				# Get absolute path for consistent output
+				local abs_file
+				abs_file=$(readlink -f "$file")
+				echo "$abs_file - Exists"
+				debug "Skipping $file: par2 file already exists"
+				return 0
+			fi
+			
+			debug "Creating par2 for file: $file"
+			debug "Par2 file will be: $par2_file"
+			
+			# Get directory of file
+			local file_dir
+			file_dir=$(dirname "$file")
+			
 			file_size_bytes=$(gstat -c %s "$file")
 			block_size_bytes=$(calculate_block_size "$file_size_bytes")
 			
-			# Use the same parameters as create_par2s
-			par2_output=$(par2 create -s$block_size_bytes -r5 -n1 -T"$NUM_PAR2_THREADS" "$par2_file" "$file" 2>&1)
-			if [[ $? -eq 0 ]]; then
-				gtouch -r "$file" "$par2_file"
-				printf "." >&2
-			else
-				echo "Warning: Failed to create par2 for '$file'. Error: $par2_output" >&2
-				retcode=1
+			debug "Processing file: $file"
+			debug "File size: $file_size_bytes bytes, Block size: $block_size_bytes bytes"
+			
+			debug "PAR2 command: par2 create -s$block_size_bytes -r$PAR2_REDUNDANCY -n1 -T\"$NUM_PAR2_THREADS\" \"$par2_file\" \"$file\""
+			
+			# Get absolute path for consistent output
+			local abs_file
+			abs_file=$(readlink -f "$file")
+			echo -n "$abs_file"
+			
+			if ! par2_output=$(par2 create -s"$block_size_bytes" -r"$PAR2_REDUNDANCY" -n1 -T"$NUM_PAR2_THREADS" "$par2_file" "$file" 2>&1); then
+				echo -e "\nError creating par2 for $abs_file" >&2
+				debug "Detailed error output: $par2_output"
+				return 1
 			fi
-		fi
-	done < <(find "$src_dir" -type f -print0)
-
-	# 2. Regenerate par2 files for modified files
-	while IFS= read -r -d $'\0' file; do
-		basefilename=$(basename "$file")
-		# Skip if file is hidden or a par2 file
-		[[ "$basefilename" =~ ^\. ]] && continue
-		[[ "$basefilename" =~ \.par2$ ]] && continue
-		
-		# Skip empty files
-		[ ! -s "$file" ] && continue
-		
-		par2_file="$(get_par2_path "$file")"
-
-		# get dirname of file
-		dir_path=$(dirname "$file")
-		
-		# If par2 file exists and is older than source, regenerate it
-		if [[ -f "$par2_file" ]]; then
-			local par2_time file_time
-			par2_time=$(gstat -c %Y "$par2_file")
+			echo " - Done."
+			debug "PAR2 output: $par2_output"
+			debug "Par2 file created: $(ls -l "$par2_file")"
+			;;
+			
+		verify)
+			[[ ! -f "$par2_file" ]] && return 0
+			debug "Verifying file: $file"
+			debug "Using par2 file: $par2_file"
+			debug "PAR2 command: par2 verify \"$par2_file\""
+			if ! par2_output=$(par2 verify "$par2_file" 2>&1); then
+				echo "Verification failed for $(readlink -f "$file")" >&2
+				debug "Detailed error output: $par2_output"
+				return 1
+			fi
+			debug "PAR2 output: $par2_output"
+			;;
+			
+		repair)
+			[[ ! -f "$par2_file" ]] && return 0
+			debug "Repairing file: $file"
+			debug "Using par2 file: $par2_file"
+			debug "File exists: $(ls -l "$file")"
+			debug "Par2 file exists: $(ls -l "$par2_file")"
+			debug "Directory contents before repair: $(ls -la "$(dirname "$file")")"
+			debug "File content before repair: $(cat "$file")"
+			debug "Par2 file content (hex): $(xxd -p "$par2_file" | head -n 1)"
+			
+			debug "PAR2 command: par2 repair -q \"$par2_file\""
+			if ! par2_output=$(par2 repair -q "$par2_file" 2>&1); then
+				echo "Repair failed for $(readlink -f "$file")" >&2
+				debug "Detailed error output: $par2_output"
+				return 1
+			fi
+			debug "PAR2 output: $par2_output"
+			debug "Directory contents after repair: $(ls -la "$(dirname "$file")")"
+			debug "File content after repair: $(cat "$file")"
+			;;
+			
+		clear)
+			remove_par2_files_for_file "$file"
+			;;
+			
+		update)
+			if [[ ! -f "$par2_file" ]]; then
+				process_single_file "$file" create
+				return $?
+			fi
+			
 			file_time=$(gstat -c %Y "$file")
+			par2_time=$(gstat -c %Y "$par2_file")
+			
 			debug "Comparing times for $file"
 			debug "Par2 file: $par2_file"
 			debug "par2_time=$par2_time file_time=$file_time"
+			
 			if (( file_time > par2_time )); then
 				debug "File is newer, regenerating"
-				echo "Regenerating par2 for modified file: '$file'" >&2
 				remove_par2_files_for_file "$file"
-				# Calculate optimal block size based on file size
-				local file_size_bytes block_size_bytes
-				file_size_bytes=$(gstat -c %s "$file")
-				block_size_bytes=$(calculate_block_size "$file_size_bytes")
-				
-				debug "File size: $file_size_bytes bytes, Block size: $block_size_bytes bytes"
-				# Use the same parameters as create_par2s
-				par2_output=$(par2 create -s$block_size_bytes -r5 -n1 -T"$NUM_PAR2_THREADS" "$par2_file" "$file" 2>&1)
-				if [[ $? -eq 0 ]]; then
-					gtouch -r "$file" "$par2_file"
-					printf "." >&2
-				else
-					echo "Warning: Failed to regenerate par2 for '$file'. Error: $par2_output" >&2
-					retcode=1
-				fi
+				process_single_file "$file" create
+				return $?
 			fi
-		fi
-	done < <(find "$src_dir" -type f -print0)
+			;;
+			
+		stats)
+			local file_size_bytes=$(gstat -c %s "$file")
+			if [[ -f "$par2_file" ]]; then
+				echo "$file_size_bytes:covered"
+			else
+				echo "$file_size_bytes:uncovered"
+			fi
+			;;
+	esac
+	return 0
+}
+
+# Create par2 files recursively
+create_par2s() {
+	local target="$1"
 	
-	# 3. Remove orphaned par2 files
-	find "$src_dir" -type f -name ".*.par2" -print0 | while IFS= read -r -d $'\0' par2_file; do
-		# Extract the original filename by removing the leading dot and trailing .par2
-		local base_par2=$(basename "$par2_file")
-		if [[ $base_par2 =~ ^\.(.+)\.vol[0-9]+\+[0-9]+\.par2$ ]] || [[ $base_par2 =~ ^\.(.+)\.par2$ ]]; then
-			local orig_file="${BASH_REMATCH[1]}"
-			local dir_path=$(dirname "$par2_file")
-			if [[ ! -f "$dir_path/$orig_file" ]]; then
-				echo "Removing orphaned par2 file: '$par2_file'" >&2
-				rm -f "$par2_file"
-				# Also remove any associated volume files
-				rm -f "${par2_file%.*}".vol*.par2 2>/dev/null
+	if [[ -f "$target" ]]; then
+		process_single_file "$target" create
+		return $?
+	fi
+	
+	if [[ ! -d "$target" ]]; then
+		echo "Error: $target is not a file or directory" >&2
+		return 1
+	fi
+	
+	find "$target" -type f -not -name "*.par2" -not -name ".*.par2" | while read -r file; do
+		process_single_file "$file" create
+	done
+}
+
+# Update par2 files
+update_par2s() {
+	local target="$1"
+	
+	if [[ -f "$target" ]]; then
+		process_single_file "$target" update
+		return $?
+	fi
+	
+	if [[ ! -d "$target" ]]; then
+		echo "Error: $target is not a file or directory" >&2
+		return 1
+	fi
+	
+	echo "Scanning for par2 files in $target..."
+	
+	# Count total par2 files for progress indication
+	local total_par2_files
+	total_par2_files=$(find "$target" -type f -name ".*.par2" | wc -l | tr -d ' ')
+	echo "Found $total_par2_files par2 files to check"
+	
+	# First, remove orphaned par2 files and their associated volume files
+	local processed_files=0
+	find "$target" -type f -name ".*.par2" | while read -r par2_file; do
+		processed_files=$((processed_files + 1))
+		if ((processed_files % 100 == 0)); then
+			echo "Checking par2 files... ($processed_files/$total_par2_files)"
+		fi
+		
+		local par2_dir
+		par2_dir=$(dirname "$par2_file")
+		local par2_base
+		par2_base=$(basename "$par2_file")
+		local orig_base
+		
+		# Extract the base name (without .par2 or .volX+Y)
+		if [[ "$par2_base" =~ \.vol ]]; then
+			orig_base="${par2_base%%.vol*}"
+		else
+			orig_base="${par2_base%.par2}"
+		fi
+		orig_base="${orig_base#.}"  # Remove leading dot
+		
+		# Check if the original file exists
+		if [[ ! -f "$par2_dir/$orig_base" ]]; then
+			# Only process each set once (when we find the first file)
+			if [[ ! -f "$par2_dir/.$orig_base.par2" ]] || [[ "$par2_file" == "$par2_dir/.$orig_base.par2" ]]; then
+				echo "Removing orphaned par2 file: $par2_file"
+				rm "$par2_dir/.$orig_base.par2" "$par2_dir/.$orig_base.vol"* 2>/dev/null || true
 			fi
 		fi
 	done
-	echo >&2
-	return $retcode
+	
+	echo "Par2 file check complete"
+	echo "Scanning for files needing par2 updates..."
+	
+	# Count total files for progress indication
+	local total_files
+	total_files=$(find "$target" -type f -not -name "*.par2" -not -name ".*.par2" | wc -l | tr -d ' ')
+	echo "Found $total_files files to process"
+	
+	# Then update/create par2 files as needed
+	processed_files=0
+	find "$target" -type f -not -name "*.par2" -not -name ".*.par2" | while read -r file; do
+		processed_files=$((processed_files + 1))
+		if ((processed_files % 100 == 0)); then
+			echo "Processing files... ($processed_files/$total_files)"
+		fi
+		process_single_file "$file" update
+	done
+	
+	echo "Update complete"
 }
 
 # Verify par2 files recursively
 verify_par2s() {
-	local src_dir="$1"
+	local target="$1"
+	local exit_code=0
 	
-	local retcode=0
-	# Ensure source directory exists and is absolute
-	src_dir=$(get_abs_directory "$src_dir")
-	retcode=$?
-	if [[ $retcode -ne 0 ]]; then
-		echo "Error: Failed to get absolute path for '$src_dir', or it does not exist" >&2
-		return $retcode
+	if [[ -f "$target" ]]; then
+		process_single_file "$target" verify
+		return $?
 	fi
 	
-	# Process all files recursively
-	find "$src_dir" -type f -print0 | while IFS= read -r -d $'\0' file; do
-		# Skip hidden and par2 files
-		[[ $(basename "$file") =~ ^\. ]] && continue
-		[[ "$file" =~ \.par2$ ]] && continue
-		
-		local par2_file="$(get_par2_path "$file")"
-		
-		# Check if par2 exists
-		if [[ ! -f "$par2_file" ]]; then
-			echo "Warning: No par2 file found for '$file'" >&2
-			continue
-		fi
-		
-		# Check modification times
-		if [[ "$file" -nt "$par2_file" ]]; then
-			echo "Warning: File '$file' has been modified since par2 creation" >&2
-			continue
-		fi
-		
-		# Verify par2
-		if ! par2 verify -q "$par2_file" >/dev/null 2>&1; then
-			echo "Error: Verification failed for '$file'" >&2
-		else
-			printf "." >&2
+	if [[ ! -d "$target" ]]; then
+		echo "Error: $target is not a file or directory" >&2
+		return 1
+	fi
+	
+	find "$target" -type f -not -name "*.par2" -not -name ".*.par2" | while read -r file; do
+		if ! process_single_file "$file" verify; then
+			exit_code=1
 		fi
 	done
-	echo >&2
+	
+	return $exit_code
 }
 
 # Repair files using par2
 repair_par2s() {
-	local src_dir="$1"
+	local target="$1"
+	local exit_code=0
 	
-	local retcode=0
-	# Ensure source directory exists and is absolute
-	src_dir=$(get_abs_directory "$src_dir")
-	retcode=$?
-	if [[ $retcode -ne 0 ]]; then
-		echo "Error: Failed to get absolute path for '$src_dir', or it does not exist" >&2
-		return $retcode
+	debug "Attempting repair on target: $target"
+	
+	if [[ -f "$target" ]]; then
+		debug "Target is a file, calling process_single_file"
+		process_single_file "$target" repair
+		return $?
 	fi
 	
-	# Process all files recursively
-	find "$src_dir" -type f -print0 | while IFS= read -r -d $'\0' file; do
-		# Skip hidden and par2 files
-		[[ $(basename "$file") =~ ^\. ]] && continue
-		[[ "$file" =~ \.par2$ ]] && continue
-		
-		# Skip empty files
-		if [ ! -s "$file" ]; then
-			continue
-		fi
-		
-		local par2_file="$(get_par2_path "$file")"
-		
-		# Check if par2 exists
-		if [[ ! -f "$par2_file" ]]; then
-			echo "Warning: No par2 file found for '$file'" >&2
-			continue
-		fi
-		
-		# Check modification times
-		if [[ "$file" -nt "$par2_file" ]]; then
-			echo "Warning: File '$file' has been modified since par2 creation" >&2
-			continue
-		fi
-		
-		# Attempt repair if verification fails
-		if ! par2 verify -q "$par2_file" >/dev/null 2>&1; then
-			echo "Attempting repair of '$file'..." >&2
-			local par2_output
-			par2_output=$(par2 repair "$par2_file" 2>&1)
-			local repair_code=$?
-			if [[ $repair_code -eq 0 ]]; then
-				echo "Successfully repaired '$file'" >&2
-				# Update modification time of par2 file to match repaired file
-				gtouch -r "$file" "$par2_file"
-			else
-				echo "Failed to repair '$file'. Error: $par2_output" >&2
-				retcode=1
-			fi
+	if [[ ! -d "$target" ]]; then
+		echo "Error: $target is not a file or directory" >&2
+		return 1
+	fi
+	
+	debug "Target is a directory, processing files recursively"
+	find "$target" -type f -not -name "*.par2" -not -name ".*.par2" | while read -r file; do
+		debug "Processing file in directory: $file"
+		if ! process_single_file "$file" repair; then
+			exit_code=1
 		fi
 	done
-	return $retcode
+	
+	return $exit_code
 }
 
-# Clear all par2 files in a directory
+# Clear all par2 files
 clear_par2s() {
-	local src_dir="$1"
+	local target="$1"
 	
-	echo "Clearing par2 files..." >&2
-	
-	local retcode=0
-	# Ensure source directory exists and is absolute
-	src_dir=$(get_abs_directory "$src_dir")
-	retcode=$?
-	if [[ $retcode -ne 0 ]]; then
-		echo "Error: Failed to get absolute path for '$src_dir', or it does not exist" >&2
-		return $retcode
+	if [[ -f "$target" ]]; then
+		process_single_file "$target" clear
+		return $?
 	fi
 	
-	# Find and remove all par2 files (including volume files)
-	find "$src_dir" -type f -name ".*.par2" -print0 | while IFS= read -r -d $'\0' par2_file; do
-		echo "Removing: $par2_file" >&2
-		rm -f "$par2_file"
+	if [[ ! -d "$target" ]]; then
+		echo "Error: $target is not a file or directory" >&2
+		return 1
+	fi
+	
+	find "$target" -type f -name "*.par2" | while read -r par2_file; do
+		echo "Removing: $par2_file"
+		rm "$par2_file"
 	done
 }
 
-# Calculate par2 coverage statistics for a directory
+# Calculate par2 coverage statistics
 stats_par2s() {
-	local src_dir="$1"
-	local quiet="${2:-false}"
-	
-	[[ "$quiet" != "true" ]] && echo "Calculating par2 coverage statistics..." >&2
-	
-	# Ensure source directory exists and is absolute
-	src_dir=$(get_abs_directory "$src_dir")
-	local retcode=$?
-	if [[ $retcode -ne 0 ]]; then
-		echo "Error: Failed to get absolute path for '$src_dir', or it does not exist" >&2
-		return $retcode
-	fi
-	
+	local target="$1"
 	local covered_bytes=0
 	local uncovered_bytes=0
-	
-	# Find all regular files (excluding hidden files)
-	while IFS= read -r -d '' file; do
-		local basename
-		basename=$(basename "$file")
-		
-		# Skip par2 files
-		[[ "$basename" =~ ^[.].+[.]par2$ ]] && continue
-		
-		# Skip other hidden files
-		[[ "$basename" =~ ^[.] ]] && continue
-		
-		local file_size
-		file_size=$(gstat -c %s "$file")
-		
-		# Check if file has par2 coverage
-		local par2_file
-		par2_file=$(get_par2_path "$file")
-		if [[ -f "$par2_file" ]]; then
-			((covered_bytes += file_size))
-		else
-			((uncovered_bytes += file_size))
-		fi
-	done < <(find "$src_dir" -type f -print0)
-	
-	# Calculate coverage percentage
 	local coverage_percent=0
+	local stats_output=""
+	
+	if [[ -f "$target" ]]; then
+		stats_output=$(process_single_file "$target" stats)
+		IFS=: read -r bytes status <<< "$stats_output"
+		if [[ "$status" == "covered" ]]; then
+			covered_bytes=$((covered_bytes + bytes))
+		else
+			uncovered_bytes=$((uncovered_bytes + bytes))
+		fi
+	elif [[ -d "$target" ]]; then
+		local file_count=0
+		while IFS= read -r file; do
+			((file_count++))
+			stats_output=$(process_single_file "$file" stats)
+			IFS=: read -r bytes status <<< "$stats_output"
+			if [[ "$status" == "covered" ]]; then
+				covered_bytes=$((covered_bytes + bytes))
+			else
+				uncovered_bytes=$((uncovered_bytes + bytes))
+			fi
+		done < <(find "$target" -type f -not -name "*.par2" -not -name ".*.par2")
+		
+		# If no files were found, still output stats with zeros
+		if [[ $file_count -eq 0 ]]; then
+			echo "Total bytes: 0"
+			echo "Covered bytes: 0"
+			echo "Uncovered bytes: 0"
+			echo "Coverage: 100.00%"
+			return 0
+		fi
+	else
+		echo "Error: $target is not a file or directory" >&2
+		return 1
+	fi
+	
 	local total_bytes=$((covered_bytes + uncovered_bytes))
 	if [[ $total_bytes -gt 0 ]]; then
 		coverage_percent=$(echo "scale=2; ($covered_bytes * 100) / $total_bytes" | bc)
+	else
+		coverage_percent="100.00"
 	fi
 	
 	# Output statistics
-	echo "Total data size: $total_bytes bytes"
-	echo "Protected data: $covered_bytes bytes"
-	echo "Unprotected data: $uncovered_bytes bytes"
+	echo "Total bytes: $total_bytes"
+	echo "Covered bytes: $covered_bytes"
+	echo "Uncovered bytes: $uncovered_bytes"
 	echo "Coverage: ${coverage_percent}%"
-	
-	return 0
-}
-
-test() {
-	local test_dir
-	test_dir=$(mktemp -d "/tmp/par2_test.$$_XXXXXX") || exit 1
-	local empty_dir
-	empty_dir=$(mktemp -d "/tmp/par2_empty.$$_XXXXXX") || exit 1
-
-	local test_fails=0
-	
-	# Ensure cleanup on exit
-	trap 'rm -rf "$test_dir" "$empty_dir"' EXIT
-
-	debug "Testing block size calculations..."
-	
-	# Test cases: [size_bytes, expected_min_percent, expected_max_percent]
-	declare -a test_cases=(
-		"1024:18:21"      # 1KB: ~20%
-		"10240:4:7"       # 10KB: ~6%
-		"51200:3:5"       # 50KB: ~4%
-		"102400:3:5"      # 100KB: ~4%
-		"1048576:1.2:2"   # 1MB: ~1.5%
-		"10485760:1.2:1.3" # 10MB: ~1.2%
-	)
-	
-	for test_case in "${test_cases[@]}"; do
-		IFS=: read -r size min_percent max_percent <<< "$test_case"
-		
-		block_size=$(calculate_block_size "$size")
-		actual_percent=$(echo "scale=4; $block_size * 100 / $size" | bc)
-		
-		if (( $(echo "$actual_percent < $min_percent" | bc) )) || \
-		   (( $(echo "$actual_percent > $max_percent" | bc) )); then
-			test_error "Block size calculation failed for ${size} bytes"
-			debug "  Expected: between ${min_percent}% and ${max_percent}%"
-			debug "  Got: ${actual_percent}%"
-			((test_fails++))
-		else
-			debug "✓ ${size} bytes: ${actual_percent}% (expected ${min_percent}%-${max_percent}%)"
-		fi
-		
-		# Verify block size is multiple of 4
-		if (( block_size % 4 != 0 )); then
-			test_error "Block size $block_size is not a multiple of 4"
-			((test_fails++))
-		fi
-	done
-
-	debug "Running par2_dir tests..."
-
-	# Test 1: Non-existent directory
-	if verify_par2s /tmp/nonexistent_directory 2>/dev/null; then
-		test_error "verify_par2s should fail on non-existent directory"	
-		((test_fails++))
-	fi
-
-	# Test 2: Empty directory
-	if ! verify_par2s "$empty_dir" >/dev/null 2>&1; then
-		test_error "verify_par2s should succeed on empty directory"
-		((test_fails++))
-	fi
-
-	# Create test directory structure
-	mkdir "$test_dir/testsubdirectory"
-	echo "Hello World! This is a test file with enough content to ensure that a single character change is less than 5% of the total content. Testing par2 functionality." > "$test_dir/test.txt"
-	echo "This is a test file with more content." > "$test_dir/testsubdirectory/test2.txt"
-	
-	# Test 3: Initial create
-	if ! create_par2s "$test_dir" >/dev/null 2>&1; then
-		test_error "create_par2s failed on initial creation"
-		((test_fails++))
-	fi
-	
-	# Test 4: Idempotent create - capture stderr to verify skip message
-	local skip_output
-	skip_output=$(create_par2s "$test_dir" 2>&1)
-	if ! echo "$skip_output" | grep -q "Skipping.*test.txt.*par2 file already exists"; then
-		test_error "create_par2s should indicate skipping existing par2 files"
-		((test_fails++))
-	fi
-	
-	# Test 5: Update functionality
-	# 5a. Create an orphaned par2 file
-	touch "$test_dir/.orphaned_file.par2"
-	
-	# 5b. Modify a file and update its timestamp
-	local par2_time
-	par2_time=$(gstat -c %Y "$test_dir/.test.txt.par2")
-	echo "Modified content" > "$test_dir/test.txt"
-	# Set timestamp to 1 second later than original
-	gtouch -d "@$((par2_time + 1))" "$test_dir/test.txt"
-	
-	# Debug: Check modification times
-	debug "par2 time: $(gstat -c %Y "$test_dir/.test.txt.par2")"
-	debug "file time: $(gstat -c %Y "$test_dir/test.txt")"
-	
-	# 5c. Create a new file without par2
-	echo "New file" > "$test_dir/new_file.txt"
-	
-	# Run update and capture output
-	local update_output
-	update_output=$(update_par2s "$test_dir" 2>&1)
-	
-	# Verify orphaned par2 was removed
-	if [[ -f "$test_dir/.orphaned_file.par2" ]]; then
-		test_error "update_par2s should remove orphaned par2 files"
-		((test_fails++))
-	fi
-	
-	# Verify modified file's par2 was regenerated by checking both the message and the timestamp
-	if ! echo "$update_output" | grep -q "Regenerating par2 for modified file:.*test.txt"; then
-		debug "Expected regeneration message for test.txt"
-		debug "Got output: $update_output"
-		test_error "update_par2s should regenerate par2 for modified files"
-		((test_fails++))
-	fi
-	
-	# Also verify the par2 file was actually regenerated by checking its timestamp
-	local new_par2_time
-	new_par2_time=$(gstat -c %Y "$test_dir/.test.txt.par2")
-	if (( new_par2_time <= par2_time )); then
-		debug "Original par2 time: $par2_time"
-		debug "New par2 time: $new_par2_time"
-		test_error "par2 file was not actually regenerated (timestamp not updated)"
-		((test_fails++))
-	fi
-	
-	# Verify new file has par2
-	if [[ ! -f "$test_dir/.new_file.txt.par2" ]]; then
-		test_error "update_par2s should create par2 for new files"
-		((test_fails++))
-	fi
-	
-	# Reset test.txt for repair test
-	echo "Hello World! This is a test file with enough content to ensure that a single character change is less than 5% of the total content. Testing par2 functionality." > "$test_dir/test.txt"
-	create_par2s "$test_dir" >/dev/null 2>&1
-	
-	# check for existence of hidden par2 files
-	if [[ ! -f "$test_dir/.test.txt.par2" ]]; then
-		test_error ".test.txt.par2 not found"
-		((test_fails++))
-	fi
-	if [[ ! -f "$test_dir/testsubdirectory/.test2.txt.par2" ]]; then
-		test_error "testsubdirectory/.test2.txt.par2 not found"
-		((test_fails++))
-	fi
-	
-	# Use gstat for GNU compatibility
-	local orig_mod_time_test
-	orig_mod_time_test=$(gstat -c %Y "$test_dir/test.txt")
-	
-	# Save original content
-	local orig_content
-	orig_content=$(cat "$test_dir/test.txt")
-	
-	# Mutilate a file by changing a single character using GNU sed
-	sed -i 's/World/Wxrld/' "$test_dir/test.txt"
-	# Set timestamp to 1 second later than original
-	gtouch -d "@$((orig_mod_time_test + 1))" "$test_dir/test.txt"
-	
-	# Remove existing par2 file
-	remove_par2_files_for_file "$test_dir/test.txt"
-	
-	# Regenerate par2 file for the modified content
-	create_par2s "$test_dir" >/dev/null 2>&1
-	
-	# Now restore the original content (simulating corruption)
-	echo "$orig_content" > "$test_dir/test.txt"
-	# Keep the same timestamp as the modified version
-	gtouch -d "@$((orig_mod_time_test + 1))" "$test_dir/test.txt"
-	
-	# Attempt repair
-	repair_par2s "$test_dir" >/dev/null 2>&1
-	
-	# Verify file contents - should match the modified version
-	if ! diff <(echo "Hello Wxrld! This is a test file with enough content to ensure that a single character change is less than 5% of the total content. Testing par2 functionality.") "$test_dir/test.txt"; then
-		test_error "Repair failed: test.txt contents do not match modified"
-		((test_fails++))
-	fi
-	
-	# Test 6: Clear functionality
-	# First verify we have par2 files
-	if [[ ! -f "$test_dir/.test.txt.par2" ]] || [[ ! -f "$test_dir/testsubdirectory/.test2.txt.par2" ]]; then
-		test_error "setup for clear test failed - par2 files not found"
-		((test_fails++))
-	fi
-	
-	# Run clear and capture output
-	local clear_output
-	clear_output=$(clear_par2s "$test_dir" 2>&1)
-	
-	# Verify output shows files being removed
-	if ! echo "$clear_output" | grep -q "Removing:.*\.par2"; then
-		test_error "clear_par2s should show which files it's removing"
-		((test_fails++))
-	fi
-	
-	# Verify all par2 files are gone
-	if find "$test_dir" -type f -name ".*.par2" | grep -q .; then
-		test_error "clear_par2s should remove all par2 files"
-		((test_fails++))
-	fi
-	
-	# Test 7: Stats functionality
-	debug "Testing stats functionality..."
-	
-	# Create test files with known sizes
-	echo "This is a 100-byte file" > "$test_dir/file1.txt"
-	dd if=/dev/zero bs=1000 count=1 of="$test_dir/file2.txt" 2>/dev/null
-	
-	# Create par2 files
-	create_par2s "$test_dir" >/dev/null 2>&1
-	
-	# Get stats output
-	local stats_output
-	stats_output=$(stats_par2s "$test_dir" 2>&1)
-	
-	# Extract coverage percentage from output
-	local coverage_percent
-	coverage_percent=$(echo "$stats_output" | grep -o 'Coverage: [0-9.]*%' | cut -d' ' -f2 | tr -d '%')
-	
-	# Verify coverage is a number between 0 and 100
-	if ! [[ "$coverage_percent" =~ ^[0-9]+(\.[0-9]+)?$ ]] || \
-	   (( $(echo "$coverage_percent > 100" | bc) )) || \
-	   (( $(echo "$coverage_percent < 0" | bc) )); then
-		test_error "Stats coverage percentage ($coverage_percent) should be between 0 and 100"
-		((test_fails++))
-	else
-		debug "✓ Stats test passed (coverage: $coverage_percent%)"
-	fi
-
-	if ((test_fails > 0)); then
-		echo -e "\033[0;31mFAIL: Tests failed: $test_fails\033[0m" >&2
-		return $test_fails
-	else
-		echo -e "\033[0;32mPASS: All tests passed\033[0m" >&2
-		return 0
-	fi
 }
 
 # Debug output function
@@ -711,16 +485,16 @@ show_help() {
 	cat >&2 <<EOF
 ${cmd_name} - Create and manage file redundancy at the directory level
 
-Usage: $cmd_name <command> [<directory>]
+Usage: $cmd_name <command> [<file_or_directory>]
 
 Commands:
   help     Display this help message
-  create   Create par2 files for all files in directory
-  update   Update par2 files for modified files in directory
-  verify   Verify all par2 files in directory
-  repair   Repair any corrupted files in directory using par2
-  clear    Remove all par2 files in directory
-  stats    Show par2 coverage statistics for directory
+  create   Create par2 files for all files in directory or a single file
+  update   Update par2 files for modified files in directory or a single file
+  verify   Verify all par2 files in directory or a single file
+  repair   Repair any corrupted files in directory or a single file
+  clear    Remove all par2 files in directory or for a single file
+  stats    Show par2 coverage statistics for directory or a single file
   test     Run test suite
 
 par2 by default works at the individual file level and allows you to specify
@@ -747,10 +521,13 @@ optimal block sizes:
   The block size is always rounded up to the nearest multiple of 4 bytes
   (per par2 requirements).
 
-The par2 files are created as hidden files (prefixed with .) in the same
-directory as the source files. Each set of par2 files includes 5% redundancy
-with a block size of approx. BlockSize = 10.5 * (FileSize^0.63)
-and an appropriate number of recovery blocks computed by par2.
+Environment Variables:
+  NUM_PAR2_THREADS  Number of threads to use for par2 operations
+                    Defaults to the number of CPU cores if not set
+                    Example: NUM_PAR2_THREADS=4 ./par2_dir create /path/to/dir
+  PAR2_REDUNDANCY   Par2 redundancy percentage (5 means roughly 5% extra data for recovery)
+                    Defaults to 5 if not set
+                    Example: PAR2_REDUNDANCY=10 ./par2_dir create /path/to/dir
 
 Dependencies:
 par2, of course (the Nix package I used is par2cmdline-turbo).
@@ -758,9 +535,339 @@ The GNU (not BSD which is the Mac default!) versions of stat, touch and sed
 are currently required. You can install these via homebrew or your distro's
 package manager (although in the case of Linux, these are likely the default).
 It is assumed that these tools are available in the PATH via gstat, gtouch
-and sed. (On Nix[OS]/nix-darwin, the coreutils-prefixed package provides this, 
+and sed. (On Nix[OS]/nix-darwin, the coreutils-prefixed package provides this,
 in case you don't want to shadow the BSD versions, which I recommend.)
 EOF
+}
+
+test_suite() {
+	test_dir=$(mktemp -d)
+	test_fails=0
+	debug "Testing in directory: $test_dir"
+	debug "Testing with $NUM_PAR2_THREADS threads"
+	
+	# Test 1: Create par2 files for directory
+	debug "Testing directory creation..."
+	if ! create_par2s "$test_dir" >/dev/null 2>&1; then
+		test_error "create_par2s failed on directory"
+		((test_fails++))
+	fi
+	
+	# Test 2: Verify par2 files for directory
+	debug "Testing directory verification..."
+	if ! verify_par2s "$test_dir" >/dev/null 2>&1; then
+		test_error "verify_par2s failed on directory"
+		((test_fails++))
+	fi
+	
+	# Test 3: Update par2 files for directory
+	debug "Testing directory update..."
+	if ! update_par2s "$test_dir" >/dev/null 2>&1; then
+		test_error "update_par2s failed on directory"
+		((test_fails++))
+	fi
+	
+	# Test 4: Repair par2 files for directory
+	debug "Testing directory repair..."
+	if ! repair_par2s "$test_dir" >/dev/null 2>&1; then
+		test_error "repair_par2s failed despite par2's built-in redundancy"
+		((test_fails++))
+	fi
+	
+	# Test 5: Clear par2 files for directory
+	debug "Testing directory clear..."
+	if ! clear_par2s "$test_dir" >/dev/null 2>&1; then
+		test_error "clear_par2s failed on directory"
+		((test_fails++))
+	fi
+	
+	# Test 6: Stats for directory
+	debug "Testing directory stats..."
+	local stats_output
+	stats_output=$(stats_par2s "$test_dir")
+	if ! echo "$stats_output" | grep -q "Coverage: 100.00%"; then
+		test_error "stats_par2s failed on directory"
+		((test_fails++))
+	fi
+	
+	# Test 7: Create par2 files for non-existent directory
+	debug "Testing non-existent directory creation..."
+	if create_par2s "/non/existent/directory" >/dev/null 2>&1; then
+		test_error "create_par2s should fail on non-existent directory"
+		((test_fails++))
+	fi
+	
+	# Test 8: Single file operations
+	debug "Testing single file operations..."
+	
+	# Create a test file
+	echo "This is a test file for single file operations" > "$test_dir/single.txt"
+	
+	# Test create on single file
+	if ! create_par2s "$test_dir/single.txt" >/dev/null 2>&1; then
+		test_error "create_par2s failed on single file"
+		((test_fails++))
+	fi
+	
+	# Verify par2 file was created
+	if [[ ! -f "$test_dir/.single.txt.par2" ]]; then
+		test_error "Par2 file not created for single file"
+		((test_fails++))
+	fi
+	
+	# Test verify on single file
+	if ! verify_par2s "$test_dir/single.txt" >/dev/null 2>&1; then
+		test_error "verify_par2s failed on single file"
+		((test_fails++))
+	fi
+	
+	# Test repair on single file
+	debug "Starting repair test"
+	# First clear any existing par2 files
+	debug "Clearing existing par2 files"
+	if ! clear_par2s "$test_dir/single.txt" >/dev/null 2>&1; then
+		test_error "clear_par2s failed before repair test"
+		((test_fails++))
+	fi
+	# Create par2 file for original content
+	debug "Creating par2 file for original content"
+	if ! create_par2s "$test_dir/single.txt" >/dev/null 2>&1; then
+		test_error "create_par2s failed before repair test"
+		((test_fails++))
+	fi
+	debug "Checking if par2 file exists: $(ls -la "$test_dir/.single.txt.par2" 2>/dev/null || echo "not found")"
+	# Then corrupt the file
+	debug "Corrupting file"
+	sed -i 's/test/tXst/' "$test_dir/single.txt"
+	debug "Corrupted file content: $(cat "$test_dir/single.txt")"
+	debug "Attempting repair"
+	if ! repair_par2s "$test_dir/single.txt" >/dev/null 2>&1; then
+		test_error "repair_par2s failed despite par2's built-in redundancy"
+		((test_fails++))
+	fi
+	debug "Checking repaired file content: $(cat "$test_dir/single.txt")"
+	# Verify file was repaired
+	if ! grep -q "This is a test file for single file operations" "$test_dir/single.txt"; then
+		test_error "repair_par2s did not restore original file content"
+		((test_fails++))
+	fi
+	if ! verify_par2s "$test_dir/single.txt" >/dev/null 2>&1; then
+		test_error "Verification failed after repair"
+		((test_fails++))
+	else
+		debug "Repair of $test_dir/single.txt succeeded, demonstrating par2's resilience to corruption"
+	fi
+	
+	# Test update on single file
+	echo "Modified content" > "$test_dir/single.txt"
+	if ! update_par2s "$test_dir/single.txt" >/dev/null 2>&1; then
+		test_error "update_par2s failed on single file"
+		((test_fails++))
+	fi
+	
+	# Test stats on single file
+	local single_stats
+	single_stats=$(stats_par2s "$test_dir/single.txt")
+	if ! echo "$single_stats" | grep -q "Coverage: 100.00%"; then
+		test_error "stats_par2s failed on single file"
+		((test_fails++))
+	fi
+	
+	# Test clear on single file
+	if ! clear_par2s "$test_dir/single.txt" >/dev/null 2>&1; then
+		test_error "clear_par2s failed on single file"
+		((test_fails++))
+	fi
+	
+	# Verify par2 file was removed
+	if [[ -f "$test_dir/.single.txt.par2" ]]; then
+		test_error "Par2 file not removed for single file"
+		((test_fails++))
+	fi
+	
+	# Test with filename containing special characters
+	debug "Testing filename with special characters..."
+	echo "This is a test file with special characters" > "$test_dir/test*file?.txt"
+	
+	# Test create on file with special characters
+	if ! create_par2s "$test_dir/test*file?.txt" >/dev/null 2>&1; then
+		test_error "create_par2s failed on file with special characters"
+		((test_fails++))
+	fi
+	
+	# Verify par2 file was created with sanitized name
+	if [[ ! -f "$test_dir/.test_file_.txt.par2" ]]; then
+		test_error "Par2 file not created for file with special characters"
+		((test_fails++))
+	fi
+	
+	# Test verify on file with special characters
+	if ! verify_par2s "$test_dir/test*file?.txt" >/dev/null 2>&1; then
+		test_error "verify_par2s failed on file with special characters"
+		((test_fails++))
+	fi
+	
+	# Test repair on file with special characters
+	# First clear any existing par2 files
+	if ! clear_par2s "$test_dir/test*file?.txt" >/dev/null 2>&1; then
+		test_error "clear_par2s failed before repair test"
+		((test_fails++))
+	fi
+	# Create par2 file for original content
+	if ! create_par2s "$test_dir/test*file?.txt" >/dev/null 2>&1; then
+		test_error "create_par2s failed before repair test"
+		((test_fails++))
+	fi
+	# Then corrupt the file
+	sed -i 's/characters/characXers/' "$test_dir/test*file?.txt"
+	if ! repair_par2s "$test_dir/test*file?.txt" >/dev/null 2>&1; then
+		test_error "repair_par2s failed on file with special characters"
+		((test_fails++))
+	fi
+	# Verify file was repaired
+	if ! grep -q "This is a test file with special characters" "$test_dir/test*file?.txt"; then
+		test_error "repair_par2s did not restore original file content"
+		((test_fails++))
+	fi
+	
+	# Test clear on file with special characters
+	if ! clear_par2s "$test_dir/test*file?.txt" >/dev/null 2>&1; then
+		test_error "clear_par2s failed on file with special characters"
+		((test_fails++))
+	fi
+	
+	# Verify par2 file was removed
+	if [[ -f "$test_dir/.test_file_.txt.par2" ]]; then
+		test_error "Par2 file not removed for file with special characters"
+		((test_fails++))
+	fi
+	
+	# Test high redundancy warning
+	debug "Testing high redundancy warning..."
+	local warning_output
+	warning_output=$(PAR2_REDUNDANCY=100 "$0" create "$test_dir/single.txt" 2>&1)
+	if ! echo "$warning_output" | grep -q "Warning: PAR2_REDUNDANCY is set to 100%"; then
+		test_error "High redundancy warning not shown"
+		((test_fails++))
+	fi
+	
+	# Test normal redundancy (no warning)
+	debug "Testing normal redundancy..."
+	warning_output=$(PAR2_REDUNDANCY=5 "$0" create "$test_dir/single.txt" 2>&1)
+	if echo "$warning_output" | grep -q "Warning: PAR2_REDUNDANCY"; then
+		test_error "Warning shown for normal redundancy"
+		((test_fails++))
+	fi
+	
+	# Test corrupted par2 data
+	debug "Testing corrupted par2 data..."
+	# Create a test file
+	echo "This is a test file for par2 corruption test" > "$test_dir/corrupt_test.txt"
+	# Create par2 file
+	if ! create_par2s "$test_dir/corrupt_test.txt" >/dev/null 2>&1; then
+		test_error "create_par2s failed before par2 corruption test"
+		((test_fails++))
+	fi
+	# Corrupt the par2 file using dd to change a single byte in the middle
+	local par2_size
+	par2_size=$(gstat -c %s "$test_dir/.corrupt_test.txt.par2")
+	local corrupt_pos=$((par2_size / 2))
+	debug "Corrupting par2 file at position $corrupt_pos"
+	printf 'X' | dd of="$test_dir/.corrupt_test.txt.par2" bs=1 seek="$corrupt_pos" count=1 conv=notrunc 2>/dev/null
+	# Now corrupt the original file
+	sed -i 's/test/tXst/' "$test_dir/corrupt_test.txt"
+	# Try to repair - this should succeed due to par2's built-in redundancy
+	if ! repair_par2s "$test_dir/corrupt_test.txt" >/dev/null 2>&1; then
+		test_error "repair_par2s failed despite par2's built-in redundancy"
+		((test_fails++))
+	fi
+	# Verify file was repaired
+	if ! grep -q "This is a test file for par2 corruption test" "$test_dir/corrupt_test.txt"; then
+		test_error "repair_par2s did not restore original file content"
+		((test_fails++))
+	else
+		debug "Repair succeeded, demonstrating par2's resilience to corruption"
+	fi
+	
+	# Test corrupted par2 data with intact original file
+	debug "Testing corrupted par2 data with intact original file..."
+	# Create a fresh test file
+	echo "This is another test file for par2 corruption test" > "$test_dir/corrupt_test2.txt"
+	# Create par2 file
+	if ! create_par2s "$test_dir/corrupt_test2.txt" >/dev/null 2>&1; then
+		test_error "create_par2s failed before second par2 corruption test"
+		((test_fails++))
+	fi
+	# Save original content for comparison
+	local original_content
+	original_content=$(cat "$test_dir/corrupt_test2.txt")
+	# Corrupt the par2 file
+	par2_size=$(gstat -c %s "$test_dir/.corrupt_test2.txt.par2")
+	corrupt_pos=$((par2_size / 2))
+	debug "Corrupting second par2 file at position $corrupt_pos"
+	printf 'X' | dd of="$test_dir/.corrupt_test2.txt.par2" bs=1 seek="$corrupt_pos" count=1 conv=notrunc 2>/dev/null
+	# Verify should succeed due to par2's built-in redundancy
+	if ! verify_par2s "$test_dir/corrupt_test2.txt" >/dev/null 2>&1; then
+		test_error "verify_par2s failed despite par2's built-in redundancy"
+		((test_fails++))
+	fi
+	# Check that original file is unchanged
+	if [[ "$(cat "$test_dir/corrupt_test2.txt")" != "$original_content" ]]; then
+		test_error "Original file was modified during verify"
+		((test_fails++))
+	fi
+	debug "Verify succeeded, demonstrating par2's resilience to corruption"
+	
+	# Test update command with orphaned par2 files
+	debug "Testing update command with orphaned par2 files"
+	# Create test files in a subdirectory
+	local update_test_dir="$test_dir/update_test"
+	mkdir -p "$update_test_dir/subdir"
+	echo "test file 1" > "$update_test_dir/file1.txt"
+	echo "test file 2" > "$update_test_dir/file2.txt"
+	echo "test file 3" > "$update_test_dir/subdir/file3.txt"
+	
+	# Create initial par2 files
+	create_par2s "$update_test_dir"
+	
+	# Manually create volume-based par2 files to simulate legacy par2 files
+	cp "$update_test_dir/.file2.txt.par2" "$update_test_dir/.file2.txt.vol0+1.par2"
+	cp "$update_test_dir/.file2.txt.par2" "$update_test_dir/.file2.txt.vol0+2.par2"
+	cp "$update_test_dir/.file1.txt.par2" "$update_test_dir/.file1.txt.vol0+1.par2"
+	
+	# Remove one of the source files to create an orphaned par2 set
+	rm "$update_test_dir/file2.txt"
+	
+	# Run update
+	update_par2s "$update_test_dir"
+	
+	# Verify entire par2 set for file2.txt was removed
+	if [[ -f "$update_test_dir/.file2.txt.par2" ]] || \
+	   [[ -f "$update_test_dir/.file2.txt.vol0+1.par2" ]] || \
+	   [[ -f "$update_test_dir/.file2.txt.vol0+2.par2" ]]; then
+		test_error "Orphaned par2 set was not completely removed"
+		return 1
+	fi
+	
+	# Verify par2 set for file1.txt still exists completely
+	if [[ ! -f "$update_test_dir/.file1.txt.par2" ]] || \
+	   [[ ! -f "$update_test_dir/.file1.txt.vol0+1.par2" ]]; then
+		test_error "Valid par2 set was incorrectly removed"
+		return 1
+	fi
+	
+	# Verify regular par2 file for file3.txt still exists
+	if [[ ! -f "$update_test_dir/subdir/.file3.txt.par2" ]]; then
+		test_error "Valid par2 file was incorrectly removed"
+		return 1
+	fi
+	
+	if ((test_fails > 0)); then
+		echo "Tests failed: $test_fails"
+		return 1
+	fi
+	echo "All tests passed"
+	return 0
 }
 
 # Main execution (if script is run directly)
@@ -769,9 +876,9 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 	command="$1"
 	directory="$2"
 
-	ensure_directory_arg_provided() {
+	ensure_target_arg_provided() {
 		if [[ -z "$1" ]]; then
-			echo -ne "Error: Directory argument is required\n\n" >&2
+			echo -ne "Error: File or directory argument is required\n\n" >&2
 			show_help
 			exit 2
 		fi
@@ -783,11 +890,11 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 			exit 0
 			;;
 		test)
-			test
+			test_suite
 			exit $?
 			;;
 		create|update|verify|repair|clear|stats)
-			ensure_directory_arg_provided "$@"
+			ensure_target_arg_provided "$@"
 			"${command}_par2s" "$2"
 			exit $?
 			;;
