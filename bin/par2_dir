@@ -5,6 +5,18 @@
 
 IFS=$'\n\t'
 
+# Get number of CPU cores based on OS
+get_cpu_cores() {
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        sysctl -n hw.ncpu
+    else
+        nproc
+    fi
+}
+
+# Set number of par2 threads, allowing override via environment variable
+: "${NUM_PAR2_THREADS:=$(get_cpu_cores)}"
+
 check_dependencies() {
 	local dependencies=(gtouch gstat sed)
 	local missing=()
@@ -66,13 +78,13 @@ remove_par2_files_for_file() {
 # Calculate optimal block size for par2 based on file size
 calculate_block_size() {
 	local file_size="$1"
-	local k=$(echo "scale=6; $file_size/1024" | bc -l)  # Convert to KB
+	local k=$(echo "scale=6; $file_size/1024" | bc)  # Convert to KB
 	
 	# Calculate block size percentage using double exponential decay:
 	# 1.2: Base percentage (asymptotic minimum)
-	# 2.8 * e^(-0.001 * k): Slow decay term for gradual reduction from 1MB to 10MB
-	# 20 * e^(-0.3 * k): Fast decay term for steep initial drop from 1KB to 100KB
-	local percent=$(echo "scale=6; 1.2 + 2.8 * e(-0.001 * $k) + 20 * e(-0.3 * $k)" | bc -l)
+	# 2.0 * e^(-0.001 * k): Slow decay term for gradual reduction from 1MB to 10MB
+	# 21 * e^(-0.3 * k): Fast decay term for steep initial drop from 1KB to 100KB (increased from 20)
+	local percent=$(echo "scale=6; 1.2 + 2.0 * e(-0.001 * $k) + 21 * e(-0.3 * $k)" | bc -l)
 	
 	# Calculate block size in bytes
 	local block_size=$(echo "scale=0; ($file_size * $percent) / 100" | bc)
@@ -134,8 +146,8 @@ create_par2s() {
 		# Debugging output
 		debug "Processing file: $file"
 		debug "File size: $file_size_bytes bytes, Block size: $block_size_bytes bytes"
-		debug "PAR2 command: par2 create -s$block_size_bytes -r5 \"$par2_file\" \"$file\""
-		par2_output=$(par2 create -s$block_size_bytes -r5 "$par2_file" "$file" 2>&1)
+		debug "PAR2 command: par2 create -s$block_size_bytes -r5 -n1 -T\"$NUM_PAR2_THREADS\" \"$par2_file\" \"$file\""
+		par2_output=$(par2 create -s$block_size_bytes -r5 -n1 -T"$NUM_PAR2_THREADS" "$par2_file" "$file" 2>&1)
 		# Capture detailed error output
 		retcode=$?
 		if [[ $retcode -ne 0 ]]; then
@@ -187,7 +199,7 @@ update_par2s() {
 			block_size_bytes=$(calculate_block_size "$file_size_bytes")
 			
 			# Use the same parameters as create_par2s
-			par2_output=$(par2 create -s$block_size_bytes -r5 "$par2_file" "$file" 2>&1)
+			par2_output=$(par2 create -s$block_size_bytes -r5 -n1 -T"$NUM_PAR2_THREADS" "$par2_file" "$file" 2>&1)
 			if [[ $? -eq 0 ]]; then
 				gtouch -r "$file" "$par2_file"
 				printf "." >&2
@@ -232,7 +244,7 @@ update_par2s() {
 				
 				debug "File size: $file_size_bytes bytes, Block size: $block_size_bytes bytes"
 				# Use the same parameters as create_par2s
-				par2_output=$(par2 create -s$block_size_bytes -r5 "$par2_file" "$file" 2>&1)
+				par2_output=$(par2 create -s$block_size_bytes -r5 -n1 -T"$NUM_PAR2_THREADS" "$par2_file" "$file" 2>&1)
 				if [[ $? -eq 0 ]]; then
 					gtouch -r "$file" "$par2_file"
 					printf "." >&2
@@ -385,6 +397,64 @@ clear_par2s() {
 	done
 }
 
+# Calculate par2 coverage statistics for a directory
+stats_par2s() {
+	local src_dir="$1"
+	local quiet="${2:-false}"
+	
+	[[ "$quiet" != "true" ]] && echo "Calculating par2 coverage statistics..." >&2
+	
+	# Ensure source directory exists and is absolute
+	src_dir=$(get_abs_directory "$src_dir")
+	local retcode=$?
+	if [[ $retcode -ne 0 ]]; then
+		echo "Error: Failed to get absolute path for '$src_dir', or it does not exist" >&2
+		return $retcode
+	fi
+	
+	local covered_bytes=0
+	local uncovered_bytes=0
+	
+	# Find all regular files (excluding hidden files)
+	while IFS= read -r -d '' file; do
+		local basename
+		basename=$(basename "$file")
+		
+		# Skip par2 files
+		[[ "$basename" =~ ^[.].+[.]par2$ ]] && continue
+		
+		# Skip other hidden files
+		[[ "$basename" =~ ^[.] ]] && continue
+		
+		local file_size
+		file_size=$(gstat -c %s "$file")
+		
+		# Check if file has par2 coverage
+		local par2_file
+		par2_file=$(get_par2_path "$file")
+		if [[ -f "$par2_file" ]]; then
+			((covered_bytes += file_size))
+		else
+			((uncovered_bytes += file_size))
+		fi
+	done < <(find "$src_dir" -type f -print0)
+	
+	# Calculate coverage percentage
+	local coverage_percent=0
+	local total_bytes=$((covered_bytes + uncovered_bytes))
+	if [[ $total_bytes -gt 0 ]]; then
+		coverage_percent=$(echo "scale=2; ($covered_bytes * 100) / $total_bytes" | bc)
+	fi
+	
+	# Output statistics
+	echo "Total data size: $total_bytes bytes"
+	echo "Protected data: $covered_bytes bytes"
+	echo "Unprotected data: $uncovered_bytes bytes"
+	echo "Coverage: ${coverage_percent}%"
+	
+	return 0
+}
+
 test() {
 	local test_dir
 	test_dir=$(mktemp -d "/tmp/par2_test.$$_XXXXXX") || exit 1
@@ -395,7 +465,44 @@ test() {
 	
 	# Ensure cleanup on exit
 	trap 'rm -rf "$test_dir" "$empty_dir"' EXIT
+
+	debug "Testing block size calculations..."
 	
+	# Test cases: [size_bytes, expected_min_percent, expected_max_percent]
+	declare -a test_cases=(
+		"1024:18:21"      # 1KB: ~20%
+		"10240:4:7"       # 10KB: ~6%
+		"51200:3:5"       # 50KB: ~4%
+		"102400:3:5"      # 100KB: ~4%
+		"1048576:1.2:2"   # 1MB: ~1.5%
+		"10485760:1.2:1.3" # 10MB: ~1.2%
+	)
+	
+	for test_case in "${test_cases[@]}"; do
+		IFS=: read -r size min_percent max_percent <<< "$test_case"
+		
+		block_size=$(calculate_block_size "$size")
+		actual_percent=$(echo "scale=4; $block_size * 100 / $size" | bc)
+		
+		if (( $(echo "$actual_percent < $min_percent" | bc) )) || \
+		   (( $(echo "$actual_percent > $max_percent" | bc) )); then
+			test_error "Block size calculation failed for ${size} bytes"
+			debug "  Expected: between ${min_percent}% and ${max_percent}%"
+			debug "  Got: ${actual_percent}%"
+			((test_fails++))
+		else
+			debug "✓ ${size} bytes: ${actual_percent}% (expected ${min_percent}%-${max_percent}%)"
+		fi
+		
+		# Verify block size is multiple of 4
+		if (( block_size % 4 != 0 )); then
+			test_error "Block size $block_size is not a multiple of 4"
+			((test_fails++))
+		fi
+	done
+
+	debug "Running par2_dir tests..."
+
 	# Test 1: Non-existent directory
 	if verify_par2s /tmp/nonexistent_directory 2>/dev/null; then
 		test_error "verify_par2s should fail on non-existent directory"	
@@ -435,7 +542,7 @@ test() {
 	local par2_time
 	par2_time=$(gstat -c %Y "$test_dir/.test.txt.par2")
 	echo "Modified content" > "$test_dir/test.txt"
-	# Set modification time to 1 second after par2 file
+	# Set timestamp to 1 second later than original
 	gtouch -d "@$((par2_time + 1))" "$test_dir/test.txt"
 	
 	# Debug: Check modification times
@@ -549,6 +656,34 @@ test() {
 		((test_fails++))
 	fi
 	
+	# Test 7: Stats functionality
+	debug "Testing stats functionality..."
+	
+	# Create test files with known sizes
+	echo "This is a 100-byte file" > "$test_dir/file1.txt"
+	dd if=/dev/zero bs=1000 count=1 of="$test_dir/file2.txt" 2>/dev/null
+	
+	# Create par2 files
+	create_par2s "$test_dir" >/dev/null 2>&1
+	
+	# Get stats output
+	local stats_output
+	stats_output=$(stats_par2s "$test_dir" 2>&1)
+	
+	# Extract coverage percentage from output
+	local coverage_percent
+	coverage_percent=$(echo "$stats_output" | grep -o 'Coverage: [0-9.]*%' | cut -d' ' -f2 | tr -d '%')
+	
+	# Verify coverage is a number between 0 and 100
+	if ! [[ "$coverage_percent" =~ ^[0-9]+(\.[0-9]+)?$ ]] || \
+	   (( $(echo "$coverage_percent > 100" | bc) )) || \
+	   (( $(echo "$coverage_percent < 0" | bc) )); then
+		test_error "Stats coverage percentage ($coverage_percent) should be between 0 and 100"
+		((test_fails++))
+	else
+		debug "✓ Stats test passed (coverage: $coverage_percent%)"
+	fi
+
 	if ((test_fails > 0)); then
 		echo -e "\033[0;31mFAIL: Tests failed: $test_fails\033[0m" >&2
 		return $test_fails
@@ -576,6 +711,18 @@ show_help() {
 	cat >&2 <<EOF
 ${cmd_name} - Create and manage file redundancy at the directory level
 
+Usage: $cmd_name <command> [<directory>]
+
+Commands:
+  help     Display this help message
+  create   Create par2 files for all files in directory
+  update   Update par2 files for modified files in directory
+  verify   Verify all par2 files in directory
+  repair   Repair any corrupted files in directory using par2
+  clear    Remove all par2 files in directory
+  stats    Show par2 coverage statistics for directory
+  test     Run test suite
+
 par2 by default works at the individual file level and allows you to specify
 a percentage of repairable redundancy (5% by default). This means that up to 5%
 of the file's content can be corrupted before the file is considered beyond repair.
@@ -584,24 +731,21 @@ space used.
 
 ${cmd_name} applies this at the directory level, across every file, recursively.
 The par2 files are created as hidden files (prefixed with .) in the same
-directory as the source files.
-
-Usage: $cmd_name <command> [<directory>]
-
-Commands:
-  help     Display this help message (also -h and --help works).
-  create   Create par2 files for all files in directory (recursively).
-           Files with existing par2s will be skipped unless modified.
-  verify   Check integrity of files against their par2 files.
-           Reports files that have been modified or are missing par2s.
-  repair   Attempt to repair any corrupted files using their par2 files.
-           Only repairs files where corruption is detected.
-  update   Smart update of par2 files:
-           - Creates par2s for files without them
-           - Regenerates par2s for modified files
-           - Removes orphaned par2 files
-  clear    Remove all par2 files in the directory (recursively).
-  test     Run the test suite.
+directory as the source files. Each set of par2 files includes a fixed 5% redundancy.
+Block size is calculated as a percentage of the original file size using
+a double exponential decay formula (previously empirically determined):
+  1.2 + 2.0 * e^(-0.001 * k) + 21 * e^(-0.3 * k)
+where k is the file size in kilobytes (KB). With 5% redundancy, this provides
+optimal block sizes:
+  ~18-21% of file size for 1KB files
+    (note that small files are inefficient with par2 currently,
+    regardless of block size)
+  ~4-7% of file size for 10KB files
+  ~3-5% of file size for 50-100KB files
+  ~1.2-2% of file size for 1MB files
+  ~1.2% of file size for 10MB+ files
+  The block size is always rounded up to the nearest multiple of 4 bytes
+  (per par2 requirements).
 
 The par2 files are created as hidden files (prefixed with .) in the same
 directory as the source files. Each set of par2 files includes 5% redundancy
@@ -638,34 +782,19 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 			show_help
 			exit 0
 			;;
-		create)
-			ensure_directory_arg_provided "$directory"
-			create_par2s "$directory"
-			;;
-		update)
-			ensure_directory_arg_provided "$directory"
-			update_par2s "$directory"
-			;;
-		verify)
-			ensure_directory_arg_provided "$directory"
-			verify_par2s "$directory"
-			;;
-		repair)
-			ensure_directory_arg_provided "$directory"
-			repair_par2s "$directory"
-			;;
-		clear)
-			ensure_directory_arg_provided "$directory"
-			clear_par2s "$directory"
-			;;
 		test)
 			test
 			exit $?
 			;;
+		create|update|verify|repair|clear|stats)
+			ensure_directory_arg_provided "$@"
+			"${command}_par2s" "$2"
+			exit $?
+			;;
 		*)
-			echo "Invalid command '$command'." >&2
+			echo "Error: Unknown command '$command'" >&2
 			show_help
-			exit 2
+			exit 1
 			;;
 	esac
 fi
