@@ -2,10 +2,10 @@
 # .profile must remain POSIX-compliant, use shellcheck to verify
 # There is currently 1 exception to this rule: the use of ${BASH_SOURCE[0]} in source_relative[_once]
 
-[ -n "$DEBUG_SHELLCONFIG" ] && echo "Entering $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")" || $INTERACTIVE_SHELL && $LOGIN_SHELL && printf "prof;"
+[ -n "$DEBUG_SHELLCONFIG" ] && echo "Entering $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")" || $INTERACTIVE_SHELL && $LOGIN_SHELL && append_dotfile_progress "prof"
 [ -n "$DEBUG_PATHCONFIG" ] && echo $PATH
 
-$INTERACTIVE_SHELL && $LOGIN_SHELL && printf "\n$DISTRO_PRETTY\n"
+$INTERACTIVE_SHELL && $LOGIN_SHELL && echo "$DISTRO_PRETTY"
 
 # most things should be sourced via source_relative... except source_relative itself
 # if the function is not already defined, define it. use posix syntax for portability

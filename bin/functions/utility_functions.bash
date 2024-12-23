@@ -118,8 +118,10 @@ function rehash() {
   #   orig_PROMPT_COMMAND=("${PROMPT_COMMAND[@]}")
   #   echo "we saved PROMPT_COMMAND"
   # fi
+  local old_dotfile_run="$LAST_DOTFILE_RUN"
   unset _SOURCED_FILES
   source $HOME/.bashrc
+  export LAST_DOTFILE_RUN="$old_dotfile_run"
   # I had to set this declaratively to what it's set in a new terminal to avoid brittle behavior
   # declare -- PROMPT_COMMAND=$'mcfly_prompt_command;_direnv_hook\n__bp_trap_string="$(trap -p DEBUG)"\ntrap - DEBUG\n__bp_install'
   # declare -a precmd_functions=([0]="starship_precmd")
@@ -275,7 +277,6 @@ puts() {
   print_fmt=''
   print_spec='%s'
   newline='\n'
-  end_fmt=''
   fd='1'
   while true; do
     case "${1}" in

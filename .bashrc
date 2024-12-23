@@ -44,7 +44,7 @@ source_relative_once .pathconfig
 [ "${AWK+set}" = "set" ] && \
   export AWK=$(command -v frawk || command -v gawk || command -v awk)
 
-[ "${DEBUG_SHELLCONFIG+set}" = "set" ] && echo "Entering $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")" || $INTERACTIVE_SHELL && $LOGIN_SHELL && printf "rc;"
+[ "${DEBUG_SHELLCONFIG+set}" = "set" ] && echo "Entering $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")" || $INTERACTIVE_SHELL && $LOGIN_SHELL && append_dotfile_progress "rc"
 [ "${DEBUG_PATHCONFIG+set}" = "set" ] && echo "$PATH"
 
 # mute direnv constantly telling me what it's loading
@@ -83,9 +83,9 @@ if [[ -n $SSH_CONNECTION ]]; then
   unset VISUAL
 else
   needs micro "please install the micro editor" && export EDITOR='micro' || export EDITOR='nano'
-  needs cursor "please install the Cursor.sh editor" && export VISUAL='cursor -g' || export VISUAL="$EDITOR"
+  needs windsurf "please install the Codeium Windsurf editor" && export VISUAL='windsurf -g' || export VISUAL="$EDITOR"
   export EDITOR='micro'
-  export VISUAL='cursor -g'
+  export VISUAL='windsurf'
 fi
 
 choose_editor() {
@@ -297,5 +297,5 @@ $INTERACTIVE_SHELL && . "$HOME/dotfiles/bin/aliases.sh"
 # activate ble.sh/blesh
 # [[ ! ${BLE_VERSION-} ]] || ble-attach
 
-[ -n "${DEBUG_SHELLCONFIG}" ] && echo "Exiting $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")"
+[ -n "${DEBUG_SHELLCONFIG}" ] && echo "Entering $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")" || $INTERACTIVE_SHELL && $LOGIN_SHELL && append_dotfile_progress "rc"
 [ -n "${DEBUG_PATHCONFIG}" ] && echo "$PATH" || :

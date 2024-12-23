@@ -18,23 +18,41 @@ else
   echo "Warning: Couldn't parse Bash version: $BASH_VERSION" >&2
 fi
 
+append_dotfile_progress() {
+    # Expand the abbreviated names
+    local expanded_name
+    case "$1" in
+        "bp") expanded_name=".bash_profile" ;;
+        "rc") expanded_name=".bashrc" ;;
+        "env") expanded_name=".envconfig" ;;
+        "P") expanded_name=".pathconfig" ;;
+        "prof") expanded_name=".profile" ;;
+        *) expanded_name="$1" ;;
+    esac
+    
+    # Prevent duplicate entries
+    if [[ ! $LAST_DOTFILE_RUN =~ ${expanded_name}-loaded\; ]]; then
+        export LAST_DOTFILE_RUN="${LAST_DOTFILE_RUN:-}${expanded_name}-loaded;"
+    fi
+}
+
 # since .bash_profile is usually only included for non-login shells
 # (note: OS X Terminal ALWAYS runs as a login shell but still ALWAYS includes this file, but it's nonstandard)
 # set LOGIN_SHELL and INTERACTIVE_SHELL here but only if it wasn't already set
 shopt -q login_shell && LOGIN_SHELL=true || LOGIN_SHELL=false
 [[ $- == *i* ]] && INTERACTIVE_SHELL=true || INTERACTIVE_SHELL=false
 
-[ "${DEBUG_SHELLCONFIG+set}" = "set" ] && echo "Entering $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")" || $INTERACTIVE_SHELL && $LOGIN_SHELL && printf "bp;"
+[ "${DEBUG_SHELLCONFIG+set}" = "set" ] && echo "Entering $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")" || $INTERACTIVE_SHELL && $LOGIN_SHELL && append_dotfile_progress "bp"
 [ "${DEBUG_PATHCONFIG+set}" = "set" ] && echo "$PATH"
 
 # subtle shell characteristics indication, but only if interactive
 if $INTERACTIVE_SHELL; then
-  printf "i;"
-  if $LOGIN_SHELL; then
-    printf "l;"
-  else
-    printf "nl;"
-  fi
+    append_dotfile_progress "interactive"
+    if $LOGIN_SHELL; then
+        append_dotfile_progress "login"
+    else
+        append_dotfile_progress "non-login"
+    fi
 fi
 
 # most things should be sourced via source_relative... except source_relative itself
