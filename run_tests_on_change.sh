@@ -14,8 +14,16 @@ if command -v xxhsum &> /dev/null; then
 fi
 [ -n "${DEBUG_SHELLCONFIG}" ] && echo "Using hasher: $hasher"
 # Use GNU stat installed via nix-darwin or nixos if it exists, otherwise use BSD stat
-if [ -f /run/current-system/sw/bin/stat ]; then
+# first look for gstat anywhere in path
+if command -v gstat &> /dev/null; then
+  statter="gstat -c %Y"
+# then look for stat in /run/current-system/sw/bin
+elif [ -f /run/current-system/sw/bin/stat ]; then
   statter="/run/current-system/sw/bin/stat -c %Y"
+# then try to see if an option only available on gnu stat errors
+elif stat -c %Y / 2>/dev/null; then
+  statter="stat -c %Y"
+# else just assume bsd stat
 else
   statter="/usr/bin/stat -f %m"
 fi

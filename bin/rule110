@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+
+# Rule 110 Cellular Automaton Simulator
+# Arguments: steps [width, defaults to terminal width]
+# Example: ./rule110.sh 10 20
+
+steps=${1:-10000}   # Number of steps to simulate
+width=${2:-$(tput cols)}   # Get raw width
+cells=$((width / 2))      # Calculate number of cells accounting for emoji width
+delay=${RULE110_DELAY:-50000}  # Delay in microseconds (50ms default)
+
+# Initial state: A single '1' in the middle
+row=$(printf "%0${cells}s" | tr ' ' '0')
+mid=$((cells / 2 - 2))  # Adjust midpoint to account for pattern length
+row="${row:0:$mid}1110${row:$((mid+4))}"
+
+AWK=$(command -v frawk || command -v gawk || command -v awk || { echo "no awk found" >&2; exit 1; })
+
+# Rule 110 transition table
+$AWK -v row="$row" -v steps="$steps" -v cells="$cells" -v delay="$delay" '
+function sleep(ms) {
+  cmd = "sleep " ms
+  system(cmd)
+}
+
+BEGIN {
+  # Define Rule 110 transitions
+  rules["111"] = "0"; rules["110"] = "1"; rules["101"] = "1"; rules["100"] = "0";
+  rules["011"] = "1"; rules["010"] = "1"; rules["001"] = "1"; rules["000"] = "0";
+  
+  # Print initial state with emojis
+  gsub("1", "⚪️", row)
+  gsub("0", "⚫️", row)
+  print row
+  sleep(delay/1000000)  # Convert microseconds to seconds
+
+  for (i = 1; i < steps; i++) {
+    new_row = ""
+    
+    # Strip emojis for processing
+    orig_row = row
+    gsub("⚪️", "1", orig_row)
+    gsub("⚫️", "0", orig_row)
+    row = orig_row
+
+    # Process each position maintaining width
+    for (j = 1; j <= cells; j++) {
+      # Extract neighborhood (correctly wrap edges)
+      left = (j == 1 ? substr(row, cells, 1) : substr(row, j - 1, 1))
+      center = substr(row, j, 1)
+      right = (j == cells ? substr(row, 1, 1) : substr(row, j + 1, 1))
+      neighborhood = left center right
+
+      # Transition based on rules
+      new_row = new_row rules[neighborhood]
+    }
+    
+    # Emoji-fy the output
+    gsub("1", "⚪️", new_row)
+    gsub("0", "⚫️", new_row)
+    print new_row
+    sleep(delay/1000000)  # Convert microseconds to seconds
+    row = new_row
+  }
+}'

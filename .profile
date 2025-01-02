@@ -467,6 +467,10 @@ check_sixel_support() {
  but check again soon because sixel support was added to xterm.js, which Hyper uses." >&2
     return 1
   fi
+  if [[ "$TERM_PROGRAM" == "ghostty" ]]; then
+    [ -n "$DEBUG_SHELLCONFIG" ] && echo "Ghostty terminal detected, which does not support Sixel as of 2024." >&2
+    return 1
+  fi
   # Fall back on the assumption that these might work
   case "$TERM" in
     xterm-256color|xterm-kitty|mlterm|yaft|wezterm)
@@ -474,7 +478,7 @@ check_sixel_support() {
       return 0
       ;;
   esac
-  echo "Unable to determine Sixel support. Terminal: $TERM, TERM_PROGRAM: $TERM_PROGRAM" >&2
+  echo "Unable to determine Sixel support. TERM: $TERM, TERM_PROGRAM: $TERM_PROGRAM" >&2
   return 2
 }
 export -f check_sixel_support
