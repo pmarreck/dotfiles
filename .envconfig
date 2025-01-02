@@ -174,7 +174,8 @@ fi
 IGNORE_EXCLUDE_PATH_WARNINGS=true exclude_path '/nix/var/nix/profiles/per-user/root/channels' NIX_PATH
 
 # Fontconfig
-export FONTCONFIG_PATH="${XDG_CONFIG_HOME:-~/.config}/fontconfig"
+export FONTCONFIG_PATH="${XDG_CONFIG_HOME:-$HOME/.config}/fontconfig"
+export FONTCONFIG_FILE="${FONTCONFIG_PATH}/fonts.conf"
 
 # erlang/elixir config- 2 million process limit
 # (# of schedulers is automatic to # of CPU logical cores, but can be forced with +S arg)
