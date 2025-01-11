@@ -42,6 +42,29 @@ append_dotfile_progress() {
 shopt -q login_shell && LOGIN_SHELL=true || LOGIN_SHELL=false
 [[ $- == *i* ]] && INTERACTIVE_SHELL=true || INTERACTIVE_SHELL=false
 
+# Warp terminal seems to have nonstandard behavior and non-gnu sed breaks things
+# so we are using this workaround:
+# Set SED env var to first gnu sed found on PATH; otherwise warn
+# Use [[ "$($candidate_sed --version 2>/dev/null | head -1)" =~ .*GNU.* ]] to detect
+# Find the first GNU sed in PATH if SED is unset
+if [ -z ${SED+x} ]; then
+  for candidate_sed in $(type -a -p gsed) $(type -a -p sed); do
+    if [[ "$($candidate_sed --version 2>/dev/null | head -1)" =~ .*GNU.* ]]; then
+      export SED=$candidate_sed
+      break
+    fi
+  done
+  # Warn if no GNU sed found
+  if [ -z ${SED+x} ]; then
+    echo "Warning from .bashrc: No GNU sed found in PATH. This may result in problems. Using system's default sed." >&2
+    export SED=`which sed`
+  fi
+fi
+# echo "SED in .bashrc:56 is: $SED"
+# Awk-ward! (see note below about "using the right awk"...)
+[ -z "${AWK+x}" ] && \
+  export AWK=$(command -v frawk || command -v gawk || command -v awk)
+
 [ "${DEBUG_SHELLCONFIG+set}" = "set" ] && echo "Entering $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")" || $INTERACTIVE_SHELL && $LOGIN_SHELL && append_dotfile_progress "bp"
 [ "${DEBUG_PATHCONFIG+set}" = "set" ] && echo "$PATH"
 
@@ -63,10 +86,23 @@ fi
 # Pull in path configuration
 source_relative_once .pathconfig
 
-# prefer gnu sed installed via nix, otherwise warn
-SED=$(command -v gsed 2>/dev/null || command -v sed)
-[[ "$($SED --version | head -1)" =~ .*GNU.* ]] || echo "WARNING from .bash_profile: The sed on PATH is not GNU sed, which may cause problems" >&2 && SED="/run/current-system/sw/bin/sed"
-export SED
+# Warp terminal seems to have nonstandard behavior and non-gnu sed breaks things
+# so we are using this workaround:
+# Set SED env var to first gnu sed found on PATH; otherwise warn
+# Use [[ "$($candidate_sed --version 2>/dev/null | head -1)" =~ .*GNU.* ]] to detect
+# Find the first GNU sed in PATH
+unset SED
+for candidate_sed in $(type -a -p gsed) $(type -a -p sed); do
+  if [[ "$($candidate_sed --version 2>/dev/null | head -1)" =~ .*GNU.* ]]; then
+    export SED=$candidate_sed
+    break
+  fi
+done
+# Warn if no GNU sed found
+if [ -z ${SED+x} ]; then
+  echo "Warning from .bash_profile: No GNU sed found in PATH. This may result in problems. Using system's default sed." >&2
+  export SED=`which sed`
+fi
 
 # enable timing debugging
 # PS4='+ \D{%s} \011 '

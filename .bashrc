@@ -35,13 +35,27 @@ shopt -q login_shell && LOGIN_SHELL=true || LOGIN_SHELL=false
 # Pull in path configuration
 source_relative_once .pathconfig
 
-# prefer gnu sed installed via nix, otherwise warn
-[ "${SED+set}" = "set" ] && \
-  export SED=$(command -v gsed 2>/dev/null || command -v sed)
-[[ "$($SED --version | head -1)" =~ .*GNU.* ]] || echo "WARNING from .bashrc: The sed on PATH is not GNU sed, which may cause problems" >&2 && SED="/run/current-system/sw/bin/sed"
-
+# Warp terminal seems to have nonstandard behavior and non-gnu sed breaks things
+# so we are using this workaround:
+# Set SED env var to first gnu sed found on PATH; otherwise warn
+# Use [[ "$($candidate_sed --version 2>/dev/null | head -1)" =~ .*GNU.* ]] to detect
+# Find the first GNU sed in PATH if SED is unset
+if [ -z ${SED+x} ]; then
+  for candidate_sed in $(type -a -p gsed) $(type -a -p sed); do
+    if [[ "$($candidate_sed --version 2>/dev/null | head -1)" =~ .*GNU.* ]]; then
+      export SED=$candidate_sed
+      break
+    fi
+  done
+  # Warn if no GNU sed found
+  if [ -z ${SED+x} ]; then
+    echo "Warning from .bashrc: No GNU sed found in PATH. This may result in problems. Using system's default sed." >&2
+    export SED=`which sed`
+  fi
+fi
+# echo "SED in .bashrc:56 is: $SED"
 # Awk-ward! (see note below about "using the right awk"...)
-[ "${AWK+set}" = "set" ] && \
+[ -z "${AWK+x}" ] && \
   export AWK=$(command -v frawk || command -v gawk || command -v awk)
 
 [ "${DEBUG_SHELLCONFIG+set}" = "set" ] && echo "Entering $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")" || $INTERACTIVE_SHELL && $LOGIN_SHELL && append_dotfile_progress "rc"
@@ -77,15 +91,15 @@ needs() {
 # You may need to manually set your language environment
 export LANG=en_US.UTF-8
 
-# Preferred editor for local and remote sessions
+# Preferred editor with logic for local and remote sessions
+unset VISUAL EDITOR
 if [[ -n $SSH_CONNECTION ]]; then
-  needs micro "please install the micro editor" && export EDITOR='micro' || export EDITOR='nano'
-  unset VISUAL
+  needs micro "please install the micro editor; defaulting to nano" && export EDITOR='micro' || export EDITOR='nano'
+  unset VISUAL # note: this indicates to other tooling later on that we are not in a GUI context
 else
-  needs micro "please install the micro editor" && export EDITOR='micro' || export EDITOR='nano'
-  needs windsurf "please install the Codeium Windsurf editor" && export VISUAL='windsurf -g' || export VISUAL="$EDITOR"
-  export EDITOR='micro'
-  export VISUAL='windsurf'
+  needs micro "please install the micro editor; defaulting to nano for EDITOR" && export EDITOR='micro' || export EDITOR='nano'
+  needs code "please install the VSCode editor and commandline access for it" && export VISUAL='code' || export VISUAL="$EDITOR"
+  needs windsurf "please install the Codeium Windsurf editor and commandline access for it" && export VISUAL='windsurf -g' || export VISUAL="${VISUAL:-$EDITOR}"
 fi
 
 choose_editor() {
@@ -180,7 +194,7 @@ case $OSTYPE in
         12.*) distribution="Monterey" ;;
         11.*) distribution="Big Sur" ;;
         10.15*) distribution="Catalina" ;;
-        10.14*) distribution="Mojave" ;;
+        10.14*) distribution="Mojave" ;; # last version to support 32-bit Mac apps
         10.13*) distribution="High Sierra" ;;
         10.12*) distribution="Sierra" ;;
         10.11*) distribution="El Capitan" ;;
@@ -190,6 +204,11 @@ case $OSTYPE in
         10.7*) distribution="Lion" ;;
         10.6*) distribution="Snow Leopard" ;;
         10.5*) distribution="Leopard" ;;
+        10.4*) distribution="Tiger" ;;
+        10.3*) distribution="Panther" ;;
+        10.2*) distribution="Jaguar" ;;
+        10.1*) distribution="Puma" ;;
+        10.0*) distribution="Cheetah" ;;
         *) distribution="Unknown" ;;
       esac
       export DISTRO_VERSION="$version"
@@ -235,6 +254,10 @@ case $OSTYPE in
     ;;
 esac
 
+if [ "$AWK" = "" ]; then
+  export AWK=$(command -v frawk || command -v gawk || command -v awk)
+fi
+# echo "AWK in .bashrc:258 is: $AWK"
 # using the right awk is a PITA on macOS vs. Linux so let's ensure GNU Awk everywhere
 is_gnu_awk=$($AWK --version | grep -q -m 1 'GNU Awk' && echo true || echo false)
 [ "${PLATFORM}$(basename $AWK)" == "osxawk" ] && \

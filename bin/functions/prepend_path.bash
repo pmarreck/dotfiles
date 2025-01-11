@@ -22,8 +22,28 @@ find_binary() {
 }
 export -f find_binary
 
-export AWK=$(find_binary awk)
-export SED=$(find_binary sed)
+# Warp terminal seems to have nonstandard behavior and non-gnu sed breaks things
+# so we are using this workaround:
+# Set SED env var to first gnu sed found on PATH; otherwise warn
+# Use [[ "$($candidate_sed --version 2>/dev/null | head -1)" =~ .*GNU.* ]] to detect
+# Find the first GNU sed in PATH if SED is unset
+if [ -z ${SED+x} ]; then
+  for candidate_sed in $(type -a -p gsed) $(type -a -p sed); do
+    if [[ "$($candidate_sed --version 2>/dev/null | head -1)" =~ .*GNU.* ]]; then
+      export SED=$candidate_sed
+      break
+    fi
+  done
+  # Warn if no GNU sed found
+  if [ -z ${SED+x} ]; then
+    echo "Warning from .bashrc: No GNU sed found in PATH. This may result in problems. Using system's default sed." >&2
+    export SED=`which sed`
+  fi
+fi
+# echo "SED in .bashrc:56 is: $SED"
+# Awk-ward! (see note below about "using the right awk"...)
+[ -z "${AWK+x}" ] && \
+  export AWK=$(command -v frawk || command -v gawk || command -v awk)
 
 # function to prepend paths in an idempotent way
 prepend_path() {

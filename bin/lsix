@@ -111,7 +111,7 @@ autodetect() {
     # Space on either side of each tile is less than 0.5% of total screen width
     tilexspace=$((width/201))
     [ -n "$DEBUG" ] && echo "tilexspace=$tilexspace"
-    tileyspace=$((tilexspace/2))
+    tileyspace=$((tilexspace/2 + 10))
     [ -n "$DEBUG" ] && echo "tileyspace=$tileyspace"
     # Figure out how many tiles we can fit per row. ("+ 1" is for -shadow).
     numtiles=$((width/(tilewidth + 2*tilexspace + 1)))
@@ -123,19 +123,24 @@ main() {
     autodetect
 
     if [[ $# == 0 ]]; then
-    # No command line args? Use a sorted list of image files in CWD.
-    shopt -s nullglob nocaseglob nocasematch
-    set - *{jpg,jpeg,png,gif,tiff,tif,p?m,x[pb]m,bmp,ico,svg,eps}
-    [[ $# != 0 ]] || exit
-    mapfile -t < <(printf "%s\n" "$@" | sort)
+        # No command line args? Use a sorted list of image files in CWD.
+        shopt -s nullglob nocaseglob nocasematch
+        set - *{jpg,jpeg,png,gif,tiff,tif,p?m,x[pb]m,bmp,ico,svg,eps}
+        [[ $# != 0 ]] || exit
+        
+        # Read sorted filenames into array
+        declare -a files
+        while IFS= read -r line; do
+            files+=("$line")
+        done < <(printf "%s\n" "$@" | sort)
 
-    # Only show first frame of animated GIFs if filename not specified.
-    for x in ${!MAPFILE[@]}; do
-        if [[ ${MAPFILE[$x]} =~ gif$ ]]; then
-        MAPFILE[$x]+="[0]"
-        fi
-    done
-    set - "${MAPFILE[@]}"
+        # Only show first frame of animated GIFs if filename not specified.
+        for x in ${!files[@]}; do
+            if [[ ${files[$x]} =~ gif$ ]]; then
+                files[$x]+="[0]"
+            fi
+        done
+        set - "${files[@]}"
     fi
 
     # Resize on load: Save memory by appending this suffix to every filename.

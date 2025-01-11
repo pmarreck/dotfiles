@@ -185,6 +185,27 @@ up() {
 }
 export -f up
 
+httpstat() {
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  local default="www.google.com"
+  local site="${1:-$default}"
+  case $site in
+  -h | --help)
+    echo -e "\e[1mhttpstat\e[0m lets you check your ability to access http[s] sites."
+    echo "usage: httpstat [www.whatever.com]"
+    echo "(you should omit the https://)"
+    echo "if param is omitted, uses $default; this can be used"
+    echo "to see if you can access anything to begin with over https."
+    echo "(https is assumed)"
+    echo "It returns the HTTP status code of the request to stdout."
+    return 0
+    ;;
+  *)
+    curl -s -o /dev/null -w "%{http_code}" "https://$site"
+    ;;
+  esac
+}
+export -f httpstat
 
 # browse a CSV file as a scrollable table
 csv() {

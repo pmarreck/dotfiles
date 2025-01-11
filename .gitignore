@@ -13,3 +13,4 @@ bin/orbctl
 bin/steam
 bin/*launcher
 .codegpt
+.vscode

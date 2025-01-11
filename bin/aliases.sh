@@ -128,6 +128,8 @@ alias dotfiles='cd ~/dotfiles'
 
 alias configs='cd ~/.config'
 
+alias config="choose_editor $XDG_CONFIG_HOME"
+
 # alias ss='script/server'
 # alias sc='script/console'
 # alias rc='rails console'
