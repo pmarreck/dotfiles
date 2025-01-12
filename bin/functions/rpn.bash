@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
 # file: rpn.bash
 
+if [ -z "$AWK" ]; then
+  if command -v frawk &>/dev/null; then
+    AWK="frawk"
+  elif command -v gawk &>/dev/null; then
+    AWK="gawk"
+  else
+    AWK="awk"
+  fi
+fi
+
 reverse_args() {
 	echo "$@" | tr ' ' '\n' | tac | tr '\n' ' '
 }
@@ -10,10 +20,10 @@ rpn() {
 	if [ -p /dev/stdin ]; then
 		# If data is piped, read it as a single line
 		input=$(cat)
-		reverse_args $input | gawk -f "$(dirname "${BASH_SOURCE[0]}")/rpn.awk"
+		reverse_args $input | $AWK -f "$(dirname "${BASH_SOURCE[0]}")/rpn.awk"
 	else
 		# Otherwise, process the arguments directly
-		reverse_args "$@" | gawk -f "$(dirname "${BASH_SOURCE[0]}")/rpn.awk"
+		reverse_args "$@" | $AWK -f "$(dirname "${BASH_SOURCE[0]}")/rpn.awk"
 	fi
 }
 export -f rpn

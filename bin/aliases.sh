@@ -88,14 +88,14 @@ else # linux
 fi
 
 # NixOS-specific stuff
-if [ "${PLATFORM}-${DISTRO}" = "linux-NixOS" ] || is_nix_darwin?; then
+if [ "${PLATFORM}-${DISTRO}" = "linux-NixOS" ] || is_nix_darwin; then
   alias nix-list-gens='sudo nix-env -p /nix/var/nix/profiles/system --list-generations'
   alias nix-gen-num='readlink /nix/var/nix/profiles/system | cut -d- -f2'
   nix-genstamp() {
     [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
     echo "$(datetimestamp) generation $(nix-gen-num); nvidia version $(nvidia --version); kernel version $(uname -r)" >> ~/nix-genstamp.txt
   } && export -f nix-genstamp
-  is_nix_darwin? || alias nixos="choose_editor /etc/nixos &"
+  is_nix_darwin || alias nixos="choose_editor /etc/nixos &"
   function abbrev-nix-store-paths(){
     [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
     $SED -E 's|(/nix/store/)?[a-z0-9]{32}-|/⌘/|g'
