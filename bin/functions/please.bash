@@ -32,13 +32,12 @@ _generate_curl_api_request_for_please() {
   needs jq
   local request args timeout model curl
   curl=${CURL:-curl}
-  model=${OPENAI_MODEL:-gpt-4-1106-preview} # other options: gpt-4, gpt-4-0314, gpt-4-32k, gpt-4-32k-0314, gpt-3.5-turbo, gpt-3.5-turbo-0301
+  model=${OPENAI_MODEL:-gpt-4o}
   timeout=${OPENAI_TIMEOUT:-30}
   args="$@"
   args=$(printf "%b" "$args" | $SED "s/'/'\\\\''/g") # This is just a narsty sed to escape single quotes.
   # (Piping to "jq -sRr '@json'" was not working correctly, so I had to take control of the escaping myself.)
 # printf "escaped args: %b\n" "$args" >&2
-  # note that gpt-3.5-turbo-0301 is the very latest model as of 2021-03-01 but will only be supported for a few weeks
   read -r -d '' request <<EOF
   $curl https://api.openai.com/v1/chat/completions \
   -H "Authorization: Bearer $OPENAI_API_KEY" \
@@ -50,6 +49,19 @@ EOF
   printf "%b" "$request"
 }
 export -f _generate_curl_api_request_for_please
+
+clip() {
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return;
+  if command -v pbcopy > /dev/null; then
+    [ -t 0 ] && pbpaste || pbcopy;
+  elif command -v xclip > /dev/null; then
+    [ -t 0 ] && xclip -o -selection clipboard || xclip -selection clipboard;
+  else
+    echo "clip function error: Neither pbcopy/pbpaste nor xclip are available." >&2;
+    return 1;
+  fi
+}
+export -f clip
 
 please() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
@@ -70,13 +82,21 @@ please() {
     printf "%b\n" "$response_parsed"
   else
     response_parsed_cleaned=$(printf "%s" "$response_parsed" | sed -e 's/^[\\n]\+//' -e 's/^[\n]\+//')
-    if gum confirm --affirmative="Run it" --negative="GTFO" "$response_parsed_cleaned"; then
-      printf "\e[0;33m%s\n\e[m" "$response_parsed_cleaned" >&2
-      printf "%s" "$response_parsed_cleaned" | bash
-    else
-      printf "%s" "Aborted."
-      return 1
-    fi
+    printf "\e[0;33m%s\n\e[m" "$response_parsed_cleaned" >&2
+    local choice=$(gum choose --limit 1 "Run it" "Copy to clipboard" "GTFO");
+    case "$choice" in
+      "Run it")
+        printf "%s" "$response_parsed_cleaned" | bash;
+        ;;
+      "Copy to clipboard")
+        printf "Copying command to clipboard.\n";
+        printf "%s" "$response_parsed_cleaned" | clip;
+        ;;
+      *)
+        printf "%s" "Aborted.";
+        return 1;
+        ;;
+    esac;
   fi
 }
 export -f please

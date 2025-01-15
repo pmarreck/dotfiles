@@ -186,26 +186,73 @@ up() {
 export -f up
 
 httpstat() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   local default="www.google.com"
   local site="${1:-$default}"
   case $site in
-  -h | --help)
-    echo -e "\e[1mhttpstat\e[0m lets you check your ability to access http[s] sites."
-    echo "usage: httpstat [www.whatever.com]"
-    echo "(you should omit the https://)"
-    echo "if param is omitted, uses $default; this can be used"
-    echo "to see if you can access anything to begin with over https."
-    echo "(https is assumed)"
-    echo "It returns the HTTP status code of the request to stdout."
-    return 0
+    -h | --help)
+      echo -e "\e[1mhttpstat\e[0m lets you check your ability to access http[s] sites."
+      echo "usage: httpstat [www.whatever.com]"
+      echo "(you should omit the https://)"
+      echo "if param is omitted, uses $default; this can be used"
+      echo "to see if you can access anything to begin with over https."
+      echo "(https is assumed)"
+      echo "It returns the HTTP status code of the request to stdout."
+      return 0
     ;;
-  *)
-    curl -s -o /dev/null -w "%{http_code}" "https://$site"
+    *)
+      # Get HTTP status code
+      local status=$(curl -s -o /dev/null -w "%{http_code}" "https://$site")
+
+      # Map status codes to descriptions
+      local description
+      case $status in
+        200) description="OK";;
+        201) description="Created";;
+        202) description="Accepted";;
+        204) description="No Content";;
+        301) description="Moved Permanently";;
+        302) description="Found";;
+        304) description="Not Modified";;
+        400) description="Bad Request";;
+        401) description="Unauthorized";;
+        403) description="Forbidden";;
+        404) description="Not Found";;
+        405) description="Method Not Allowed";;
+        500) description="Internal Server Error";;
+        502) description="Bad Gateway";;
+        503) description="Service Unavailable";;
+        504) description="Gateway Timeout";;
+        *) description="Unknown Status";;
+      esac
+
+      # Output status and description
+      echo "$status"
+      echo "$description" >&2
     ;;
   esac
 }
 export -f httpstat
+
+ram-size() {
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  local proc_meminfo="/proc/meminfo"
+  local total_mem_gb=0
+  # Check if /proc/meminfo exists (Linux)
+  if [ -f "$proc_meminfo" ]; then
+    local total_mem_kb=$(grep MemTotal $proc_meminfo | awk '{print $2}')
+    total_mem_gb=$((total_mem_kb / (1024 ** 2)))
+  # If not, assume macOS and use sysctl
+  elif command -v sysctl &> /dev/null; then
+    local memsize=$(sysctl -n hw.memsize)
+    total_mem_gb=$((memsize / (1024 ** 3)))
+  # If neither is available, return an error message.
+  else 
+    echo "Unable to determine RAM size due to lack of $proc_meminfo or sysctl." >&2
+    return 1
+  fi
+  echo "${total_mem_gb}GB"
+}
+export -f ram-size
 
 # browse a CSV file as a scrollable table
 csv() {

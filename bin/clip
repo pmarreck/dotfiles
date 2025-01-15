@@ -1,17 +1,16 @@
 #!/usr/bin/env bash
 
-if [[ "$(uname)" == "Darwin" ]]; then
-  clip() {
-    [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-    [ -t 0 ] && pbpaste || pbcopy
-  }
-else # assume linux if not macos
-  clip() {
-    [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-    [ -t 0 ] && xclip -o -selection clipboard || xclip -selection clipboard
-  }
-fi
-
+clip() {
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return;
+  if command -v pbcopy > /dev/null; then
+    [ -t 0 ] && pbpaste || pbcopy;
+  elif command -v xclip > /dev/null; then
+    [ -t 0 ] && xclip -o -selection clipboard || xclip -selection clipboard;
+  else
+    echo "clip function error: Neither pbcopy/pbpaste nor xclip are available." >&2;
+    return 1;
+  fi
+}
 export -f clip
 
 # Run the function, passing along any args, if this file was run directly (such as via sudo) instead of as an include
