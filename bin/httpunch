@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+
+# Function to simulate slow HTTPS requests using curl
+httpunch() {
+	local url=$1
+	local connections=${2:-${HTTPUNCH_CONNECTIONS:-100}}
+	local action=$1
+	local keepalive_time=${HTTPUNCH_KEEPALIVE:-60}
+	local silent_mode=false
+
+	# Check if "kill" was passed as the first argument
+	if [[ $action == "kill" ]]; then
+		echo "Killing all curl processes..."
+		pkill -f "curl --no-buffer"
+		return
+	fi
+
+	# Parse optional --silent argument
+	for arg in "$@"; do
+		if [[ $arg == "--silent" ]]; then
+			silent_mode=true
+			break
+		fi
+	done
+
+	# Ensure URL is provided if "kill" is not used
+	if [[ -z $url ]]; then
+		echo "Usage: httpunch [kill | <url>] [number_of_connections] [--silent]"
+		echo "Environment variables: HTTPUNCH_CONNECTIONS (default: 100), HTTPUNCH_KEEPALIVE (default: 60)."
+		return 1
+	fi
+
+	echo "Starting $connections connections to $url..."
+	for ((i = 1; i <= connections; i++)); do
+		if $silent_mode; then
+			curl --no-buffer --silent --output /dev/null --keepalive-time "$keepalive_time" "$url" &
+		else
+			curl --no-buffer --keepalive-time "$keepalive_time" "$url" &
+		fi
+	done
+
+	echo "$connections connections started with a keepalive time of $keepalive_time seconds."
+	echo "Use 'httpunch kill' to terminate them."
+}
+
+# Run the function, passing along any args, if this file was run directly (such as via sudo) instead of as an include
+# Sometimes, $0 contains a leading dash to indicate an interactive (or is it login?) shell,
+# which is apparently an old convention (which also broke the basename call on OS X)
+_me=$(basename "${0##\-}")
+if [ "$_me" = "httpunch" ]; then
+	$_me "$@"
+fi
+unset _me
