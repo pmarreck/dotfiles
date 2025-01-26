@@ -263,7 +263,7 @@ fi
 # using the right awk is a PITA on macOS vs. Linux so let's ensure GNU Awk everywhere
 is_gnu_awk=$($AWK --version | grep -q -m 1 'GNU Awk' && echo true || echo false)
 [ "${PLATFORM}$(basename $AWK)" == "osxawk" ] && \
-  [ "$is_gnu_awk" = "false" ] && \
+  $is_gnu_awk && \
   echo "WARNING: The awk on PATH is not GNU Awk on macOS, which may cause problems" >&2
 
 # # asdf config
@@ -316,6 +316,25 @@ source $HOME/bin/apply-hooks || echo "Problem when sourcing $HOME/bin/apply-hook
 
 # aliases- source these on every interactive shell because they do not inherit
 $INTERACTIVE_SHELL && . "$HOME/dotfiles/bin/aliases.sh"
+
+# control globbing/shell expansion on a case-by-case basis
+expand() {
+   local args=()
+   for arg in "$@"; do
+       if [[ $arg == *"*"* ]]; then
+           # Temporarily enable globbing just for this expansion
+           set +f
+           args+=($arg)  # Let globbing happen
+           set -f
+       else
+           args+=("$arg")
+       fi
+   done
+   echo "${args[@]}"
+}
+
+# Keep globbing/shell expansion off by default due to possible unexpected behavior
+set -f
 
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced aliases.sh"
 
