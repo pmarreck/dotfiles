@@ -1,6 +1,8 @@
-#!/usr/bin/awk -f
+#!/usr/bin/env gawk -f
 # file: rpn.awk
 # RPN interpreter with stack operations
+# Requires GNU awk due to use of `switch` statement
+
 BEGIN {
 	# Initialize empty stack
 	stack_size = 0
@@ -29,7 +31,7 @@ function peek() {
 # Math operations
 function add() { push(pop() + pop()) }
 
-function subtract() { 
+function subtract() {
 	b = pop()
 	a = pop()
 	push(a - b)
@@ -48,7 +50,7 @@ function divide() {
 }
 
 # Stack operations
-function dup() { 
+function dup() {
 	a = peek()
 	push(a)
 }
@@ -143,35 +145,61 @@ function peek_print() {
 	# Process each line of input
 	for (i = NF; i >= 1; i--) {
 		val = $i
-		
+
 		# Handle quoted strings
 		if (val ~ /^".*"$/) {
 			# Strip quotes and push as string
 			push(substr(val, 2, length(val)-2))
 			continue
 		}
-		
+
 		# Handle numbers
 		if (val ~ /^[+-]?([0-9]*[.])?[0-9]+$/) {
 			push(val + 0)  # Convert to number
 			continue
 		}
-		
+
 		# Handle operators
 		switch (val) {
-			case "+":    add(); break
-			case "-":    subtract(); break
-			case "*":    multiply(); break
-						case "\\*":   multiply(); break
-			case "/":    divide(); break
-			case "dup":  dup(); break
-			case "swap": swap(); break
-			case "drop": drop(); break
-			case "and":  bitwise_and(); break
-			case "or":   bitwise_or(); break
-			case "xor":  bitwise_xor(); break
-			case ".":    dot(); break
-			case ".s":   peek_print(); break
+			case "+":
+				add()
+				break
+			case "-":
+				subtract()
+				break
+			case "*":
+				multiply()
+				break
+			case "\\*":
+				multiply()
+				break
+			case "/":
+				divide()
+				break
+			case "dup":
+				dup()
+				break
+			case "swap":
+				swap()
+				break
+			case "drop":
+				drop()
+				break
+			case "and":
+				bitwise_and()
+				break
+			case "or":
+				bitwise_or()
+				break
+			case "xor":
+				bitwise_xor()
+				break
+			case ".":
+				dot()
+				break
+			case ".s":
+				peek_print()
+				break
 			default:
 				print "Error: Unknown operator " val > "/dev/stderr"
 				exit 1

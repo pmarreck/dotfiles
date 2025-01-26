@@ -1,15 +1,27 @@
 #!/usr/bin/env bash
 # file: rpn.bash
 
-if [ -z "$AWK" ]; then
-  if command -v frawk &>/dev/null; then
-    AWK="frawk"
-  elif command -v gawk &>/dev/null; then
-    AWK="gawk"
-  else
-    AWK="awk"
-  fi
-fi
+choose_awk() {
+	if command -v gawk &>/dev/null; then
+		command -v gawk
+	elif awk --version &>/dev/null; then
+		command -v awk
+	else
+		echo "WARNING: rpn.awk requires GNU awk" >&2
+		exit 1
+	fi
+}
+
+debug () {
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	if [ -p /dev/stdin ]; then
+		echo -e "\nDEBUG:" >&2
+		tee >(cat >&2)
+		echo >&2
+	else
+		echo -e "\nDEBUG:\n$@\n" >&2
+	fi
+}
 
 reverse_args() {
 	echo "$@" | tr ' ' '\n' | tac | tr '\n' ' '
@@ -20,10 +32,10 @@ rpn() {
 	if [ -p /dev/stdin ]; then
 		# If data is piped, read it as a single line
 		input=$(cat)
-		reverse_args $input | $AWK -f "$(dirname "${BASH_SOURCE[0]}")/rpn.awk"
+		reverse_args $input | $(choose_awk) -f "$(dirname "${BASH_SOURCE[0]}")/rpn.awk"
 	else
 		# Otherwise, process the arguments directly
-		reverse_args "$@" | $AWK -f "$(dirname "${BASH_SOURCE[0]}")/rpn.awk"
+		reverse_args "$@" | $(choose_awk) -f "$(dirname "${BASH_SOURCE[0]}")/rpn.awk"
 	fi
 }
 export -f rpn
@@ -37,7 +49,7 @@ test_rpn() {
 		echo "✓ Test passed: '$input' -> '$result'"
 		return 0
 	else
-		echo "✗ Test failed in $(dirname "${BASH_SOURCE[0]}"): '$input'" >&2
+		echo "✗ Test failed in $(dirname "${BASH_SOURCE[0]}/$(basename "${BASH_SOURCE[0]}")"): '$input'" >&2
 		echo "  Expected: '$expected'" >&2
 		echo "  Got:      '$result'" >&2
 		return 1
@@ -48,55 +60,55 @@ run_test() {
 	local errors=0
 	# Basic arithmetic
 	test_rpn "2 3 + ." "5"
-	((errors += $?))
+	((errors += $?)) || true
 	test_rpn "5 3 - ." "2"
-	((errors += $?))
+	((errors += $?)) || true
 	test_rpn "4 2 \* ." "8"
-	((errors += $?))
+	((errors += $?)) || true
 	test_rpn "6 2 / ." "3"
-	((errors += $?))
+	((errors += $?)) || true
 
 	# Stack operations
 	test_rpn "2 dup + ." "4"
-	((errors += $?))
+	((errors += $?)) || true
 	test_rpn "1 2 swap + ." "3"
-	((errors += $?))
+	((errors += $?)) || true
 	test_rpn "1 2 3 drop + ." "3"
-	((errors += $?))
+	((errors += $?)) || true
 
 	# Complex operations
 	test_rpn "15 7 1 1 + - / 3 \* 2 1 1 + + - ." "5"
-	((errors += $?))
+	((errors += $?)) || true
 
 	# Strings
 	test_rpn "\"hello\" ." "hello"
-	((errors += $?))
+	((errors += $?)) || true
 
 	# Bitwise operations
 	test_rpn "1 2 and ." "0"
-	((errors += $?))
+	((errors += $?)) || true
 	test_rpn "1 2 or ." "3"
-	((errors += $?))
+	((errors += $?)) || true
 	test_rpn "1 3 xor ." "2"
-	((errors += $?))
+	((errors += $?)) || true
 
 	# Peek prints
 	test_rpn "69 .s .s ." "69
 69
 69"
-	((errors += $?))
+	((errors += $?)) || true
 
 	# Error cases
 	test_rpn "+" "Error: Stack underflow"
-	((errors += $?))
+	((errors += $?)) || true
 	test_rpn "1 2 + +" "Error: Stack underflow"
-	((errors += $?))
+	((errors += $?)) || true
 	test_rpn "1 0 /" "Error: Division by zero"
-	((errors += $?))
+	((errors += $?)) || true
 
 	return $errors
 }
 
 if [ "$RUN_DOTFILE_TESTS" == "true" ]; then
-  run_test > /dev/null
+	run_test > /dev/null
 fi

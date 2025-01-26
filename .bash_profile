@@ -29,7 +29,7 @@ append_dotfile_progress() {
         "prof") expanded_name=".profile" ;;
         *) expanded_name="$1" ;;
     esac
-    
+
     # Prevent duplicate entries
     if [[ ! $LAST_DOTFILE_RUN =~ ${expanded_name}-loaded\; ]]; then
         export LAST_DOTFILE_RUN="${LAST_DOTFILE_RUN:-}${expanded_name}-loaded;"
