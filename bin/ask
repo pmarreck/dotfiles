@@ -389,62 +389,77 @@ if truthy RUN_DOTFILE_TESTS; then
   source_relative_once functions/assert.bash
   source_relative_once functions/utility_functions.bash
 
-  # TEST SETUP
-  history_file="${XDG_DATA_HOME:-$HOME/.local/share}/ask_history.json"
-  # back up conversation file
+  # Set up test environment
+  temp_json_out=$(mktemp)
+  temp_json=$(mktemp)
+  history_file=$(mktemp)
   if [[ -f "$history_file" ]]; then
     cp "$history_file" "${history_file%.json}_backup$$.json"
   fi
-  shopt -q extglob && extglob_set=true || extglob_set=false
-  shopt -s extglob
 
-  # mock out curl
-  mocked_curl() {
-    [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-      # http_status=$($curl -w "%{http_code}" -s -o "$temp_json_out" -X POST $openai_url \
-      # -H "Content-Type: application/json" \
-      # -H "Authorization: Bearer $OPENAI_API_KEY" \
-      # --silent \
-      # --max-time $timeout \
-      # -d "@$temp_json")
-    local output_file
-    while getopts ":o:w:X:H:d:s" opt; do
-      case ${opt} in
-      o )
-        output_file=$OPTARG
-        # echo "output_file: $output_file" >&2
-        ;;
-      ? )
-        ;;
-      : )
-      echo "Option -$OPTARG requires an argument." >&2
-        ;;
-      esac
-    done
-    cat <<EOF | trim_leading_heredoc_whitespace | unwrap > "$output_file"
-      {"id":"chatcmpl-6q7qCBoIJGlRldK97GQrLAcfOqXwS","object":"chat.completion",
-      "created":1677881216,"model":"test-model","usage":{"prompt_tokens":29,
-      "completion_tokens":96,"total_tokens":125},"choices":[{"message":{"role":"assistant",
-      "content":"\n\nThere is no direct connection between \"The Last Question\" and\n\"The Last Answer\" by Isaac Asimov. \"The Last Answer\" is a short story about\na man who searches for the meaning of life and death, while \"The Last Question\"\nis a science fiction story that explores the concept of the end of the universe and\nthe possibility of creating a new one. However, both stories deal with philosophical\nthemes about the nature of existence and the ultimate fate of humanity."},
-      "finish_reason":null,"index":0}]}
+  # Function to run tests and report results
+  run_test_suite() {
+    local test_name="${1:-${0##*/}}"
+    local failed=false
+
+    # Run tests in a subshell to capture failures
+    if (
+      # mock out curl
+      mocked_curl() {
+        [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+        local output_file
+        while getopts ":o:w:X:H:d:s" opt; do
+          case ${opt} in
+          o )
+            output_file=$OPTARG
+            ;;
+          ? )
+            ;;
+          : )
+          echo "Option -$OPTARG requires an argument." >&2
+            ;;
+          esac
+        done
+        cat <<EOF | trim_leading_heredoc_whitespace | unwrap > "$output_file"
+          {"id":"chatcmpl-6q7qCBoIJGlRldK97GQrLAcfOqXwS","object":"chat.completion",
+          "created":1677881216,"model":"test-model","usage":{"prompt_tokens":29,
+          "completion_tokens":96,"total_tokens":125},"choices":[{"message":{"role":"assistant",
+          "content":"\n\nThere is no direct connection between \"The Last Question\" and\n\"The Last Answer\" by Isaac Asimov. \"The Last Answer\" is a short story about\na man who searches for the meaning of life and death, while \"The Last Question\"\nis a science fiction story that explores the concept of the end of the universe and\nthe possibility of creating a new one. However, both stories deal with philosophical\nthemes about the nature of existence and the ultimate fate of humanity."},
+          "finish_reason":null,"index":0}]}
 EOF
-    echo 200 # assumes http_code was the curl format parameter
+        echo 200 # assumes http_code was the curl format parameter
+      }
+
+      # TESTS
+      resp=$(CURL=mocked_curl ask "What is the connection between \"The Last Question\" and \"The Last Answer\" by Isaac Asimov?")
+      assert "$resp" =~ "connection"
+
+      # If we get here, all tests passed
+      true
+    ); then
+      printf "\033[32m%s: PASS\033[0m\n" "$test_name"
+    else
+      printf "\033[31m%s: FAIL\033[0m\n" "$test_name"
+      failed=true
+    fi
+
+    # TEST TEARDOWN
+    unset -f mocked_curl # unmock curl
+
+    # restore original history file after removing the test one
+    if [ -f "${history_file%.json}_backup$$.json" ]; then
+      rm -f "$history_file"
+      mv "${history_file%.json}_backup$$.json" "$history_file"
+    fi
+
+    # Clean up temp files
+    rm -f "$temp_json_out" "$temp_json"
+
+    $failed && return 1 || return 0
   }
 
-  # TESTS
-  resp=$(CURL=mocked_curl ask "What is the connection between \"The Last Question\" and \"The Last Answer\" by Isaac Asimov?")
-  # echo "response in test: '$resp'"
-  assert "$resp" =~ "connection"
-
-  # TEST TEARDOWN
-  unset -f mocked_curl # unmock curl
-  $extglob_set || shopt -u extglob # restore extglob setting
-  unset extglob_set
-  # restore original history file after removing the test one
-  if [ -f "${history_file%.json}_backup$$.json" ]; then
-    rm -f "$history_file"
-    mv "${history_file%.json}_backup$$.json" "$history_file"
-  fi
+  # Run the test suite
+  run_test_suite "ask"
 fi
 
 # Export the function so it can be used by find -exec

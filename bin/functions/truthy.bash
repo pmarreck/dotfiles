@@ -25,11 +25,11 @@ truthy() {
 	# 3. Retrieve the variable value (POSIX-compatible eval)
 	value=$(eval "printf '%s\n' \"\$$var_name\"")
 
-	# 4. Convert value to lowercase (manual loop, no `${var,,}`)
+	# 4. Convert value to lowercase (manual loop, no `${var,,}`, due to desiring POSIX...)
 	lower_value=""
 	for i in $(printf '%s' "$value" | fold -w1); do
 		case "$i" in
-			[A-Z]) lower_value="${lower_value}$(printf '\\%o' "$(( $(printf '%d' "'$i") + 32 ))")" ;;
+			[A-Z]) lower_value="${lower_value}$(printf "\\$(printf '%03o' "$(( $(printf '%d' "'$i") + 32 ))")")" ;;
 			*) lower_value="${lower_value}${i}" ;;
 		esac
 	done
@@ -54,32 +54,85 @@ falsey() {
 }
 export -f falsey
 
+if truthy DEBUG_SHELLCONFIG; then
+	echo "Loaded truthy.bash"
+fi
+
 # tests
-if [ "$RUN_DOTFILE_TESTS" == "true" ]; then
+if truthy RUN_DOTFILE_TESTS; then
 	source_relative_once assert.bash
-	_a=1
-	_b=true
-	_d=0
-	_e=false
-	truthy _a
-	assert "$?" == "0"
-	truthy _b
-	assert "$?" == "0"
-	truthy _c
-	assert "$?" == "1"
-	truthy _d
-	assert "$?" == "1"
-	truthy _e
-	assert "$?" == "1"
-	falsey _a
-	assert "$?" == "1"
-	falsey _b
-	assert "$?" == "1"
-	falsey _c
-	assert "$?" == "0"
-	falsey _d
-	assert "$?" == "0"
-	falsey _e
-	assert "$?" == "0"
-	unset _a _b _c _d _e
+	source_relative_once test_reporter.bash
+
+	test_truthy() {
+		# Set up test variables
+		_a=1
+		_b=true
+		_c=yes
+		_d=on
+		_e=y
+		_f=enable
+		_g=enabled
+		_h=TRUE
+		_i=YES
+		_A=0
+		_B=false
+		# _C # remains unset
+		_D=no
+		_E=off
+		_F=disable
+		_G=disabled
+		_H=n
+		_I=FALSE
+		_J=NO
+
+		# Run tests
+		truthy _a
+		assert "$?" == "0" "1 should have returned truthy"
+		truthy _b
+		assert "$?" == "0" "true should have returned truthy"
+		truthy _c
+		assert "$?" == "0" "yes should have returned truthy"
+		truthy _d
+		assert "$?" == "0" "on should have returned truthy"
+		truthy _e
+		assert "$?" == "0" "y should have returned truthy"
+		truthy _f
+		assert "$?" == "0" "enable should have returned truthy"
+		truthy _g
+		assert "$?" == "0" "enabled should have returned truthy"
+		truthy _h
+		assert "$?" == "0" "TRUE should have returned truthy"
+		truthy _i
+		assert "$?" == "0" "YES should have returned truthy"
+		falsey _A
+		assert "$?" == "0" "0 should have returned falsey"
+		falsey _B
+		assert "$?" == "0" "false should have returned falsey"
+		falsey _C
+		assert "$?" == "0" "an undefined variable should have returned falsey"
+		truthy _C
+		assert "$?" == "1" "an undefined variable should have NOT returned truthy"
+		truthy _D
+		assert "$?" == "1" "no should have NOT returned truthy"
+		falsey _D
+		assert "$?" == "0" "no should have returned falsey"
+		truthy _E
+		assert "$?" == "1" "off should have NOT returned truthy"
+		falsey _F
+		assert "$?" == "0" "disable should have returned falsey"
+		falsey _G
+		assert "$?" == "0" "disabled should have returned falsey"
+		falsey _H
+		assert "$?" == "0" "n should have returned falsey"
+		falsey _I
+		assert "$?" == "0" "FALSE should have returned falsey"
+		falsey _J
+		assert "$?" == "0" "NO should have returned falsey"
+	}
+
+	test_cleanup() {
+		unset _a _b _c _d _e _f _g _A _B _D _E _F _G _H _I _J
+	}
+
+	run_test_suite "truthy" : test_truthy test_cleanup
 fi

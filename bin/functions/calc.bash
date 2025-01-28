@@ -1,6 +1,7 @@
 # do simple math in the shell
 # example: calc 2+2
 # note that 'calc 4 * 23' will fail due to globbing, but 'calc 4*23' or 'calc "4 * 23"' will work
+# EDIT: Turned globbing off globally; to force globbing, use the "expand" function now. So `calc 4 * 23` works fine.
 # calc "define fac(x) { if (x == 0) return (1); return (fac(x-1) * x); }; fac(5)"
 if needs bc ; then
   calc() {
@@ -46,7 +47,10 @@ if needs bc ; then
     source_relative_once assert.bash
 
     assert "$(calc 2*4)" == 8 "simple calculations with calc should work"
+    assert "$(calc 4 * 23)" == 92 "simple calculations with calc should not glob (requires globbing to be off)"
     assert "$(calc "define fac(x) { if (x == 0) return (1); return (fac(x-1) * x); }; fac(5)")" == 120 "recursive functions with calc should work"
     assert "$(puts "define fac(x) { if (x == 0) return (1); return (fac(x-1) * x); }; fac(5)" | calc)" == 120 "piping into calc should work"
   fi
+else
+  fail "bc is not installed; can't define calc function." 0
 fi

@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+
+# Source the test reporter first
+source "$HOME/dotfiles/bin/functions/test_reporter.bash"
+
+# Find all shell scripts that might contain tests
+find_test_files() {
+  find "$HOME/dotfiles/bin" -type f \( -name "*.sh" -o -name "*.bash" \) -not -path "*/\.*"
+}
+
+# Run tests for a single file
+run_file_tests() {
+  local file="$1"
+  local test_count=0
+  local pass_count=0
+  local fail_count=0
+
+  # Source the file to get its functions
+  source "$file"
+
+  # Temporarily force RUN_DOTFILE_TESTS=true regardless of its current value
+  local old_run_tests="$RUN_DOTFILE_TESTS"
+  export RUN_DOTFILE_TESTS=true
+
+  # Run the file's tests (this will trigger any run_test_suite calls)
+  if (source "$file"); then
+    result=0
+  else
+    result=1
+  fi
+
+  # Restore the original value
+  export RUN_DOTFILE_TESTS="$old_run_tests"
+
+  return $result
+}
+
+# Main execution
+main() {
+  local total_files=0
+  local passed_files=0
+  local failed_files=0
+  local failed_files_list=()
+
+  echo "Running dotfile tests..."
+  echo "======================="
+
+  # Run tests for each file
+  while IFS= read -r file; do
+    if grep -q "run_test_suite" "$file"; then
+      ((total_files++))
+      echo -n "Testing $(basename "$file")... "
+      if run_file_tests "$file"; then
+        ((passed_files++))
+        echo -e "\033[32mPASSED\033[0m"
+      else
+        ((failed_files++))
+        echo -e "\033[31mFAILED\033[0m"
+        failed_files_list+=("$(basename "$file")")
+      fi
+    fi
+  done < <(find_test_files)
+
+  # Print summary
+  echo -e "\nTest Summary"
+  echo "============"
+  echo "Total files tested: $total_files"
+  echo -e "\033[32mPassed files: $passed_files\033[0m"
+  if [[ ${#failed_files_list[@]} -gt 0 ]]; then
+    echo -e "\033[31mFailed files: $failed_files\033[0m"
+    echo -e "\033[31mFailed tests in: ${failed_files_list[*]}\033[0m"
+  fi
+
+  # Return failure if any tests failed
+  [[ $failed_files -eq 0 ]]
+}
+
+# Run main if not being sourced
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main "$@"
+fi

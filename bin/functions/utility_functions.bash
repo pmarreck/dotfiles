@@ -13,11 +13,11 @@ export -f needs
 # check if the AWK environment variable is already set and if not, set it to frawk, gawk, or awk
 [ -z "${AWK}" ] && export AWK=$(command -v frawk || command -v gawk || command -v awk)
 
-if [ "$RUN_DOTFILE_TESTS" == "true" ]; then
+if truthy RUN_DOTFILE_TESTS; then
   source_relative_once assert.bash
+  source_relative_once test_reporter.bash
 fi
 
-# the following utility functions are duplicated from tinytestlib
 save_shellenv() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   export OLDHISTIGNORE=$HISTIGNORE
@@ -217,14 +217,13 @@ END {
 }
 export -f trim_leading_heredoc_whitespace
 
-if [ "$RUN_DOTFILE_TESTS" == "true" ]; then
-  assert "$(echo -e "  This\n  is a\n    multiline\n  string." | trim_leading_heredoc_whitespace)" == "This\nis a\n  multiline\nstring."
+if truthy RUN_DOTFILE_TESTS; then
+  test_trim_leading_heredoc() {
+    assert "$(echo -e "  This\n  is a\n    multiline\n  string." | trim_leading_heredoc_whitespace)" == "This\nis a\n  multiline\nstring."
+  }
+  run_test_suite "trim_leading_heredoc" : test_trim_leading_heredoc :
 fi
 
-# The point of this function is to unwrap word-wrapped (which should
-# really be called "line-wrapped") text that has had newlines inserted,
-# but leave intentional newlines (those without surrounding whitespace)
-# alone.
 unwrap() {
   local SED=`which sed`
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
@@ -235,9 +234,18 @@ unwrap() {
 }
 export -f unwrap
 
-# Wraps text to the current width of the terminal, or to a specified width.
-# Expects input via stdin
-# For already-wrapped text, consider using unwrap first
+if truthy RUN_DOTFILE_TESTS; then
+  test_unwrap_wrap() {
+    # test unwrap
+    assert "$(echo -e "This\nis a \nmultiline\n string." | unwrap)" == "This\nis a multiline string."
+    # test unwrap preserving double newlines
+    assert "$(echo -e "This\nis a\n\nmultiline\n string." | unwrap)" == "This\nis a\n\nmultiline string."
+    # test wrap
+    assert "$(echo -e "This is a long line that should be wrapped to width 16." | wrap 16)" == "This is a long \nline that \nshould be \nwrapped to \nwidth 16."
+  }
+  run_test_suite "unwrap_wrap" : test_unwrap_wrap :
+fi
+
 wrap() {
   # take an argument of colwidth but default to current terminal width
   local colwidth=${1:-$(tput cols)}
@@ -247,30 +255,193 @@ wrap() {
 }
 export -f wrap
 
-if [ "$RUN_DOTFILE_TESTS" == "true" ]; then
-  # test unwrap
-  assert "$(echo -e "This\nis a \nmultiline\n string." | unwrap)" == "This\nis a multiline string."
-  # test unwrap preserving double newlines
-  assert "$(echo -e "This\nis a\n\nmultiline\n string." | unwrap)" == "This\nis a\n\nmultiline string."
-  # test wrap
-  assert "$(echo -e "This is a long line that should be wrapped to width 16." | wrap 16)" == "This is a long \nline that \nshould be \nwrapped to \nwidth 16."
-fi
-
-# Is this a color TTY? Or, is one (or the lack of one) being faked for testing reasons?
 isacolortty() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   [[ "$TERM" =~ 'color' ]] && return 0 || return 1
 }
 export -f isacolortty
 
-if [ "$RUN_DOTFILE_TESTS" == "true" ]; then
-  TERM=xterm-256color isacolortty
-  assert "$?" == "0"
-  TERM=dumb isacolortty
-  assert "$?" == "1"
+if truthy RUN_DOTFILE_TESTS; then
+  test_isacolortty() {
+    TERM=xterm-256color isacolortty
+    assert "$?" == "0"
+    TERM=dumb isacolortty
+    assert "$?" == "1"
+  }
+  run_test_suite "isacolortty" : test_isacolortty :
 fi
 
-# echo has nonstandard behavior, so...
+strip_ansi() {
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  local ansiregex="s/\x1b\[[0-9;]*[a-zA-Z]//g"
+
+  if [ -t 0 ] && [ "$#" -eq 0 ]; then
+    printf "Usage: strip_ansi [text]\n"
+    printf "   or: printf '%%s' text | strip_ansi\n"
+    return 1
+  fi
+
+  if [ -t 0 ]; then
+    # Input from arguments
+    printf '%b' "$*" | $SED -E "$ansiregex"
+  else
+    # Input from pipe
+    $SED -E "$ansiregex"
+  fi
+}
+export -f strip_ansi
+
+if truthy RUN_DOTFILE_TESTS; then
+  test_strip_ansi() {
+    # Test with printf-generated ANSI sequences
+    assert "$(printf '\e[31mRed text\e[0m' | strip_ansi)" == "Red text"
+    # Test with literal ANSI sequences
+    assert "$(echo -e '\e[93mYellow text\e[0m' | strip_ansi)" == "Yellow text"
+    # Test with complex ANSI sequences
+    assert "$(printf '\e[1;31;42mBold red on green\e[0m' | strip_ansi)" == "Bold red on green"
+  }
+  run_test_suite "strip_ansi" : test_strip_ansi :
+fi
+
+elixir_js_loc() {
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  git ls-files | grep -E '\.erl|\.exs?|\.js$' | xargs cat | $SED -e '/^$/d' -e '/^ *#/d' -e '/^ *\/\//d' | wc -l
+}
+export -f elixir_js_loc
+
+open_gem() {
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  choose_editor "$(bundle show "$1")"
+}
+export -f open_gem
+
+contains() {
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [[ "$2" == "" ]] && return 0 # Empty string is contained in every string (including empty string)
+  local word
+  for word in $1; do
+    if [[ "$word" == "$2" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+export -f contains
+
+if truthy RUN_DOTFILE_TESTS; then
+  test_contains() {
+    contains "foo bar baz" "bar"
+    assert "$?" == "0"
+    contains "foo bar baz" "quux"
+    assert "$?" == "1"
+    # Empty string is contained in every string (including empty string)
+    # This follows from the mathematical principle that ε is a substring of all strings
+    contains "foo" ""
+    assert "$?" == "0"
+  }
+  run_test_suite "contains" : test_contains :
+fi
+
+edit() {
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  if contains "$(functions)" $1; then
+    EDIT=1 $1
+  else
+    choose_editor "$@"
+  fi
+}
+export -f edit
+
+ltrim() {
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  local var="$*"
+  # remove leading whitespace characters
+  var="${var#"${var%%[![:space:]]*}"}"
+  printf '%s' "$var"
+}
+export -f ltrim
+
+rtrim() {
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  local var="$*"
+  # remove trailing whitespace characters
+  var="${var%"${var##*[![:space:]]}"}"
+  printf '%s' "$var"
+}
+export -f rtrim
+
+trim() {
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  local var="$*"
+  var="$(ltrim "$var")"
+  var="$(rtrim "$var")"
+  printf '%s' "$var"
+}
+export -f trim
+
+if truthy RUN_DOTFILE_TESTS; then
+  test_trim() {
+    assert "$(ltrim "  foo  ")" == "foo  "
+    assert "$(rtrim "  foo  ")" == "  foo"
+    assert "$(trim "  foo  ")" == "foo"
+  }
+  run_test_suite "trim" : test_trim :
+fi
+
+datetime() {
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  date "+%Y-%m-%d %H:%M:%S"
+}
+export -f datetime
+
+datetime-human() {
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  date +"%A, %B %d, %Y %I:%M %p"
+}
+export -f datetime-human
+
+image_convert_to_heif() {
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  # base name of argument 1
+  # local bn="${1%.*}"
+  # ffmpeg -i "$1" -c:v libx265 -preset ultrafast -x265-params lossless=1 "${bn}.heif"
+
+  # lossless conversion, FYI
+  needs heif-enc "please install libheif" && \
+  echo_eval "heif-enc -L -p chroma=444 --matrix_coefficients=0 \"$1\""
+}
+export -f image_convert_to_heif
+
+image_convert_to_jpegxl() {
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  # base name of argument 1
+  local bn="${1%.*}"
+  local d="${JXL_DISTANCE:-0}" # 0-9 where 0 is lossless; default 0
+  local e="${JXL_EFFORT:-7}" # 0-9 where 9 is extremely slow but smallest; default 7
+
+  needs cjxl "please install the libjxl package to get the cjxl executable" && \
+  echo_eval "cjxl -d $d -e $e --lossless_jpeg=0 \"$1\" \"${bn}.jxl\""
+}
+export -f image_convert_to_jpegxl
+
+# supertop: open htop and btop at the same time in a tmux split
+# requires btop and htop to be installed
+supertop() {
+  if ! command -v nix &> /dev/null; then
+    echo "nix is not installed. Please install it first, along with btop and htop.";
+    return;
+  fi;
+
+  local session_name;
+  session_name="split_session_$$";
+
+  # Create the tmux session
+  tmux new-session -d -s "${session_name}" 'htop';
+  tmux split-window -h 'btop';
+  tmux attach-session -t "${session_name}";
+}
+export -f supertop
+
 puts() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   local print_fmt end_fmt print_spec fd newline
@@ -345,160 +516,3 @@ fail() {
   return ${2:-1}
 }
 export -f fail
-
-strip_ansi() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-  local ansiregex="s/\x1b\[[0-9;]*[a-zA-Z]//g"
-
-  if [ -t 0 ] && [ "$#" -eq 0 ]; then
-    printf "Usage: strip_ansi [text]\n"
-    printf "   or: printf '%%s' text | strip_ansi\n"
-    return 1
-  fi
-
-  if [ -t 0 ]; then
-    # Input from arguments
-    printf '%b' "$*" | $SED -E "$ansiregex"
-  else
-    # Input from pipe
-    $SED -E "$ansiregex"
-  fi
-}
-export -f strip_ansi
-
-if [ "$RUN_DOTFILE_TESTS" == "true" ]; then
-  assert "$(printf '\e[31mRed text\e[0m' | strip_ansi)" == "Red text"
-  assert "$(strip_ansi '\e[93mYellow text\e[0m')" == "Yellow text"
-fi
-
-# elixir and js lines of code count
-# removes blank lines and commented-out lines
-elixir_js_loc() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-  git ls-files | grep -E '\.erl|\.exs?|\.js$' | xargs cat | $SED -e '/^$/d' -e '/^ *#/d' -e '/^ *\/\//d' | wc -l
-}
-export -f elixir_js_loc
-
-open_gem() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-  choose_editor "$(bundle show "$1")"
-}
-export -f open_gem
-
-contains() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-  local word
-  for word in $1; do
-    if [[ "$word" == "$2" ]]; then
-      return 0
-    fi
-  done
-  return 1
-}
-export -f contains
-
-if [ "$RUN_DOTFILE_TESTS" == "true" ]; then
-  contains "foo bar baz" "bar"
-  assert "$?" == "0"
-  contains "foo bar" "quux"
-  assert "$?" == "1"
-fi
-
-# universal edit command, points back to your defined $EDITOR
-# note that there is an "edit" command in Ubuntu that I told to fuck off basically
-edit() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-  if contains "$(functions)" $1; then
-    EDIT=1 $1
-  else
-    choose_editor "$@"
-  fi
-}
-export -f edit
-
-ltrim() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-  local var="$*"
-  # remove leading whitespace characters
-  var="${var#"${var%%[![:space:]]*}"}"
-  printf '%s' "$var"
-}
-export -f ltrim
-
-rtrim() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-  local var="$*"
-  # remove trailing whitespace characters
-  var="${var%"${var##*[![:space:]]}"}"
-  printf '%s' "$var"
-}
-export -f rtrim
-
-trim() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-  local var="$*"
-  var="$(ltrim "$var")"
-  var="$(rtrim "$var")"
-  printf '%s' "$var"
-}
-export -f trim
-
-if [ "$RUN_DOTFILE_TESTS" == "true" ]; then
-  assert "$(ltrim "  foo  ")" == "foo  "
-  assert "$(rtrim "  foo  ")" == "  foo"
-  assert "$(trim "  foo  ")" == "foo"
-fi
-
-datetime() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-  date "+%Y-%m-%d %H:%M:%S"
-}
-export -f datetime
-
-datetime-human() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-  date +"%A, %B %d, %Y %I:%M %p"
-}
-export -f datetime-human
-
-image_convert_to_heif() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-  # base name of argument 1
-  # local bn="${1%.*}"
-  # ffmpeg -i "$1" -c:v libx265 -preset ultrafast -x265-params lossless=1 "${bn}.heif"
-
-  # lossless conversion, FYI
-  needs heif-enc "please install libheif" && \
-  echo_eval "heif-enc -L -p chroma=444 --matrix_coefficients=0 \"$1\""
-}
-export -f image_convert_to_heif
-
-image_convert_to_jpegxl() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-  # base name of argument 1
-  local bn="${1%.*}"
-  local d="${JXL_DISTANCE:-0}" # 0-9 where 0 is lossless; default 0
-  local e="${JXL_EFFORT:-7}" # 0-9 where 9 is extremely slow but smallest; default 7
-
-  needs cjxl "please install the libjxl package to get the cjxl executable" && \
-  echo_eval "cjxl -d $d -e $e --lossless_jpeg=0 \"$1\" \"${bn}.jxl\""
-}
-export -f image_convert_to_jpegxl
-
-# supertop: open htop and btop at the same time in a tmux split
-# requires btop and htop to be installed
-supertop() {
-  if ! command -v nix &> /dev/null; then
-    echo "nix is not installed. Please install it first, along with btop and htop.";
-    return;
-  fi;
-
-  local session_name;
-  session_name="split_session_$$";
-
-  # Create the tmux session
-  tmux new-session -d -s "${session_name}" 'htop';
-  tmux split-window -h 'btop';
-  tmux attach-session -t "${session_name}";
-}
-export -f supertop

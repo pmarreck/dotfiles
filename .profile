@@ -99,7 +99,7 @@ source_relative_once bin/functions/date_difference_days.bash
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced date_difference_days.bash"
 
 source_relative_once bin/functions/calc.bash
-[ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced calc.bash"
+# [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced calc.bash"
 
 source_relative_once bin/functions/encrypt_decrypt.sh
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced encrypt_decrypt.sh"
@@ -246,7 +246,7 @@ ram-size() {
     local memsize=$(sysctl -n hw.memsize)
     total_mem_gb=$((memsize / (1024 ** 3)))
   # If neither is available, return an error message.
-  else 
+  else
     echo "Unable to determine RAM size due to lack of $proc_meminfo or sysctl." >&2
     return 1
   fi

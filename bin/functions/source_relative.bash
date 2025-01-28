@@ -2,23 +2,22 @@
 
 # Source a file relative to the current file.
 # Only redefines it here if it's not already defined.
-# Since we need a way to reload this if editing it, we will use the same
-# global variable that is unset in the "rehash" function that reloads the dotfiles
-# and which is actually set in these functions.
-[[ -n "${_SOURCED_FILES}" ]] || \
+
+declare -f source_relative &>/dev/null || \
 source_relative() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   # _dir_name=`dirname "$0"` # doesn't work reliably
   local _dir_name=`dirname "${BASH_SOURCE[1]}"` # works in bash but not POSIX compliant sh
   local _temp_path=`cd "$_dir_name" && pwd`
   [[ -n "${_TRACE_SOURCING}" ]] && echo "Sourcing $temp_path/$1" >&2
+  [[ -n "$DEBUG_SHELLCONFIG" ]] && echo "Sourcing $_temp_path/$1 AT LEAST once (hypothetically...)" >&2
   . "$_temp_path/$1"
 }
 export -f source_relative
 
 # Define the source_relative_once function
 # export _TRACE_SOURCING=true
-[[ -n "${_SOURCED_FILES}" ]] || \
+declare -f source_relative_once &>/dev/null || \
 source_relative_once() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   [[ -n "${_TRACE_SOURCING}" ]] && local _debug_id=$RANDOM
@@ -86,6 +85,7 @@ source_relative_once() {
     _SOURCED_FILES="$_abs_path $_SOURCED_FILES"
   fi
   export _SOURCED_FILES
+  [[ -n "$DEBUG_SHELLCONFIG" ]] && echo "Sourcing $_abs_path once (hypothetically...)" >&2
   source "$_abs_path" || echo "Problem when sourcing $_abs_path" >&2
   [[ -n "${_TRACE_SOURCING}" ]] && echo "source_relative_once invocation #${_debug_id}: after sourcing \"$_abs_path\", _SOURCED_FILES is now $(wc -w <<< "$_SOURCED_FILES") long" >&2
   return 0 # or else this exits nonzero and breaks other things
