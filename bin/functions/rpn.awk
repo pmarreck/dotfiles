@@ -207,7 +207,9 @@ function peek_print() {
 	}
 }
 END {
-	if (stack_size > 0) {
+	if (stack_size > 1) {
 		print "Warning: " stack_size " items left on stack" > "/dev/stderr"
+	} else if (stack_size == 1) {
+		dot()
 	}
 }

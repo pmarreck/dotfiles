@@ -98,6 +98,10 @@ run_test() {
 69"
 	((errors += $?)) || true
 
+	# Does not error when only 1 item left on stack and assumes dot
+	test_rpn "69 1 \*" "69"
+	((errors += $?)) || true
+
 	# Error cases
 	test_rpn "+" "Error: Stack underflow"
 	((errors += $?)) || true
