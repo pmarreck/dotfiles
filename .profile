@@ -104,6 +104,9 @@ source_relative_once bin/functions/calc.bash
 source_relative_once bin/functions/encrypt_decrypt.sh
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced encrypt_decrypt.sh"
 
+source_relative_once bin/functions/job_control.bash
+# [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced job_control.bash"
+
 source_relative_once bin/functions/randompass.sh
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced randompass.sh"
 
