@@ -164,9 +164,9 @@ alias fuck='sudo $(history -p \!\!)'
 alias beep='tput bel'
 
 # forget curl vs wget; just get a URL, follow any redirects, and output it to stdout, reliably
-alias get='wget --xattr --show-progress -c -q -O - --'
+alias get='wget --xattr -c --progress=bar -O - --'
 # but also sometimes just download a file as-is
-alias getfile='wget --xattr --show-progress -c -q --'
+alias getfile='wget --xattr -c --progress=bar --'
 # wanted to add the ability to handle multiple files...
 getfiles() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
@@ -177,7 +177,7 @@ getfiles() {
 
 alias newsshkey='ssh-keygen -t ed25519 -C lumbergh@gmail.com'
 alias copysshpubkey='cat ~/.ssh/id_ed25519.pub | clip' # depends on 'clip' function
-alias consoleconfig='code $WEZTERM_CONFIG_FILE'
+alias consoleconfig='edit $WEZTERM_CONFIG_FILE'
 
 # quick CLI editor shortcut
 needs micro "please install the micro editor"
@@ -188,6 +188,12 @@ alias e='choose_editor'
 
 # forkbomb!
 # alias forkbomb=':(){ :|:& };:'
+
+# z-library attribution removal from filename
+# Since I usually leave globbing off, but need it on here, this checks globbing state
+# and restores it to whatever it was after, cleaning up after itself.
+# alias remove_z_library_attrib='rsg="+"; if [[ $- == *f* ]]; then rsg="-"; fi; set +f; for file in *\ \(Z-Library\).*; do mv "$file" "${file/ (Z-Library)/}"; done; set ${rsg}f; unset rsg'
+# ...Converted to a function in .bashrc, kept here for posterity
 
 # GIT shortcuts
 needs git "please install git"

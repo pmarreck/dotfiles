@@ -1,72 +1,234 @@
 #!/usr/bin/env elixir
 
-# example usage: env | name-value-to-table
+# example usage: env | name-value-to-table [key_column_width] [value_column_width]
+# or: name-value-to-table --help
+# or: name-value-to-table --test
 
 defmodule FormatTabular do
   def get_stdin_data do
     :stdio
-    |> IO.read(:all)
+    |> IO.read(:eof)
   end
 
   def name_value_pairs_to_keyword_list(str) do
     str
     |> String.split("\n", trim: true)
+    |> Enum.filter(fn line ->
+      # Only include lines that match valid variable name pattern followed by equals sign
+      # This will filter out multiline bash function exports while allowing all valid Bash characters
+      # Bash allows letters, numbers, underscores, and question marks in function names
+      Regex.match?(~r/^[a-zA-Z_][a-zA-Z0-9_\?]*(%%)?=/, line)
+    end)
     |> Enum.map(fn line ->
       # IO.inspect line
-      [key, value] = String.split(line, "=", parts: 2)
-      {key, value}
+        [key, value] = String.split(line, "=", parts: 2)
+        {key, value}
     end)
   end
 
   def max_length_key_value(keyword_list) do
     max_length_key = keyword_list
-    |> Enum.max_by(fn {k, _v} -> String.length(k) end)
+    |> Enum.max_by(fn {k, _v} -> String.length(k) end, fn -> {"", ""} end)
     |> elem(0)
     |> String.length
     max_length_value = keyword_list
-    |> Enum.max_by(fn {_k, v} -> String.length(v) end)
+    |> Enum.max_by(fn {_k, v} -> String.length(v) end, fn -> {"", ""} end)
     |> elem(1)
     |> String.length
     {max_length_key, max_length_value}
   end
 
-  def truncate_with_ellipsis(str, max_len \\ 40) do
+  def truncate_with_ellipsis(str, max_len \\ 45) do
     if String.length(str) > max_len do
-      String.slice(str, 0..(max_len - 1)) <> "…"
+      String.slice(str, 0..(max_len - 2)) <> "…"
     else
       str
     end
   end
 
-  def keyword_list_to_table(keyword_list, max_len \\ 40) do
+  def keyword_list_to_table(keyword_list, max_length_key \\ 45, max_length_value \\ nil) do
+    max_length_value = if max_length_value, do: max_length_value, else: max_length_key * 2
     {max_key, max_val} = max_length_key_value(keyword_list)
     # IO.inspect {max_key, max_val}
-    key_col_width = if max_key > max_len do
-      max_len
+    key_col_width = if max_key > max_length_key do
+      max_length_key
     else
       max_key
     end
-    val_col_width = if max_val > max_len do
-      max_len
+    val_col_width = if max_val > max_length_value do
+      max_length_value
     else
       max_val
     end
     keyword_list
     |> Enum.each(fn {k,v} ->
-      IO.puts "#{(String.pad_trailing(truncate_with_ellipsis(k, max_len), key_col_width))} | #{String.pad_trailing(truncate_with_ellipsis(v, max_len), val_col_width)}"
+      IO.puts "#{(String.pad_trailing(truncate_with_ellipsis(k, max_length_key), key_col_width))} | #{String.pad_trailing(truncate_with_ellipsis(v, max_length_value), val_col_width)}"
     end)
   end
 
+  def run_tests do
+    IO.puts("Running tests for name-value-to-table...")
+
+    # Test 1: Basic name-value parsing
+    test_input = "FOO=bar\nBAZ=qux\nLONG_NAME=some_value"
+    result = name_value_pairs_to_keyword_list(test_input)
+    expected = [{"FOO", "bar"}, {"BAZ", "qux"}, {"LONG_NAME", "some_value"}]
+    assert_equal(result, expected, "Basic name-value parsing")
+
+    # Test 2: Filtering non-matching lines
+    test_input = "FOO=bar\nNot a valid line\nBAZ=qux"
+    result = name_value_pairs_to_keyword_list(test_input)
+    expected = [{"FOO", "bar"}, {"BAZ", "qux"}]
+    assert_equal(result, expected, "Filtering non-matching lines")
+
+    # Test 3: Handling empty input
+    test_input = ""
+    result = name_value_pairs_to_keyword_list(test_input)
+    expected = []
+    assert_equal(result, expected, "Handling empty input")
+
+    # Test 4: Truncation with ellipsis
+    result = truncate_with_ellipsis("This is a very long string that should be truncated", 20)
+    expected = "This is a very long…"
+    assert_equal(result, expected, "Truncation with ellipsis")
+
+    # Test 5: No truncation needed
+    result = truncate_with_ellipsis("Short string", 20)
+    expected = "Short string"
+    assert_equal(result, expected, "No truncation needed")
+
+    # Test 6: Bash exported function names (keep first line only)
+    test_input = """
+    BASH_FUNC_whatismyip%%=() {  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return;
+     needs awk "Please install awk";
+     if command -v ifconfig > /dev/null 2>&1; then
+     if [[ "$(uname)" == "Darwin" ]]; then
+     ip=$(ifconfig | grep "inet " | grep -v 127.0.0.1 | awk '{print $2}');
+     else
+     ip=$(ifconfig | grep -oP '(?<=inet\\s)\\d+(\.\\d+){3}' | grep -v 127.0.0.1);
+     fi;
+     else
+     if command -v ip > /dev/null 2>&1; then
+     ip=$(ip addr show | grep -oP '(?<=inet\\s)\\d+(\.\\d+){3}' | grep -v 127.0.0.1);
+     else
+     echo "Neither ifconfig nor ip command is available.";
+     return 1;
+     fi;
+     fi;
+     if [[ -z "$ip" ]]; then
+     echo "Could not determine local IP address." 1>&2;
+     return 1;
+     else
+     echo "$ip";
+     fi
+    }
+    FOO=bar
+    """
+    result = name_value_pairs_to_keyword_list(test_input)
+    expected = [
+      {"BASH_FUNC_whatismyip%%", "() {  [ -n \"${EDIT}\" ] && unset EDIT && edit_function \"${FUNCNAME[0]}\" \"$BASH_SOURCE\" && return;"},
+      {"FOO", "bar"}
+    ]
+    assert_equal(result, expected, "Bash exported function names")
+
+    # Test 7: Multiple Bash exported functions
+    test_input = """
+    BASH_FUNC_func1%%=() { echo "func1"; }
+    BASH_FUNC_func2%%=() {
+      echo "func2";
+      return 0;
+    }
+    NORMAL_VAR=value
+    """
+    result = name_value_pairs_to_keyword_list(test_input)
+    expected = [
+      {"BASH_FUNC_func1%%", "() { echo \"func1\"; }"},
+      {"BASH_FUNC_func2%%", "() { "},
+      {"NORMAL_VAR", "value"}
+    ]
+    assert_equal(result, expected, "Multiple Bash exported functions")
+
+    IO.puts("\nAll tests completed successfully!")
+  end
+
+  defp assert_equal(actual, expected, test_name) do
+    if actual == expected do
+      IO.puts("✓ #{test_name}")
+    else
+      IO.puts("✗ #{test_name}")
+      IO.puts("  Expected: #{inspect(expected)}")
+      IO.puts("  Got:      #{inspect(actual)}")
+      System.halt(1)
+    end
+  end
+
+  def print_help do
+    IO.puts """
+    name-value-to-table - Format name=value pairs as a table
+
+    USAGE:
+      command-generating-name-value-pairs | name-value-to-table [KEY_WIDTH] [VALUE_WIDTH]
+      name-value-to-table --test
+      name-value-to-table --help
+
+    ARGUMENTS:
+      KEY_WIDTH     Optional width for the key column (default: 45)
+      VALUE_WIDTH   Optional width for the value column (default: 2*KEY_WIDTH)
+
+    OPTIONS:
+      --help        Display this help message
+      --test        Run the test suite
+
+    EXAMPLES:
+      env | name-value-to-table
+      env | name-value-to-table 30
+      env | name-value-to-table 30 60
+    """
+  end
 end
 
-max_col_width = case OptionParser.parse(System.argv(), strict: [max_col_width: :integer]) do
-  {[max_col_width: max_col_width], _, _} -> max_col_width
-  _ -> 40
+# Parse command line arguments
+case System.argv() do
+  ["--help"] ->
+    FormatTabular.print_help()
+
+  ["-h"] ->
+    FormatTabular.print_help()
+
+  ["--test"] ->
+    FormatTabular.run_tests()
+
+  args ->
+    # Parse positional arguments for column widths
+    {key_width, value_width} = case args do
+      [key_str | [value_str | _]] ->
+        {
+          case Integer.parse(key_str) do
+            {num, _} -> num
+            :error -> 45
+          end,
+          case Integer.parse(value_str) do
+            {num, _} -> num
+            :error -> nil
+          end
+        }
+
+      [key_str] ->
+        {
+          case Integer.parse(key_str) do
+            {num, _} -> num
+            :error -> 45
+          end,
+          nil
+        }
+
+      [] ->
+        {45, nil}
+    end
+
+    # Process input
+    FormatTabular.get_stdin_data()
+    |> FormatTabular.name_value_pairs_to_keyword_list()
+    |> Enum.sort()
+    |> FormatTabular.keyword_list_to_table(key_width, value_width)
 end
-
-FormatTabular.get_stdin_data()
-|> FormatTabular.name_value_pairs_to_keyword_list()
-|> Enum.sort()
-|> FormatTabular.keyword_list_to_table(max_col_width)
-
-#TODO: add tests

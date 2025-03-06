@@ -43,7 +43,8 @@ run_test_suite() {
   test_count=$((pass_count + fail_count))
 
   # If this is the last test suite being run, show a summary
-  if [[ "$test_name" == "$(basename "$0")" ]]; then
+  # Use -- to ensure basename treats $0 as a filename even if it starts with a dash
+  if [[ "$test_name" == "$(basename -- "$0")" ]]; then
     printf "\nTest Summary:\n"
     printf "Total Tests: %d\n" $test_count
     printf "\033[32mPassed: %d\033[0m\n" $pass_count

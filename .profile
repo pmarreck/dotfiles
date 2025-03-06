@@ -110,6 +110,9 @@ source_relative_once bin/functions/job_control.bash
 source_relative_once bin/functions/randompass.sh
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced randompass.sh"
 
+source_relative_once bin/functions/random_color.bash
+# [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced random_color.bash"
+
 source_relative_once bin/functions/executables.bash
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced executables.bash"
 

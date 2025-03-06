@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 
-ANSI="\033["
-TXTYLW='0;33m' # Yellow
-TXTRED='0;31m' # Red
-TXTRST='0m'
+ANSI=${ANSI:-"\e["}
+TXTRED=${TXTRED:-"0;31m"}
+TXTYLW=${TXTYLW:-"0;33m"}
+TXTRST=${TXTRST:-"m"}
 
+>/dev/null declare -F warn || \
 warn() {
   echo -e "${ANSI}${TXTYLW}$1${ANSI}${TXTRST}" 1>&2
 }
 
+>/dev/null declare -F err || \
 err() {
   echo -e "${ANSI}${TXTRED}$1${ANSI}${TXTRST}" 1>&2
 }

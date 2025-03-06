@@ -1,72 +1,801 @@
 #!/usr/bin/env bash
 
-# graceful dependency enforcement
-# Usage: needs <executable> [provided by <packagename>]
-# only redefines it here if it's not already defined
->/dev/null declare -F needs || \
-needs() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-  local bin=$1
-  shift
-  command -v "$bin" >/dev/null 2>&1 || { echo >&2 "I require $bin but it's not installed or in PATH; $*"; return 1; }
+### jpegxl: a bash function to make conversions to/from jpegxl easier!
+
+# Silence function - runs a command silently but preserves exit code
+silence() {
+  "$@" >/dev/null 2>&1
+  return $?
 }
 
->/dev/null declare -F debug || \
+# Check for required dependencies
+check_dependencies() {
+  local missing_deps=()
+
+  # Check for JPEG XL tools
+  if ! silence command -v cjxl; then
+    missing_deps+=("cjxl")
+  fi
+
+  if ! silence command -v djxl; then
+    missing_deps+=("djxl")
+  fi
+
+  # Check for ImageMagick
+  if ! silence command -v magick; then
+    missing_deps+=("ImageMagick")
+  fi
+
+  # Determine which stat command to use
+  if silence command -v gstat; then
+    # Use GNU stat from coreutils if available (macOS with homebrew/nix)
+    STAT="gstat"
+  elif silence stat --version; then
+    # Use GNU stat if available (Linux)
+    STAT="stat"
+  else
+    # No GNU stat available
+    missing_deps+=("GNU stat (gstat)")
+  fi
+  export STAT
+
+  # Determine which date command to use
+  if silence command -v gdate; then
+    # Use GNU date from coreutils if available (macOS with homebrew/nix)
+    DATE="gdate"
+  elif silence date --version; then
+    # Use GNU date if available (Linux)
+    DATE="date"
+  else
+    # No GNU date available
+    missing_deps+=("GNU date (gdate)")
+  fi
+  export DATE
+
+  # Determine which numfmt command to use
+  if silence command -v gnumfmt; then
+    # Use GNU numfmt from coreutils if available (macOS with homebrew/nix)
+    NUMFMT="gnumfmt"
+  elif silence numfmt --version; then
+    # Use GNU numfmt if available (Linux)
+    NUMFMT="numfmt"
+  else
+    # No GNU numfmt available, but this is optional
+    NUMFMT=""
+  fi
+  export NUMFMT
+
+  if [[ ${#missing_deps[@]} -gt 0 ]]; then
+    echo "Error: Missing required dependencies: ${missing_deps[*]}" >&2
+    if [[ " ${missing_deps[*]} " =~ " GNU stat (gstat) " || " ${missing_deps[*]} " =~ " GNU date (gdate) " ]]; then
+      echo "Note: This script requires GNU versions of stat and date." >&2
+      echo "On macOS, install them with: brew install coreutils" >&2
+      echo "Or with Nix/nix-darwin: nix-shell -p coreutils-prefixed (or add to global flake.nix)" >&2
+    fi
+    return 1
+  fi
+
+  return 0
+}
+
+# Debug output function
 debug() {
   [ -n "$DEBUG" ] && echo "DEBUG: $*" >&2
 }
 
-jpegxl() {
-  # DEBUG=true
-  needs cjxl provided by jpeg-xl
+# Create a temporary file with a unique name
+create_temp_file() {
+  local extension=$1
+  local temp_file
 
-  JPEGXL_DEFAULT_EFFORT=${JPEGXL_DEFAULT_EFFORT:-10}
-  debug "Default effort JPEGXL_DEFAULT_EFFORT set to: $JPEGXL_DEFAULT_EFFORT"
-  JPEGXL_DEFAULT_DISTANCE=${JPEGXL_DEFAULT_DISTANCE:-1}
-  debug "Default distance JPEGXL_DEFAULT_DISTANCE set to: $JPEGXL_DEFAULT_DISTANCE"
+  # Create a temporary file with X's at the end (as required by mktemp)
+  local base_temp=$(mktemp -t jpegxl)
 
-  for filepath in "$@"; do
-    if [[ -f "$filepath" ]]; then
-      extension="${filepath##*.}"
-      extension="${extension,,}"  # Convert to lowercase
-      debug "File extension: $extension"
-      output="${filepath%.*}.jxl"
-      debug "Output file: $output"
-      if [[ "$extension" == "png" || "$extension" == "gif" ]]; then
-        debug "Extension is png or gif. Converting $filepath to $output"
-        debug "cjxl -e $JPEGXL_DEFAULT_EFFORT -d $JPEGXL_DEFAULT_DISTANCE \"$filepath\" \"$output\"" >&2
-        cjxl -e $JPEGXL_DEFAULT_EFFORT -d $JPEGXL_DEFAULT_DISTANCE "$filepath" "$output"
-      elif [[ "$extension" == "jpg" || "$extension" == "jpeg" ]]; then
-        debug "Extension is jpg or jpeg. Converting $filepath to $output"
-        # let jpegs recompress losslessly; this is the default, but if you remove this param, it complains
-        debug "cjxl -e $JPEGXL_DEFAULT_EFFORT --lossless_jpeg=1 \"$filepath\" \"$output\""
-        cjxl -e $JPEGXL_DEFAULT_EFFORT --lossless_jpeg=1 "$filepath" "$output"
-      elif [[ "$extension" == "webp" ]]; then
-        debug "Extension is webp. Converting $filepath to $output"
-        needs cwebp provided by libwebp
-        temp_png=$(mktemp --suffix=.png)
-        debug "cwebp -o \"$temp_png\" \"$filepath\""
-        cwebp -o "$temp_png" "$filepath"
-        # since webp is already lossy-compressed, we can use a little lower distance
-        cjxl -e $JPEGXL_DEFAULT_EFFORT -d $(( JPEGXL_DEFAULT_DISTANCE + 1 )) "$temp_png" "$output"
-        rm "$temp_png"
-      elif [[ "$extension" == "heic" ]]; then
-        debug "Extension is heic. Converting $filepath to $output"
-        needs heif-dec provided by libheif
-        temp_png=$(mktemp --suffix=.png)
-        debug "temp_png: $temp_png"
-        # note that rotation when converting heic to png is often not respected; out of scope for this script
-        debug "heif-dec \"$filepath\" \"$temp_png\""
-        heif-dec "$filepath" "$temp_png"
-        # since heic is already lossy-compressed, we can use a little lower distance
-        debug "cjxl -e $JPEGXL_DEFAULT_EFFORT -d $(( JPEGXL_DEFAULT_DISTANCE + 1 )) \"$temp_png\" \"$output\""
-        cjxl -e $JPEGXL_DEFAULT_EFFORT -d $(( JPEGXL_DEFAULT_DISTANCE + 1 )) "$temp_png" "$output"
-        [ -n "$DEBUG" ] || rm "$temp_png"
+  # Rename it to have the correct extension
+  temp_file="${base_temp}.${extension}"
+  mv "$base_temp" "$temp_file"
+
+  debug "Created temporary file: $temp_file"
+  echo "$temp_file"
+}
+
+# Compute the output path for a file
+compute_output_path() {
+  local input_file="$1"
+  local extension="${input_file##*.}"
+  extension="${extension,,}"  # Convert to lowercase
+  local to_format="${2:-jxl}"  # Default output format is jxl
+  
+  # Replace the extension with the target format
+  local output_path="${input_file%.*}.${to_format}"
+  echo "$output_path"
+}
+
+# Display compression ratio
+display_compression_ratio() {
+  local original_file="$1"
+  local new_file="$2"
+  
+  # Get file sizes
+  local original_size=$(gstat -c "%s" "$original_file")
+  local new_size=$(gstat -c "%s" "$new_file")
+  
+  # Calculate percentage
+  local percentage=$(echo "scale=2; 100 * $new_size / $original_size" | bc)
+  
+  # Format sizes for display
+  local original_size_display="$original_size"
+  local new_size_display="$new_size"
+  
+  # Use human-readable sizes if gnumfmt is available
+  if command -v gnumfmt &> /dev/null; then
+    original_size_display=$(echo "$original_size" | gnumfmt --to=iec)
+    new_size_display=$(echo "$new_size" | gnumfmt --to=iec)
+  fi
+  
+  # Display the result
+  echo "$original_file → $new_file ($new_size_display, ${percentage}% of original $original_size_display)"
+}
+
+print_help() {
+  cat << EOF
+Usage: jpegxl [OPTIONS] FILE...
+
+Convert images to and from JPEG XL format.
+
+Options:
+  --help, -h               Show this help message and exit
+  --effort=N               Set compression effort (1-10, default: 10)
+  --distance=N             Set compression distance (0-15, default: 1)
+                           0 is lossless, higher values = more lossy
+  --quality=N              Set compression quality (1-100, default: 93)
+                           Equivalent to setting distance, but in a more familiar scale
+  --lossy                  Use lossy compression (default: lossless)
+  --lossless               Use lossless compression
+  --no-hdr                 Disable HDR preservation (default: enabled)
+  --basic                  Use basic compression settings (effort=5, lossy)
+  --to=FORMAT              Convert JXL to another format (jpeg, png, etc.)
+  --preserve-timestamps    Preserve original file creation/modification timestamps
+  test                     Run self-test
+
+Environment Variables:
+  JPEGXL_DEFAULT_EFFORT    Set default compression effort (1-10, default: 10)
+  JPEGXL_DEFAULT_DISTANCE  Set default compression distance (0-15, default: 1)
+  DEBUG                    Enable debug output
+
+Examples:
+  # Convert a JPEG to JXL (lossless by default)
+  jpegxl image.jpg
+
+  # Convert a JPEG to JXL with lossy compression
+  jpegxl --lossy image.jpg
+
+  # Convert a JPEG to JXL with specific quality
+  jpegxl --quality=80 image.jpg
+
+  # Convert a JXL back to JPEG
+  jpegxl --to=jpeg image.jxl
+
+  # Convert a JXL to PNG
+  jpegxl --to=png image.jxl
+
+  # Preserve original file timestamps
+  jpegxl --preserve-timestamps image.jpg
+
+Notes:
+  - By default, the script preserves as much data as possible (lossless, HDR, metadata)
+  - Use --lossy or --basic to sacrifice quality for compression
+  - Use --no-hdr to disable HDR preservation
+
+Dependencies:
+  - JPEG XL tools (cjxl, djxl)
+  - ImageMagick (convert, identify)
+  - ExifTool (optional, for better metadata handling)
+EOF
+}
+
+run_test() {
+  # Check dependencies
+  check_dependencies || return 1
+
+  local test_dir=$(mktemp -d)
+  local test_passed=true
+  local failure_count=0
+
+  echo "Running jpegxl test in temporary directory: $test_dir"
+
+  # Create test images
+  echo "Creating test images..."
+  (
+    cd "$test_dir"
+    # Create test images for different formats
+    magick -size 100x100 gradient:blue-red "$test_dir/test_png.png"
+    magick -size 100x100 xc:none -fill red -draw "circle 50,50 20,30" "$test_dir/alpha_test_png.png"
+    magick -size 100x100 gradient:green-yellow "$test_dir/test_jpg.jpg"
+    magick "$test_dir/test_jpg.jpg" -set exif:BrightnessValue "2.5" "$test_dir/exif_test_jpg.jpg"
+    magick -size 100x100 gradient:red-green "$test_dir/test_webp.webp"
+    magick -size 100x100 xc:none -fill blue -draw "circle 50,50 20,30" "$test_dir/alpha_test_webp.webp"
+  )
+
+  # Test conversion
+  echo "Testing conversion..."
+  (
+    cd "$test_dir"
+    # Basic conversion tests
+    echo "Testing PNG conversion..."
+    DEBUG=true jpegxl test_png.png
+    
+    echo "Testing JPG conversion..."
+    DEBUG=true jpegxl test_jpg.jpg
+
+    # Verify PNG and JPG conversion
+    if [[ -f "test_png.jxl" ]] && [[ -f "test_jpg.jxl" ]]; then
+      echo "PNG and JPG conversion: OK"
+    else
+      echo "ERROR: Failed to convert PNG or JPG to JXL"
+      test_passed=false
+      ((failure_count++))
+    fi
+
+    # Test WebP conversion with more debugging
+    echo "Testing WebP conversion..."
+    DEBUG=true jpegxl test_webp.webp
+
+    # Test WebP with alpha channel
+    echo "Testing WebP with alpha channel..."
+    DEBUG=true jpegxl alpha_test_webp.webp
+
+    # Verify WebP conversion
+    if [[ -f "test_webp.jxl" ]]; then
+      echo "WebP conversion: OK"
+    else
+      echo "ERROR: Failed to convert WebP"
+      test_passed=false
+      ((failure_count++))
+    fi
+
+    # Verify WebP alpha channel preservation
+    if [[ -f "alpha_test_webp.jxl" ]]; then
+      echo "WebP alpha channel preserved: OK"
+    else
+      echo "ERROR: Failed to preserve WebP alpha channel"
+      test_passed=false
+      ((failure_count++))
+    fi
+
+    # Test alpha channel preservation
+    silence jpegxl alpha_test_png.png
+    if [[ -f "alpha_test_png.jxl" ]]; then
+      echo "PNG alpha channel preserved: OK"
+    else
+      echo "ERROR: Failed to convert PNG with alpha to JXL"
+      test_passed=false
+      ((failure_count++))
+    fi
+
+    # Test EXIF preservation
+    echo "Testing EXIF preservation..."
+    DEBUG=true jpegxl exif_test_jpg.jpg
+    if [[ -f "exif_test_jpg.jxl" ]]; then
+      # Check if EXIF data is preserved
+      exif_value=$(exiftool -BrightnessValue exif_test_jpg.jxl 2>/dev/null)
+      debug "EXIF value: $exif_value"
+      if echo "$exif_value" | grep -q "2.5"; then
+        echo "EXIF data preserved: OK"
       else
-        echo "Unsupported file type: $filepath"
+        echo "ERROR: EXIF data not preserved (expected: 2.5, got: $exif_value)"
+        test_passed=false
+        ((failure_count++))
       fi
     else
-      echo "File not found: $filepath"
+      echo "ERROR: Failed to convert JPEG with EXIF to JXL"
+      test_passed=false
+      ((failure_count++))
+    fi
+
+    # Test timestamp preservation
+    echo "Testing timestamp preservation..."
+    # Use an existing PNG file for timestamp test
+    cp test_png.png timestamp_test.png
+    touch -t 202001010000.00 timestamp_test.png
+    DEBUG=true jpegxl --preserve-timestamps timestamp_test.png
+    if [[ -f "timestamp_test.jxl" ]]; then
+      local orig_time=$(gstat -c "%Y" timestamp_test.png)
+      local new_time=$(gstat -c "%Y" timestamp_test.jxl)
+      if [[ "$orig_time" == "$new_time" ]]; then
+        echo "Timestamp preserved: OK"
+      else
+        echo "ERROR: Timestamp not preserved (original: $orig_time, new: $new_time)"
+        test_passed=false
+        ((failure_count++))
+      fi
+    else
+      echo "ERROR: Failed to convert with timestamp preservation"
+      test_passed=false
+      ((failure_count++))
+    fi
+
+    # Test bidirectional conversion
+    # PNG
+    if [[ -f "test_png.jxl" ]]; then
+      silence jpegxl --to=png test_png.jxl
+      if [[ -f "test_png.png" ]]; then
+        echo "PNG bidirectional conversion: OK"
+      else
+        echo "ERROR: Failed to convert JXL back to PNG"
+        test_passed=false
+        ((failure_count++))
+      fi
+    else
+      echo "ERROR: Cannot test PNG bidirectional conversion, JXL file not created"
+      test_passed=false
+      ((failure_count++))
+    fi
+
+    # JPEG
+    if [[ -f "test_jpg.jxl" ]]; then
+      silence jpegxl --to=jpeg test_jpg.jxl
+      if [[ -f "test_jpg.jpeg" ]]; then
+        echo "JPEG bidirectional conversion: OK"
+      else
+        echo "ERROR: Failed to convert JXL back to JPEG"
+        test_passed=false
+        ((failure_count++))
+      fi
+    else
+      echo "ERROR: Cannot test JPEG bidirectional conversion, JXL file not created"
+      test_passed=false
+      ((failure_count++))
+    fi
+
+    # WebP
+    if [[ -f "test_webp.jxl" ]]; then
+      silence jpegxl --to=webp test_webp.jxl
+      if [[ -f "test_webp.webp" ]]; then
+        echo "WebP bidirectional conversion: OK"
+      else
+        echo "ERROR: Failed to convert JXL back to WebP"
+        test_passed=false
+        ((failure_count++))
+      fi
+    else
+      echo "ERROR: Cannot test WebP bidirectional conversion, JXL file not created"
+      test_passed=false
+      ((failure_count++))
+    fi
+  )
+
+  if [[ "$test_passed" == "true" ]]; then
+    echo "Test PASSED: Successfully converted test images to and from JXL format"
+  else
+    echo "Test FAILED: $failure_count tests did not work as expected"
+  fi
+
+  echo "Cleaning up test directory..."
+  rm -rf "$test_dir"
+
+  return $failure_count
+}
+
+jpegxl() {
+  # Check dependencies
+  check_dependencies || return 1
+
+  # Default settings
+  local effort=10
+  local distance=1
+  local lossy=false
+  local preserve_hdr=true
+  local no_hdr=false
+  local basic=false
+  local preserve_timestamps=false
+  local to_format=""
+  local quality=90
+  local output=""  # Initialize output variable
+  local original_output="" # Initialize original output variable
+  local file=""
+
+  # Parse arguments
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -h|--help)
+        print_help
+        return 0
+        ;;
+      test)
+        run_test
+        return $?
+        ;;
+      --effort=*)
+        effort="${1#*=}"
+        ;;
+      --distance=*)
+        distance="${1#*=}"
+        ;;
+      --quality=*)
+        quality="${1#*=}"
+        ;;
+      --lossy)
+        lossy=true
+        ;;
+      --lossless)
+        lossy=false
+        ;;
+      --no-hdr)
+        no_hdr=true
+        ;;
+      --basic)
+        basic=true
+        ;;
+      --preserve-timestamps)
+        preserve_timestamps=true
+        ;;
+      --to=*)
+        to_format="${1#*=}"
+        ;;
+      -*)
+        echo "Unknown option: $1" >&2
+        print_help
+        return 1
+        ;;
+      *)
+        # Assume this is the file path
+        if [[ -z "$file" ]]; then
+          file="$1"
+        else
+          echo "Error: Only one input file can be processed at a time" >&2
+          print_help
+          return 1
+        fi
+        ;;
+    esac
+    shift
+  done
+
+  # If no file is provided, show help
+  if [[ -z "$file" ]]; then
+    echo "Error: No input file specified" >&2
+    print_help
+    return 1
+  fi
+
+  # Debug mode
+  if [[ "$DEBUG" == "true" ]]; then
+    debug "Effort set to: $effort"
+    debug "Distance set to: $distance"
+    debug "Lossy mode: $lossy"
+    debug "Preserve HDR: $preserve_hdr"
+    debug "Basic mode: $basic"
+    debug "Preserve timestamps: $preserve_timestamps"
+  fi
+
+  # Check if file exists
+  if [[ ! -f "$file" ]]; then
+    echo "Error: File not found: $file" >&2
+    return 1
+  fi
+
+  # Get file extension
+  local extension="${file##*.}"
+  extension="${extension,,}"  # Convert to lowercase
+  debug "File extension: $extension"
+
+  # Create a temporary PNG for formats that need conversion
+  local temp_files=()
+  local original_file="$file"
+  local conversion_done=false
+  local original_output=""
+
+  # Set output path for all formats
+  if [[ "$extension" != "jxl" || -n "$to_format" ]]; then
+    # For non-JXL files or when converting JXL to another format
+    if [[ "$extension" != "jxl" ]]; then
+      # For non-JXL files, set output to .jxl
+      output=$(compute_output_path "$file" "jxl")
+    fi
+    # For JXL files, output is already set above when handling --to
+  fi
+  debug "Output file: $output"
+
+  # Skip processing if we're converting from JXL to another format
+  if [[ "$extension" == "jxl" && -n "$to_format" ]]; then
+    # Handle JXL to other format conversion
+    output=$(compute_output_path "$file" "$to_format")
+    debug "Output file: $output"
+    conversion_done=true
+
+    case "$to_format" in
+      jpeg|jpg)
+        debug "Converting JXL to JPEG"
+        if ! djxl -q "$quality" "$file" "$output" 2>/tmp/djxl_error.log; then
+          echo "ERROR: Failed to convert JXL to JPEG" >&2
+          cat /tmp/djxl_error.log >&2
+          return 1
+        fi
+        ;;
+      png)
+        debug "Converting JXL to PNG"
+        if ! djxl "$file" "$output" 2>/tmp/djxl_error.log; then
+          echo "ERROR: Failed to convert JXL to PNG" >&2
+          cat /tmp/djxl_error.log >&2
+          return 1
+        fi
+        ;;
+      webp)
+        debug "Converting JXL to WebP"
+        # First convert to PNG as intermediate format
+        local temp_png=$(create_temp_file "png")
+        temp_files+=("$temp_png")
+        
+        if ! djxl "$file" "$temp_png" 2>/tmp/djxl_error.log; then
+          echo "ERROR: Failed to convert JXL to PNG (intermediate)" >&2
+          cat /tmp/djxl_error.log >&2
+          return 1
+        fi
+        
+        # Then convert PNG to WebP
+        if ! magick "$temp_png" -quality "$quality" "$output" 2>/tmp/magick_error.log; then
+          echo "ERROR: Failed to convert PNG to WebP" >&2
+          cat /tmp/magick_error.log >&2
+          return 1
+        fi
+        ;;
+      *)
+        echo "Unsupported output format: $to_format" >&2
+        return 1
+        ;;
+    esac
+    
+    # Preserve timestamps if requested
+    if [[ "$preserve_timestamps" == "true" ]]; then
+      debug "Preserving timestamps from $file to $output"
+      touch -r "$file" "$output"
+    fi
+    
+    # Display compression ratio if not suppressed
+    if [[ "$suppress_ratio" != "true" ]]; then
+      display_compression_ratio "$file" "$output"
+    fi
+    
+    return 0
+  fi
+
+  # Create a temporary PNG for formats that need conversion
+  if [[ "$extension" == "webp" || "$extension" == "heic" ]]; then
+    # Save the original output path
+    original_output="$output"
+    debug "Setting output path: $original_output"
+    
+    temp_png=$(create_temp_file "png")
+    temp_files+=("$temp_png")
+    debug "Converting $extension to PNG using ImageMagick: $file -> $temp_png"
+    # Add explicit error checking for the ImageMagick conversion
+    if ! magick "$file" "$temp_png" 2>/tmp/magick_error.log; then
+      echo "ERROR: Failed to convert $extension to PNG using ImageMagick" >&2
+      echo "Error details:" >&2
+      cat /tmp/magick_error.log >&2
+      # Try with a different approach for WebP files
+      if [[ "$extension" == "webp" ]]; then
+        echo "Trying alternative WebP conversion method..." >&2
+        if command -v dwebp &>/dev/null; then
+          debug "Using dwebp for conversion"
+          if dwebp "$file" -o "$temp_png"; then
+            echo "Successfully converted using dwebp" >&2
+          else
+            return 1
+          fi
+        else
+          # Try with a different ImageMagick approach
+          debug "Trying with different ImageMagick options"
+          if magick convert "$file" -alpha on "$temp_png" 2>/tmp/magick_error2.log; then
+            echo "Successfully converted using alternative ImageMagick options" >&2
+          else
+            echo "Alternative conversion also failed:" >&2
+            cat /tmp/magick_error2.log >&2
+            return 1
+          fi
+        fi
+      else
+        return 1
+      fi
+    fi
+    # Verify the temporary PNG was created
+    if [[ ! -f "$temp_png" ]]; then
+      echo "ERROR: Temporary PNG file was not created: $temp_png" >&2
+      return 1
+    fi
+    debug "Temporary PNG file size: $($STAT -c "%s" "$temp_png") bytes"
+    file="$temp_png"
+    extension="png"
+    # Use the original output path for WebP/HEIC files
+    output="$original_output"
+    debug "Using temporary file: $file"
+    debug "Output will be saved to: $output"
+  fi
+
+  # Flag to track if we've already done the conversion
+  local conversion_done=false
+
+  # Determine conversion settings based on file type and options
+  if [[ "$extension" == "jpg" || "$extension" == "jpeg" ]]; then
+    if [[ "$lossy" == "true" ]]; then
+      # For lossy JPEG conversion with HDR preservation, use the PNG path
+      if [[ "$preserve_hdr" == "true" && "$no_hdr" == "false" ]]; then
+        debug "Using lossless mode with HDR preservation for JPEG"
+        local temp_png2
+        temp_png2=$(create_temp_file "png")
+        if [[ -z "$temp_png2" || ! -f "$file" ]]; then
+          echo "ERROR: Failed to create temporary PNG file for JPEG HDR preservation" >&2
+          return 1
+        fi
+        temp_files+=("$temp_png2")
+        debug "Converting to PNG with HDR preservation"
+        magick "$file" -colorspace RGB "$temp_png2"
+
+        debug "cjxl -e $effort -d $distance -x color_space=RGB_D65_SRG_Rel_Lin \"$temp_png2\" \"$output\""
+        if ! cjxl -e $effort -d $distance -x color_space=RGB_D65_SRG_Rel_Lin "$temp_png2" "$output" 2>/tmp/cjxl_error.log; then
+          echo "WARNING: Failed to encode with HDR preservation, falling back to standard encoding" >&2
+          cat /tmp/cjxl_error.log >&2
+          # Try without HDR preservation
+          if ! cjxl -e $effort -d $distance "$temp_png2" "$output" 2>/tmp/cjxl_fallback_error.log; then
+            echo "ERROR: All encoding methods failed" >&2
+            cat /tmp/cjxl_fallback_error.log >&2
+            return 1
+          fi
+        fi
+        conversion_done=true
+      else
+        # Standard lossy mode without HDR preservation
+        debug "Using lossy mode for JPEG conversion"
+        debug "cjxl -e $effort -d $distance \"$file\" \"$output\""
+        cjxl -e $effort -d $distance "$file" "$output"
+        conversion_done=true
+      fi
+    else
+      # Default to lossless JPEG transcoding (preserves metadata)
+      debug "Using lossless JPEG transcoding"
+      debug "cjxl -e $effort --lossless_jpeg=1 \"$file\" \"$output\""
+      cjxl -e $effort --lossless_jpeg=1 "$file" "$output"
+      conversion_done=true
+    fi
+  fi
+
+  # Only proceed with other formats if we haven't done the conversion yet
+  if [[ "$conversion_done" == "false" ]]; then
+    if [[ "$extension" == "png" || "$extension" == "gif" ]]; then
+      if [[ "$lossy" == "true" ]]; then
+        if [[ "$preserve_hdr" == "true" && "$no_hdr" == "false" ]]; then
+          debug "Using lossless mode with HDR preservation for PNG/GIF"
+          local temp_png2
+          temp_png2=$(create_temp_file "png")
+          if [[ -z "$temp_png2" || ! -f "$file" ]]; then
+            echo "ERROR: Failed to create temporary PNG file for PNG/GIF HDR preservation" >&2
+            return 1
+          fi
+          temp_files+=("$temp_png2")
+          debug "Converting to PNG with HDR preservation"
+          # Use a more robust conversion method
+          if ! magick "$file" -alpha on -colorspace RGB "$temp_png2" 2>/tmp/magick_hdr_error.log; then
+            echo "WARNING: Failed to convert with HDR preservation, falling back to standard conversion" >&2
+            cat /tmp/magick_hdr_error.log >&2
+            # Try without HDR preservation
+            if ! magick "$file" "$temp_png2" 2>/tmp/magick_fallback_error.log; then
+              echo "ERROR: All conversion methods failed" >&2
+              cat /tmp/magick_fallback_error.log >&2
+              return 1
+            fi
+          fi
+
+          debug "cjxl -e $effort -d $distance -x color_space=RGB_D65_SRG_Rel_Lin \"$temp_png2\" \"$output\""
+          if ! cjxl -e $effort -d $distance -x color_space=RGB_D65_SRG_Rel_Lin "$temp_png2" "$output" 2>/tmp/cjxl_error.log; then
+            echo "WARNING: Failed to encode with HDR preservation, falling back to standard encoding" >&2
+            cat /tmp/cjxl_error.log >&2
+            # Try without HDR preservation
+            if ! cjxl -e $effort -d $distance "$temp_png2" "$output" 2>/tmp/cjxl_fallback_error.log; then
+              echo "ERROR: All encoding methods failed" >&2
+              cat /tmp/cjxl_fallback_error.log >&2
+              return 1
+            fi
+          fi
+          conversion_done=true
+        else
+          # Use lossy mode for PNG/GIF without HDR preservation
+          debug "Using lossy mode for PNG/GIF conversion"
+          debug "cjxl -e $effort -d $distance \"$file\" \"$output\""
+          cjxl -e $effort -d $distance "$file" "$output"
+          conversion_done=true
+        fi
+      else
+        # Default to lossless for PNG/GIF without HDR preservation
+        debug "Using lossless mode for PNG/GIF conversion"
+        debug "cjxl -e $effort -d 0 \"$file\" \"$output\""
+        cjxl -e $effort -d 0 "$file" "$output"
+        conversion_done=true
+      fi
+    fi
+
+    # Only proceed with other formats if we still haven't done the conversion
+    if [[ "$conversion_done" == "false" ]]; then
+      # For other formats, use lossless by default
+      # Skip HDR preservation for JXL files (they already have HDR if present)
+      if [[ "$preserve_hdr" == "true" && "$no_hdr" == "false" && "$extension" != "jxl" ]]; then
+        # With HDR preservation for other formats
+        debug "Using $([ "$lossy" == "true" ] && echo "lossy" || echo "lossless") mode with HDR preservation for $extension"
+        local temp_png2
+        temp_png2=$(create_temp_file "png")
+        if [[ -z "$temp_png2" || ! -f "$file" ]]; then
+          echo "ERROR: Failed to create temporary PNG file for $extension HDR preservation" >&2
+          return 1
+        fi
+        temp_files+=("$temp_png2")
+        debug "Converting to PNG with HDR preservation"
+        magick "$file" -colorspace RGB "$temp_png2"
+
+        if [[ "$lossy" == "true" ]]; then
+          debug "cjxl -e $effort -d $distance -x color_space=RGB_D65_SRG_Rel_Lin \"$temp_png2\" \"$output\""
+          if ! cjxl -e $effort -d $distance -x color_space=RGB_D65_SRG_Rel_Lin "$temp_png2" "$output" 2>/tmp/cjxl_error.log; then
+            echo "WARNING: Failed to encode with HDR preservation, falling back to standard encoding" >&2
+            cat /tmp/cjxl_error.log >&2
+            # Try without HDR preservation
+            if ! cjxl -e $effort -d $distance "$temp_png2" "$output" 2>/tmp/cjxl_fallback_error.log; then
+              echo "ERROR: All encoding methods failed" >&2
+              cat /tmp/cjxl_fallback_error.log >&2
+              return 1
+            fi
+          fi
+        else
+          debug "cjxl -e $effort -d 0 -x color_space=RGB_D65_SRG_Rel_Lin \"$temp_png2\" \"$output\""
+          if ! cjxl -e $effort -d 0 -x color_space=RGB_D65_SRG_Rel_Lin "$temp_png2" "$output" 2>/tmp/cjxl_error.log; then
+            echo "WARNING: Failed to encode with HDR preservation, falling back to standard encoding" >&2
+            cat /tmp/cjxl_error.log >&2
+            # Try without HDR preservation
+            if ! cjxl -e $effort -d 0 "$temp_png2" "$output" 2>/tmp/cjxl_fallback_error.log; then
+              echo "ERROR: All encoding methods failed" >&2
+              cat /tmp/cjxl_fallback_error.log >&2
+              return 1
+            fi
+          fi
+        fi
+      else
+        # Without HDR preservation for other formats
+        debug "Using $([ "$lossy" == "true" ] && echo "lossy" || echo "lossless") mode for $extension conversion"
+        if [[ "$lossy" == "true" ]]; then
+          debug "cjxl -e $effort -d $distance \"$file\" \"$output\""
+          cjxl -e $effort -d $distance "$file" "$output"
+        else
+          debug "cjxl -e $effort -d 0 \"$file\" \"$output\""
+          cjxl -e $effort -d 0 "$file" "$output"
+        fi
+      fi
+    fi
+  fi
+
+  # Preserve timestamps if requested
+  if [[ "$preserve_timestamps" == "true" ]]; then
+    debug "Preserving timestamps from $file to $output"
+    touch -r "$file" "$output"
+  fi
+
+  # Show compression ratio
+  if [[ -f "$output" ]]; then
+    original_size=$($STAT -c "%s" "$file")
+    new_size=$($STAT -c "%s" "$output")
+    ratio=$(awk "BEGIN {printf \"%.2f\", ($new_size / $original_size) * 100}")
+    if [[ -n "$NUMFMT" ]]; then
+      original_size_human=$($NUMFMT --to=iec "$original_size" 2>/dev/null)
+      new_size_human=$($NUMFMT --to=iec "$new_size" 2>/dev/null)
+      echo "$file → $output (${new_size_human}, ${ratio}% of original ${original_size_human})"
+    else
+      # If numfmt is not available, use plain bytes
+      echo "$file → $output (${new_size} bytes, ${ratio}% of original ${original_size} bytes)"
+    fi
+  fi
+
+  # Clean up temporary files
+  for temp_file in "${temp_files[@]}"; do
+    if [[ -f "$temp_file" ]]; then
+      debug "Removing temporary file: $temp_file"
+      rm -f "$temp_file"
     fi
   done
 }

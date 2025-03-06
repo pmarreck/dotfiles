@@ -13,11 +13,12 @@ ltrim() {
 # }
 
 # alerting in yellow to stderr
-ANSI="\e["
-TXTDFT="0;39m"
-TXTYLW="0;33m"
+ANSI=${ANSI:-"\e["}
+TXTRED=${TXTRED:-"0;31m"}
+TXTYLW=${TXTYLW:-"0;33m"}
+TXTRST=${TXTRST:-"m"}
 note() {
-  >&2 printf "$ANSI$TXTYLW%s$ANSI$TXTDFT\n" "$@"
+  >&2 printf "%s%s%s\n" "$ANSI$TXTYLW" "$@" "$ANSI$TXTRST"
 }
 
 get_git_status() {

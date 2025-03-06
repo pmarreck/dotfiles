@@ -24,9 +24,9 @@ sudo find . -type f -o -type d -o -type l | while read -r file; do
   file="${file#./}"
 
   # Get the user, group and permissions of the file
-  user=$(sudo stat -c "%U" "$file")
-  group=$(sudo stat -c "%G" "$file")
-  perm=$(sudo stat -c "%a" "$file")
+  user=$(sudo gstat -c "%U" "$file")
+  group=$(sudo gstat -c "%G" "$file")
+  perm=$(sudo gstat -c "%a" "$file")
 
   # Create the directory if it doesn't exist
   mkdir -p "${curdir}/log_perms-$timestamp/$group/$user"

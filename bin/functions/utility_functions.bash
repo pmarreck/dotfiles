@@ -1,3 +1,5 @@
+source_relative_once truthy.bash
+
 # graceful dependency enforcement
 # Usage: needs <executable> [provided by <packagename>]
 # only redefines it here if it's not already defined
@@ -427,9 +429,9 @@ export -f image_convert_to_jpegxl
 # supertop: open htop and btop at the same time in a tmux split
 # requires btop and htop to be installed
 supertop() {
-  if ! command -v nix &> /dev/null; then
-    echo "nix is not installed. Please install it first, along with btop and htop.";
-    return;
+  if ! command -v tmux &> /dev/null; then
+    err "tmux is not installed. Please install it first, along with btop and htop.";
+    return 1;
   fi;
 
   local session_name;
@@ -446,20 +448,42 @@ puts() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   local print_fmt end_fmt print_spec fd newline
   print_fmt=''
+  end_fmt=''
   print_spec='%s'
   newline='\n'
   fd='1'
   while true; do
     case "${1}" in
+      (--help)
+        cat << EOF
+Usage: puts [OPTIONS] [TEXT]
+
+A utility function for formatted text output.
+
+Options:
+  --help     Display this help message
+  --green    Print text in green color
+  --yellow   Print text in yellow color
+  --orange   Print text in orange color
+  --red      Print text in red color
+  --stderr   Output to stderr instead of stdout
+  -n         Do not append a newline
+  -e         Interpret backslash escapes (like \\n, \\t)
+  -en, -ne   Combine -e and -n options
+  -E         Do not interpret backslash escapes (default)
+EOF
+        return 0
+        ;;
       (--green)   print_fmt='\e[32m'; end_fmt='\e[0m' ;;
       (--yellow)  print_fmt='\e[93m'; end_fmt='\e[0m' ;;
+      (--orange)  print_fmt='\e[38;5;208m'; end_fmt='\e[0m' ;;
       (--red)     print_fmt='\e[31m'; end_fmt='\e[0m' ;;
       (--stderr)  fd='2' ;;
       (-n)        newline='' ;;
       (-e)        print_spec='%b' ;;
       (-en|-ne)   print_spec='%b'; newline='' ;;
       (-E)        print_spec='%s' ;;
-      (-*)        die "Unknown format specifier: ${1}" ;;
+      (-*)        fail "Unknown format specifier: ${1}" ;;
       (*)         break ;;
     esac
     shift
@@ -492,6 +516,12 @@ yellow_text() {
 }
 export -f yellow_text
 
+orange_text() {
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  puts --orange -en "$*"
+}
+export -f orange_text
+
 echo_eval() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   yellow_text "$*\n" >&2
@@ -516,3 +546,28 @@ fail() {
   return ${2:-1}
 }
 export -f fail
+
+# mute stdout and stderr and only return the return code
+success?() {
+  "$@" >/dev/null 2>&1
+  return $?
+}
+export -f success?
+# mute stdout and stderr and only return the return code
+error?() {
+  ! success? "$@"
+  return $?
+}
+export -f error?
+
+remove_z_library_attrib() {
+  local files
+  IFS=$'\n' files=($(expand "*\ \(Z-Library\).*"))
+  if [[ ${#files[@]} -eq 1 && "${files[0]}" == "*\ (Z-Library).*" ]]; then
+    return  # No matches
+  fi
+  for file in "${files[@]}"; do
+    mv "$file" "${file/ (Z-Library)/}"
+  done
+}
+export -f remove_z_library_attrib

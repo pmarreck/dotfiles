@@ -41,8 +41,9 @@ export NODE_PATH=/usr/local/lib/node
 
 # ANSI color escape-code constants
 # On SGR: https://en.wikipedia.org/wiki/ANSI_escape_code#SGR
-export ANSI="\e["
+export ANSI="\e[" # open ANSI escape sequence
 export TXT="0;"
+export TXT256="38;5;" # 256 color palette
 export BLD="1;"
 export UND="4;"
 export NOUND="24;"
@@ -50,6 +51,7 @@ export BLK=30
 export RED=31
 export GRN=32
 export YLW=33
+export ORG=208 # 256 color palette orange color
 export BLU=34
 export MAG=35
 export CYN=36
@@ -60,6 +62,7 @@ export TXTBLK="$TXT$BLK$SGR" # Black - Regular
 export TXTRED="$TXT$RED$SGR" # Red
 export TXTGRN="$TXT$GRN$SGR" # Green
 export TXTYLW="$TXT$YLW$SGR" # Yellow
+export TXTORG="$TXT256$ORG$SGR" # Orange... Note, 256 color
 export TXTBLU="$TXT$BLU$SGR" # Blue
 export TXTMAG="$TXT$MAG$SGR" # Magenta
 export TXTCYN="$TXT$CYN$SGR" # Cyan
@@ -90,7 +93,7 @@ export BAKMAG="$(($MAG+10))$SGR" # Magenta
 export BAKCYN="$(($CYN+10))$SGR" # Cyan
 export BAKWHT="$(($WHT+10))$SGR" # White
 export BAKDFT="$(($DFT+10))$SGR" # Default
-export TXTRST="$SGR"          # Text Reset, disable coloring
+export TXTRST="$SGR"          # Text Reset
 
 # Pager config (ex., for git diff output)
 #E=quit at first EOF
@@ -100,8 +103,9 @@ export TXTRST="$SGR"          # Text Reset, disable coloring
 #-x2=two spaces per tab
 export LESS="-EQRX -x2"
 
-# Color terminals
-export COLORTERM=truecolor
+# Color terminals, default to truecolor unless otherwise set
+export COLORTERM=${COLORTERM:-truecolor}
+
 # For the great "micro" editor
 export MICRO_TRUECOLOR=1
 
@@ -118,18 +122,35 @@ hyperlink() {
   printf "$2"
   printf '\e]8;;\e\\\n'
 }
+export -f hyperlink
 
 # alerting in yellow to stderr
 note() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   >&2 printf "$ANSI$TXTYLW%s$ANSI$TXTDFT\n" "$@"
 }
+export -f note
 
-# warning in red to stderr
+# warning in orange to stderr
 warn() {
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  >&2 printf "$ANSI$TXTORG%s$ANSI$TXTDFT\n" "$@"
+}
+export -f warn
+
+# error in red to stderr
+err() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   >&2 printf "$ANSI$TXTRED%s$ANSI$TXTDFT\n" "$@"
 }
+export -f err
+
+fail() {
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  err "$@"
+  exit 1
+}
+export -f fail
 
 # Ruby environment tweaking
 # export RUBY_GC_HEAP_INIT_SLOTS=1000000
@@ -158,6 +179,7 @@ warn() {
 export PS4='$0:$LINENO+ '
 
 # shut up, macos, zsh isn't significantly better enough than bash to warrant switching
+# (and you only did it because of the licensing difference, anyway)
 # (If this is unset on macos, it will keep reminding you to switch to zsh)
 if [ "$PLATFORM" = "osx" ]; then
   export BASH_SILENCE_DEPRECATION_WARNING=1

@@ -1,0 +1,972 @@
+#!/usr/bin/env bash
+
+# set -euo pipefail
+
+success? () {
+  "$@" > /dev/null 2>&1;
+  return $?
+}
+
+# Parse command-line arguments
+SCAN_DIR="."  # Default to current directory
+SHOW_PROGRESS=true
+SCAN_ONLY=false
+PRECONFIRM=false
+RUN_TESTS=false
+RESUME_FROM=""
+UPDATE_INTERVAL=10  # Update progress every 10 files
+TOTAL_FILES=0
+DUPLICATES_FOUND=0
+CURRENT_FILE=""
+PROGRESS_STATUS=""
+TERM_WIDTH=120  # Default terminal width
+
+usage() {
+  echo "Usage: $(basename "$0") [OPTIONS] [DIRECTORY]"
+  echo
+  echo "Deduplicate files in DIRECTORY using APFS cloning."
+  echo
+  echo "Options:"
+  echo "  --help          Show this help message and exit"
+  echo "  --noprogress    Don't show progress during scanning"
+  echo "  --scanonly      Only scan for duplicates, don't ask to deduplicate"
+  echo "  --preconfirm    Automatically confirm deduplication"
+  echo "  --test          Run the test suite"
+  echo "  --resume-from FILE  Resume deduplication from a previous duplicates file"
+  echo "  --term-width WIDTH  Set terminal width (default: 120)"
+  echo
+  echo "If DIRECTORY is not specified, the current directory is used by default."
+  exit 1
+}
+
+clone_checker_c_source() {
+  awk 'p;/^__clone_checker.c__$/{p=1}' "${BASH_SOURCE[0]}"
+}
+
+TMPDIR="$(mktemp -d)"
+
+compile_clone_checker() {
+  local TMPDIR="${TMPDIR:-$(mktemp -d)}"
+  # check to see if it exists already
+  if [ -f "$TMPDIR/clone_checker" ]; then
+    echo "$TMPDIR/clone_checker"
+    return
+  fi
+  local TMPSRC="$TMPDIR/clone_checker.c"
+  clone_checker_c_source > "$TMPSRC"
+  gcc "$TMPSRC" -o "$TMPDIR/clone_checker"
+  rm "$TMPSRC"
+  chmod +x "$TMPDIR/clone_checker"
+  echo "$TMPDIR/clone_checker"
+}
+
+clone_checker() {
+  export CLONE_CHECKER="${CLONE_CHECKER:-$(compile_clone_checker)}"
+  "$CLONE_CHECKER" "$@"
+}
+
+# Function to print debug messages if DEBUG is set
+debug() {
+  if [[ -n "${DEBUG:-}" ]]; then
+    echo >&2 "DEBUG: $*"
+  fi
+}
+
+ANSI='\e['
+TXTRED='1;31'
+TXTDFT='0;39'
+SGR='m'
+err() {
+  >&2printf "$ANSI$TXTRED$SGR%s$ANSI$TXTDFT$SGR\n" "$@"
+}
+
+# Process command-line arguments
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --help)
+      usage
+      ;;
+    --noprogress)
+      SHOW_PROGRESS=false
+      shift
+      ;;
+    --scanonly)
+      SCAN_ONLY=true
+      shift
+      ;;
+    --preconfirm)
+      PRECONFIRM=true
+      shift
+      ;;
+    --test)
+      RUN_TESTS=true
+      shift
+      ;;
+    --resume-from)
+      RESUME_FROM="$2"
+      shift 2
+      ;;
+    --term-width)
+      TERM_WIDTH="$2"
+      shift 2
+      ;;
+    -*)
+      echo "Unknown option: $1"
+      usage
+      ;;
+    *)
+      SCAN_DIR="$1"
+      shift
+      ;;
+  esac
+done
+
+# Dependencies check
+success? gum -v || { echo "Error: 'gum' is required."; exit 1; }
+success? xxhsum -V || { echo "Error: 'xxHash' is required."; exit 1; }
+NUMFMT=gnumfmt
+if success? numfmt --version; then
+  NUMFMT=numfmt
+fi
+success? $NUMFMT --version || { echo "Error: 'numfmt' or 'gnumfmt' is required."; exit 1; }
+export NUMFMT
+success? gcc -v || { echo "Error: 'gcc' is required."; exit 1; }
+
+# Function to check if two files are cloned on APFS
+# Returns 0 (true) if they are cloned, 1 (false) if not
+are_files_cloned() {
+  local file1="$1"
+  local file2="$2"
+
+  # Check if both files exist
+  [[ ! -f "$file1" || ! -f "$file2" ]] && return 1
+
+  local clone_result=$(clone_checker "$file1" "$file2")
+  # The clone checker binary outputs 1 if they are clones and 0 if not
+  if [[ "$clone_result" == "1" ]]; then
+    return 0
+  else
+    return 1
+  fi
+}
+
+# Run test suite if requested
+run_tests() {
+  echo "Running test suite..."
+
+  # Create test directories
+  TEST_DIR=$(mktemp -d)
+  TEST_DUPES_FILE=$(mktemp)
+
+  echo "Creating test files..."
+
+  # Create test files
+  mkdir -p "$TEST_DIR/original"
+  mkdir -p "$TEST_DIR/duplicate"
+
+  # Create a set of duplicate files
+  echo "content1" > "$TEST_DIR/original/file1.txt"
+  echo "content2" > "$TEST_DIR/original/file2.txt"
+  echo "content3" > "$TEST_DIR/original/file3.txt"
+  echo "content1" > "$TEST_DIR/duplicate/file1_copy.txt"
+  echo "content2" > "$TEST_DIR/duplicate/file2_copy.txt"
+  echo "content3" > "$TEST_DIR/duplicate/file3_copy.txt"
+
+  # Create an empty file (should be skipped)
+  touch "$TEST_DIR/empty.txt"
+
+  # Test 1: Test scan-only functionality
+  echo "Test 1: Testing scan-only functionality..."
+  OUTPUT=$(bash "$0" --noprogress --scanonly "$TEST_DIR")
+
+  echo "Checking scan results..."
+
+  # Extract the number of duplicate sets and files from the output
+  SETS_FOUND=$(echo "$OUTPUT" | grep "Duplicate Sets Found" | awk '{print $4}')
+  DUPES_FOUND=$(echo "$OUTPUT" | grep "Duplicate Files Found" | awk '{print $4}')
+
+  # Check if the correct number of duplicate sets and files were found
+  if [[ "$SETS_FOUND" -eq 3 ]]; then
+    echo "✅ Test passed: Found correct number of duplicate sets"
+  else
+    echo "❌ Test failed: Expected 3 duplicate sets, found $SETS_FOUND"
+    exit 1
+  fi
+
+  if [[ "$DUPES_FOUND" -eq 3 ]]; then
+    echo "✅ Test passed: Found correct number of duplicate files"
+  else
+    echo "❌ Test failed: Expected 3 duplicate files, found $DUPES_FOUND"
+    exit 1
+  fi
+
+  # Check if empty files were skipped
+  if ! grep -q "empty.txt" <<< "$OUTPUT"; then
+    echo "✅ Test passed: Empty files were correctly skipped"
+  else
+    echo "❌ Test failed: Empty files were not skipped"
+    exit 1
+  fi
+
+  # Test 2: Test preconfirm functionality
+  echo "Test 2: Testing preconfirm functionality..."
+
+  # First, verify that cp -c performs cloning
+  echo "Verifying that cp -c performs cloning..."
+  TEST_ORIGINAL="$TEST_DIR/original/test_clone_original.txt"
+  TEST_CLONE="$TEST_DIR/original/test_clone.txt"
+  echo "test content" > "$TEST_ORIGINAL"
+  cp -c "$TEST_ORIGINAL" "$TEST_CLONE"
+
+  # Verify content is preserved
+  if [[ "$(cat "$TEST_CLONE")" == "test content" ]]; then
+    echo "✅ Test passed: cp -c preserves file content"
+  else
+    echo "❌ Test failed: cp -c did not preserve file content"
+    exit 1
+  fi
+
+  # Run deduplication with preconfirm
+  bash "$0" --noprogress --preconfirm "$TEST_DIR" > /dev/null
+
+  # Verify that files were deduplicated
+  if are_files_cloned "$TEST_DIR/original/file1.txt" "$TEST_DIR/duplicate/file1_copy.txt"; then
+    echo "✅ Test passed: Preconfirm option automatically performed deduplication"
+  else
+    echo "❌ Test failed: Preconfirm option did not perform deduplication"
+    exit 1
+  fi
+
+  # Test 3: Test resume functionality
+  echo "Test 3: Testing resume functionality..."
+
+  # Create new test files for resume test
+  echo "content4" > "$TEST_DIR/original/file4.txt"
+  echo "content5" > "$TEST_DIR/original/file5.txt"
+  echo "content6" > "$TEST_DIR/original/file6.txt"
+  echo "content4" > "$TEST_DIR/duplicate/file4_copy.txt"
+  echo "content5" > "$TEST_DIR/duplicate/file5_copy.txt"
+  echo "content6" > "$TEST_DIR/duplicate/file6_copy.txt"
+
+  # Create a duplicates file
+  cat > "$TEST_DUPES_FILE" << EOF
+Original: $TEST_DIR/original/file4.txt
+Duplicate: $TEST_DIR/duplicate/file4_copy.txt
+Original: $TEST_DIR/original/file5.txt
+Duplicate: $TEST_DIR/duplicate/file5_copy.txt
+Original: $TEST_DIR/original/file6.txt
+Duplicate: $TEST_DIR/duplicate/file6_copy.txt
+EOF
+
+  # Run deduplication with resume
+  bash "$0" --noprogress --resume-from "$TEST_DUPES_FILE" > /dev/null
+
+  # Verify that files were deduplicated
+  if are_files_cloned "$TEST_DIR/original/file4.txt" "$TEST_DIR/duplicate/file4_copy.txt"; then
+    echo "✅ Test passed: Resume option successfully deduplicated files"
+  else
+    echo "❌ Test failed: Resume option did not deduplicate files"
+    exit 1
+  fi
+
+  # Verify that files are properly cloned
+  for i in 4 5 6; do
+    if are_files_cloned "$TEST_DIR/original/file${i}.txt" "$TEST_DIR/duplicate/file${i}_copy.txt"; then
+      echo "✅ Test passed: Files are properly cloned after resume deduplication"
+    else
+      echo "❌ Test failed: Files are not properly cloned after resume deduplication"
+      exit 1
+    fi
+  done
+
+  # Test 4: Test metadata preservation
+  echo "Test 4: Testing metadata preservation..."
+
+  # Create test files with different metadata
+  echo "metadata test" > "$TEST_DIR/original/metadata.txt"
+  echo "metadata test" > "$TEST_DIR/duplicate/metadata_copy.txt"
+
+  # Set different permissions and timestamps on the duplicate
+  chmod 600 "$TEST_DIR/original/metadata.txt"
+  chmod 644 "$TEST_DIR/duplicate/metadata_copy.txt"
+
+  # Set a different timestamp on the duplicate (1 hour in the past)
+  PAST_TIME=$(/bin/date -v-1H +"%Y%m%d%H%M.%S")
+  touch -t "$PAST_TIME" "$TEST_DIR/duplicate/metadata_copy.txt"
+
+  # Save the original metadata
+  ORIG_PERMS=$(stat -f "%p" "$TEST_DIR/duplicate/metadata_copy.txt")
+  ORIG_MTIME=$(stat -f "%m" "$TEST_DIR/duplicate/metadata_copy.txt")
+
+  # Create a duplicates file for the metadata test
+  cat > "$TEST_DUPES_FILE" << EOF
+Original: $TEST_DIR/original/metadata.txt
+Duplicate: $TEST_DIR/duplicate/metadata_copy.txt
+EOF
+
+  # Run deduplication with resume
+  bash "$0" --noprogress --resume-from "$TEST_DUPES_FILE" > /dev/null
+
+  # Verify that metadata was preserved
+  NEW_PERMS=$(stat -f "%p" "$TEST_DIR/duplicate/metadata_copy.txt")
+  NEW_MTIME=$(stat -f "%m" "$TEST_DIR/duplicate/metadata_copy.txt")
+
+  if [[ "$NEW_PERMS" == "$ORIG_PERMS" ]]; then
+    echo "✅ Test passed: File permissions were preserved after deduplication"
+  else
+    echo "❌ Test failed: File permissions were not preserved (original: $ORIG_PERMS, new: $NEW_PERMS)"
+    exit 1
+  fi
+
+  # Allow a small tolerance for timestamp comparison (within 2 seconds)
+  MTIME_DIFF=$((NEW_MTIME - ORIG_MTIME))
+  if [[ ${MTIME_DIFF#-} -lt 2 ]]; then
+    echo "✅ Test passed: File modification time was preserved after deduplication"
+  else
+    echo "❌ Test failed: File modification time was not preserved (diff: $MTIME_DIFF seconds)"
+    exit 1
+  fi
+
+  echo "Cleaning up test directories..."
+  rm -rf "$TEST_DIR"
+  rm -f "$TEST_DUPES_FILE"
+
+  echo "Test suite completed."
+  exit 0
+}
+
+# Run tests if requested
+if [[ "$RUN_TESTS" == true ]]; then
+  run_tests
+fi
+
+# Temp file for storing duplicates
+DUPES_LIST="${DUPES_LIST:-$(mktemp -t dupes_list.XXXXXX)}"
+
+# Variables for progress tracking
+CURRENT_FILE=""
+PROGRESS_STATUS=""
+
+# Cleanup function
+cleanup() {
+  echo -e "\nCleaning up..."
+  # Clear the progress line
+  printf "\r\033[K"
+  echo "Exiting."
+  exit 1
+}
+
+# Set up trap for Ctrl+C and other termination signals
+trap cleanup SIGINT SIGTERM EXIT
+
+# Create a temporary file for metadata preservation
+METADATA_REF=$(mktemp)
+trap 'rm -f "$METADATA_REF"; cleanup' EXIT
+
+# TUI function to show progress without sleeping
+show_progress() {
+  if [[ "$SHOW_PROGRESS" != true ]]; then
+    return
+  fi
+
+  # Get terminal width
+  local term_width
+  term_width=$(tput cols 2>/dev/null || echo 80)
+  TERM_WIDTH=$term_width
+  debug "Terminal width detected as $term_width"
+
+  # Calculate elapsed time and rate
+  local current_time=$(date +%s)
+  local elapsed=$((current_time - START_TIME))
+  local rate=0
+  if [[ $elapsed -gt 0 && $TOTAL_FILES -gt 0 ]]; then
+    rate=$((TOTAL_FILES / elapsed))
+  fi
+
+  # Create progress message
+  local progress_msg="Files scanned: $TOTAL_FILES | Duplicates: $DUPLICATES_FOUND | Rate: ${rate}/s"
+
+  # If we have a current file, add it to the message
+  if [[ -n "$CURRENT_FILE" ]]; then
+    # Truncate the path if it's too long
+    local max_path_length=$((term_width - ${#progress_msg} - 10))
+    if [[ ${#CURRENT_FILE} -gt $max_path_length && $max_path_length -gt 10 ]]; then
+      local truncated_path="...${CURRENT_FILE:(-$max_path_length)}"
+      progress_msg="$progress_msg | Current: $truncated_path"
+    elif [[ $max_path_length -gt 10 ]]; then
+      progress_msg="$progress_msg | Current: $CURRENT_FILE"
+    fi
+  fi
+
+  # Print with clear to end of line
+  printf "\r%s\033[K" "$progress_msg"
+}
+
+# Count lines in a file
+count_lines() {
+  wc -l < "$1" | tr -d ' '
+}
+
+# Step 1: Scan and identify duplicates
+declare -A FILE_HASHES
+declare -A HASH_PATHS
+declare -A DUPLICATE_SETS
+declare -A SIZE_GROUPS
+TOTAL_FILES=0
+DUPLICATES_FOUND=0
+DUPLICATE_SETS_COUNT=0
+POTENTIAL_SAVINGS=0
+START_TIME=$(date +%s)
+DUPES_BUFFER=""
+BUFFER_COUNT=0
+MAX_BUFFER=100
+
+# Function to flush the duplicates buffer to the file
+flush_dupes_buffer() {
+  if [[ -n "$DUPES_BUFFER" ]]; then
+    echo -n "$DUPES_BUFFER" >> "$DUPES_LIST"
+    DUPES_BUFFER=""
+    BUFFER_COUNT=0
+  fi
+}
+
+echo "Duplicate file list will be accrued at: $DUPES_LIST (in case you wish to tail -f or resume applying it after --scanonly)"
+echo "Scanning directory: $SCAN_DIR"
+# Start progress display if enabled
+show_progress
+
+# Use process substitution instead of a pipeline to avoid subshell variable scope issues
+if [[ -n "$RESUME_FROM" ]]; then
+  # Resume from a previous duplicates file
+  echo "Resuming from previous duplicates file: $RESUME_FROM"
+  echo "Deduplicating..."
+
+  # Count total lines for progress tracking
+  TOTAL_LINES=$(count_lines "$RESUME_FROM")
+  CURRENT_LINE=0
+  DEDUPLICATED=0
+
+  while IFS= read -r line; do
+    ((CURRENT_LINE++))
+    show_dedup_progress "$CURRENT_LINE" "$TOTAL_LINES"
+
+    if [[ "$line" == "Original:"* ]]; then
+      CURRENT_ORIGINAL="${line#Original: }"
+    elif [[ "$line" == "Duplicate:"* ]]; then
+      DUPLICATE="${line#Duplicate: }"
+      if [[ -f "$CURRENT_ORIGINAL" && -f "$DUPLICATE" && "$CURRENT_ORIGINAL" != "$DUPLICATE" ]]; then
+        # Display what we're working on
+        if [[ "$SHOW_PROGRESS" != true ]]; then
+          echo -e "\nDeduplicating:"
+          echo "  Original: $CURRENT_ORIGINAL"
+          echo "  Duplicate: $DUPLICATE"
+        fi
+
+        if deduplicate_file "$CURRENT_ORIGINAL" "$DUPLICATE" ""; then
+          ((POTENTIAL_SAVINGS+=$(stat -f %z "$DUPLICATE")))
+        fi
+      fi
+    fi
+  done < "$RESUME_FROM"
+
+  # Clear the progress line
+  if [[ "$SHOW_PROGRESS" == true ]]; then
+    printf "\r\033[K"
+  fi
+
+  echo "Deduplication complete! Deduplicated $DEDUPLICATED files."
+  echo "Potential space savings: $($NUMFMT --to=iec-i --suffix=B --format="%.1f" $POTENTIAL_SAVINGS)"
+  exit 0
+fi
+
+while read -r file; do
+  ((TOTAL_FILES++))
+  CURRENT_FILE="$file"
+  
+  # Show progress every 100 files
+  if [[ $((TOTAL_FILES % 100)) -eq 0 ]]; then
+    show_progress
+  fi
+
+  # Get file size
+  SIZE=$(stat -f %z "$file")
+
+  # Skip empty files
+  if [[ $SIZE -eq 0 ]]; then
+    continue
+  fi
+  
+  # Group files by size first - only hash files of the same size
+  if [[ ! -v SIZE_GROUPS["$SIZE"] ]]; then
+    # This is the first file of this size
+    SIZE_GROUPS["$SIZE"]="$file"
+    continue
+  fi
+  
+  # Debug the hash calculation
+  debug "Calculating hash for: $file"
+  HASH_CMD="xxhsum -H2 \"$file\""
+  HASH_OUTPUT=$(xxhsum -H2 "$file")
+  debug "Hash command: $HASH_CMD"
+  debug "Hash output: $HASH_OUTPUT"
+  HASH=$(echo "$HASH_OUTPUT" | awk '{print $1}')
+  debug "Extracted hash: $HASH"
+
+  if [[ -v FILE_HASHES["$HASH"] ]]; then
+    # This might be a duplicate, but verify content first
+    ORIGINAL_FILE="${FILE_HASHES["$HASH"]}"
+    
+    # Verify that files are actually identical by comparing content
+    if cmp -s "$ORIGINAL_FILE" "$file"; then
+      # This is a confirmed duplicate
+      if [[ ! -v DUPLICATE_SETS["$HASH"] ]]; then
+        # First duplicate of this hash, increment set counter
+        ((DUPLICATE_SETS_COUNT++))
+        # Add the original file to the duplicate set
+        DUPES_BUFFER+="# Duplicate set $DUPLICATE_SETS_COUNT (hash: $HASH)\n"
+        DUPES_BUFFER+="Original: ${FILE_HASHES["$HASH"]}\n"
+        DUPLICATE_SETS["$HASH"]=1
+        ((BUFFER_COUNT++))
+      fi
+
+      ((DUPLICATES_FOUND++))
+      POTENTIAL_SAVINGS=$((POTENTIAL_SAVINGS + SIZE))
+      DUPES_BUFFER+="Duplicate: $file\n"
+      HASH_PATHS["$HASH"]+=$'\n'"$file"
+      ((BUFFER_COUNT++))
+      
+      # Flush buffer periodically to avoid excessive memory usage
+      if [[ $BUFFER_COUNT -ge $MAX_BUFFER ]]; then
+        flush_dupes_buffer
+      fi
+    else
+      # Hash collision detected, use a more unique identifier
+      # Append file path to hash to make it unique
+      UNIQUE_HASH="${HASH}_$(echo -n "$file" | xxhsum -H2 | awk '{print $1}')"
+      FILE_HASHES["$UNIQUE_HASH"]="$file"
+      err "Hash collision detected between $ORIGINAL_FILE and $file"
+    fi
+  else
+    # First time seeing this hash
+    FILE_HASHES["$HASH"]="$file"
+  fi
+done < <(find "$SCAN_DIR" -type f)
+
+# Flush any remaining entries in the buffer
+flush_dupes_buffer
+
+# Remove the EXIT trap since we're exiting normally
+trap - EXIT
+
+# Clean up progress display
+[[ "$SHOW_PROGRESS" == true ]] && printf "\r\033[K"  # Clear the progress line
+
+# Calculate elapsed time
+END_TIME=$(date +%s)
+ELAPSED=$((END_TIME - START_TIME))
+ELAPSED_STR=$(printf "%02d:%02d:%02d" $((ELAPSED/3600)) $((ELAPSED%3600/60)) $((ELAPSED%60)))
+
+echo -e "\nScan Complete!"
+echo "Total Files Scanned: $TOTAL_FILES"
+echo "Duplicate Files Found: $DUPLICATES_FOUND"
+echo "Duplicate Sets Found: $DUPLICATE_SETS_COUNT"
+echo "Potential Space Savings: $($NUMFMT --to=iec-i --suffix=B --format="%.1f" $POTENTIAL_SAVINGS)"
+echo "Elapsed Time: $ELAPSED_STR"
+echo "Duplicate file list stored at: $DUPES_LIST"
+
+# Function to deduplicate a file
+deduplicate_file() {
+  local original="$1"
+  local duplicate="$2"
+  local current_set="$3"
+
+  if [[ ! -f "$original" || ! -f "$duplicate" ]]; then
+    echo "Skipping: One of the files no longer exists."
+    return 1
+  fi
+
+  if [[ "$original" == "$duplicate" ]]; then
+    echo "Skipping: Original and duplicate are the same file."
+    return 1
+  fi
+
+  # Check if files are already clones
+  if are_files_cloned "$original" "$duplicate"; then
+    echo "Skipping: Files are already clones."
+    return 1
+  fi
+
+  # Save metadata from the duplicate before we replace it
+  local owner_group=$(stat -f "%u:%g" "$duplicate")
+  local permissions=$(stat -f "%p" "$duplicate")
+  local permissions_octal=$(stat -f "%OLp" "$duplicate")
+
+  # Create a reference for the duplicate's timestamps
+  touch -r "$duplicate" "$METADATA_REF"
+
+  # Use macOS-specific clone operation
+  if cp -c "$original" "$duplicate"; then
+    # Restore metadata to the cloned file
+    chown "$owner_group" "$duplicate" 2>/dev/null
+    chmod "$permissions_octal" "$duplicate" 2>/dev/null
+
+    # Preserve timestamps using the reference file
+    touch -r "$METADATA_REF" "$duplicate" 2>/dev/null
+
+    ((DEDUPLICATED++))
+    return 0
+  else
+    echo "Error: Deduplication failed."
+    return 1
+  fi
+}
+
+# Function to show deduplication progress
+show_dedup_progress() {
+  local current="$1"
+  local total="$2"
+  local percent=$((current * 100 / total))
+
+  if [[ "$SHOW_PROGRESS" != true ]]; then
+    return
+  fi
+
+  # Get terminal width
+  local term_width=$TERM_WIDTH
+
+  # Create progress message
+  local progress_msg="Deduplicating: $current/$total ($percent%)"
+
+  # Print with clear to end of line
+  printf "\r%s\033[K" "$progress_msg"
+}
+
+# Main deduplication logic
+if [[ "$SCAN_ONLY" == false ]]; then
+  if [[ "$DUPLICATES_FOUND" -eq 0 && -z "$RESUME_FROM" ]]; then
+    echo "No duplicates found."
+    exit 0
+  fi
+
+  echo "Deduplicating..."
+
+  # Count total duplicate sets for progress tracking
+  TOTAL_SETS=$(grep -c "# Duplicate set" "$DUPES_LIST" || echo 0)
+  CURRENT_SET_NUM=0
+  DEDUPLICATED=0
+
+  # Process each duplicate set
+  while IFS= read -r line; do
+    if [[ "$line" == "# Duplicate set"* ]]; then
+      CURRENT_SET="$line"
+      ((CURRENT_SET_NUM++))
+      show_dedup_progress "$CURRENT_SET_NUM" "$TOTAL_SETS"
+    elif [[ "$line" == "Original:"* ]]; then
+      ORIGINAL_FILE="${line#Original: }"
+    elif [[ "$line" == "Duplicate:"* ]]; then
+      DUPLICATE="${line#Duplicate: }"
+
+      # If preconfirm is set, automatically deduplicate
+      if [[ "$PRECONFIRM" == true ]]; then
+        DEDUPLICATE=true
+      else
+        # Display what we're working on
+        if [[ "$SHOW_PROGRESS" == true ]]; then
+          printf "\r\033[K"  # Clear the progress line
+        fi
+
+        echo -e "\n$CURRENT_SET"
+        echo "Original: $ORIGINAL_FILE"
+        echo "Duplicate: $DUPLICATE"
+
+        # Use gum for interactive confirmation
+        if command -v gum &>/dev/null; then
+          if gum confirm "Deduplicate this file?"; then
+            DEDUPLICATE=true
+          else
+            DEDUPLICATE=false
+          fi
+        else
+          # Fallback to read
+          read -p "Deduplicate this file? (y/n) " -n 1 -r
+          echo
+          if [[ $REPLY =~ ^[Yy]$ ]]; then
+            DEDUPLICATE=true
+          else
+            DEDUPLICATE=false
+          fi
+        fi
+      fi
+
+      if [[ "$DEDUPLICATE" == true ]]; then
+        if deduplicate_file "$ORIGINAL_FILE" "$DUPLICATE" "$CURRENT_SET"; then
+          true  # Success already counted in deduplicate_file
+        fi
+      fi
+    fi
+  done < "$DUPES_LIST"
+
+  # Clear the progress line
+  if [[ "$SHOW_PROGRESS" == true ]]; then
+    printf "\r\033[K"
+  fi
+
+  echo "Deduplication complete! Deduplicated $DEDUPLICATED files."
+fi
+
+# Clean up temporary directory on exit
+trap "rm -rf $TMPDIR" EXIT
+
+exit 0
+
+#### The rest of this is the C source for clone_checker.c, because I hate external deps... lol
+#### (...but love transparency! :D That ruled out sticking an encoded binary in here...)
+__clone_checker.c__
+//
+//  clone_checker.c
+//
+//  To compile:
+//    gcc clone_checker.c -o clone_checker
+//
+//  Created by Dyorgio Nascimento on 2020-12-10.
+//  https://github.com/dyorgio/apfs-clone-checker
+//
+#include <stdbool.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <errno.h>
+#include <sys/stat.h>
+#include <sys/mount.h>
+#include <string.h>
+
+// declare methods
+void printUsage(char* executable);
+int compare_blocks(int block_size, char *filenameA, char *filenameB, int fdA, int fdB);
+int compare_boundary_blocks(char *filenameA, char *filenameB, int fdA, int fdB);
+void check_disk_fs(char *filename, bool is_forced_mode);
+struct stat check_file(char *filename, bool is_forced_mode);
+
+// entrypoint
+int main(int args_count, char **args) {
+
+  bool is_forced_mode = false;
+  bool is_quick_mode = false;
+  int opt;
+  while ( (opt = getopt(args_count, args, "fqv?h")) != -1) {
+       switch ( opt ) {
+         case 'f': is_forced_mode = true; break;
+         case 'q': is_quick_mode = true; break;
+         case 'v': fprintf(stderr, "APFS Clone Checker - Version: 1.0.0.0\n"); exit(EXIT_SUCCESS); break;
+         case '?':
+         case 'h': printUsage(args[0]);
+         default:
+            printUsage(args[0]);
+    }
+  }
+  if ( args_count - optind < 2 ) {
+      printUsage(args[0]);
+  }
+
+  char* filenameA = args[optind];
+  char* filenameB = args[optind + 1];
+
+  check_disk_fs(filenameA, is_forced_mode);
+  check_disk_fs(filenameB, is_forced_mode);
+
+  struct stat statA = check_file(filenameA, is_forced_mode);
+  struct stat statB = check_file(filenameB, is_forced_mode);
+
+  if (statA.st_dev != statB.st_dev || statA.st_size != statB.st_size || statA.st_size < 1
+      || statA.st_blocks != statB.st_blocks || statA.st_ino == statB.st_ino) {
+    // clones only are supported on same device and have same size em blocks count, a file cannot be a clone of itself
+    fprintf(stdout,"0\n");
+    exit(EXIT_SUCCESS);
+  }
+
+  int fdA = open(filenameA, O_RDONLY);
+  if (fdA < 0 ) {
+    fprintf(stderr,"%s: Cannot open. %s\n", filenameA, strerror(errno));
+    if ( is_forced_mode ) {
+      fprintf(stdout,"0\n");
+      exit(EXIT_SUCCESS);
+    } else {
+      exit(EXIT_FAILURE);
+    }
+  }
+
+  int fdB = open(filenameB, O_RDONLY);
+  if ( fdB < 0 ) {
+    fprintf(stderr,"%s: Cannot open. %s\n", filenameB, strerror(errno));
+    close(fdA);
+    if ( is_forced_mode ) {
+      fprintf(stdout,"0\n");
+      exit(EXIT_SUCCESS);
+    } else {
+      exit(EXIT_FAILURE);
+    }
+  }
+
+  int result;
+  if ( is_quick_mode ) {
+    result = compare_boundary_blocks(filenameA, filenameB, fdA, fdB);
+  } else {
+    result = compare_blocks(statA.st_blksize, filenameA, filenameB, fdA, fdB);
+  }
+
+  close(fdA);
+  close(fdB);
+
+  if ( result != -1 ) {
+    fprintf(stdout,"%i\n", result);
+    exit(EXIT_SUCCESS);
+  } else {
+    if ( is_forced_mode ) {
+      fprintf(stdout,"0\n");
+      exit(EXIT_SUCCESS);
+    } else {
+      exit(EXIT_FAILURE);
+    }
+  }
+}
+
+void printUsage(char* executable){
+    fprintf(stderr, "Usage: %s [-fqv] fileA fileB\n", executable);
+    exit(EXIT_FAILURE);
+}
+
+int compare_blocks(int block_size, char *filenameA, char *filenameB, int fdA, int fdB) {
+
+  long sts = 0;
+  struct log2phys physA;
+  struct log2phys physB;
+
+  for ( off_t offset = 0; sts >= 0; offset += block_size ) {
+    physA.l2p_devoffset = offset;
+    // get current blocks physical location
+    sts = fcntl(fdA, F_LOG2PHYS_EXT, &physA);
+    if ( sts < 0 && errno == ERANGE ) {
+      physB.l2p_devoffset = offset;
+      sts = fcntl(fdB, F_LOG2PHYS_EXT, &physB);
+      if ( sts < 0 && errno == ERANGE ) {
+        // both files seeked to the end with same offsets
+        return true;
+      } else if ( sts < 0 ) {
+        fprintf(stderr,"%s: Cannot convert logical to physical offset. %i %s\n", filenameB, errno, strerror(errno));
+        return -1;
+    }
+      break;
+    } else if ( sts < 0 ) {
+      fprintf(stderr,"%s: Cannot convert logical to physical offset. %i %s\n", filenameA, errno, strerror(errno));
+        return -1;
+    }
+
+    physB.l2p_devoffset = offset;
+    sts = fcntl(fdB, F_LOG2PHYS_EXT, &physB);
+    if ( sts < 0 && errno == ERANGE ) {
+      // insanity check, size of files already verified before
+      break;
+    } else if ( sts < 0 ) {
+      fprintf(stderr,"%s: Cannot convert logical to physical offset. %i %s\n", filenameB, errno, strerror(errno));
+        return -1;
+    }
+
+    if ( physA.l2p_devoffset != physB.l2p_devoffset ) {
+      // found a diff block
+      break;
+    }
+  }
+
+  // not a clone (check loop breaked)
+  return false;
+    }
+
+int compare_boundary_blocks(char *filenameA, char *filenameB, int fdA, int fdB) {
+
+  long sts = 0;
+  struct log2phys physA;
+  struct log2phys physB;
+  // get initial blocks physical location
+  sts = fcntl(fdA, F_LOG2PHYS, &physA);
+  if ( sts < 0 ) {
+    fprintf(stderr,"%s: Cannot convert logical to physical offset. %i %s\n", filenameA, errno, strerror(errno));
+    return -1;
+  }
+
+  sts = fcntl(fdB, F_LOG2PHYS, &physB);
+  if ( sts < 0 ) {
+    fprintf(stderr,"%s: Cannot convert logical to physical offset. %i %s\n", filenameB, errno, strerror(errno));
+    return -1;
+  }
+
+  if ( physA.l2p_devoffset == physB.l2p_devoffset ) {
+    // Move to end of files
+     sts = lseek(fdA, -1, SEEK_END);
+     if ( sts < 0 ) {
+       fprintf(stderr,"%s: Cannot seek. %ld %s\n", filenameA, sts, strerror(errno));
+        return -1;
+    }
+     sts = lseek(fdB, -1, SEEK_END);
+     if ( sts < 0 ) {
+       fprintf(stderr,"%s: Cannot seek. %ld %s\n", filenameB, sts, strerror(errno));
+       return -1;
+     }
+
+     // get last blocks physical location
+     sts = fcntl(fdA, F_LOG2PHYS, &physA);
+     if ( sts < 0 ) {
+       fprintf(stderr,"%s: Cannot convert logical to physical offset. %i %s\n", filenameA, errno, strerror(errno));
+       return -1;
+     }
+
+     sts = fcntl(fdB, F_LOG2PHYS, &physB);
+     if ( sts < 0 ) {
+       fprintf(stderr,"%s: Cannot convert logical to physical offset. %i %s\n", filenameB, errno, strerror(errno));
+        return -1;
+    }
+
+     return physA.l2p_devoffset == physB.l2p_devoffset;
+  }
+
+  return false;
+}
+
+void check_disk_fs(char *filename, bool is_forced_mode) {
+  struct statfs fs;
+  if( statfs(filename, &fs) == 0 ) {
+    if( strcmp(fs.f_fstypename, "apfs") != 0) {
+      fprintf(stderr, "%s: Only APFS is supported: %s\n", filename, fs.f_fstypename);
+      if ( is_forced_mode ) {
+        fprintf(stdout,"0\n");
+        exit(EXIT_SUCCESS);
+      } else {
+        exit(EXIT_FAILURE);
+      }
+    }
+  }
+}
+
+struct stat check_file(char *filename, bool is_forced_mode) {
+  struct stat st;
+  if ( stat(filename, &st) < 0 ) {
+    fprintf(stderr, "%s: No such file\n", filename);
+    if ( is_forced_mode ) {
+      fprintf(stdout,"0\n");
+      exit(EXIT_SUCCESS);
+    } else {
+      exit(EXIT_FAILURE);
+    }
+  }
+
+  if ( (st.st_mode & S_IFMT) != S_IFREG ) {
+    fprintf(stderr, "%s: Not a regular file\n", filename);
+    if ( is_forced_mode ) {
+      fprintf(stdout,"0\n");
+      exit(EXIT_SUCCESS);
+    } else {
+      exit(EXIT_FAILURE);
+    }
+  }
+  return st;
+}

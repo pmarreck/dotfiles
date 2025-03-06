@@ -1,14 +1,55 @@
 #!/usr/bin/env bash
 
+source_relative_once functions/utility_functions.bash
+source_relative_once functions/assert.bash
+
 clip() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return;
-  if command -v pbcopy > /dev/null; then
-    [ -t 0 ] && pbpaste || pbcopy;
-  elif command -v xclip > /dev/null; then
-    [ -t 0 ] && xclip -o -selection clipboard || xclip -selection clipboard;
+  # Test suite for the clip function
+  test_clip() {
+    local fails=0
+
+    # Test 1: Piping to clip - should output to stdout and copy to clipboard
+    test_string="Test clip function"
+    output=$(echo -n "$test_string" | clip)  # Put test string in clipboard
+    assert "$output" == "$test_string" "clip should output to stdout when piped to"
+    (( fails += $? ))
+
+    # Test 2: Reading from clipboard - should match what we just put in
+    assert "$(clip)" == "$test_string" "clip should retrieve from clipboard when not piped to"
+    (( fails += $? ))
+
+    # Test 3: Empty clipboard
+    echo -n "" | clip > /dev/null
+    assert "$(clip)" == "" "clip should return empty string when clipboard is empty"
+    (( fails += $? ))
+
+    if [ $fails -ne 0 ]; then
+      red_text "Clip tests failed!" >&2
+    else
+      green_text "All clip tests passed!"
+    fi
+    return $fails
+  }
+
+  if [ "$1" = "--test" ]; then
+    test_clip
+    return
+  fi
+
+  if success? type pbcopy; then
+    if [ -t 0 ]; then
+      pbpaste
+    else
+      # Use tee to both send to pbcopy and output to stdout
+      tee >(pbcopy) || cat
+    fi
   else
-    echo "clip function error: Neither pbcopy/pbpaste nor xclip are available." >&2;
-    return 1;
+    if [ -t 0 ]; then
+      xclip -o -selection clipboard
+    else
+      # Use tee to both send to xclip and output to stdout
+      tee >(xclip -selection clipboard) || cat
+    fi
   fi
 }
 export -f clip
@@ -18,6 +59,15 @@ export -f clip
 # which is apparently an old convention (which also broke the basename call on OS X)
 _me=$(basename "${0##\-}")
 if [ "$_me" = "clip" ]; then
-  $_me "$@"
+  if [ $# = 0 ]; then
+    clip
+  else
+    clip "$@"
+  fi
 fi
 unset _me
+
+# Run tests if RUN_DOTFILE_TESTS is true
+if truthy RUN_DOTFILE_TESTS; then
+  clip --test
+fi

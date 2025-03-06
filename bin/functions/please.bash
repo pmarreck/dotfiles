@@ -50,18 +50,7 @@ EOF
 }
 export -f _generate_curl_api_request_for_please
 
-clip() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return;
-  if command -v pbcopy > /dev/null; then
-    [ -t 0 ] && pbpaste || pbcopy;
-  elif command -v xclip > /dev/null; then
-    [ -t 0 ] && xclip -o -selection clipboard || xclip -selection clipboard;
-  else
-    echo "clip function error: Neither pbcopy/pbpaste nor xclip are available." >&2;
-    return 1;
-  fi
-}
-export -f clip
+source_relative_once "../clip"
 
 please() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return

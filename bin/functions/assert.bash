@@ -4,13 +4,16 @@
 assert() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   local arg1 comp arg2 message comp_result
-  arg1="$1"
-  comp="$2"
-  arg2="$3"
-  if [[ -z "$arg1" || -z "$comp" || -z "$arg2" ]]; then
+  
+  # Check if arguments are provided (not if they're empty)
+  if [ $# -lt 3 ]; then
     echo "Insufficient arguments to assert in ${BASH_SOURCE[1]}: $*" >&2
     return 0 # because returning 1 would cause the shell to exit during sourcing
   fi
+  
+  arg1="$1"
+  comp="$2"
+  arg2="$3"
   message="$4"
   # We add a form feed character at the end of both due to how Bash command substitution
   # gobbles up trailing newlines (and that's POSIX!).

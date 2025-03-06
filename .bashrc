@@ -161,6 +161,293 @@ edit_function() {
   choose_editor "${file}:${fl}"
 }
 
+# Silence function - runs a command silently but preserves exit code
+# (Note that there is another function called "success?" in functions/utility_functions.bash
+# that does the same thing.)
+silence() {
+  "$@" >/dev/null 2>&1
+  return $?
+}
+
+# control globbing/shell expansion on a case-by-case basis
+expand() {
+  # Test function for expand
+  _test_expand() {
+    echo "Testing expand function..."
+    local fail_count=0
+    local test_name=""
+    local expected=""
+    local actual=""
+
+    # Helper function to run a test and check the result
+    _run_test() {
+      test_name="$1"
+      expected="$2"
+      shift 2
+      echo -n "Running test: $test_name... "
+
+      # Capture the actual output
+      actual=$("$@")
+
+      # Compare with expected output
+      if [[ "$actual" == "$expected" ]]; then
+        green_text "PASS"
+        echo
+      else
+        red_text "FAIL"
+        echo
+        red_text "  Expected: '$expected'"
+        echo
+        red_text "  Actual:   '$actual'"
+        echo
+        ((fail_count++))
+      fi
+    }
+
+    # Create test files
+    touch test1.jpg test2.jpg "test with spaces.jpg"
+
+    # Test 1: Direct pattern expansion
+    _run_test "Direct pattern expansion" \
+      "test\ with\ spaces.jpg test1.jpg test2.jpg " \
+      expand "test*.jpg"
+
+    # Test 2: Command with pattern
+    _run_test "Command with pattern" \
+      "test1.jpg test2.jpg test with spaces.jpg" \
+      expand echo "test*.jpg"
+
+    # Test 3: Command with multiple patterns
+    _run_test "Command with multiple patterns" \
+      "test1.jpg test1.jpg test2.jpg test with spaces.jpg" \
+      expand echo "test1.jpg" "test*.jpg"
+
+    # Test 4: Pattern with spaces
+    _run_test "Pattern with spaces" \
+      "test\\ with\\ spaces.jpg " \
+      expand "test with*.jpg"
+
+    # Test 5: Non-matching pattern
+    _run_test "Non-matching pattern" \
+      "nonexistent\\*.jpg " \
+      expand "nonexistent*.jpg"
+
+    # Test 6: Command with non-matching pattern
+    _run_test "Command with non-matching pattern" \
+      "nonexistent*.jpg" \
+      expand echo "nonexistent*.jpg"
+
+    # Clean up test files
+    rm test1.jpg test2.jpg "test with spaces.jpg"
+
+    # Final summary
+    echo ""
+    if [[ $fail_count -eq 0 ]]; then
+      green_text "All tests passed successfully!"
+      echo
+    else
+      red_text "$fail_count test(s) failed."
+      echo
+    fi
+
+    return $fail_count
+  }
+
+  # Help function
+  _show_help() {
+    cat << EOF
+expand: A utility for controlled glob expansion
+
+USAGE:
+  expand PATTERN                   Expand a glob pattern and print results
+  expand COMMAND [ARG...]          Run a command with expanded arguments
+  expand --test                    Run self-tests
+  expand --help                    Show this help message
+
+EXAMPLES:
+  expand "*.jpg"                   Expand and print all jpg files
+  expand ls -la "*.jpg"            Run ls -la with expanded jpg files
+  expand jpegxl --lossless "*.jpg" Run jpegxl with expanded jpg files
+
+DESCRIPTION:
+  The expand function provides controlled glob expansion even when
+  globbing is disabled (set -f). It preserves spaces in filenames
+  and properly quotes results for shell consumption.
+
+  When used with a command, it expands any glob patterns in the arguments
+  before passing them to the command. If a pattern doesn't match any files,
+  it's passed as-is to the command.
+EOF
+  }
+
+  # Check for special arguments
+  if [[ $# -eq 0 || "$1" == "--help" ]]; then
+    _show_help
+    return 0
+  fi
+
+  if [[ "$1" == "--test" ]]; then
+    _test_expand
+    return $?
+  fi
+
+  # Store original globbing state and nullglob setting
+  local glob_disabled nullglob_set
+  [[ -o noglob ]] && glob_disabled=true || glob_disabled=false
+  [[ -o nullglob ]] && nullglob_set=true || nullglob_set=false
+
+  # Enable globbing temporarily
+  set +f
+
+  local first_arg="$1"
+
+  # Detect if first argument is an expansion (contains *, ?, [)
+  if [[ "$first_arg" == *[\*\?\[]* ]]; then
+    debug "First argument is an expansion: $first_arg"
+
+    # Enable nullglob for direct pattern expansion
+    shopt -s nullglob
+
+    # For patterns with spaces, use find instead of bash's built-in globbing
+    if [[ "$first_arg" == *" "* ]]; then
+      debug "Pattern contains spaces, using find"
+      local expanded=()
+      while IFS= read -r -d $'\0' file; do
+        # Remove ./ prefix if present
+        file="${file#./}"
+        expanded+=("$file")
+      done < <(find . -maxdepth 1 -name "$first_arg" -print0 2>/dev/null)
+    else
+      # Use bash's built-in globbing for patterns without spaces
+      local expanded=($first_arg)
+    fi
+
+    # If no matches found, keep the original pattern
+    if [[ ${#expanded[@]} -eq 0 ]]; then
+      debug "No matches found for pattern: $first_arg"
+      expanded=("$first_arg")
+    else
+      debug "Found ${#expanded[@]} matches for pattern: $first_arg"
+    fi
+
+    # Print expanded filenames safely, properly quoted for shell consumption
+    for item in "${expanded[@]}"; do
+      builtin printf "%q " "$item"
+    done
+    echo
+
+    # Restore original settings
+    $glob_disabled && set -f
+    $nullglob_set || shopt -u nullglob
+    return
+  fi
+
+  # Detect if first argument is an executable command
+  if silence command -v "$first_arg"; then
+    local retcode
+    debug "First argument is an executable command: $first_arg"
+
+    # For commands, we want to expand any glob patterns in the arguments
+    shift
+    local expanded_args=()
+
+    # Process each argument
+    for arg in "$@"; do
+      if [[ "$arg" == *[\*\?\[]* ]]; then
+        debug "Expanding glob pattern: $arg"
+
+        # For command arguments, we want to keep the pattern if no matches
+        # so DON'T enable nullglob here
+        shopt -u nullglob
+
+        # Save the original pattern before expansion
+        local original_pattern="$arg"
+
+        # Use find to expand the pattern reliably
+        local arg_expanded=()
+        while IFS= read -r -d $'\0' file; do
+          # Remove ./ prefix if present
+          file="${file#./}"
+          arg_expanded+=("$file")
+        done < <(find . -maxdepth 1 -name "$original_pattern" -print0 2>/dev/null)
+
+        debug "Found ${#arg_expanded[@]} matches for pattern: $original_pattern"
+
+        # If no matches found, keep the original pattern
+        if [[ ${#arg_expanded[@]} -eq 0 ]]; then
+          debug "No matches found, keeping original pattern: $original_pattern"
+          expanded_args+=("$original_pattern")
+        else
+          debug "Adding expanded arguments: ${arg_expanded[*]}"
+          expanded_args+=("${arg_expanded[@]}")
+        fi
+      else
+        # Not a glob pattern, add as is
+        debug "Adding non-glob argument: $arg"
+        expanded_args+=("$arg")
+      fi
+    done
+
+    debug "Final command: $first_arg ${expanded_args[*]}"
+
+    # Execute command with expanded args in a subshell
+    # The subshell gets replaced by exec, but the parent shell continues
+    (exec "$first_arg" "${expanded_args[@]}")
+    retcode=$?
+
+    # Restore original settings
+    $glob_disabled && set -f
+    $nullglob_set || shopt -u nullglob
+    return $retcode
+  fi
+
+  # Otherwise, assume it's a filename and print safely, properly quoted
+  debug "First argument is a filename: $first_arg"
+
+  # Enable nullglob for consistent behavior
+  shopt -s nullglob
+
+  for item in "$@"; do
+    builtin printf "%q " "$item"
+  done
+  echo
+
+  # Restore original settings
+  $glob_disabled && set -f
+  $nullglob_set || shopt -u nullglob
+}
+
+# Run tests for expand function when dotfiles change
+if [ "$RUN_DOTFILE_TESTS" == "true" ]; then
+  # Define a wrapper function that returns the test result
+  _run_expand_tests() {
+    expand --test
+    return $?
+  }
+
+  # Source the test reporter if it's not already available
+  if ! type run_test_suite &>/dev/null; then
+    if [ -f "$HOME/dotfiles/bin/functions/test_reporter.bash" ]; then
+      source "$HOME/dotfiles/bin/functions/test_reporter.bash"
+    fi
+  fi
+
+  # Run the tests using the test suite runner if available
+  if type run_test_suite &>/dev/null; then
+    run_test_suite "expand" : _run_expand_tests
+  else
+    # Fallback to direct execution
+    echo "Running tests for expand function..."
+    _run_expand_tests
+    if [ $? -eq 0 ]; then
+      echo "expand function tests passed"
+    else
+      echo "expand function tests failed with $? failures"
+    fi
+  fi
+fi
+
+# Utility functions
 # Compilation flags
 # export ARCHFLAGS="-arch arm64"
 ARCHFLAGS="-arch $(uname -a | rev | cut -d ' ' -f 2 | rev)"
@@ -285,7 +572,7 @@ fi
 # who am I? (should work even when sourced from elsewhere, but only in Bash)
 me() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-  basename "${BASH_SOURCE[0]}"
+  basename -- "${BASH_SOURCE[0]}"
 }
 
 # zoxide integration
@@ -316,22 +603,6 @@ source $HOME/bin/apply-hooks || echo "Problem when sourcing $HOME/bin/apply-hook
 
 # aliases- source these on every interactive shell because they do not inherit
 $INTERACTIVE_SHELL && . "$HOME/dotfiles/bin/aliases.sh"
-
-# control globbing/shell expansion on a case-by-case basis
-expand() {
-   local args=()
-   for arg in "$@"; do
-       if [[ $arg == *"*"* ]]; then
-           # Temporarily enable globbing just for this expansion
-           set +f
-           args+=($arg)  # Let globbing happen
-           set -f
-       else
-           args+=("$arg")
-       fi
-   done
-   echo "${args[@]}"
-}
 
 # Keep globbing/shell expansion off by default due to possible unexpected behavior
 set -f

@@ -12,26 +12,21 @@ needs() {
   command -v "$bin" >/dev/null 2>&1 || { echo >&2 "I require $bin but it's not installed or in PATH; $*"; return 1; }
 } && export -f needs
 
->/dev/null declare -F debug || \
-debug() {
-  local debug_value="$1"
-  if [[ "$debug_value" == "1" || "$debug_value" == "true" ]]; then
-    return 0
-  else
-    return 1
-  fi
-} && export -f debug
-
 >/dev/null declare -F note || \
 note() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return;
   printf "$ANSI$TXTYLW%s$ANSI$TXTDFT\n" "$@" 1>&2
 } && export -f note
 
+# >/dev/null declare -F debug || \
+debug() {
+  [ -n "$DEBUG" ] && note "DEBUG: $*"
+} && export -f debug
+
 >/dev/null declare -F warn || \
 warn() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return;
-  printf "$ANSI$TXTRED%s$ANSI$TXTDFT\n" "$@" 1>&2
+  >&2 printf "$ANSI$TXTORG%s$ANSI$TXTDFT\n" "$@"
 } && export -f warn
 
 # Function to get local zip code
@@ -114,20 +109,20 @@ get_weather() {
     return 1
   fi
 #   local postal_code_hopefully_filtered==$(echo "$postal_code" | $SED 's/\\"/"/g')
-#   debug "$DEBUG" && note "DEBUG: postal_code_hopefully_filtered=$postal_code_hopefully_filtered"
+#   debug "postal_code_hopefully_filtered=$postal_code_hopefully_filtered"
 #   postal_code=$(echo "$postal_code" | $SED 's/\\"/"/g' | jq -r '.zip_code')
-  debug "$DEBUG" && note "DEBUG: postal_code=$postal_code"
+  debug "postal_code=$postal_code"
   local appid=${OPENWEATHERMAP_APPID}  # Use your API key from the environment
   note "Calling get_weather for postal code ${postal_code}..." # Italic and yellow text
   # Fetch weather data via curl and parse using jq
   local openweathermap_api_output
   openweathermap_api_output=$(curl -s "https://api.openweathermap.org/data/2.5/weather?zip=$postal_code&appid=$appid")
-  debug "$DEBUG" && note "DEBUG: openweathermap_api_output=$openweathermap_api_output"
+  debug "openweathermap_api_output=$openweathermap_api_output"
   local town weather_desc temp feels_like temp_min temp_max humidity visibility wind_speed wind_dir wind_gust
   IFS=$'\t' read -r town weather_desc temp feels_like temp_min temp_max humidity visibility wind_speed wind_dir wind_gust <<< $(
     echo "$openweathermap_api_output" | jq -r '[.name, .weather[0].description, .main.temp, .main.feels_like, .main.temp_min, .main.temp_max, .main.humidity, .visibility, .wind.speed, .wind.deg, (.wind.gust // "N/A")] | @tsv'
   )
-  debug "$DEBUG" && note "DEBUG: town=$town, weather_desc=$weather_desc, temp=$temp, feels_like=$feels_like, temp_min=$temp_min, temp_max=$temp_max, humidity=$humidity, visibility=$visibility, wind_speed=$wind_speed, wind_dir=$wind_dir, wind_gust=$wind_gust"
+  debug "town=$town, weather_desc=$weather_desc, temp=$temp, feels_like=$feels_like, temp_min=$temp_min, temp_max=$temp_max, humidity=$humidity, visibility=$visibility, wind_speed=$wind_speed, wind_dir=$wind_dir, wind_gust=$wind_gust"
 
   # Apply conversions and formatting for units
   temp=$(convert_temp "$temp" F)
@@ -263,28 +258,28 @@ ask() {
   fi
 
   # Check if there is a tool call in the response
-  debug "$DEBUG" && note "DEBUG: temp_json_out:"
-  debug "$DEBUG" && cat $temp_json_out
+  debug "temp_json_out:"
+  debug "$(cat $temp_json_out)"
   tool_calls=$(jq -r '.choices[0].message.tool_calls // empty' < "$temp_json_out")
-  debug "$DEBUG" && note "DEBUG: tool_calls (initial): $tool_calls"
+  debug "tool_calls (initial): $tool_calls"
   if [[ -n "$tool_calls" ]]; then
     tool_results=""
 
     # Collect all tool results
-    debug "$DEBUG" && note "DEBUG: raw tool_calls: $tool_calls"
+    debug "raw tool_calls: $tool_calls"
     tool_calls=$(echo "$tool_calls" | jq -c '.[]')
-    debug "$DEBUG" && note "DEBUG: tool_calls (parsed): $tool_calls"
+    debug "tool_calls (parsed): $tool_calls"
     for tool_call in $tool_calls; do
-      debug "$DEBUG" && note "DEBUG: tool_call: $tool_call"
+      debug "tool_call: $tool_call"
       tool_name=$(echo "$tool_call" | jq -r '.function.name')
-      debug "$DEBUG" && note "DEBUG: tool_name: $tool_name"
+      debug "tool_name: $tool_name"
       tool_arguments=$(echo "$tool_call" | jq -c '.function.arguments')
-      debug "$DEBUG" && note "DEBUG: tool_arguments: $tool_arguments"
+      debug "tool_arguments: $tool_arguments"
       case "$tool_name" in
         "get_zip")
           # Perform the get_location tool call
           tool_result=$(get_zip)
-          debug "$DEBUG" && note "DEBUG: tool_result for get_zip: $tool_result"
+          debug "tool_result for get_zip: $tool_result"
           # replace real linefeeds with actual \n
           # tool_result=$(echo "$tool_result" | $SED ':a;N;$!ba;s/\n/\\n/g')
           if [[ -n "$tool_results" ]]; then
@@ -295,7 +290,7 @@ ask() {
         # "get_location")
         #   # Perform the get_location tool call
         #   tool_result=$(get_location)
-        #   debug "$DEBUG" && note "DEBUG: tool_result for get_location: $tool_result"
+        #   debug "tool_result for get_location: $tool_result"
         #   # replace real linefeeds with actual \n
         #   # tool_result=$(echo "$tool_result" | sed ':a;N;$!ba;s/\n/\\n/g')
         #   if [[ -n "$tool_results" ]]; then
@@ -306,16 +301,16 @@ ask() {
         "get_weather")
           # Perform the get_weather tool call
           local zip=$(echo "$tool_arguments" | jq -r 'fromjson | .zip_code')
-          debug "$DEBUG" && note "DEBUG: zip: $zip"
+          debug "zip: $zip"
           tool_result=$(get_weather "$zip")
-          debug "$DEBUG" && note "DEBUG: tool_result for get_weather: $tool_result"
+          debug "tool_result for get_weather: $tool_result"
           # replace real linefeeds with actual \n
           # tool_result=$(echo "$tool_result" | sed ':a;N;$!ba;s/\n/\\n/g')
           if [[ -n "$tool_results" ]]; then
             tool_results+=","
           fi
           tool_results+="{\"role\":\"function\",\"name\":\"$tool_name\",\"content\":\"$tool_result\"}"
-          debug "$DEBUG" && note "DEBUG: tool_results: $tool_results"
+          debug "tool_results: $tool_results"
           ;;
         "multi_tool_use.parallel")
           note "Parallel multi-tool use is not supported in this script (yet)."
@@ -333,9 +328,9 @@ ask() {
     # but first escape all newlines
     # tool_results=$(echo -n "$tool_results" | sed ':a;N;$!ba;s/\n/\\n/g')
     tool_results="[$tool_results]"
-    debug "$DEBUG" && note "DEBUG: messages: $(cat $history_file | $SED ':a;N;$!ba;s/\n/\\n/g')"
-    debug "$DEBUG" && note "DEBUG: Tool results: $tool_results" # | $SED ':a;N;$!ba;s/\n/\\n/g'
-    # debug "$DEBUG" && note "DEBUG: jq '.' $history_file"
+    debug "messages: $(cat $history_file | $SED ':a;N;$!ba;s/\n/\\n/g')"
+    debug "Tool results: $tool_results" # | $SED ':a;N;$!ba;s/\n/\\n/g'
+    # debug "jq '.' $history_file"
     # debug "$DEBUG" && jq '.' "$history_file"
     # Send the combined results back to ChatGPT
     jq -n --arg model "$model" \
@@ -362,10 +357,11 @@ ask() {
       return 1
     fi
 
-    response=$(jq -r '.choices[0].message.content' < "$temp_json_out" 2>/dev/null | $SED 's/^[ \t]*//;s/[ \t]*$//')
+    response=$(jq -r '.choices[0].message.content // .message.content' < "$temp_json_out" 2>/dev/null | $SED 's/^[ \t]*//;s/[ \t]*$//')
   else
     # No tool call, just process the response
-    response=$(jq -r '.choices[0].message.content' < "$temp_json_out" 2>/dev/null | $SED 's/^[ \t]*//;s/[ \t]*$//')
+    debug "temp_json_out=$(cat $temp_json_out)"
+    response=$(jq -r '.choices[0].message.content // .message.content' < "$temp_json_out" 2>/dev/null | $SED 's/^[ \t]*//;s/[ \t]*$//')
   fi
 
   if [[ "$response" == "null" || "$?" != "0" ]]; then
@@ -387,6 +383,7 @@ if truthy RUN_DOTFILE_TESTS; then
   # IMPORTANT!
   # how do we even test this function? Pass in a mocked curl somehow?
   source_relative_once functions/assert.bash
+  source_relative_once functions/test_reporter.bash
   source_relative_once functions/utility_functions.bash
 
   # Set up test environment
@@ -397,56 +394,55 @@ if truthy RUN_DOTFILE_TESTS; then
     cp "$history_file" "${history_file%.json}_backup$$.json"
   fi
 
-  # Function to run tests and report results
-  run_test_suite() {
-    local test_name="${1:-${0##*/}}"
-    local failed=false
-
-    # Run tests in a subshell to capture failures
-    if (
-      # mock out curl
-      mocked_curl() {
-        [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-        local output_file
-        while getopts ":o:w:X:H:d:s" opt; do
-          case ${opt} in
-          o )
-            output_file=$OPTARG
-            ;;
-          ? )
-            ;;
-          : )
-          echo "Option -$OPTARG requires an argument." >&2
-            ;;
-          esac
-        done
-        cat <<EOF | trim_leading_heredoc_whitespace | unwrap > "$output_file"
-          {"id":"chatcmpl-6q7qCBoIJGlRldK97GQrLAcfOqXwS","object":"chat.completion",
-          "created":1677881216,"model":"test-model","usage":{"prompt_tokens":29,
-          "completion_tokens":96,"total_tokens":125},"choices":[{"message":{"role":"assistant",
-          "content":"\n\nThere is no direct connection between \"The Last Question\" and\n\"The Last Answer\" by Isaac Asimov. \"The Last Answer\" is a short story about\na man who searches for the meaning of life and death, while \"The Last Question\"\nis a science fiction story that explores the concept of the end of the universe and\nthe possibility of creating a new one. However, both stories deal with philosophical\nthemes about the nature of existence and the ultimate fate of humanity."},
-          "finish_reason":null,"index":0}]}
+  # Define the mocked curl function for testing
+  mocked_curl() {
+    [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+    local output_file
+    while getopts ":o:w:X:H:d:s" opt; do
+      case ${opt} in
+      o )
+        output_file=$OPTARG
+        ;;
+      ? )
+        ;;
+      : )
+      echo "Option -$OPTARG requires an argument." >&2
+        ;;
+      esac
+    done
+    cat <<EOF | trim_leading_heredoc_whitespace | unwrap > "$output_file"
+      {"id":"chatcmpl-6q7qCBoIJGlRldK97GQrLAcfOqXwS","object":"chat.completion",
+      "created":1677881216,"model":"test-model","usage":{"prompt_tokens":29,
+      "completion_tokens":96,"total_tokens":125},"choices":[{"message":{"role":"assistant",
+      "content":"\n\nThere is no direct connection between \"The Last Question\" and\n\"The Last Answer\" by Isaac Asimov. \"The Last Answer\" is a short story about\na man who searches for the meaning of life and death, while \"The Last Question\"\nis a science fiction story that explores the concept of the end of the universe and\nthe possibility of creating a new one. However, both stories deal with philosophical\nthemes about the nature of existence and the ultimate fate of humanity."},
+      "finish_reason":null,"index":0}]}
 EOF
-        echo 200 # assumes http_code was the curl format parameter
-      }
+    echo 200 # assumes http_code was the curl format parameter
+  }
 
-      # TESTS
-      resp=$(CURL=mocked_curl ask "What is the connection between \"The Last Question\" and \"The Last Answer\" by Isaac Asimov?")
-      assert "$resp" =~ "connection"
+  # Define setup function (empty in this case, but included for completeness)
+  ask_test_setup() {
+    :  # No additional setup needed beyond what's already done
+  }
 
-      # If we get here, all tests passed
-      true
-    ); then
-      printf "\033[32m%s: PASS\033[0m\n" "$test_name"
-    else
-      printf "\033[31m%s: FAIL\033[0m\n" "$test_name"
-      failed=true
+  # Define the test function
+  ask_test_run() {
+    # TESTS
+    resp=$(CURL=mocked_curl ask "What is the connection between \"The Last Question\" and \"The Last Answer\" by Isaac Asimov?")
+    assert "$resp" =~ "connection"
+    
+    # If we get here, all tests passed
+    return 0
+  }
+
+  # Define teardown function
+  ask_test_teardown() {
+    # Clean up any mocked functions
+    if declare -F mocked_curl >/dev/null; then
+      unset -f mocked_curl
     fi
 
-    # TEST TEARDOWN
-    unset -f mocked_curl # unmock curl
-
-    # restore original history file after removing the test one
+    # Restore original history file after removing the test one
     if [ -f "${history_file%.json}_backup$$.json" ]; then
       rm -f "$history_file"
       mv "${history_file%.json}_backup$$.json" "$history_file"
@@ -454,12 +450,13 @@ EOF
 
     # Clean up temp files
     rm -f "$temp_json_out" "$temp_json"
-
-    $failed && return 1 || return 0
   }
 
-  # Run the test suite
-  run_test_suite "ask"
+  # Run the test suite with proper setup and teardown
+  run_test_suite "ask" ask_test_setup ask_test_run ask_test_teardown
+
+  # Clean up the test functions
+  unset -f ask_test_setup ask_test_run ask_test_teardown
 fi
 
 # Export the function so it can be used by find -exec
