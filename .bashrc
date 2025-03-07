@@ -607,6 +607,12 @@ $INTERACTIVE_SHELL && . "$HOME/dotfiles/bin/aliases.sh"
 # Keep globbing/shell expansion off by default due to possible unexpected behavior
 set -f
 
+# Turn history expansion off because I like my exclamations unadulterated
+# (and never use history expansion anyway)
+# TODO: function to turn on history expansion temporarily, like what I do
+# with the expand function to handle globbing
+set +H
+
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced aliases.sh"
 
 # activate ble.sh/blesh

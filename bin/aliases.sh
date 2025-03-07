@@ -238,3 +238,5 @@ alias gcail=git_commit_ai_local
 alias d=show # "view" goes to vim, "s" usually launches a search or server, so "d" (for "define") is a good alias for show IMHO
 
 alias t='supertop'
+
+alias surf='windsurf'

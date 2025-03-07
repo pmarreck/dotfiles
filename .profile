@@ -22,6 +22,9 @@ source_relative_once bin/functions/utility_functions.bash
 source_relative_once bin/functions/binhex.bash
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced binhex.bash"
 
+source_relative_once bin/functions/nix-hash-retrievals.bash
+# [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced nix-hash-retrievals.bash"
+
 # config for Visual Studio Code
 # if [ "$PLATFORM" = "osx" ]; then
 #   code () { VSCODE_CWD="$PWD" open -n -b com.microsoft.VSCode --args "$*" ;}
