@@ -562,7 +562,8 @@ export -f error?
 
 remove_z_library_attrib() {
   local files
-  IFS=$'\n' files=($(expand "*\ \(Z-Library\).*"))
+  # Use sed to convert unescaped spaces to newlines and remove backslashes in one pass
+  IFS=$'\n' files=($(expand "*\ \(Z-Library\).*" | sed -e 's/\([^\\]\) /\1\n/g' -e 's/\\//g'))
   if [[ ${#files[@]} -eq 1 && "${files[0]}" == "*\ (Z-Library).*" ]]; then
     return  # No matches
   fi

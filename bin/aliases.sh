@@ -240,3 +240,5 @@ alias d=show # "view" goes to vim, "s" usually launches a search or server, so "
 alias t='supertop'
 
 alias surf='windsurf'
+
+alias rm='rm-safe'
