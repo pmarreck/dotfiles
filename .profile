@@ -393,6 +393,9 @@ source_relative_once bin/functions/kill-steam-proton-pids.bash
 source_relative_once bin/functions/whatismyip.sh
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced whatismyip.sh"
 
+source_relative_once bin/functions/pdf_utils.bash
+# [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced pdf_utils.bash"
+
 # command prompt
 # NOTE: Now configured via starship in apply-hooks
 # $INTERACTIVE_SHELL && . $HOME/.commandpromptconfig

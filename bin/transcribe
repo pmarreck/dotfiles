@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+
+# if there is no = in argument 1, assume it's a youtube ID and prefix it with a youtube URL
+if [[ $1 != *=* ]]; then
+  yt-transcriber "https://www.youtube.com/watch?v=$1" | summarize -md -l | glow
+else
+  yt-transcriber "$1" | summarize -md -l | glow
+fi

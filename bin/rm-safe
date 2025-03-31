@@ -1,629 +1,501 @@
 #!/usr/bin/env bash
 
-set -e
+# Stricter error handling:
+# -e: Exit immediately if a command exits with a non-zero status.
+# -u: Treat unset variables as an error when substituting.
+# -o pipefail: The return value of a pipeline is the status of the last command
+#              to exit with a non-zero status, or zero if no command exited
+#              with a non-zero status.
+set -euo pipefail
 
-# Determine OS
+# --- Configuration ---
+
+# Determine OS and User Info
 OS="$(uname)"
-CURRENT_USER=$(whoami)
-TIMESTAMP=$(date "+%Y%m%d%H%M%S%Z")
+CURRENT_USER_ID="$EUID"
+CURRENT_USER_NAME="$(id -un)" # More portable than whoami
 
-# Define trash location per user
-if [[ "$EUID" -eq 0 ]]; then
+# Define Trash directory base location per user and OS
+# Follows FreeDesktop.org Trash specification where possible on Linux
+# https://specifications.freedesktop.org/trash-spec/trashspec-latest.html
+TRASH_BASE_DIR="" # Initialize
+if [[ "$CURRENT_USER_ID" -eq 0 ]]; then
+  # Root user
   case "$OS" in
-    Darwin) TRASH_DIR="/var/root/.Trash" ;;
-    Linux) TRASH_DIR="/root/.local/share/Trash/files" ;;
-    *) echo "rm-safe: Unsupported OS: $OS" >&2; exit 1 ;;
+    Darwin) TRASH_BASE_DIR="/var/root/.Trash" ;; # Conventional macOS root trash
+    Linux)  TRASH_BASE_DIR="/root/.local/share/Trash" ;; # FHS-like for root, follows FDS structure
+    *) printf "rm-safe: Unsupported OS for root: %s\n" "$OS" >&2; exit 1 ;;
   esac
 else
-  TRASH_DIR="$HOME/.Trash"
+  # Non-root user
+  case "$OS" in
+    Darwin) TRASH_BASE_DIR="$HOME/.Trash" ;; # Standard macOS user trash
+    Linux)  TRASH_BASE_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/Trash" ;; # FreeDesktop standard user trash
+    *) printf "rm-safe: Unsupported OS: %s\n" "$OS" >&2; exit 1 ;;
+  esac
 fi
 
-LOG_FILE="$TRASH_DIR/rm_safe.log"
+# Define specific directories within the trash base (FDS structure)
+TRASH_FILES_DIR="$TRASH_BASE_DIR/files"
+TRASH_INFO_DIR="$TRASH_BASE_DIR/info"
+# Log file location - placing it inside the base helps keep related files together
+LOG_FILE="$TRASH_BASE_DIR/rm_safe.log"
 
-# Critical Directories (No-Go List)
-# Paths that are protected including all their subdirectories
-PREFIX_PROTECTED_PATHS=("/root" "/etc" "/var" "/usr" "/bin" "/sbin" "/lib" "/opt" "/nix/store")
-# Paths that are only protected as exact matches (not their contents)
-EXACT_PROTECTED_PATHS=("/" "/*" "/home" "/home/*" "/Users" "/Users/*")
+# Critical Directories (No-Go List) - Customize as needed
+# These paths, and everything underneath them, are protected by default.
+PREFIX_PROTECTED_PATHS=(
+    "/root" "/etc" "/var" "/usr" "/bin" "/sbin" "/lib" "/opt" "/nix/store" # Common Linux/Unix
+    "/System" "/Library" # Common macOS
+)
+# These paths trigger protection for exact matches or direct children only.
+EXACT_PROTECTED_PATHS=(
+    "/" "/*"                 # Root and its direct children
+    "/home" "/home/*"        # Protect /home itself and other users' homes (/home/otheruser)
+    "/Users" "/Users/*"      # Protect /Users itself and other users' homes (/Users/otheruser)
+    "/tmp" "/tmp/*"          # Protect /tmp itself and direct children
+    "/var/tmp" "/var/tmp/*"  # Protect /var/tmp itself and direct children
+)
 
-# Ensure Trash directory exists
-mkdir -p "$TRASH_DIR" 2>/dev/null || {
-  echo "rm-safe: cannot create Trash directory: $TRASH_DIR" >&2
-  exit 1
-}
+# --- Global Flags (used by functions) ---
+VERBOSE_MODE=false
+FORCE_MODE=false
+INTERACTIVE_MODE=false
 
-# Function to check if a file is immutable
-is_immutable() {
-  local file="$1"
-
-  # Check if lsattr is available (Linux)
-  if command -v lsattr >/dev/null 2>&1; then
-    if lsattr "$file" 2>/dev/null | grep -q "^....i"; then
-      return 0
-    fi
-  fi
-
-  # Check if chflags is available (macOS)
-  if command -v chflags >/dev/null 2>&1; then
-    if [[ -n "$(ls -lO "$file" 2>/dev/null | grep -E 'uchg|schg')" ]]; then
-      return 0
-    fi
-  fi
-
-  return 1
-}
-
-# Function to move a file to trash
-move_to_trash() {
-  local file="$1"
-  local force="${2:-false}"
-  local verbose="${3:-false}"
-
-  # Check that force and verbose are both either true or false
-  if [[ "$force" != true && "$force" != false ]]; then
-    echo "rm-safe: invalid value for force: $force" >&2
-    return 1
-  fi
-  if [[ "$verbose" != true && "$verbose" != false ]]; then
-    echo "rm-safe: invalid value for verbose: $verbose" >&2
-    return 1
-  fi
-
-  # Check if file exists
-  if [[ ! -e "$file" && ! -L "$file" ]]; then
-    verbose_only "rm-safe: cannot remove '$file': No such file or directory"
-    return 1
-  fi
-
-  # Get absolute path
-  local abs_path=$(get_absolute_path "$file")
-
-  # Check if file is immutable
-  if is_immutable "$file"; then
-    verbose_only "rm-safe: cannot remove '$file': File is immutable"
-    return 1
-  fi
-
-  # Check if path should be protected
-  if ! $force && should_protect_path "$abs_path" > /dev/null; then
-    local warning_msg=$(should_protect_path "$abs_path")
-    verbose_only "WARNING: $warning_msg"
-
-    # If not in force mode, prompt for confirmation
-    if ! $force; then
-      read -p "Are you sure you want to move this to trash? (y/n): " confirm
-      if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
-        verbose_only "Skipping '$file'"
-        return 0
-      fi
-    fi
-  fi
-
-  # For testing purposes, if TEST_PRESERVE_STRUCTURE is set, skip system trash utilities
-  if [[ -z "$TEST_PRESERVE_STRUCTURE" ]]; then
-    # Try to use system trash utilities first
-    case "$OS" in
-      Darwin)
-        # On macOS, just use mv to stay with Unix conventions
-        : # No-op, fall through to the manual move
-        ;;
-      Linux)
-        # On Linux, try to use gio or trash-put
-        if command -v gio >/dev/null 2>&1; then
-          gio trash "$file" >/dev/null 2>&1 && {
-            verbose_only "Moved '$file' to trash using gio"
-            return 0
-          }
-        elif command -v trash-put >/dev/null 2>&1; then
-          trash-put "$file" >/dev/null 2>&1 && {
-            verbose_only "Moved '$file' to trash using trash-put"
-            return 0
-          }
-        fi
-        ;;
-    esac
-  fi
-
-  # Fall back to manual move with directory structure preservation
-  local base_name=$(basename "$abs_path")
-  local trash_path
-
-  # For absolute paths, create a directory structure in trash
-  if [[ "$abs_path" == /* ]]; then
-    # Remove leading slash and create path in trash
-    local rel_structure="${abs_path#/}"
-    local trash_dir="$TRASH_DIR/$rel_structure"
-    trash_dir=$(dirname "$trash_dir")
-
-    # Create directory structure
-    mkdir -p "$trash_dir" 2>/dev/null || {
-      verbose_only "rm-safe: cannot create directory structure in trash for '$file'"
-      # Fall back to flat structure if directory creation fails
-      trash_path="$TRASH_DIR/$base_name"
-    }
-
-    # Set the trash path with directory structure
-    if [[ -d "$trash_dir" ]]; then
-      trash_path="$trash_dir/$base_name"
+# --- Setup ---
+if ! mkdir -p "$TRASH_FILES_DIR" "$TRASH_INFO_DIR" 2>/dev/null; then
+    if [[ -d "$TRASH_BASE_DIR" ]]; then
+        printf "rm-safe: Error: Cannot create required subdirectories 'files' and 'info' in Trash: %s\n" "$TRASH_BASE_DIR" >&2
+        printf "rm-safe: Check permissions.\n" >&2
     else
-      trash_path="$TRASH_DIR/$base_name"
+        printf "rm-safe: Error: Cannot create Trash directory structure: %s\n" "$TRASH_BASE_DIR" >&2
     fi
-  else
-    # For relative paths, just use the basename
-    trash_path="$TRASH_DIR/$base_name"
-  fi
+    exit 1
+fi
+if ! touch "$LOG_FILE" 2>/dev/null; then
+    printf "rm-safe: Warning: Cannot create or write to log file: %s\n" "$LOG_FILE" >&2
+    printf "rm-safe: Proceeding without logging.\n" >&2
+    LOG_FILE=""
+fi
 
-  # Handle name collisions
-  local counter=1
-  local orig_trash_path="$trash_path"
-  while [[ -e "$trash_path" ]]; do
-    trash_path="${orig_trash_path}_${counter}"
-    counter=$((counter + 1))
-  done
+# --- Helper Functions ---
 
-  # Move the file to trash
-  if mv "$file" "$trash_path" 2>/dev/null; then
-    verbose_only "Moved '$file' to trash as '$trash_path'"
-    return 0
-  else
-    verbose_only "rm-safe: cannot move '$file' to trash"
-    return 1
-  fi
-}
-
-# Function to get absolute path that works on both macOS and Linux
-get_absolute_path() {
-  local file="$1"
-  local abs_path
-
-  # Try using the system's realpath or readlink first
-  if command -v realpath >/dev/null 2>&1; then
-    abs_path=$(realpath "$file" 2>/dev/null)
-    if [[ -n "$abs_path" ]]; then
-      echo "$abs_path"
-      return
-    fi
-  elif command -v readlink >/dev/null 2>&1; then
-    abs_path=$(readlink -f "$file" 2>/dev/null)
-    if [[ -n "$abs_path" ]]; then
-      echo "$abs_path"
-      return
-    fi
-  fi
-
-  # If we get here, either the commands failed or they don't exist
-  # Implement our own path normalization
-
-  # First, make the path absolute if it's not already
-  if [[ "$file" != /* ]]; then
-    file="$(pwd)/$file"
-  fi
-
-  # Handle special case of root directory
-  if [[ "$file" == "/" ]]; then
-    echo "/"
-    return
-  fi
-
-  # Remove any trailing slashes
-  file="${file%/}"
-
-  # Split the path by '/' and process each component
-  local parts=()
-  local IFS='/'
-  read -ra path_parts <<< "$file"
-
-  for part in "${path_parts[@]}"; do
-    if [[ -z "$part" || "$part" == "." ]]; then
-      # Skip empty parts and current directory
-      continue
-    elif [[ "$part" == ".." ]]; then
-      # Go up one directory by removing the last part
-      if [[ ${#parts[@]} -gt 0 ]]; then
-        unset "parts[${#parts[@]}-1]"
-      fi
-    else
-      # Add this part to our path
-      parts+=("$part")
-    fi
-  done
-
-  # Reconstruct the path
-  local result="/"
-  for part in "${parts[@]}"; do
-    result="${result}${part}/"
-  done
-
-  # Remove trailing slash (unless it's just "/")
-  if [[ "$result" != "/" ]]; then
-    result="${result%/}"
-  fi
-
-  echo "$result"
-}
-
-# Function to check if a path should be protected
-should_protect_path() {
-  local path="$1"
-
-  # Check exact matches first
-  for protected in "${EXACT_PROTECTED_PATHS[@]}"; do
-    # Handle glob patterns
-    if [[ "$protected" == *"*"* ]]; then
-      # Handle /path/* pattern (only matches direct children)
-      if [[ "$protected" == *"/*" ]]; then
-        local base_path="${protected%/*}"
-        # Match direct children only, not deeper descendants
-        if [[ "$path" == "$base_path"/* ]]; then
-          # Count slashes to determine depth
-          local rel_path="${path#$base_path/}"
-          if [[ "$rel_path" != *"/"* ]]; then
-            echo "Protected path: $path (matches pattern '$protected')"
-            return 0
-          fi
-        fi
-      else
-        # Handle other glob patterns
-        local pattern="${protected//\*/.*}"
-        if [[ "$path" =~ ^$pattern$ ]]; then
-          echo "Protected path: $path (matches pattern '$protected')"
-          return 0
-        fi
-      fi
-    elif [[ "$path" == "$protected" ]]; then
-      echo "Protected path: $path (exact match with '$protected')"
-      return 0
-    fi
-  done
-
-  # Check prefix matches
-  for protected in "${PREFIX_PROTECTED_PATHS[@]}"; do
-    if [[ "$path" == "$protected" || "$path" == "$protected"/* ]]; then
-      echo "Protected path: $path (starts with '$protected')"
-      return 0
-    fi
-  done
-
-  return 1
-}
-
-# Function to only echo if verbose mode is enabled
+# Function to only output messages if verbose mode is enabled (-v)
 verbose_only() {
-  if [[ "$VERBOSE_MODE" == true ]]; then
-    echo "$@" >&2
+  if [[ "${VERBOSE_MODE:-false}" == true ]]; then
+    printf "rm-safe: %s\n" "$@" >&2
   fi
+}
+
+# Function to log actions to the log file
+log_action() {
+    [[ -z "$LOG_FILE" ]] && return 0
+    local action="$1" original_path="$2" trash_path="${3:-N/A}" details="${4:-}"
+    local timestamp; timestamp=$(date -u "+%Y-%m-%dT%H:%M:%SZ")
+    if ! printf "%s\t%s\t%s\t%s\t%s\t%s\n" "$timestamp" "$CURRENT_USER_NAME" "$action" "$original_path" "$trash_path" "$details" >> "$LOG_FILE"; then
+        printf "rm-safe: Warning: Failed to write to log file: %s\n" "$LOG_FILE" >&2
+        LOG_FILE=""
+    fi
+}
+
+# Function to get a reliable absolute path for a given file/directory argument.
+get_absolute_path() {
+  local file_arg="$1" abs_path=""
+  if command -v realpath >/dev/null 2>&1; then
+    abs_path=$(realpath -- "$file_arg" 2>/dev/null)
+    if [[ $? -eq 0 && -n "$abs_path" ]]; then printf "%s\n" "$abs_path"; return 0; fi
+  fi
+  if command -v readlink >/dev/null 2>&1 && [[ "$OS" != "Darwin" || -x "$(command -v greadlink)" ]]; then
+     local readlink_cmd="readlink"; [[ "$OS" == "Darwin" && -x "$(command -v greadlink)" ]] && readlink_cmd="greadlink"
+     abs_path=$($readlink_cmd -f -- "$file_arg" 2>/dev/null)
+     if [[ $? -eq 0 && -n "$abs_path" ]]; then printf "%s\n" "$abs_path"; return 0; fi
+  fi
+  verbose_only "Warning: System tools (realpath, readlink) failed or unavailable for '$file_arg'. Using manual fallback for absolute path."
+  local current_dir="" target_file=""
+  if [[ ! -e "$file_arg" && ! -L "$file_arg" ]]; then
+      verbose_only "File '$file_arg' does not exist. Constructing path relative to current directory."
+      if [[ "$file_arg" == /* ]]; then abs_path="$file_arg"; else
+          local pwd_result; pwd_result=$(pwd -P); if [[ $? -ne 0 ]]; then printf "rm-safe: Critical Error: Could not determine current directory (pwd -P failed).\n" >&2; return 1; fi
+          abs_path="$pwd_result/$file_arg"; fi
+  else
+      if [[ "$file_arg" == *"/"* ]]; then local dir_name; dir_name=$(dirname -- "$file_arg"); current_dir=$( (cd -- "$dir_name" &>/dev/null && pwd -P) ); target_file=$(basename -- "$file_arg"); else current_dir=$(pwd -P); target_file="$file_arg"; fi
+      if [[ -z "$current_dir" ]]; then
+          printf "rm-safe: Error: Failed to resolve directory for '%s'. Check permissions or path validity.\n" "$file_arg" >&2; current_dir=$(pwd -P); if [[ -z "$current_dir" ]]; then printf "rm-safe: Critical Error: Could not determine current directory (pwd -P failed).\n" >&2; return 1; fi
+          [[ "$file_arg" == *"/"* ]] && target_file=$(basename -- "$file_arg") || target_file="$file_arg"; abs_path="$current_dir/$target_file"; printf "rm-safe: Warning: Using best-guess path: %s\n" "$abs_path" >&2; else abs_path="$current_dir/$target_file"; fi
+  fi
+  if [[ "$abs_path" != "/" && "$abs_path" == */ ]]; then abs_path="${abs_path%/}"; fi
+  if [[ -z "$abs_path" ]]; then printf "rm-safe: Critical Error: Failed to determine absolute path for '%s'.\n" "$file_arg" >&2; return 1; fi
+  printf "%s\n" "$abs_path"; return 0;
+}
+
+# Function to check if a file has immutable flags set (OS-dependent)
+is_immutable() {
+  # Defensive check: Ensure argument 1 exists
+  if [[ $# -eq 0 ]]; then
+      printf "rm-safe: FATAL ERROR in is_immutable: Function called with no arguments!\n" >&2
+      log_action "INTERNAL_ERROR" "N/A" "" "is_immutable called with no arguments"
+      return 1 # Treat as not immutable, but log the internal error
+  fi
+
+  # FIX: Declare local variables on separate lines for clarity
+  local file_path="$1"
+  local check_target="$file_path"
+
+  # Check if path is empty, lsattr/ls might fail or behave unexpectedly
+  if [[ -z "$check_target" ]]; then
+      verbose_only "is_immutable called with empty path, assuming not immutable."
+      return 1 # Cannot determine immutability for empty path
+  fi
+
+  # Use command lsattr/grep to bypass potential aliases
+  if command -v lsattr >/dev/null 2>&1; then
+    if [[ -e "$check_target" || -L "$check_target" ]]; then
+        if lsattr -d -- "$check_target" 2>/dev/null | command grep -q -- '^....i'; then
+          verbose_only "'$file_path' has Linux immutable flag 'i'."
+          return 0 # Is immutable
+        fi
+    else
+        verbose_only "Skipping lsattr check in is_immutable: '$check_target' does not exist."
+    fi
+  fi
+
+  if command -v ls >/dev/null 2>&1 && [[ "$OS" == "Darwin" ]]; then
+    if [[ -e "$check_target" || -L "$check_target" ]]; then
+        local ls_flags
+        ls_flags=$(ls -ldO -- "$check_target" 2>/dev/null)
+        # Use command grep to bypass potential aliases
+        if echo "$ls_flags" | command grep -q -E '(uchg|schg)'; then
+            if echo "$ls_flags" | command grep -q 'schg'; then
+                verbose_only "'$file_path' has macOS system immutable flag 'schg'."
+                return 0 # System immutable
+            elif [[ "$CURRENT_USER_ID" -ne 0 ]]; then
+                 verbose_only "'$file_path' has macOS user immutable flag 'uchg' (and user is not root)."
+                 return 0 # User immutable, user is not root
+            else
+                 verbose_only "'$file_path' has macOS user immutable flag 'uchg', but user is root. Allowing override."
+                 # Fall through, allow root to potentially remove uchg files
+            fi
+        fi
+    else
+        verbose_only "Skipping ls -O check in is_immutable: '$check_target' does not exist."
+    fi
+  fi
+  return 1 # Not immutable or check not applicable/failed
+}
+
+# Function to check if a resolved absolute path falls under protected rules
+should_protect_path() {
+  local abs_path="$1" protection_reason=""
+  if [[ -z "$abs_path" ]]; then verbose_only "should_protect_path called with empty path, assuming not protected."; return 1; fi
+  for protected_pattern in "${EXACT_PROTECTED_PATHS[@]}"; do if [[ "$protected_pattern" == *"/*" && "$protected_pattern" != "/*" ]]; then local base_path="${protected_pattern%/*}"; [[ -z "$base_path" ]] && base_path="/"; if [[ "$abs_path" == "$base_path/"* ]]; then local relative_part="${abs_path#$base_path/}"; if [[ "$relative_part" != *"/"* && -n "$relative_part" ]]; then protection_reason="Protected path: '$abs_path' (matches direct child pattern '$protected_pattern')"; printf "%s\n" "$protection_reason"; return 0; fi; fi; elif [[ "$abs_path" == "$protected_pattern" ]]; then protection_reason="Protected path: '$abs_path' (exact match with '$protected_pattern')"; printf "%s\n" "$protection_reason"; return 0; fi; done
+  for protected_prefix in "${PREFIX_PROTECTED_PATHS[@]}"; do if [[ "$abs_path" == "$protected_prefix" || "$abs_path" == "$protected_prefix/"* ]]; then protection_reason="Protected path: '$abs_path' (is or is inside protected prefix '$protected_prefix')"; printf "%s\n" "$protection_reason"; return 0; fi; done
+  if [[ "$abs_path" == "$TRASH_FILES_DIR" || "$abs_path" == "$TRASH_INFO_DIR" || "$abs_path" == "$TRASH_BASE_DIR" || (-n "$LOG_FILE" && "$abs_path" == "$LOG_FILE") ]]; then protection_reason="Protected path: '$abs_path' (cannot trash the trash directory or log file itself)"; printf "%s\n" "$protection_reason"; return 0; fi
+  return 1;
+}
+
+# Function to create the .trashinfo file according to FreeDesktop spec
+create_trashinfo() {
+    # Ensure parameters are defined
+    if [[ $# -lt 2 ]]; then
+        printf "rm-safe: FATAL ERROR in create_trashinfo: Function called with insufficient arguments!\n" >&2
+        log_action "INTERNAL_ERROR" "N/A" "" "create_trashinfo called with insufficient arguments"
+        return 1
+    fi
+    
+    local original_abs_path="$1" 
+    local trash_file_basename="$2" 
+    local info_file_path="$TRASH_INFO_DIR/$trash_file_basename.trashinfo"
+    local deletion_date; deletion_date=$(date -u "+%Y-%m-%dT%H:%M:%S")
+    local path_field="Path=$original_abs_path"
+    if printf "[Trash Info]\n%s\nDeletionDate=%s\n" "$path_field" "$deletion_date" > "$info_file_path"; then 
+        verbose_only "Created trashinfo: $info_file_path"; 
+        return 0; 
+    else
+        local error_code=$?
+        printf "rm-safe: Error: Failed to create .trashinfo file: %s (Error code: %d)\n" "$info_file_path" "$error_code" >&2
+        local orphaned_file="$TRASH_FILES_DIR/$trash_file_basename"
+        if [[ -e "$orphaned_file" ]]; then 
+            printf "rm-safe: Attempting to remove orphaned file: %s\n" "$orphaned_file" >&2
+            /bin/rm -f -- "$orphaned_file" 2>/dev/null || printf "rm-safe: Warning: Failed to remove orphaned file %s using /bin/rm\n" "$orphaned_file" >&2
+        fi
+        return 1
+    fi
+}
+
+# Function to move a single file/directory item to the trash.
+move_to_trash() {
+  local item_arg="$1" force_mode="${2:-false}" interactive_mode="${3:-false}" return_code=0
+  verbose_only "Processing item: '$item_arg'"
+  
+  # For symlinks, we need to get the path to the symlink itself, not what it points to
+  local abs_path
+  if [[ -L "$item_arg" ]]; then
+    # For symlinks, get the directory containing the symlink + the basename
+    local symlink_dir symlink_base
+    symlink_dir=$(cd "$(dirname -- "$item_arg")" 2>/dev/null && pwd -P) || symlink_dir=""
+    symlink_base=$(basename -- "$item_arg")
+    
+    if [[ -n "$symlink_dir" ]]; then
+      abs_path="$symlink_dir/$symlink_base"
+    else
+      # Fallback if we can't determine the directory
+      if ! abs_path=$(get_absolute_path "$item_arg"); then 
+        printf "rm-safe: Error: Failed to resolve absolute path for symlink '%s'. Skipping.\n" "$item_arg" >&2
+        log_action "FAIL_PATH_RESOLVE" "$item_arg" "" "Symlink path resolution failed"
+        return 1
+      fi
+    fi
+    verbose_only "Item is a symlink: '$item_arg'"
+  else
+    # For non-symlinks, use normal path resolution
+    if ! abs_path=$(get_absolute_path "$item_arg"); then 
+      printf "rm-safe: Error: Failed to resolve absolute path for '%s'. Skipping.\n" "$item_arg" >&2
+      log_action "FAIL_PATH_RESOLVE" "$item_arg" "" "Path resolution failed"
+      return 1
+    fi
+  fi
+  
+  verbose_only "Resolved absolute path: '$abs_path'"
+
+  if is_immutable "$abs_path"; then if [[ -z "$abs_path" ]]; then printf "rm-safe: Error: Cannot check immutability for empty path derived from '%s'. Skipping.\n" "$item_arg" >&2; log_action "FAIL_IMMUTABLE" "$abs_path" "" "Empty path check"; else printf "rm-safe: Error: Cannot remove '%s': Item is immutable.\n" "$item_arg" >&2; log_action "FAIL_IMMUTABLE" "$abs_path" "" "Immutable flag detected"; fi; return 1; fi
+
+  local protection_reason; protection_reason=$(should_protect_path "$abs_path"); local is_protected=$?
+  local confirm_needed=false skip_item=false
+  if [[ $is_protected -eq 0 && "$force_mode" == false ]]; then printf "rm-safe: WARNING: %s\n" "$protection_reason" >&2; printf "rm-safe: Move this protected item to trash? ('%s') (y/n): " "$item_arg"; confirm_needed=true; elif [[ "$interactive_mode" == true ]]; then printf "rm-safe: Remove '%s'? (y/n): " "$item_arg"; confirm_needed=true; elif [[ $is_protected -eq 0 && "$force_mode" == true ]]; then verbose_only "WARNING: $protection_reason (Overridden by --force)"; log_action "FORCE_PROTECTED" "$abs_path" "" "Forced removal of protected item"; fi
+  if [[ "$confirm_needed" == true ]]; then local confirm_response=""; read -r confirm_response < /dev/tty; if [[ "$confirm_response" != "y" && "$confirm_response" != "Y" ]]; then verbose_only "Skipping '$item_arg' (user confirmation denied)."; if [[ $is_protected -eq 0 ]]; then log_action "SKIP_PROTECTED" "$abs_path" "" "User denied confirmation"; else log_action "SKIP_INTERACTIVE" "$abs_path" "" "User denied confirmation"; fi; skip_item=true; else if [[ $is_protected -eq 0 ]]; then verbose_only "Proceeding with protected item '$item_arg' (user confirmation)."; log_action "CONFIRM_PROTECTED" "$abs_path" "" "User confirmed removal"; else verbose_only "Proceeding with '$item_arg' (user confirmation)."; log_action "CONFIRM_INTERACTIVE" "$abs_path" "" "User confirmed removal"; fi; fi; fi
+  if [[ "$skip_item" == true ]]; then return 0; fi
+
+  local system_trash_used=false
+  if [[ "$OS" == "Linux" ]]; then
+    verbose_only "Attempting Linux system trash utilities..."; local gio_cmd trash_put_cmd; gio_cmd=$(command -v gio) || true; trash_put_cmd=$(command -v trash-put) || true
+    if [[ -n "$gio_cmd" && -x "$gio_cmd" ]]; then verbose_only "Trying '$gio_cmd trash'..."; if "$gio_cmd" trash -- "$item_arg" 2>/dev/null; then verbose_only "Moved '$item_arg' to trash using gio."; log_action "TRASH_GIO" "$abs_path"; system_trash_used=true; else local gio_ec=$?; verbose_only "gio trash command failed for '$item_arg' (exit code $gio_ec). Trying next."; fi; fi
+    if [[ "$system_trash_used" == false && -n "$trash_put_cmd" && -x "$trash_put_cmd" ]]; then verbose_only "Trying '$trash_put_cmd'..."; if "$trash_put_cmd" -- "$item_arg" 2>/dev/null; then verbose_only "Moved '$item_arg' to trash using trash-put."; log_action "TRASH_TRASHPUT" "$abs_path"; system_trash_used=true; else local tp_ec=$?; verbose_only "trash-put command failed for '$item_arg' (exit code $tp_ec). Using manual fallback."; fi; fi
+    if [[ "$system_trash_used" == false && (-z "$gio_cmd" || ! -x "$gio_cmd") && (-z "$trash_put_cmd" || ! -x "$trash_put_cmd") ]]; then verbose_only "No standard Linux trash utility (gio, trash-put) found or executable. Using manual fallback."; fi
+  else verbose_only "Not on Linux or no system trash utility configured. Using manual fallback."; fi
+
+  if [[ "$system_trash_used" == false ]]; then
+    if [[ -z "$abs_path" ]]; then printf "rm-safe: Error: Cannot move item derived from '%s' because its absolute path is empty.\n" "$item_arg" >&2; log_action "FAIL_MOVE" "$abs_path" "" "Cannot move empty path"; return 1; fi
+    verbose_only "Using manual fallback to move '$item_arg' to $TRASH_FILES_DIR"
+    local base_name; base_name=$(basename -- "$abs_path"); local trash_file_target_name="$base_name"; local trash_info_target_name="$base_name"
+    local counter=1; while [[ -e "$TRASH_FILES_DIR/$trash_file_target_name" || -e "$TRASH_INFO_DIR/$trash_info_target_name.trashinfo" ]]; do local timestamp_suffix; timestamp_suffix=$(date "+%Y%m%d%H%M%S"); trash_file_target_name="${base_name}_${timestamp_suffix}_${counter}"; trash_info_target_name="$trash_file_target_name"; counter=$((counter + 1)); done
+    if [[ "$trash_file_target_name" != "$base_name" ]]; then verbose_only "Collision detected. Using unique name in trash: $trash_file_target_name"; fi
+    local final_trash_file_path="$TRASH_FILES_DIR/$trash_file_target_name"
+
+    local mv_cmd="mv -- '$abs_path' '$final_trash_file_path'"; verbose_only "Executing: $mv_cmd"
+    local mv_exit_code=0; local mv_output; mv_output=$(command mv -- "$abs_path" "$final_trash_file_path" 2>&1) || mv_exit_code=$?
+    verbose_only "mv command exit code: $mv_exit_code"
+
+    if [[ $mv_exit_code -eq 0 ]]; then
+      verbose_only "mv command appears to have succeeded (exit code 0)."
+      verbose_only "Successfully moved '$item_arg' to '$final_trash_file_path'"
+      if create_trashinfo "$abs_path" "$trash_info_target_name"; then log_action "TRASH_MANUAL" "$abs_path" "$final_trash_file_path"; return_code=0; else log_action "FAIL_TRASHINFO" "$abs_path" "$final_trash_file_path" "Info creation failed after move"; return_code=1; fi
+    else
+      verbose_only "mv command appears to have failed (exit code $mv_exit_code)."
+      local mv_error_hint=""; if [[ ! -w "$(dirname "$final_trash_file_path")" ]]; then mv_error_hint=" (Hint: Check write permissions on $TRASH_FILES_DIR)"; elif [[ ! -r "$abs_path" || ! -x "$(dirname "$abs_path")" ]]; then mv_error_hint=" (Hint: Check read/execute permissions on source)"; fi
+      printf "rm-safe: Error: Failed to move '%s' to trash (mv exit code %d).%s\n" "$item_arg" "$mv_exit_code" "$mv_error_hint" >&2
+      [[ -n "$mv_output" ]] && printf "rm-safe: mv output: %s\n" "$mv_output" >&2
+      log_action "FAIL_MOVE" "$abs_path" "" "mv failed with exit code $mv_exit_code"
+      return_code=1
+    fi
+  fi
+  return $return_code
 }
 
 # Function to display help message
 show_help() {
-  cat <<EOF
-rm-safe: A safer alternative to 'rm' that moves files to trash instead of deleting them.
-
-USAGE:
-  rm-safe [OPTIONS] FILE...
-
-OPTIONS:
-  -f, --force       Force removal without confirmation, even for protected paths
-  -i, --interactive Prompt before every removal
-  -r, --recursive   Remove directories and their contents recursively
-  -R, --recursive   Remove directories and their contents recursively (alternative to -r)
-  -v, --verbose     Explain what is being done
-  -h, --help        Display this help message and exit
-  --test            Run the test suite and exit
-
-EXAMPLES:
-  rm-safe file.txt              # Move file.txt to trash
-  rm-safe -r directory          # Move directory and its contents to trash
-  rm-safe -f /etc/hosts         # Force move /etc/hosts to trash (will prompt for confirmation)
-  rm-safe -i *.txt              # Prompt before moving each .txt file
-
-NOTES:
-  - Files are moved to ${TRASH_DIR}
-  - A log of all moved files is kept at ${LOG_FILE}
-  - Protected system paths will trigger a confirmation prompt
-  - Use with caution, especially with wildcards and recursive options
-EOF
+  local display_trash_path="$TRASH_BASE_DIR"
+  printf "rm-safe: A safer alternative to 'rm' that moves files to a trash directory.\n"
+  printf "Version: 3.1 (Split local Vars)\n\n" # Updated version
+  printf "USAGE:\n  rm-safe [OPTIONS] FILE_OR_DIRECTORY...\n\n"
+  printf "DESCRIPTION:\n"
+  printf "  Moves specified files or directories to the trash instead of permanently deleting them.\n"
+  printf "  On Linux, attempts to use FreeDesktop.org compliant trash utilities (gio, trash-put) first.\n"
+  printf "  Falls back to a manual move, creating metadata (.trashinfo files) for better recovery.\n"
+  printf "  Protects critical system paths and prompts for confirmation unless '--force' is used.\n\n"
+  printf "OPTIONS:\n"
+  printf "  -f, --force        Override protection prompts (use with extreme caution!)\n"
+  printf "                     Does *not* override immutable file checks or self-trashing checks.\n"
+  printf "  -i, --interactive  Prompt before every removal attempt.\n"
+  printf "  -r, -R, --recursive\n"
+  printf "                     Recursively move directory contents to trash. Required for directories.\n"
+  printf "  -v, --verbose      Explain what is being done (output to stderr).\n"
+  printf "  -h, --help         Display this help message and exit.\n"
+  printf "  --test             Run the built-in test suite.\n\n"
+  printf "TRASH LOCATION:\n"
+  printf "  Base Directory:     %s\n" "$display_trash_path"
+  printf "  Files are moved into: %s/files\n" "$display_trash_path"
+  printf "  Metadata stored in: %s/info\n" "$display_trash_path"
+  [[ -n "$LOG_FILE" ]] && printf "  Log file:           %s\n" "$LOG_FILE"
+  printf "\n"
+  printf "EXAMPLES:\n"
+  printf "  rm-safe file.txt             # Move file.txt to trash\n"
+  printf "  rm-safe -r my_folder         # Move my_folder and its contents to trash\n"
+  printf "  rm-safe -i *.log             # Prompt before moving each .log file\n"
+  printf "  rm-safe -vf /etc/some_config # Forcefully move a protected file (with verbose output)\n\n"
+  printf "WARNING:\n"
+  printf "  While safer than 'rm', recovery depends on the trash implementation and metadata.\n"
+  printf "  Use '--force' responsibly. Test thoroughly before aliasing 'rm'.\n"
+  printf "  The test suite (--test) may require manual setup/cleanup and assumes certain commands (like 'find', 'grep') are available.\n"
   exit 0
 }
 
-# Run test suite
+# Function to run the test suite (Restored and Adapted)
 run_tests() {
-  local test_count=0
-  local pass_count=0
-  local fail_count=0
-
-  echo "Running rm-safe test suite..."
-
-  # Test 1: Home directory itself should be protected
-  ((++test_count))
-  if should_protect_path "$HOME" > /dev/null; then
-    echo " Test 1 passed: Home directory is protected"
-    ((++pass_count))
-  else
-    echo " Test 1 failed: Home directory should be protected"
-    ((++fail_count))
-  fi
-
-  # Test 2: Files directly in home directory should NOT be protected
-  ((++test_count))
-  if ! should_protect_path "$HOME/test_file" > /dev/null; then
-    echo " Test 2 passed: Files in home directory are not protected"
-    ((++pass_count))
-  else
-    echo " Test 2 failed: Files in home directory should not be protected"
-    ((++fail_count))
-  fi
-
-  # Test 3: Subdirectories in home directory should NOT be protected
-  ((++test_count))
-  if ! should_protect_path "$HOME/test_dir" > /dev/null; then
-    echo " Test 3 passed: Subdirectories in home directory are not protected"
-    ((++pass_count))
-  else
-    echo " Test 3 failed: Subdirectories in home directory should not be protected"
-    ((++fail_count))
-  fi
-
-  # Test 4: Files in subdirectories of home directory should NOT be protected
-  # (glob pattern /home/* only protects immediate children, not grandchildren)
-  ((++test_count))
-  if ! should_protect_path "$HOME/test_dir/test_file" > /dev/null; then
-    echo " Test 4 passed: Files in subdirectories of home directory are not protected"
-    ((++pass_count))
-  else
-    echo " Test 4 failed: Files in subdirectories of home directory should not be protected"
-    ((++fail_count))
-  fi
-
-  # Test 5: Root directory should be protected
-  ((++test_count))
-  if should_protect_path "/" > /dev/null; then
-    echo " Test 5 passed: Root directory is protected"
-    ((++pass_count))
-  else
-    echo " Test 5 failed: Root directory should be protected"
-    ((++fail_count))
-  fi
-
-  # Test 6: System directories should be protected
-  ((++test_count))
-  if should_protect_path "/etc" > /dev/null; then
-    echo " Test 6 passed: System directories are protected"
-    ((++pass_count))
-  else
-    echo " Test 6 failed: System directories should be protected"
-    ((++fail_count))
-  fi
-
-  # Test 7: Files in system directories should be protected
-  ((++test_count))
-  if should_protect_path "/etc/hosts" > /dev/null; then
-    echo " Test 7 passed: Files in system directories are protected"
-    ((++pass_count))
-  else
-    echo " Test 7 failed: Files in system directories should be protected"
-    ((++fail_count))
-  fi
-
-  # Test 8: Path normalization should work
-  ((++test_count))
-  local normalized=$(get_absolute_path "/etc/../etc/./hosts")
-  # On macOS, /etc is a symlink to /private/etc
-  if [[ "$normalized" == "/etc/hosts" || "$normalized" == "/private/etc/hosts" ]]; then
-    echo " Test 8 passed: Path normalization works correctly"
-    echo "   '/etc/../etc/./hosts' -> '$normalized'"
-    ((++pass_count))
-  else
-    echo " Test 8 failed: Path normalization should resolve '/etc/../etc/./hosts' to '/etc/hosts' or '/private/etc/hosts'"
-    echo "   Got: '$normalized'"
-    ((++fail_count))
-  fi
-
-  # Test 9: /Users directory should be protected
-  ((++test_count))
-  if should_protect_path "/Users" > /dev/null; then
-    echo " Test 9 passed: /Users directory is protected"
-    ((++pass_count))
-  else
-    echo " Test 9 failed: /Users directory should be protected"
-    ((++fail_count))
-  fi
-
-  # Test 10: Other user directories SHOULD be protected
-  ((++test_count))
-  if should_protect_path "/Users/another_user" > /dev/null; then
-    echo " Test 10 passed: Other user directories are protected"
-    ((++pass_count))
-  else
-    echo " Test 10 failed: Other user directories should be protected"
-    ((++fail_count))
-  fi
-
-  # Test 11: Directory structure is preserved in trash
-  ((++test_count))
-  # Create a temporary test directory with nested structure
-  local test_dir="/tmp/rm_safe_test_dir"
-  local test_subdir="$test_dir/subdir1/subdir2"
-  local test_file="$test_subdir/test_file.txt"
-
-  # Clean up any previous test files first
-  rm -rf "$test_dir" "$TRASH_DIR/tmp/rm_safe_test_dir" "$TRASH_DIR/private/tmp/rm_safe_test_dir" 2>/dev/null
-
-  # Create test directory and file
-  mkdir -p "$test_subdir"
-  echo "test content" > "$test_file"
-
-  # Force verbose mode for this test and set TEST_PRESERVE_STRUCTURE
-  local old_verbose="$VERBOSE_MODE"
+  local test_count=0 pass_count=0 fail_count=0
+  printf '%s\n' "--- Running rm-safe Test Suite ---"
+  printf "WARNING: This test suite modifies files in /tmp and your Trash directory (%s).\n" "$TRASH_BASE_DIR"
+  printf "Ensure no important data exists in /tmp/rm_safe_test_area or the trash before proceeding.\n"; sleep 1
+  # Enable verbose mode during tests to help with debugging
   VERBOSE_MODE=true
-  export TEST_PRESERVE_STRUCTURE=1
+  local test_area="/tmp/rm_safe_test_area"; printf "Cleaning up previous test area and trash...\n"
+  /bin/rm -rf "$test_area" "$TRASH_FILES_DIR/rm_safe_test_*" "$TRASH_INFO_DIR/rm_safe_test_*.trashinfo" "$TRASH_FILES_DIR/test_*" "$TRASH_INFO_DIR/test_*.trashinfo" "$TRASH_FILES_DIR/file1.txt*" "$TRASH_INFO_DIR/file1.txt*.trashinfo" "$TRASH_FILES_DIR/subdir*" "$TRASH_INFO_DIR/subdir*.trashinfo" "$TRASH_FILES_DIR/link_to_file1*" "$TRASH_INFO_DIR/link_to_file1*.trashinfo" "$TRASH_FILES_DIR/empty_file*" "$TRASH_INFO_DIR/empty_file*.trashinfo" "$TRASH_FILES_DIR/empty_dir*" "$TRASH_INFO_DIR/empty_dir*.trashinfo" 2>/dev/null || true
+  mkdir -p "$test_area/subdir/nested"; echo "Test file content" > "$test_area/file1.txt"; echo "Another file" > "$test_area/subdir/file2.txt"; ln -s "$test_area/file1.txt" "$test_area/link_to_file1"; touch "$test_area/empty_file"; mkdir "$test_area/empty_dir"; printf "Test area created at %s\n" "$test_area"
 
-  # Run the move_to_trash function directly
-  move_to_trash "$test_file" false true
+  run_test() { local test_num=$1 description="$2" command_to_run="$3" expected_result="$4"; ((++test_count)); printf " Test %d: %s..." "$test_num" "$description"; local actual_result="false"; if eval "$command_to_run"; then actual_result="true"; fi; if [[ "$actual_result" == "$expected_result" ]]; then printf " PASSED\n"; ((++pass_count)); return 0; else printf " FAILED (Expected: %s, Got: %s)\n" "$expected_result" "$actual_result"; printf "    Command run: %s\n" "$command_to_run"; ((++fail_count)); return 1; fi; }
 
-  # Restore verbose mode and unset TEST_PRESERVE_STRUCTURE
-  VERBOSE_MODE="$old_verbose"
-  unset TEST_PRESERVE_STRUCTURE
+  # --- Protection Tests ---
+  run_test 1 "Root directory ('/') protection" "should_protect_path '/'" "true"
+  run_test 2 "System directory ('/etc') protection" "should_protect_path '/etc'" "true"
+  run_test 3 "File in system directory ('/etc/hosts') protection" "should_protect_path '/etc/hosts'" "true"
+  local other_user_home="/home/fakeuser"; [[ "$OS" == "Darwin" ]] && other_user_home="/Users/fakeuser"; run_test 4 "Other user home dir ('$other_user_home') protection" "should_protect_path '$other_user_home'" "true"
+  local user_file_in_home="$HOME/some_test_file_in_home"; run_test 5 "File in own home dir ('$user_file_in_home') not protected by wildcard" "! should_protect_path '$user_file_in_home'" "true"
 
-  # On macOS, /tmp might be symlinked to /private/tmp
-  local search_paths=("$TRASH_DIR/tmp" "$TRASH_DIR/private/tmp")
-  local found_file=""
-  local found_dir=""
+  # --- Path Normalization Test ---
+  local normalized_path; normalized_path=$(get_absolute_path "$test_area/subdir/.././file1.txt"); local expected_normalized_path="$test_area/file1.txt"
+  if [[ "$test_area" == "/tmp/"* && "$OS" == "Darwin" && -d "/private/tmp" ]]; then expected_normalized_path="/private$test_area/file1.txt"; run_test 6 "Path normalization complex" "[[ \"$normalized_path\" == \"$expected_normalized_path\" || \"$normalized_path\" == \"$test_area/file1.txt\" ]]" "true"; else run_test 6 "Path normalization complex" "[[ \"$normalized_path\" == \"$expected_normalized_path\" ]]" "true"; fi
 
-  # Check both possible paths
-  for search_path in "${search_paths[@]}"; do
-    if [[ -d "$search_path/rm_safe_test_dir" ]]; then
-      found_dir="$search_path/rm_safe_test_dir"
-      found_file=$(find "$search_path" -type f -name "test_file.txt*" 2>/dev/null | head -1)
-      if [[ -n "$found_file" ]]; then
-        break
+  # --- Basic File Trash Test ---
+  local file1_abs_path; file1_abs_path=$(get_absolute_path "$test_area/file1.txt"); printf " Running trash operation on %s...\n" "$test_area/file1.txt"
+  if move_to_trash "$test_area/file1.txt" "false" "false"; then
+      run_test 7 "Basic file trash: Original file removed" "[[ ! -e \"$test_area/file1.txt\" ]]" "true"
+      local trashed_file1_path trash_base_name="file1.txt"; trashed_file1_path=""
+      
+      # Find any files in TRASH_FILES_DIR that start with file1.txt
+      trashed_file1_path=$(command find "$TRASH_FILES_DIR/" -name "${trash_base_name}*" -print -quit 2>/dev/null) || true
+      
+      # If we found a matching file, find the corresponding .trashinfo file
+      local trashed_info1_path=""
+      if [[ -n "$trashed_file1_path" ]]; then
+          local found_base=$(basename -- "$trashed_file1_path")
+          # First try to find the exact matching .trashinfo file
+          if [[ -f "$TRASH_INFO_DIR/$found_base.trashinfo" ]]; then
+              trashed_info1_path="$TRASH_INFO_DIR/$found_base.trashinfo"
+          else
+              # If exact match not found, try to find any .trashinfo file for this basename
+              trashed_info1_path=$(command find "$TRASH_INFO_DIR/" -name "${trash_base_name}*.trashinfo" -print -quit 2>/dev/null) || true
+          fi
+      else
+          # If we didn't find the file in TRASH_FILES_DIR, search directly for .trashinfo files
+          trashed_info1_path=$(command find "$TRASH_INFO_DIR/" -name "${trash_base_name}*.trashinfo" -print -quit 2>/dev/null) || true
+          
+          # If we found a .trashinfo file but no file in TRASH_FILES_DIR, see if we can find the corresponding file
+          if [[ -n "$trashed_info1_path" ]]; then
+              local info_basename=$(basename -- "$trashed_info1_path" .trashinfo)
+              trashed_file1_path="$TRASH_FILES_DIR/$info_basename"
+          fi
       fi
-    fi
-  done
-
-  if [[ -n "$found_dir" && -n "$found_file" && ! -e "$test_file" ]]; then
-    echo " Test 11 passed: Directory structure is preserved in trash"
-    echo "   Original file: $test_file"
-    echo "   Trash file: $found_file"
-    ((++pass_count))
-  else
-    echo " Test 11 failed: Directory structure not properly preserved in trash"
-    echo "   Original file: $test_file (exists: $([[ -e "$test_file" ]] && echo "yes" || echo "no"))"
-    echo "   Found directory: $found_dir"
-    echo "   Found file: $found_file"
-    ((++fail_count))
+      
+      # Debug output for troubleshooting
+      verbose_only "Looking for trashed file at: $trashed_file1_path"
+      verbose_only "Looking for trashinfo at: $trashed_info1_path"
+      
+      run_test 8 "Basic file trash: File exists in trash files dir" "[[ -n \"$trashed_file1_path\" && -f \"$trashed_file1_path\" ]]" "true"
+      run_test 9 "Basic file trash: Info file exists in trash info dir" "[[ -n \"$trashed_info1_path\" && -f \"$trashed_info1_path\" ]]" "true"
+      if [[ -f "$trashed_info1_path" ]]; then 
+          run_test 10 "Basic file trash: Info file contains correct original path" "command grep -q -F -- \"Path=$file1_abs_path\" \"$trashed_info1_path\"" "true"
+      else 
+          ((++test_count))
+          printf " Test 10: Basic file trash: Info file contains correct original path... SKIPPED (Info file not found)\n"
+          ((++fail_count))
+      fi
+  else 
+      printf " FAILED: move_to_trash call failed for %s\n" "$test_area/file1.txt"
+      fail_count=$((fail_count + 4))
+      test_count=$((test_count + 4))
   fi
 
-  # Clean up test directory and trash
-  rm -rf "$test_dir" "$TRASH_DIR/tmp/rm_safe_test_dir" "$TRASH_DIR/private/tmp/rm_safe_test_dir" 2>/dev/null
+  # --- Symlink Trash Test ---
+  echo "Test file content" > "$test_area/file1.txt"; 
+  # For a symlink, we want the path to the symlink itself, not its target
+  local link_abs_path
+  link_abs_path=$(cd "$(dirname -- "$test_area/link_to_file1")" 2>/dev/null && pwd -P)/$(basename -- "$test_area/link_to_file1") || link_abs_path=""
+  if [[ -z "$link_abs_path" ]]; then
+      link_abs_path=$(get_absolute_path "$test_area/link_to_file1")
+  fi
+  printf " Running trash operation on symlink %s...\n" "$test_area/link_to_file1"
+  if move_to_trash "$test_area/link_to_file1" "false" "false"; then
+       run_test 11 "Symlink trash: Original link removed" "[[ ! -L \"$test_area/link_to_file1\" ]]" "true"
+       run_test 12 "Symlink trash: Target file still exists" "[[ -f \"$test_area/file1.txt\" ]]" "true"
+       local trash_link_base="link_to_file1" trashed_link_path=""; 
+       
+       # Find any files in TRASH_FILES_DIR that start with link_to_file1
+       trashed_link_path=$(command find "$TRASH_FILES_DIR/" -name "${trash_link_base}*" -print -quit 2>/dev/null) || true
+       
+       # If we found a matching file, find the corresponding .trashinfo file
+       local trashed_link_info_path=""
+       if [[ -n "$trashed_link_path" ]]; then
+           local found_base=$(basename -- "$trashed_link_path")
+           # First try to find the exact matching .trashinfo file
+           if [[ -f "$TRASH_INFO_DIR/$found_base.trashinfo" ]]; then
+               trashed_link_info_path="$TRASH_INFO_DIR/$found_base.trashinfo"
+           else
+               # If exact match not found, try to find any .trashinfo file for this basename
+               trashed_link_info_path=$(command find "$TRASH_INFO_DIR/" -name "${trash_link_base}*.trashinfo" -print -quit 2>/dev/null) || true
+           fi
+       else
+           # If we didn't find the file in TRASH_FILES_DIR, search directly for .trashinfo files
+           trashed_link_info_path=$(command find "$TRASH_INFO_DIR/" -name "${trash_link_base}*.trashinfo" -print -quit 2>/dev/null) || true
+           
+           # If we found a .trashinfo file but no file in TRASH_FILES_DIR, see if we can find the corresponding file
+           if [[ -n "$trashed_link_info_path" ]]; then
+               local info_basename=$(basename -- "$trashed_link_info_path" .trashinfo)
+               trashed_link_path="$TRASH_FILES_DIR/$info_basename"
+           fi
+       fi
+       
+       # Debug output for troubleshooting
+       verbose_only "Looking for trashed symlink at: $trashed_link_path"
+       verbose_only "Looking for symlink trashinfo at: $trashed_link_info_path"
+       
+       run_test 13 "Symlink trash: Link exists in trash files dir" "[[ -n \"$trashed_link_path\" && -e \"$trashed_link_path\" ]]" "true"
+       run_test 14 "Symlink trash: Info file exists" "[[ -n \"$trashed_link_info_path\" && -f \"$trashed_link_info_path\" ]]" "true"
+       if [[ -f "$trashed_link_info_path" ]]; then 
+           run_test 15 "Symlink trash: Info file contains correct original link path" "command grep -q -F -- \"Path=$link_abs_path\" \"$trashed_link_info_path\"" "true"
+       else 
+           ((++test_count))
+           printf " Test 15: Symlink trash: Info file contains correct original link path... SKIPPED (Info file not found)\n"
+           ((++fail_count))
+       fi
+  else 
+      printf " FAILED: move_to_trash call failed for %s\n" "$test_area/link_to_file1"
+      fail_count=$((fail_count + 5))
+      test_count=$((test_count + 5))
+  fi
 
-  echo "Test results: $pass_count/$test_count tests passed ($fail_count failed)"
+  # --- TODO: Add more tests ---
+  printf "Cleaning up test area...\n"; /bin/rm -rf "$test_area"
+  printf '\n%s\n' "Test Results: $pass_count/$test_count tests passed ($fail_count failed)."; printf '%s\n' "NOTE: AI cannot verify test execution. Review output carefully."
   exit $fail_count
 }
 
-# Main script execution
-FORCE_MODE=false
-VERBOSE_MODE=false
-RECURSIVE_MODE=false
-INTERACTIVE_MODE=false
+# --- Main Script Logic ---
+FORCE_MODE=false; VERBOSE_MODE=false; RECURSIVE_MODE=false; INTERACTIVE_MODE=false
+_force=false; _verbose=false; _recursive=false; _interactive=false
+while [[ $# -gt 0 ]]; do case "$1" in --force) _force=true; shift ;; --verbose) _verbose=true; shift ;; --recursive) _recursive=true; shift ;; --interactive) _interactive=true; shift ;; --help) show_help ;; --test) FORCE_MODE=$_force; VERBOSE_MODE=$_verbose; RECURSIVE_MODE=$_recursive; INTERACTIVE_MODE=$_interactive; run_tests; exit $? ;; -*) opts="${1#-}"; shift; for (( i=0; i<${#opts}; i++ )); do opt="${opts:$i:1}"; case "$opt" in f) _force=true ;; v) _verbose=true ;; r|R) _recursive=true ;; i) _interactive=true ;; *) printf "rm-safe: invalid option -- '%s' in '-%s'\n" "$opt" "$opts" >&2; printf "Try 'rm-safe --help' for more information.\n" >&2; exit 1 ;; esac; done ;; --) shift; break ;; *) break ;; esac; done
+FORCE_MODE=$_force; VERBOSE_MODE=$_verbose; RECURSIVE_MODE=$_recursive; INTERACTIVE_MODE=$_interactive
+if [[ $# -eq 0 ]]; then printf "rm-safe: missing operand\n" >&2; printf "Try 'rm-safe --help' for more information.\n" >&2; exit 1; fi
 
-# Parse command-line arguments
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    -f|--force)
-      FORCE_MODE=true
-      shift
-      ;;
-    -v|--verbose)
-      VERBOSE_MODE=true
-      shift
-      ;;
-    -r|-R|--recursive)
-      RECURSIVE_MODE=true
-      shift
-      ;;
-    -i|--interactive)
-      INTERACTIVE_MODE=true
-      shift
-      ;;
-    -rf|-fr|-Rf|-fR)
-      # Combined recursive and force flags
-      RECURSIVE_MODE=true
-      FORCE_MODE=true
-      shift
-      ;;
-    --test)
-      run_tests
-      exit $?
-      ;;
-    -h|--help)
-      show_help
-      ;;
-    --)
-      shift
-      break
-      ;;
-    -*)
-      # Handle combined flags like -rv, -vf, etc.
-      flag="${1#-}"
-      shift
-
-      # Process each character in the flag
-      for (( i=0; i<${#flag}; i++ )); do
-        char="${flag:$i:1}"
-        case "$char" in
-          f) FORCE_MODE=true ;;
-          r|R) RECURSIVE_MODE=true ;;
-          v) VERBOSE_MODE=true ;;
-          i) INTERACTIVE_MODE=true ;;
-          *)
-            echo "rm-safe: invalid option -- '$char'" >&2
-            echo "Try 'rm-safe --help' for more information." >&2
-            exit 1
-            ;;
-        esac
-      done
-      ;;
-    *)
-      break
-      ;;
-  esac
+overall_exit_code=0
+for item_arg in "$@"; do
+  [[ -z "$item_arg" ]] && continue; verbose_only "--- Processing argument: '$item_arg' ---"
+  if [[ ! -e "$item_arg" && ! -L "$item_arg" ]]; then printf "rm-safe: Error: Cannot remove '%s': No such file or directory\n" "$item_arg" >&2; log_action "FAIL_NOEXIST" "$item_arg" "" "Argument does not exist"; overall_exit_code=1; continue; fi
+  target_is_directory=false; if [[ -L "$item_arg" ]]; then link_target=$(readlink -- "$item_arg" 2>/dev/null || true); if [[ -n "$link_target" ]]; then potential_target_path="$link_target"; if [[ "$link_target" != /* ]]; then link_dir=$(dirname -- "$item_arg"); [[ "$link_dir" == "." ]] && link_dir=$(pwd -P); potential_target_path="$link_dir/$link_target"; fi; if [[ -e "$potential_target_path" && -d "$potential_target_path" ]]; then target_is_directory=true; verbose_only "'$item_arg' is a symlink to a directory."; fi; fi; elif [[ -d "$item_arg" ]]; then target_is_directory=true; fi
+  if [[ "$target_is_directory" == true && "$RECURSIVE_MODE" == false ]]; then printf "rm-safe: Error: Cannot remove '%s': Is a directory. Use -r or --recursive.\n" "$item_arg" >&2; log_path=$(get_absolute_path "$item_arg" 2>/dev/null || echo "$item_arg"); log_action "FAIL_ISDIR" "$log_path" "" "Directory removal requires -r"; overall_exit_code=1; continue; fi
+  if [[ "$target_is_directory" == true && "$RECURSIVE_MODE" == true ]]; then
+    verbose_only "Recursive mode: Processing directory '$item_arg'"; mapfile -d $'\0' found_items < <(command find "$item_arg" -depth -print0 2>/dev/null); find_ec=$?
+    if [[ $find_ec -ne 0 ]]; then printf "rm-safe: Error: 'find' command failed while traversing '%s' (exit code %d). Skipping directory.\n" "$item_arg" "$find_ec" >&2; log_action "FAIL_FIND" "$item_arg" "" "find command failed with exit code $find_ec"; overall_exit_code=1; continue; fi
+    recursion_failed=false; for found_item in "${found_items[@]}"; do [[ -z "$found_item" ]] && continue; verbose_only "Recursive processing: '$found_item'"; if ! move_to_trash "$found_item" "$FORCE_MODE" "$INTERACTIVE_MODE"; then printf "rm-safe: Warning: Failed to move sub-item '%s' during recursion. Continuing...\n" "$found_item" >&2; overall_exit_code=1; recursion_failed=true; fi; done
+    if [[ "$recursion_failed" == true ]]; then printf "rm-safe: Warning: One or more errors occurred during recursive removal of '%s'.\n" "$item_arg" >&2; else verbose_only "Finished recursive processing for '$item_arg'."; fi
+  else verbose_only "Processing as single item: '$item_arg'"; if ! move_to_trash "$item_arg" "$FORCE_MODE" "$INTERACTIVE_MODE"; then overall_exit_code=1; fi; fi
+  verbose_only "--- Finished processing argument: '$item_arg' ---"
 done
-
-# Check if no files were specified
-if [[ $# -eq 0 ]]; then
-  if [[ "$VERBOSE_MODE" == true ]]; then
-    echo "rm-safe: missing operand" >&2
-    echo "Try 'rm-safe --help' for more information." >&2
-  fi
-  exit 1
-fi
-
-# Process each file
-exit_code=0
-for file in "$@"; do
-  # Skip empty arguments
-  if [[ -z "$file" ]]; then
-    continue
-  fi
-
-  # Check if file exists
-  if [[ ! -e "$file" && ! -L "$file" ]]; then
-    verbose_only "rm-safe: cannot remove '$file': No such file or directory"
-    exit_code=1
-    continue
-  fi
-
-  # Check if file is a directory and recursive mode is not enabled
-  if [[ -d "$file" && ! -L "$file" && ! "$RECURSIVE_MODE" ]]; then
-    verbose_only "rm-safe: cannot remove '$file': Is a directory"
-    verbose_only "Use -r or --recursive to remove directories"
-    exit_code=1
-    continue
-  fi
-
-  # Prompt if interactive mode is enabled
-  if [[ "$INTERACTIVE_MODE" == true ]]; then
-    # Use printf instead of read -p for better compatibility
-    printf "rm-safe: remove '%s'? (y/n): " "$file"
-    read -r confirm
-    if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
-      verbose_only "Skipping '$file'"
-      continue
-    fi
-  fi
-
-  # Move file to trash
-  if ! move_to_trash "$file" "$FORCE_MODE" "$VERBOSE_MODE"; then
-    exit_code=1
-    continue
-  fi
-
-  # Log the removal
-  full_path=$(get_absolute_path "$file")
-  TIMESTAMP=$(date "+%Y%m%d%H%M%S%Z")
-  CURRENT_USER=$(whoami)
-  echo -e "$TIMESTAMP\t$CURRENT_USER\t$full_path" >> "$LOG_FILE"
-done
-
-exit $exit_code
+exit $overall_exit_code
