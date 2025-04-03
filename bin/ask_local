@@ -2,7 +2,8 @@
 
 source_relative_once "ask"
 
-export DEFAULT_LOCAL_AI_MODEL="athene-v2:latest"
+# export DEFAULT_LOCAL_AI_MODEL="athene-v2:latest"
+export DEFAULT_LOCAL_AI_MODEL=${DEFAULT_LOCAL_AI_MODEL:-qwen2.5-coder:32b}
 export DEFAULT_LOCAL_AI_HOST="localhost:11434"
 
 function ask_local() {
@@ -13,6 +14,8 @@ function ask_local() {
   OPENAI_PROTOCOL="http" \
   OPENAI_API_KEY="fake" \
   OPENAI_TIMEOUT=600 \
+  LLM_SYSTEM_PROMPT="You are a helpful AI assistant named WOPR." \
+  TOOLING_CAPABLE="${TOOLING_CAPABLE:-false}" \
   ask "$@"
 }
 

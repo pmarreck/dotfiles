@@ -132,6 +132,7 @@ function git_commit_ai() {
 export -f git_commit_ai
 # export DEFAULT_LOCAL_AI_MODEL="llama3:70b"
 # export DEFAULT_LOCAL_AI_MODEL="x/llama3.2-vision:latest"
+# export DEFAULT_LOCAL_AI_MODEL=${DEFAULT_LOCAL_AI_MODEL:-qwen2.5-coder:32b}
 export DEFAULT_LOCAL_AI_MODEL=${DEFAULT_LOCAL_AI_MODEL:-qwen2.5-coder:32b}
 export DEFAULT_LOCAL_AI_HOST=${DEFAULT_LOCAL_AI_HOST:-localhost:11434}
 

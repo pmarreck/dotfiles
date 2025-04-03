@@ -170,6 +170,12 @@ ask() {
   history_file="${XDG_DATA_HOME:-$HOME/.local/share}/ask_history.json"
   history_temp=$(mktemp -t ask_history.XXXXXX --tmpdir)
   timestamp=$(date +"%Y%m%d%H%M%S")
+  
+  # Check if the LLM is tooling-capable
+  tooling_capable=false
+  if [[ "${TOOLING_CAPABLE:-}" == "1" || "${TOOLING_CAPABLE:-}" == "true" ]]; then
+    tooling_capable=true
+  fi
 
   continue_conversation=${CONTINUE_CONVERSATION:-true}  # Set this to false to start a new conversation
   discard_history=${DISCARD_HISTORY:-false}  # Set this to true to discard the previous history
@@ -190,58 +196,76 @@ ask() {
 
   mv "$history_temp" "$history_file"
 
-  # {
-  #   "type": "function",
-  #   "function": {
-  #     "name": "get_location",
-  #     "description": "Get the detailed user location. Call this whenever you need to know their location, for example when they ask for the local weather but you need their precise location first.",
-  #     "parameters": {
-  #       "type": "object",
-  #       "properties": {}
-  #     }
-  #   }
-  # },
-  tools='[
-    {
-      "type": "function",
-      "function": {
-        "name": "get_zip",
-        "description": "Get the user zip code. Call this whenever you just need to know their zip code, for example when they ask for the local weather but you need the zip first.",
-        "parameters": {
-          "type": "object",
-          "properties": {}
+  # Only define tools if the LLM is tooling-capable
+  if [[ "$tooling_capable" == "true" ]]; then
+    # {
+    #   "type": "function",
+    #   "function": {
+    #     "name": "get_location",
+    #     "description": "Get the detailed user location. Call this whenever you need to know their location, for example when they ask for the local weather but you need their precise location first.",
+    #     "parameters": {
+    #       "type": "object",
+    #       "properties": {}
+    #     }
+    #   }
+    # },
+    tools='[
+      {
+        "type": "function",
+        "function": {
+          "name": "get_zip",
+          "description": "Get the user zip code. Call this whenever you just need to know their zip code, for example when they ask for the local weather but you need the zip first.",
+          "parameters": {
+            "type": "object",
+            "properties": {}
+          }
         }
-      }
-    },
-    {
-      "type": "function",
-      "function": {
-        "name": "get_weather",
-        "description": "Get the weather at the user location.",
-        "parameters": {
-          "type": "object",
-          "properties": {
-            "zip_code": {
-              "type": "string",
-              "description": "The user zip code."
+      },
+      {
+        "type": "function",
+        "function": {
+          "name": "get_weather",
+          "description": "Get the weather at the user location.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "zip_code": {
+                "type": "string",
+                "description": "The user zip code."
+              }
             }
           }
         }
       }
-    }
-  ]'
-  jq -n --arg model "$model" \
-        --argjson temperature "$temperature" \
-        --argjson tools "$tools" \
-        --slurpfile messages "$history_file" \
-    '{
-    model: $model,
-    messages: $messages[0].messages,
-    temperature: $temperature,
-    max_tokens: 1000,
-    tools: $tools,
-    stream: false
-  }' > "$temp_json"
+    ]'
+  fi
+
+  # Create the JSON payload conditionally including tools if tooling-capable
+  if [[ "$tooling_capable" == "true" ]]; then
+    jq -n --arg model "$model" \
+          --argjson temperature "$temperature" \
+          --argjson tools "$tools" \
+          --slurpfile messages "$history_file" \
+      '{
+      model: $model,
+      messages: $messages[0].messages,
+      temperature: $temperature,
+      max_tokens: 1000,
+      tools: $tools,
+      stream: false
+    }' > "$temp_json"
+  else
+    jq -n --arg model "$model" \
+          --argjson temperature "$temperature" \
+          --slurpfile messages "$history_file" \
+      '{
+      model: $model,
+      messages: $messages[0].messages,
+      temperature: $temperature,
+      max_tokens: 1000,
+      stream: false
+    }' > "$temp_json"
+  fi
 
   http_status=$($curl -w "%{http_code}" -s -o "$temp_json_out" -X POST $openai_url \
     -H "Content-Type: application/json" \
@@ -257,109 +281,115 @@ ask() {
     return 1
   fi
 
-  # Check if there is a tool call in the response
-  debug "temp_json_out:"
-  debug "$(cat $temp_json_out)"
-  tool_calls=$(jq -r '.choices[0].message.tool_calls // empty' < "$temp_json_out")
-  debug "tool_calls (initial): $tool_calls"
-  if [[ -n "$tool_calls" ]]; then
-    tool_results=""
+  # Check if there is a tool call in the response (only if tooling-capable)
+  if [[ "$tooling_capable" == "true" ]]; then
+    debug "temp_json_out:"
+    debug "$(cat $temp_json_out)"
+    tool_calls=$(jq -r '.choices[0].message.tool_calls // empty' < "$temp_json_out")
+    debug "tool_calls (initial): $tool_calls"
+    if [[ -n "$tool_calls" ]]; then
+      tool_results=""
 
-    # Collect all tool results
-    debug "raw tool_calls: $tool_calls"
-    tool_calls=$(echo "$tool_calls" | jq -c '.[]')
-    debug "tool_calls (parsed): $tool_calls"
-    for tool_call in $tool_calls; do
-      debug "tool_call: $tool_call"
-      tool_name=$(echo "$tool_call" | jq -r '.function.name')
-      debug "tool_name: $tool_name"
-      tool_arguments=$(echo "$tool_call" | jq -c '.function.arguments')
-      debug "tool_arguments: $tool_arguments"
-      case "$tool_name" in
-        "get_zip")
-          # Perform the get_location tool call
-          tool_result=$(get_zip)
-          debug "tool_result for get_zip: $tool_result"
-          # replace real linefeeds with actual \n
-          # tool_result=$(echo "$tool_result" | $SED ':a;N;$!ba;s/\n/\\n/g')
-          if [[ -n "$tool_results" ]]; then
-            tool_results+=","
-          fi
-          tool_results+="{\"role\":\"function\",\"name\":\"$tool_name\",\"content\":\"$tool_result\"}"
-          ;;
-        # "get_location")
-        #   # Perform the get_location tool call
-        #   tool_result=$(get_location)
-        #   debug "tool_result for get_location: $tool_result"
-        #   # replace real linefeeds with actual \n
-        #   # tool_result=$(echo "$tool_result" | sed ':a;N;$!ba;s/\n/\\n/g')
-        #   if [[ -n "$tool_results" ]]; then
-        #     tool_results+=","
-        #   fi
-        #   tool_results+="{\"role\":\"function\",\"name\":\"$tool_name\",\"content\":\"$tool_result\"}"
-        #   ;;
-        "get_weather")
-          # Perform the get_weather tool call
-          local zip=$(echo "$tool_arguments" | jq -r 'fromjson | .zip_code')
-          debug "zip: $zip"
-          tool_result=$(get_weather "$zip")
-          debug "tool_result for get_weather: $tool_result"
-          # replace real linefeeds with actual \n
-          # tool_result=$(echo "$tool_result" | sed ':a;N;$!ba;s/\n/\\n/g')
-          if [[ -n "$tool_results" ]]; then
-            tool_results+=","
-          fi
-          tool_results+="{\"role\":\"function\",\"name\":\"$tool_name\",\"content\":\"$tool_result\"}"
-          debug "tool_results: $tool_results"
-          ;;
-        "multi_tool_use.parallel")
-          note "Parallel multi-tool use is not supported in this script (yet)."
-          note "The tool_call was: $tool_call"
-          return 1
-          ;;
-        *)
-          warn "Unknown tool: $tool_name"
-          return 1
-          ;;
-      esac
-    done
+      # Collect all tool results
+      debug "raw tool_calls: $tool_calls"
+      tool_calls=$(echo "$tool_calls" | jq -c '.[]')
+      debug "tool_calls (parsed): $tool_calls"
+      for tool_call in $tool_calls; do
+        debug "tool_call: $tool_call"
+        tool_name=$(echo "$tool_call" | jq -r '.function.name')
+        debug "tool_name: $tool_name"
+        tool_arguments=$(echo "$tool_call" | jq -c '.function.arguments')
+        debug "tool_arguments: $tool_arguments"
+        case "$tool_name" in
+          "get_zip")
+            # Perform the get_location tool call
+            tool_result=$(get_zip)
+            debug "tool_result for get_zip: $tool_result"
+            # replace real linefeeds with actual \n
+            # tool_result=$(echo "$tool_result" | $SED ':a;N;$!ba;s/\n/\\n/g')
+            if [[ -n "$tool_results" ]]; then
+              tool_results+=","
+            fi
+            tool_results+="{\"role\":\"function\",\"name\":\"$tool_name\",\"content\":\"$tool_result\"}"
+            ;;
+          # "get_location")
+          #   # Perform the get_location tool call
+          #   tool_result=$(get_location)
+          #   debug "tool_result for get_location: $tool_result"
+          #   # replace real linefeeds with actual \n
+          #   # tool_result=$(echo "$tool_result" | sed ':a;N;$!ba;s/\n/\\n/g')
+          #   if [[ -n "$tool_results" ]]; then
+          #     tool_results+=","
+          #   fi
+          #   tool_results+="{\"role\":\"function\",\"name\":\"$tool_name\",\"content\":\"$tool_result\"}"
+          #   ;;
+          "get_weather")
+            # Perform the get_weather tool call
+            local zip=$(echo "$tool_arguments" | jq -r 'fromjson | .zip_code')
+            debug "zip: $zip"
+            tool_result=$(get_weather "$zip")
+            debug "tool_result for get_weather: $tool_result"
+            # replace real linefeeds with actual \n
+            # tool_result=$(echo "$tool_result" | sed ':a;N;$!ba;s/\n/\\n/g')
+            if [[ -n "$tool_results" ]]; then
+              tool_results+=","
+            fi
+            tool_results+="{\"role\":\"function\",\"name\":\"$tool_name\",\"content\":\"$tool_result\"}"
+            debug "tool_results: $tool_results"
+            ;;
+          "multi_tool_use.parallel")
+            note "Parallel multi-tool use is not supported in this script (yet)."
+            note "The tool_call was: $tool_call"
+            return 1
+            ;;
+          *)
+            warn "Unknown tool: $tool_name"
+            return 1
+            ;;
+        esac
+      done
 
-    # Wrap the collected results in a JSON array
-    # but first escape all newlines
-    # tool_results=$(echo -n "$tool_results" | sed ':a;N;$!ba;s/\n/\\n/g')
-    tool_results="[$tool_results]"
-    debug "messages: $(cat $history_file | $SED ':a;N;$!ba;s/\n/\\n/g')"
-    debug "Tool results: $tool_results" # | $SED ':a;N;$!ba;s/\n/\\n/g'
-    # debug "jq '.' $history_file"
-    # debug "$DEBUG" && jq '.' "$history_file"
-    # Send the combined results back to ChatGPT
-    jq -n --arg model "$model" \
-          --argjson results "$tool_results" \
-          --slurpfile messages "$history_file" \
-      '{
-        model: $model,
-        messages: (($messages[0].messages // []) + $results),
-        max_tokens: 1000,
-        stream: false
-      }' > "$temp_json"
+      # Wrap the collected results in a JSON array
+      # but first escape all newlines
+      # tool_results=$(echo -n "$tool_results" | sed ':a;N;$!ba;s/\n/\\n/g')
+      tool_results="[$tool_results]"
+      debug "messages: $(cat $history_file | $SED ':a;N;$!ba;s/\n/\\n/g')"
+      debug "Tool results: $tool_results" # | $SED ':a;N;$!ba;s/\n/\\n/g'
+      # debug "jq '.' $history_file"
+      # debug "$DEBUG" && jq '.' "$history_file"
+      # Send the combined results back to ChatGPT
+      jq -n --arg model "$model" \
+            --argjson results "$tool_results" \
+            --slurpfile messages "$history_file" \
+        '{
+          model: $model,
+          messages: (($messages[0].messages // []) + $results),
+          max_tokens: 1000,
+          stream: false
+        }' > "$temp_json"
 
-    http_status=$($curl -w "%{http_code}" -s -o "$temp_json_out" -X POST $openai_url \
-      -H "Content-Type: application/json" \
-      -H "Authorization: Bearer $OPENAI_API_KEY" \
-      --silent \
-      --max-time $timeout \
-      -d "@$temp_json")
+      http_status=$($curl -w "%{http_code}" -s -o "$temp_json_out" -X POST $openai_url \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer $OPENAI_API_KEY" \
+        --silent \
+        --max-time $timeout \
+        -d "@$temp_json")
 
-    if [[ "$http_status" -ne 200 ]]; then
-      warn "Error: API request failed with status code $http_status."
-      warn "Response:"
-      cat "$temp_json_out" >&2
-      return 1
+      if [[ "$http_status" -ne 200 ]]; then
+        warn "Error: API request failed with status code $http_status."
+        warn "Response:"
+        cat "$temp_json_out" >&2
+        return 1
+      fi
+
+      response=$(jq -r '.choices[0].message.content // .message.content' < "$temp_json_out" 2>/dev/null | $SED 's/^[ \t]*//;s/[ \t]*$//')
+    else
+      # No tool call, just process the response
+      debug "temp_json_out=$(cat $temp_json_out)"
+      response=$(jq -r '.choices[0].message.content // .message.content' < "$temp_json_out" 2>/dev/null | $SED 's/^[ \t]*//;s/[ \t]*$//')
     fi
-
-    response=$(jq -r '.choices[0].message.content // .message.content' < "$temp_json_out" 2>/dev/null | $SED 's/^[ \t]*//;s/[ \t]*$//')
   else
-    # No tool call, just process the response
+    # Non-tooling-capable LLM, just process the response directly
     debug "temp_json_out=$(cat $temp_json_out)"
     response=$(jq -r '.choices[0].message.content // .message.content' < "$temp_json_out" 2>/dev/null | $SED 's/^[ \t]*//;s/[ \t]*$//')
   fi
