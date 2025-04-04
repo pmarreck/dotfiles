@@ -125,11 +125,8 @@ function rehash() {
   source $HOME/.bashrc
   export LAST_DOTFILE_RUN="$old_dotfile_run"
   # I had to set this declaratively to what it's set in a new terminal to avoid brittle behavior
-  # declare -- PROMPT_COMMAND=$'mcfly_prompt_command;_direnv_hook\n__bp_trap_string="$(trap -p DEBUG)"\ntrap - DEBUG\n__bp_install'
-  # declare -a precmd_functions=([0]="starship_precmd")
-  # declare -a preexec_functions=([0]="starship_preexec_all")
-  declare -a PROMPT_COMMAND=([0]=$'__bp_precmd_invoke_cmd\nmcfly_prompt_command;_direnv_hook\n:' [1]="__bp_interactive_mode")
-  declare -a precmd_functions=([0]="starship_precmd" [1]="precmd")
+  declare -a PROMPT_COMMAND=([0]=$'__bp_precmd_invoke_cmd\n_direnv_hook;__zoxide_hook\n:' [1]="mcfly_prompt_command" [2]="__bp_interactive_mode")
+  declare -a precmd_functions=([0]="starship_precmd" [1]="__wezterm_osc7_home" [2]="precmd")
   declare -a preexec_functions=([0]="starship_preexec_all" [1]="preexec")
   # echo "precmd_functions/PROMPT_COMMAND after bashrc:"
   # declare -p PROMPT_COMMAND; declare -p precmd_functions
