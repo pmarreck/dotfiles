@@ -9,7 +9,7 @@ export -f _uuidv7_sequence_init
 export _uuidv7_sequence_counter=$(_uuidv7_sequence_init)
 # Initialize _uuidv7_last_time_ms and _uuidv7_current_time_ms variables
 export _uuidv7_last_time_ms=$(date +%s%3N)
-export _uuidv7_current_time_ms=_uuidv7_last_time_ms
+export _uuidv7_current_time_ms="$_uuidv7_last_time_ms"
 _uuidv7_sequencer() {
   # Get current timestamp in milliseconds
   _uuidv7_current_time_ms=$(date +%s%3N)
