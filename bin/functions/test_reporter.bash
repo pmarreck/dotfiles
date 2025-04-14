@@ -10,6 +10,7 @@ run_test_suite() {
   local test_count=0
   local pass_count=0
   local fail_count=0
+  local verbose=${TEST_VERBOSE:-false}
 
   # Run tests in a subshell to capture failures
   if (
@@ -27,10 +28,11 @@ run_test_suite() {
     true
   ); then
     if [[ -n "$test_fn" ]]; then
-      printf "\033[32m%s: PASS\033[0m\n" "$test_name"
+      $verbose && printf "\033[32m%s: PASS\033[0m\n" "$test_name"
       ((pass_count++))
     fi
   else
+    # Always show failures, even in non-verbose mode
     printf "\033[31m%s: FAIL\033[0m\n" "$test_name"
     ((fail_count++))
     failed=true
@@ -42,9 +44,9 @@ run_test_suite() {
   # Update total test count
   test_count=$((pass_count + fail_count))
 
-  # If this is the last test suite being run, show a summary
+  # If this is the last test suite being run, show a summary (only in verbose mode unless there are failures)
   # Use -- to ensure basename treats $0 as a filename even if it starts with a dash
-  if [[ "$test_name" == "$(basename -- "$0")" ]]; then
+  if [[ "$test_name" == "$(basename -- "$0")" && ($verbose == true || $fail_count -gt 0) ]]; then
     printf "\nTest Summary:\n"
     printf "Total Tests: %d\n" $test_count
     printf "\033[32mPassed: %d\033[0m\n" $pass_count

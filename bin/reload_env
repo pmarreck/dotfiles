@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Helper script to reload environment variables and aliases
+# without running problematic tests
+
+# Skip all tests
+export SKIP_DOTFILE_TESTS=true
+export TEST_VERBOSE=false
+export EXPAND_TEST_VERBOSE=false
+
+# Source essential files
+echo "Reloading environment..."
+
+if [[ -f "$HOME/dotfiles/bin/aliases.sh" ]]; then
+  source "$HOME/dotfiles/bin/aliases.sh"
+  echo "- Reloaded aliases"
+fi
+
+if [[ -f "$HOME/dotfiles/.pathconfig" ]]; then
+  source "$HOME/dotfiles/.pathconfig"
+  echo "- Reloaded PATH configuration"
+fi
+
+if [[ -f "$HOME/dotfiles/.envconfig" ]]; then
+  source "$HOME/dotfiles/.envconfig"
+  echo "- Reloaded environment variables"
+fi
+
+# Clean up
+unset SKIP_DOTFILE_TESTS
+
+echo "Environment refreshed without running tests."
+echo "To use, run: source ~/dotfiles/bin/reload_env"

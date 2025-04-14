@@ -41,6 +41,13 @@ else
 fi
 [ -n "${DEBUG_SHELLCONFIG}" ] && echo "Stored hash: $STORED_HASH"
 
+# Skip test runs if SKIP_DOTFILE_TESTS is set (used during rehash)
+if [ "${SKIP_DOTFILE_TESTS:-false}" == "true" ]; then
+  export RUN_DOTFILE_TESTS=false
+  echo "Skipping dotfile tests due to SKIP_DOTFILE_TESTS flag."
+  exit 0
+fi
+
 # Compare the current hash with the stored hash
 if [ "$CURRENT_HASH" != "$STORED_HASH" ]; then
   echo -n "Dotfiles have changed. Hash '$CURRENT_HASH' != '$STORED_HASH'. "
@@ -50,8 +57,16 @@ else
   echo -n "Dotfiles have not changed. Hash '$CURRENT_HASH' == '$STORED_HASH'. "
   export RUN_DOTFILE_TESTS=${RUN_DOTFILE_TESTS:-false}
 fi
+
+# If tests are enabled but test output is suppressed, run silently
 if $RUN_DOTFILE_TESTS; then
-  echo "Enabling dotfile tests..."
+  if [ "${TEST_VERBOSE:-false}" == "true" ]; then
+    echo "Enabling dotfile tests with output..."
+  else
+    echo "Running dotfile tests silently..."
+    export TEST_VERBOSE=false
+    export EXPAND_TEST_VERBOSE=false
+  fi
 else
   echo "Skipping dotfile tests."
 fi

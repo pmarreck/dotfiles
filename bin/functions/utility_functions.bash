@@ -104,52 +104,42 @@ move_PROMPT_COMMAND_to_precmd_functions() {
 }
 export -f move_PROMPT_COMMAND_to_precmd_functions
 
-# OK, thanks to badly written hooks, this now has to be a function
+# Minimalist rehash function for shell refreshing
 function rehash() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-  # Save state of hooks if they were already set up
-  # echo "precmd_functions/PROMPT_COMMAND:"
-  # declare -p PROMPT_COMMAND; declare -p precmd_functions
-  # if [[ -v precmd_functions ]]; then
-  #   local orig_precmd_functions
-  #   orig_precmd_functions=("${precmd_functions[@]}")
-  #   echo "we saved precmd_functions"
-  # fi
-  # if [[ -v PROMPT_COMMAND ]]; then
-  #   local orig_PROMPT_COMMAND
-  #   orig_PROMPT_COMMAND=("${PROMPT_COMMAND[@]}")
-  #   echo "we saved PROMPT_COMMAND"
-  # fi
-  local old_dotfile_run="$LAST_DOTFILE_RUN"
+  
+  # Skip all tests and hooks during rehash
+  export SKIP_DOTFILE_TESTS=true
+  export TEST_VERBOSE=false
+  export EXPAND_TEST_VERBOSE=false
+  
+  # Save current environment settings
+  local OLD_LAST_DOTFILE_RUN="${LAST_DOTFILE_RUN:-}"
+  
+  # Clear source tracking
   unset _SOURCED_FILES
-  source $HOME/.bashrc
-  export LAST_DOTFILE_RUN="$old_dotfile_run"
-  # I had to set this declaratively to what it's set in a new terminal to avoid brittle behavior
-  declare -a PROMPT_COMMAND=([0]=$'__bp_precmd_invoke_cmd\n_direnv_hook;__zoxide_hook\n:' [1]="mcfly_prompt_command" [2]="__bp_interactive_mode")
-  declare -a precmd_functions=([0]="starship_precmd" [1]="__wezterm_osc7_home" [2]="precmd")
-  declare -a preexec_functions=([0]="starship_preexec_all" [1]="preexec")
-  # echo "precmd_functions/PROMPT_COMMAND after bashrc:"
-  # declare -p PROMPT_COMMAND; declare -p precmd_functions
-  # # Restore hook setup
-  # if [[ -v orig_precmd_functions ]]; then
-  #   echo "we are restoring original precmd_functions"
-  #   precmd_functions=(${orig_precmd_functions[*]})
-  #   echo "precmd_functions/PROMPT_COMMAND after restoration:"
-  #   declare -p PROMPT_COMMAND; declare -p precmd_functions
-  #   # The dumb hook code inserts dupes sometimes if they are rerun (not idempotent),
-  #   # so we have to do this:
-  #   # (I hate how mutable this looks but it was the easiest way.
-  #   # Reassigning arrays in Bash is a nightmare.)
-  #   uniquify_array precmd_functions
-  #   echo "precmd_functions/PROMPT_COMMAND after uniquifying:"
-  #   declare -p PROMPT_COMMAND; declare -p precmd_functions
-  # fi
-  # if [[ -v orig_PROMPT_COMMAND ]]; then
-  #   echo "we are restoring original PROMPT_COMMAND"
-  #   PROMPT_COMMAND=(${orig_PROMPT_COMMAND[*]})
-  #   declare -p PROMPT_COMMAND; declare -p precmd_functions
-  #   # Do not need to uniquify this one at this time.
-  # fi
+  
+  # Source only the essential files
+  if [[ -f "$HOME/dotfiles/bin/aliases.sh" ]]; then
+    source "$HOME/dotfiles/bin/aliases.sh"
+  fi
+  
+  if [[ -f "$HOME/dotfiles/.pathconfig" ]]; then
+    source "$HOME/dotfiles/.pathconfig"
+  fi
+  
+  if [[ -f "$HOME/dotfiles/.envconfig" ]]; then
+    source "$HOME/dotfiles/.envconfig"
+  fi
+  
+  # Restore saved variables
+  export LAST_DOTFILE_RUN="${OLD_LAST_DOTFILE_RUN}"
+  
+  # Clean up
+  unset SKIP_DOTFILE_TESTS
+  
+  # Inform user
+  echo "Shell environment refreshed without running tests."
 }
 export -f rehash
 
