@@ -1,234 +1,152 @@
-#!/usr/bin/env elixir
+#!/usr/bin/env luajit
+--[[
+name-value-to-table-lua: Read lines like FOO=bar and emit a pretty table.
+Supports -i/--input <file> (or - for stdin), -o/--output <file> (or - for stdout),
+--help, --test, and optional --key-width <n> --val-width <n>.
+]]
 
-# example usage: env | name-value-to-table [key_column_width] [value_column_width]
-# or: name-value-to-table --help
-# or: name-value-to-table --test
+local function print_help()
+	io.stdout:write([[Usage: name-value-to-table-lua [-i file] [-o file] [--key-width N] [--val-width N]
 
-defmodule FormatTabular do
-  def get_stdin_data do
-    :stdio
-    |> IO.read(:eof)
-  end
-
-  def name_value_pairs_to_keyword_list(str) do
-    str
-    |> String.split("\n", trim: true)
-    |> Enum.filter(fn line ->
-      # Only include lines that match valid variable name pattern followed by equals sign
-      # This will filter out multiline bash function exports while allowing all valid Bash characters
-      # Bash allows letters, numbers, underscores, and question marks in function names
-      Regex.match?(~r/^[a-zA-Z_][a-zA-Z0-9_\?]*(%%)?=/, line)
-    end)
-    |> Enum.map(fn line ->
-      # IO.inspect line
-        [key, value] = String.split(line, "=", parts: 2)
-        {key, value}
-    end)
-  end
-
-  def max_length_key_value(keyword_list) do
-    max_length_key = keyword_list
-    |> Enum.max_by(fn {k, _v} -> String.length(k) end, fn -> {"", ""} end)
-    |> elem(0)
-    |> String.length
-    max_length_value = keyword_list
-    |> Enum.max_by(fn {_k, v} -> String.length(v) end, fn -> {"", ""} end)
-    |> elem(1)
-    |> String.length
-    {max_length_key, max_length_value}
-  end
-
-  def truncate_with_ellipsis(str, max_len \\ 45) do
-    if String.length(str) > max_len do
-      String.slice(str, 0..(max_len - 2)) <> "…"
-    else
-      str
-    end
-  end
-
-  def keyword_list_to_table(keyword_list, max_length_key \\ 45, max_length_value \\ nil) do
-    max_length_value = if max_length_value, do: max_length_value, else: max_length_key * 2
-    {max_key, max_val} = max_length_key_value(keyword_list)
-    # IO.inspect {max_key, max_val}
-    key_col_width = if max_key > max_length_key do
-      max_length_key
-    else
-      max_key
-    end
-    val_col_width = if max_val > max_length_value do
-      max_length_value
-    else
-      max_val
-    end
-    keyword_list
-    |> Enum.each(fn {k,v} ->
-      IO.puts "#{(String.pad_trailing(truncate_with_ellipsis(k, max_length_key), key_col_width))} | #{String.pad_trailing(truncate_with_ellipsis(v, max_length_value), val_col_width)}"
-    end)
-  end
-
-  def run_tests do
-    IO.puts("Running tests for name-value-to-table...")
-
-    # Test 1: Basic name-value parsing
-    test_input = "FOO=bar\nBAZ=qux\nLONG_NAME=some_value"
-    result = name_value_pairs_to_keyword_list(test_input)
-    expected = [{"FOO", "bar"}, {"BAZ", "qux"}, {"LONG_NAME", "some_value"}]
-    assert_equal(result, expected, "Basic name-value parsing")
-
-    # Test 2: Filtering non-matching lines
-    test_input = "FOO=bar\nNot a valid line\nBAZ=qux"
-    result = name_value_pairs_to_keyword_list(test_input)
-    expected = [{"FOO", "bar"}, {"BAZ", "qux"}]
-    assert_equal(result, expected, "Filtering non-matching lines")
-
-    # Test 3: Handling empty input
-    test_input = ""
-    result = name_value_pairs_to_keyword_list(test_input)
-    expected = []
-    assert_equal(result, expected, "Handling empty input")
-
-    # Test 4: Truncation with ellipsis
-    result = truncate_with_ellipsis("This is a very long string that should be truncated", 20)
-    expected = "This is a very long…"
-    assert_equal(result, expected, "Truncation with ellipsis")
-
-    # Test 5: No truncation needed
-    result = truncate_with_ellipsis("Short string", 20)
-    expected = "Short string"
-    assert_equal(result, expected, "No truncation needed")
-
-    # Test 6: Bash exported function names (keep first line only)
-    test_input = """
-    BASH_FUNC_whatismyip%%=() {  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return;
-     needs awk "Please install awk";
-     if command -v ifconfig > /dev/null 2>&1; then
-     if [[ "$(uname)" == "Darwin" ]]; then
-     ip=$(ifconfig | grep "inet " | grep -v 127.0.0.1 | awk '{print $2}');
-     else
-     ip=$(ifconfig | grep -oP '(?<=inet\\s)\\d+(\.\\d+){3}' | grep -v 127.0.0.1);
-     fi;
-     else
-     if command -v ip > /dev/null 2>&1; then
-     ip=$(ip addr show | grep -oP '(?<=inet\\s)\\d+(\.\\d+){3}' | grep -v 127.0.0.1);
-     else
-     echo "Neither ifconfig nor ip command is available.";
-     return 1;
-     fi;
-     fi;
-     if [[ -z "$ip" ]]; then
-     echo "Could not determine local IP address." 1>&2;
-     return 1;
-     else
-     echo "$ip";
-     fi
-    }
-    FOO=bar
-    """
-    result = name_value_pairs_to_keyword_list(test_input)
-    expected = [
-      {"BASH_FUNC_whatismyip%%", "() {  [ -n \"${EDIT}\" ] && unset EDIT && edit_function \"${FUNCNAME[0]}\" \"$BASH_SOURCE\" && return;"},
-      {"FOO", "bar"}
-    ]
-    assert_equal(result, expected, "Bash exported function names")
-
-    # Test 7: Multiple Bash exported functions
-    test_input = """
-    BASH_FUNC_func1%%=() { echo "func1"; }
-    BASH_FUNC_func2%%=() {
-      echo "func2";
-      return 0;
-    }
-    NORMAL_VAR=value
-    """
-    result = name_value_pairs_to_keyword_list(test_input)
-    expected = [
-      {"BASH_FUNC_func1%%", "() { echo \"func1\"; }"},
-      {"BASH_FUNC_func2%%", "() { "},
-      {"NORMAL_VAR", "value"}
-    ]
-    assert_equal(result, expected, "Multiple Bash exported functions")
-
-    IO.puts("\nAll tests completed successfully!")
-  end
-
-  defp assert_equal(actual, expected, test_name) do
-    if actual == expected do
-      IO.puts("✓ #{test_name}")
-    else
-      IO.puts("✗ #{test_name}")
-      IO.puts("  Expected: #{inspect(expected)}")
-      IO.puts("  Got:      #{inspect(actual)}")
-      System.halt(1)
-    end
-  end
-
-  def print_help do
-    IO.puts """
-    name-value-to-table - Format name=value pairs as a table
-
-    USAGE:
-      command-generating-name-value-pairs | name-value-to-table [KEY_WIDTH] [VALUE_WIDTH]
-      name-value-to-table --test
-      name-value-to-table --help
-
-    ARGUMENTS:
-      KEY_WIDTH     Optional width for the key column (default: 45)
-      VALUE_WIDTH   Optional width for the value column (default: 2*KEY_WIDTH)
-
-    OPTIONS:
-      --help        Display this help message
-      --test        Run the test suite
-
-    EXAMPLES:
-      env | name-value-to-table
-      env | name-value-to-table 30
-      env | name-value-to-table 30 60
-    """
-  end
+Options:
+  -i, --input <file>    Input file (default: - for stdin)
+  -o, --output <file>   Output file (default: - for stdout)
+  --key-width <N>       Key column width (default: auto)
+  --val-width <N>       Value column width (default: auto)
+  --help                Show this help
+  --test                Run tests
+]])
 end
 
-# Parse command line arguments
-case System.argv() do
-  ["--help"] ->
-    FormatTabular.print_help()
-
-  ["-h"] ->
-    FormatTabular.print_help()
-
-  ["--test"] ->
-    FormatTabular.run_tests()
-
-  args ->
-    # Parse positional arguments for column widths
-    {key_width, value_width} = case args do
-      [key_str | [value_str | _]] ->
-        {
-          case Integer.parse(key_str) do
-            {num, _} -> num
-            :error -> 45
-          end,
-          case Integer.parse(value_str) do
-            {num, _} -> num
-            :error -> nil
-          end
-        }
-
-      [key_str] ->
-        {
-          case Integer.parse(key_str) do
-            {num, _} -> num
-            :error -> 45
-          end,
-          nil
-        }
-
-      [] ->
-        {45, nil}
-    end
-
-    # Process input
-    FormatTabular.get_stdin_data()
-    |> FormatTabular.name_value_pairs_to_keyword_list()
-    |> Enum.sort()
-    |> FormatTabular.keyword_list_to_table(key_width, value_width)
+local function is_valid_var(line)
+	local key, val = line:match("^([^=]+)=(.*)$")
+	if not key or not val then return false end
+	-- Key must match ^[a-zA-Z_][a-zA-Z0-9_\?]*(%%)?$
+	if not key:match("^[a-zA-Z_][a-zA-Z0-9_%%?]*$") then return false end
+	-- If key ends with %% and value starts with (, skip (Bash function export)
+	if key:match("%%%%$") and val:match("^%(") then return false end
+	return true
 end
+
+local function parse_pairs(lines)
+	local pairs = {}
+	for _, line in ipairs(lines) do
+		if is_valid_var(line) then
+			local key, val = line:match("^([^=]+)=(.*)$")
+			table.insert(pairs, {key = key, val = val})
+		end
+	end
+	return pairs
+end
+
+local function max_widths(pairs)
+	if #pairs == 0 then return 1, 1 end
+	local k, v = 0, 0
+	for _, p in ipairs(pairs) do
+		k = math.max(k, #p.key)
+		v = math.max(v, #p.val)
+	end
+	return k, v
+end
+
+local function truncate(str, maxlen)
+	if #str > maxlen then
+		return str:sub(1, maxlen-1) .. "…" -- Unicode ellipsis
+	else
+		return str
+	end
+end
+
+-- LuaJIT string.format() only supports widths up to 99 for %s
+local MAX_WIDTH = 99
+
+local function clamp_width(w)
+	w = tonumber(w) or 1
+	if w < 1 then return 1
+	elseif w > MAX_WIDTH then return MAX_WIDTH
+	else return math.floor(w) end
+end
+
+local function table_output(pairs, keyw, valw, out)
+	if #pairs == 0 then
+		out:write("(No valid name=value pairs found.)\n")
+		return
+	end
+	keyw = clamp_width(keyw)
+	valw = clamp_width(valw)
+	-- Debug: print widths if debug env var is set
+	if os.getenv("NVTABLE_DEBUG") then
+		io.stderr:write(string.format("[DEBUG] keyw=%d valw=%d\n", keyw, valw))
+	end
+	local fmt = string.format("%%-%ds | %%-%ds\n", keyw, valw)
+	out:write(fmt:format("NAME", "VALUE"))
+	out:write(string.rep("-", keyw) .. "-+-" .. string.rep("-", valw) .. "\n")
+	for _, p in ipairs(pairs) do
+		out:write(fmt:format(truncate(p.key, keyw), truncate(p.val, valw)))
+	end
+end
+
+local function read_lines(input)
+	local lines = {}
+	for line in input:lines() do table.insert(lines, line) end
+	return lines
+end
+
+local function run(input_path, output_path, keyw, valw)
+	local input = input_path == "-" and io.stdin or assert(io.open(input_path, "r"))
+	local output = output_path == "-" and io.stdout or assert(io.open(output_path, "w"))
+	local lines = read_lines(input)
+	if input ~= io.stdin then input:close() end
+	local pairs = parse_pairs(lines)
+	-- Sort pairs by key ascending
+	table.sort(pairs, function(a, b) return a.key < b.key end)
+	local maxk, maxv = max_widths(pairs)
+	keyw = keyw and clamp_width(keyw) or clamp_width(maxk)
+	valw = valw and clamp_width(valw) or clamp_width(maxv)
+	table_output(pairs, keyw, valw, output)
+	if output ~= io.stdout then output:close() end
+end
+
+local function run_tests()
+	io.stdout:write("Running tests...\n")
+	local testlines = {"FOO=bar", "BAZ=qux", "LONG_NAME=some_value", "INVALID LINE", "_Q=ok"}
+	local pairs = parse_pairs(testlines)
+	assert(#pairs == 4, "Should parse 4 valid pairs")
+	assert(pairs[1].key == "FOO" and pairs[1].val == "bar", "First pair correct")
+	assert(pairs[3].key == "LONG_NAME", "Long name parsed")
+	local k, v = max_widths(pairs)
+	assert(k == 9 and v == 10, "Max widths correct")
+	assert(truncate("abcdefg", 5) == "abcd…", "Truncation correct")
+	io.stdout:write("All tests passed.\n")
+end
+
+-- CLI argument parsing (case+shift style)
+local args = {...}
+local input_path, output_path = "-", "-"
+local keyw, valw
+local i = 1
+while i <= #args do
+	local arg = args[i]
+	if arg == "-i" or arg == "--input" then
+		i = i + 1; input_path = args[i]
+	elseif arg == "-o" or arg == "--output" then
+		i = i + 1; output_path = args[i]
+	elseif arg == "--key-width" then
+		i = i + 1; keyw = args[i]
+	elseif arg == "--val-width" then
+		i = i + 1; valw = args[i]
+	elseif arg == "--help" then
+		print_help()
+		os.exit(0)
+	elseif arg == "--test" then
+		run_tests()
+		os.exit(0)
+	else
+		io.stderr:write("Unknown argument: " .. tostring(arg) .. "\n")
+		print_help()
+		os.exit(1)
+	end
+	i = i + 1
+end
+
+run(input_path, output_path, keyw, valw)

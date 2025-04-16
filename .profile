@@ -623,3 +623,8 @@ ${INTERACTIVE_SHELL:-false} && ${LOGIN_SHELL:-false} && fun_intro
 
 [ -n "$DEBUG_SHELLCONFIG" ] && echo "Exiting $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")"
 [ -n "$DEBUG_PATHCONFIG" ] && echo $PATH || :
+
+# Added by LM Studio CLI (lms)
+# export PATH="$PATH:/Users/pmarreck/.cache/lm-studio/bin"
+# End of LM Studio CLI section
+

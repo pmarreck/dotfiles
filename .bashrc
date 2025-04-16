@@ -184,7 +184,7 @@ expand() {
       test_name="$1"
       expected="$2"
       shift 2
-      
+
       if $verbose; then
         echo -n "Running test: $test_name... "
       fi
@@ -300,7 +300,7 @@ EOF
     if [[ "${EXPAND_TEST_VERBOSE:-false}" != "true" ]]; then
       return 0
     fi
-    
+
     echo "Testing expand function..."
     _test_expand
     return $?
@@ -641,3 +641,8 @@ set +H
 
 [ -n "${DEBUG_SHELLCONFIG}" ] && echo "Entering $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")" || $INTERACTIVE_SHELL && $LOGIN_SHELL && append_dotfile_progress "rc"
 [ -n "${DEBUG_PATHCONFIG}" ] && echo "$PATH" || :
+
+# Added by LM Studio CLI (lms)
+# export PATH="$PATH:/Users/pmarreck/.cache/lm-studio/bin"
+# End of LM Studio CLI section
+
