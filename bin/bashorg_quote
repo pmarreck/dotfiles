@@ -1,0 +1,60 @@
+#!/usr/bin/env moonrun
+-- math.randomseed os.time! -- this was too low-rez, so:
+
+ffi = require "ffi"
+ffi.cdef [[
+	typedef long time_t;
+	typedef struct timeval {
+		time_t tv_sec;
+		time_t tv_usec;
+	} timeval;
+	int gettimeofday(struct timeval* tv, void* tz);
+]]
+seed = ->
+	tv = ffi.new "timeval"
+	ffi.C.gettimeofday tv, nil
+	sec = tonumber tv.tv_sec
+	usec = tonumber tv.tv_usec
+	math.randomseed sec * 1e6 + usec
+	math.random!
+
+seed!
+
+get_script_dir = ->
+	src = debug.getinfo(2, "S").source
+	if src\match "^@"
+		return src\match("^@(.-)[^/]+$") -- extract path prefix
+	else
+		return "./"
+
+parse_quotes = (filename) ->
+	quotes = {}
+	total_score = 0
+
+	for line in io.lines filename
+		id, score, quote = line\match("^(%d+)\t(%d+)\t(.+)$")
+		continue unless id and score and quote
+
+		score = tonumber score
+		total_score += score + 10
+		table.insert quotes, {
+			score: score + 10
+			quote: quote
+			cumulative: total_score
+		}
+
+	quotes, total_score
+
+pick_quote = (quotes, total_score) ->
+	r = math.random total_score
+	for q in *quotes
+		if q.cumulative >= r
+			return q.quote\gsub("\\n", "\n")
+
+main = ->
+	script_dir = get_script_dir!
+	quotes_file = script_dir .. "functions/bashorg_quotes_unwrapped.tsv"
+	quotes, total = parse_quotes quotes_file
+	print (pick_quote quotes, total)
+
+main!

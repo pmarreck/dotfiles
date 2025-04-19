@@ -4,7 +4,7 @@ bashorg_quote() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   # Extract quote data from bashorg_quotes.tsv in the same directory as this script
   local script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-  local quotes_file="$script_dir/bashorg_quotes.tsv"
+  local quotes_file="$script_dir/bashorg_quotes_unwrapped.tsv"
   if [[ ! -f "$quotes_file" ]]; then
     echo "Error: quotes file '$quotes_file' not found." >&2
     return 1

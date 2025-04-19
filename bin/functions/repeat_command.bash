@@ -4,9 +4,9 @@ repeat() {
   local count=$1
   local retcodes=0
   shift
-  cmd=($@)
+  local cmd="$@"
   for ((i = 0; i < count; i++)); do
-    eval "${cmd[@]}"
+    eval "$cmd"
     (( retcodes+=$? ))
   done
   return $retcodes

@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+script_path="$script_dir/$(basename "${BASH_SOURCE[0]}")"
+
+usage() {
+  cat <<EOF >&2
+Usage: moonrun [--test] <file>
+Compile (if needed) and run a Moonscript file via luajit.
+Options:
+  --test   Run built-in unit tests.
+EOF
+}
+
+main() {
+  set -euo pipefail
+  if [[ $# -ne 1 ]]; then usage; exit 1; fi
+  input="$1"
+  # Determine source and base for .moon files (support extensionless input)
+  if [[ "$input" == *.moon ]]; then
+    base="${input%.moon}"
+    src="$input"
+  elif [[ -e "$input" ]]; then
+    base="$input"
+    src="$input"
+  else
+    base="$input"
+    src="$input.moon"
+  fi
+  out="$base.lua"
+
+  if [[ ! -e "$src" ]]; then
+    echo "Error: '$src' not found." >&2
+    exit 1
+  fi
+
+  need_build=false
+  if [[ ! -e "$out" ]]; then
+    need_build=true
+  else
+    # rebuild if modification times differ (avoid external gstat)
+    if [[ "$src" -nt "$out" || "$out" -nt "$src" ]]; then
+      need_build=true
+    fi
+  fi
+
+  if $need_build; then
+    "$script_dir/moonbuild" "$src"
+  fi
+
+  exec luajit "$out"
+}
+
+test_suite() {
+  local failures=0
+  echo "Running moonrun tests..."
+
+  # Test 1: nonexistent file
+  printf "Test 1 (nonexistent file)... "
+  out=$("$script_path" nonexistent.moon 2>&1)
+  rc=$?
+  if [[ $rc -ne 0 ]]; then echo "PASSED"; else echo "FAILED"; failures=$((failures+1)); fi
+
+  # Test 2: missing lua run
+  printf "Test 2 (missing lua run)... "
+  tmp=$(mktemp -d)
+  trap 'rm -rf "$tmp"' EXIT
+  cd "$tmp"
+  echo 'io.write "hello2"' > foo.moon
+  out=$("$script_path" foo.moon 2>&1)
+  rc=$?
+  if [[ $rc -eq 0 && "$out" == "hello2" ]]; then echo "PASSED"; else echo "FAILED"; failures=$((failures+1)); fi
+  cd - >/dev/null
+
+  # Test 3: up-to-date lua run
+  printf "Test 3 (uptodate lua run)... "
+  tmp2=$(mktemp -d)
+  cd "$tmp2"
+  echo 'io.write "hello3"' > foo.moon
+  "$script_dir/moonbuild" foo.moon >/dev/null 2>&1
+  out=$("$script_path" foo.moon 2>&1)
+  rc=$?
+  if [[ $rc -eq 0 && "$out" == "hello3" ]]; then echo "PASSED"; else echo "FAILED"; failures=$((failures+1)); fi
+  cd - >/dev/null
+
+  # Test 4: input without .moon suffix
+  printf "Test 4 (input without .moon)... "
+  tmp3=$(mktemp -d)
+  cd "$tmp3"
+  echo 'io.write "xyz"' > baz.moon
+  out=$("$script_path" baz 2>&1)
+  rc=$?
+  if [[ $rc -eq 0 && "$out" == "xyz" ]]; then echo "PASSED"; else echo "FAILED"; failures=$((failures+1)); fi
+  cd - >/dev/null
+
+  if [[ $failures -eq 0 ]]; then
+    echo "All tests passed"
+    exit 0
+  else
+    echo "$failures test(s) failed"
+    exit 1
+  fi
+}
+
+# Entry point
+if [[ "${1:-}" == "--test" ]]; then test_suite; exit $?; fi
+main "$@"

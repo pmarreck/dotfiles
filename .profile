@@ -142,7 +142,7 @@ source_relative_once bin/functions/ds_bore.sh
 source_relative_once bin/functions/warhammer_quote.bash
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced warhammer_quote.bash"
 
-source_relative_once bin/functions/bashorg_quote.bash
+# source_relative_once bin/functions/bashorg_quote.bash
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced bashorg_quote.bash"
 
 source_relative_once bin/functions/mandelbrot.sh
