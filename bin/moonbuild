@@ -30,6 +30,16 @@ main() {
   fi
   out="$base.lua"
 
+  # Build Moonscript dependencies first (requires)
+  dir="$(dirname "$src")"
+  # safely parse and build require'd modules
+  while IFS= read -r module; do
+    "$script_path" "$dir/$module"
+  done < <(
+    grep -Eo "require *['\"][^'\"]+['\"]" "$src" 2>/dev/null \
+    | sed -E "s/require *['\"]([^'\"]+)['\"]/\\1/" || true
+  )
+
   if [[ ! -e "$src" ]]; then
     echo "Error: '$src' not found." >&2
     exit 1
@@ -67,9 +77,8 @@ test_suite() {
   out=$("$script_path" foo.moon 2>&1)
   rc=$?
   if [[ $rc -eq 0 && -e foo.lua ]]; then
-    src_time=$(gstat -c %Y foo.moon)
-    out_time=$(gstat -c %Y foo.lua)
-    if [[ $src_time -eq $out_time ]]; then echo "PASSED"; else echo "FAILED"; failures=$((failures+1)); fi
+    # timestamps should match via shell built-in
+    if [[ ! foo.moon -nt foo.lua && ! foo.lua -nt foo.moon ]]; then echo "PASSED"; else echo "FAILED"; failures=$((failures+1)); fi
   else
     echo "FAILED"; failures=$((failures+1))
   fi
@@ -85,9 +94,8 @@ test_suite() {
   out=$("$script_path" foo.moon 2>&1)
   rc=$?
   if [[ $rc -eq 0 ]]; then
-    src_time=$(gstat -c %Y foo.moon)
-    out_time=$(gstat -c %Y foo.lua)
-    if [[ $src_time -eq $out_time ]]; then echo "PASSED"; else echo "FAILED"; failures=$((failures+1)); fi
+    # timestamps should match via shell built-in
+    if [[ ! foo.moon -nt foo.lua && ! foo.lua -nt foo.moon ]]; then echo "PASSED"; else echo "FAILED"; failures=$((failures+1)); fi
   else
     echo "FAILED"; failures=$((failures+1))
   fi
@@ -100,9 +108,8 @@ test_suite() {
   out=$("$script_path" bar 2>&1)
   rc=$?
   if [[ $rc -eq 0 && -e bar.lua ]]; then
-    src_time=$(gstat -c %Y bar.moon)
-    out_time=$(gstat -c %Y bar.lua)
-    if [[ $src_time -eq $out_time ]]; then echo "PASSED"; else echo "FAILED"; failures=$((failures+1)); fi
+    # timestamps should match via shell built-in
+    if [[ ! bar.moon -nt bar.lua && ! bar.lua -nt bar.moon ]]; then echo "PASSED"; else echo "FAILED"; failures=$((failures+1)); fi
   else
     echo "FAILED"; failures=$((failures+1))
   fi

@@ -7,7 +7,7 @@ script_path="$script_dir/$(basename "${BASH_SOURCE[0]}")"
 usage() {
   cat <<EOF >&2
 Usage: moonrun [--test] <file>
-Compile (if needed) and run a Moonscript file via luajit.
+Transpile (if needed) and run a Moonscript file via luajit.
 Options:
   --test   Run built-in unit tests.
 EOF
@@ -53,6 +53,7 @@ main() {
 }
 
 test_suite() {
+  set -o pipefail
   local failures=0
   echo "Running moonrun tests..."
 
@@ -93,6 +94,19 @@ test_suite() {
   rc=$?
   if [[ $rc -eq 0 && "$out" == "xyz" ]]; then echo "PASSED"; else echo "FAILED"; failures=$((failures+1)); fi
   cd - >/dev/null
+
+  # Test 5: require dependency
+  printf "Test 5 (require dependency)... "
+  tmp5=$(mktemp -d) && cd "$tmp5"
+  echo 'print "lib loaded"' > lib.moon
+  printf '%s\n%s\n' 'require "lib"' 'io.write "OK"' > main.moon
+  out=$("$script_path" main.moon 2>&1 | grep -v '^Warning:')
+  rc=$?
+  if [[ $rc -eq 0 && -e lib.lua && -e main.lua && "$out" == *OK ]]; then
+    echo "PASSED"
+  else
+    echo "FAILED"; failures=$((failures+1)); fi
+  cd - >/dev/null && rm -rf "$tmp5"
 
   if [[ $failures -eq 0 ]]; then
     echo "All tests passed"
