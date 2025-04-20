@@ -15,8 +15,12 @@ EOF
 
 main() {
   set -euo pipefail
-  if [[ $# -ne 1 ]]; then usage; exit 1; fi
+  if [[ $# -lt 1 ]]; then usage; exit 1; fi
+  
+  # Check if first arg is a file or an option
   input="$1"
+  shift
+  
   # Determine source and base for .moon files (support extensionless input)
   if [[ "$input" == *.moon ]]; then
     base="${input%.moon}"
@@ -49,7 +53,8 @@ main() {
     "$script_dir/moonbuild" "$src"
   fi
 
-  exec luajit "$out"
+  # Pass all remaining arguments to the Lua script
+  exec luajit "$out" "$@"
 }
 
 test_suite() {
@@ -118,5 +123,5 @@ test_suite() {
 }
 
 # Entry point
-if [[ "${1:-}" == "--test" ]]; then test_suite; exit $?; fi
+if [[ "${1:-}" == "--test" && $# -eq 1 ]]; then test_suite; exit $?; fi
 main "$@"
