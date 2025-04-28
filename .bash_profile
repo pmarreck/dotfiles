@@ -123,10 +123,10 @@ fi
 # enable tests if any script modification times are different
 source_relative_once "${HOME}/dotfiles/run_tests_on_change.sh"
 
-[ "${DEBUG_SHELLCONFIG+set}" = "set" ] && echo "Exiting $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")"
-[ "${DEBUG_PATHCONFIG+set}" = "set" ] && echo "$PATH" || :
+truthy DEBUG_SHELLCONFIG && echo "Exiting $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")"
+truthy DEBUG_PATHCONFIG && echo "$PATH" || :
+
 
 # Added by LM Studio CLI (lms)
 # export PATH="$PATH:/Users/pmarreck/.cache/lm-studio/bin"
 # End of LM Studio CLI section
-

@@ -1,3 +1,4 @@
+#!/usr/bin/env moonrun
 -- cli_utils.moon
 
 ffi = require "ffi"
@@ -84,7 +85,7 @@ parse_args = (config, argv = arg) ->
 --   { name: "file", flags: {"-f", "--file"}, has_arg: true, description: "Path to input file", validator: (f) -> f and f != "" and io.open(f) != nil }
 -- }
 
-{
+return {
   seed_rng: seed_rng
   assert_factory: assert_factory
   parse_args: parse_args

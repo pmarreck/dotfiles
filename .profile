@@ -148,6 +148,10 @@ source_relative_once bin/functions/warhammer_quote.bash
 source_relative_once bin/functions/mandelbrot.sh
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced mandelbrot.sh"
 
+# A solution to the nix problem of finding standard libraries "loosely"
+source_relative_once bin/functions/gmp_path.bash
+# [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced gmp_path.bash"
+
 source_relative_once bin/functions/clock.bash
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced clock.bash"
 

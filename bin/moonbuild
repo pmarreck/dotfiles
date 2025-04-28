@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -uo pipefail
+set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 script_path="$script_dir/$(basename "${BASH_SOURCE[0]}")"
@@ -14,9 +14,9 @@ EOF
 }
 
 main() {
-  set -euo pipefail
   if [[ $# -ne 1 ]]; then usage; exit 1; fi
   input="$1"
+
   # Determine source and base for .moon files (support extensionless input)
   if [[ "$input" == *.moon ]]; then
     base="${input%.moon}"
@@ -30,23 +30,25 @@ main() {
   fi
   out="$base.lua"
 
-  # Build Moonscript dependencies first (requires)
-  dir="$(dirname "$src")"
-  # safely parse and build require'd modules
-  while IFS= read -r module; do
-    "$script_path" "$dir/$module"
-  done < <(
-    grep -Eo "require *['\"][^'\"]+['\"]" "$src" 2>/dev/null \
-    | sed -E "s/require *['\"]([^'\"]+)['\"]/\\1/" || true
-  )
-
   if [[ ! -e "$src" ]]; then
     echo "Error: '$src' not found." >&2
     exit 1
   fi
 
+  # Build Moonscript dependencies first (require'd modules that actually exist)
+  dir="$(dirname "$src")"
+  while IFS= read -r module; do
+    modpath="$dir/$module.moon"
+    if [[ -e "$modpath" ]]; then
+      "$script_path" "$modpath"
+    fi
+  done < <(
+    grep -Eo "require *['\"][^'\"]+['\"]" "$src" 2>/dev/null \
+    | sed -E "s/require *['\"]([^'\"]+)['\"]/\\1/" || true
+  )
+
+  # Skip build if timestamps match
   if [[ -e "$out" ]]; then
-    # skip build if modification times are equal (built-in tests avoid gstat)
     if [[ ! "$src" -nt "$out" && ! "$out" -nt "$src" ]]; then
       exit 0
     fi
@@ -57,8 +59,11 @@ main() {
     echo "Error: expected '$out' after compilation." >&2
     exit 1
   fi
+  # Sync timestamps so "rebuild if newer" logic stays clean
   gtouch -r "$src" "$out"
 }
+
+# Test suite
 
 test_suite() {
   local failures=0

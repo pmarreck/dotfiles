@@ -62,7 +62,7 @@ fi
 [ "${DEBUG_PATHCONFIG+set}" = "set" ] && echo "$PATH"
 
 # mute direnv constantly telling me what it's loading
-export DIRENV_LOG_FORMAT=
+export DIRENV_LOG_FORMAT=""
 
 # graceful dependency enforcement
 # Usage: needs <executable> ["provided by <packagename>"]

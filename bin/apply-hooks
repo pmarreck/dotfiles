@@ -43,14 +43,12 @@ needs tokei "cargo install --git https://github.com/XAMPPRocky/tokei.git tokei"
 
 # echo "before direnv hook: $(declare -p PROMPT_COMMAND)"
 ##### direnv hook
-# mute direnv constantly telling me what it's loading
-export DIRENV_LOG_FORMAT=
 needs direnv
 if [ $? -eq 0 ]; then
   # if array_contains_element precmd_functions _direnv_hook; then
   #   :
   # else
-    eval "$(direnv hook bash)"
+    eval "$(direnv hook bash)" >/dev/null 2>&1
   # fi
 fi
 
