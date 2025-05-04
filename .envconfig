@@ -199,6 +199,10 @@ IGNORE_EXCLUDE_PATH_WARNINGS=true exclude_path '/nix/var/nix/profiles/per-user/r
 export FONTCONFIG_PATH="${XDG_CONFIG_HOME:-$HOME/.config}/fontconfig"
 export FONTCONFIG_FILE="${FONTCONFIG_PATH}/fonts.conf"
 
+# Ollama
+export OLLAMA_CONTEXT_LENGTH=16384
+export OLLAMA_DEFAULT_MODEL=${OLLAMA_DEFAULT_MODEL:-llama3.3:70b}
+
 # erlang/elixir config- 2 million process limit
 # (# of schedulers is automatic to # of CPU logical cores, but can be forced with +S arg)
 export ERL_FLAGS="+P 2000000";

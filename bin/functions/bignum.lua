@@ -19,37 +19,37 @@ load_gmp = function()
   end
   return error("Could not load GMP: set GMP_PATH or add libgmp to DYLD_LIBRARY_PATH")
 end
-ffi.cdef([[  typedef struct {
-    int _mp_alloc, _mp_size;
-    void *_mp_d;
-  } __mpz_struct;
-  typedef __mpz_struct mpz_t[1];
+ffi.cdef([[	typedef struct {
+		int _mp_alloc, _mp_size;
+		void *_mp_d;
+	} __mpz_struct;
+	typedef __mpz_struct mpz_t[1];
 
-  void __gmpz_init(mpz_t);
-  void __gmpz_clear(mpz_t);
-  void __gmpz_set_str(mpz_t, const char *, int);
-  void __gmpz_set_si(mpz_t, long);
-  void __gmpz_set(mpz_t, const mpz_t);
-  void __gmpz_add(mpz_t, const mpz_t, const mpz_t);
-  void __gmpz_sub(mpz_t, const mpz_t, const mpz_t);
-  void __gmpz_mul(mpz_t, const mpz_t, const mpz_t);
-  void __gmpz_tdiv_q(mpz_t, const mpz_t, const mpz_t);
-  void __gmpz_tdiv_r(mpz_t, const mpz_t, const mpz_t);
-  void __gmpz_pow_ui(mpz_t, const mpz_t, unsigned long);
-  void __gmpz_abs(mpz_t, const mpz_t);
-  void __gmpz_neg(mpz_t, const mpz_t);
-  void __gmpz_gcd(mpz_t, const mpz_t, const mpz_t);
-  void __gmpz_and(mpz_t, const mpz_t, const mpz_t);
-  void __gmpz_ior(mpz_t, const mpz_t, const mpz_t);
-  void __gmpz_xor(mpz_t, const mpz_t, const mpz_t);
-  void __gmpz_com(mpz_t, const mpz_t);
-  void __gmpz_mul_2exp(mpz_t, const mpz_t, unsigned long);
-  void __gmpz_fdiv_q_2exp(mpz_t, const mpz_t, unsigned long);
-  void __gmpz_setbit(mpz_t, unsigned long);
-  void __gmpz_clrbit(mpz_t, unsigned long);
-  void __gmpz_combit(mpz_t, unsigned long);
-  int __gmpz_cmp(const mpz_t, const mpz_t);
-  char* __gmpz_get_str(char *, int, const mpz_t);
+	void __gmpz_init(mpz_t);
+	void __gmpz_clear(mpz_t);
+	void __gmpz_set_str(mpz_t, const char *, int);
+	void __gmpz_set_si(mpz_t, long);
+	void __gmpz_set(mpz_t, const mpz_t);
+	void __gmpz_add(mpz_t, const mpz_t, const mpz_t);
+	void __gmpz_sub(mpz_t, const mpz_t, const mpz_t);
+	void __gmpz_mul(mpz_t, const mpz_t, const mpz_t);
+	void __gmpz_tdiv_q(mpz_t, const mpz_t, const mpz_t);
+	void __gmpz_tdiv_r(mpz_t, const mpz_t, const mpz_t);
+	void __gmpz_pow_ui(mpz_t, const mpz_t, unsigned long);
+	void __gmpz_abs(mpz_t, const mpz_t);
+	void __gmpz_neg(mpz_t, const mpz_t);
+	void __gmpz_gcd(mpz_t, const mpz_t, const mpz_t);
+	void __gmpz_and(mpz_t, const mpz_t, const mpz_t);
+	void __gmpz_ior(mpz_t, const mpz_t, const mpz_t);
+	void __gmpz_xor(mpz_t, const mpz_t, const mpz_t);
+	void __gmpz_com(mpz_t, const mpz_t);
+	void __gmpz_mul_2exp(mpz_t, const mpz_t, unsigned long);
+	void __gmpz_fdiv_q_2exp(mpz_t, const mpz_t, unsigned long);
+	void __gmpz_setbit(mpz_t, unsigned long);
+	void __gmpz_clrbit(mpz_t, unsigned long);
+	void __gmpz_combit(mpz_t, unsigned long);
+	int __gmpz_cmp(const mpz_t, const mpz_t);
+	char* __gmpz_get_str(char *, int, const mpz_t);
 ]])
 local gmp = load_gmp()
 local mpz_wrapper = ffi.metatype("struct { mpz_t value; }", {
@@ -237,26 +237,34 @@ end
 if arg and arg[0] and arg[1] == "--test" then
   local script_path = debug.getinfo(1, "S").source:match("^@(.*/)")
   package.path = script_path .. "?.lua;" .. script_path .. "?.moon;" .. package.path
-  local cli_utils = require("cli_utils")
-  local tf = cli_utils.assert_factory()
+  local test_factory = require("test_factory").test_factory
+  local tf = test_factory()
   local B = Bignum
-  tf.assert(B("2") + B("3") == B("5"), "2 + 3 == 5")
-  tf.assert(B("5") - B("3") == B("2"), "5 - 3 == 2")
-  tf.assert(tostring(B("4") * B("6")) == "24", "4 * 6 == 24")
-  tf.assert(tostring(B("10") / B("2")) == "5", "10 / 2 == 5")
-  tf.assert(tostring(B("10") % B("3")) == "1", "10 % 3 == 1")
-  tf.assert(tostring(B("2") ^ 10) == "1024", "2 ^ 10 == 1024")
-  tf.assert(tostring(B("-42"):abs()) == "42", "abs(-42) == 42")
-  tf.assert(B("123"):tostring() == "123", "Bignum:tostring! method works")
+  tf.assert_equal(B("2") + B("3"), B("5"), "2 + 3 == 5")
+  tf.assert_equal(B("5") - B("3"), B("2"), "5 - 3 == 2")
+  tf.assert_equal((B("4") * B("6")):tostring(), "24", "4 * 6 == 24")
+  tf.assert_equal((B("10") / B("2")):tostring(), "5", "10 / 2 == 5")
+  tf.assert_equal((B("10") % B("3")):tostring(), "1", "10 % 3 == 1")
+  tf.assert_equal((B("2") ^ 10):tostring(), "1024", "2 ^ 10 == 1024")
+  tf.assert_equal(B("-42"):abs():tostring(), "42", "abs(-42) == 42")
+  tf.assert_equal(B("123"):tostring(), "123", "Bignum:tostring! method works")
   local f, note = B("12345678901234567890"):to_number_annotated()
-  tf.assert(type(f) == "number", "float conversion returns number")
-  tf.assert(type(note) == "string", "conversion note is string")
-  tf.assert(B("6"):band(B("3")) == B("2"), "6 AND 3 == 2")
-  tf.assert(B("6"):bor(B("3")) == B("7"), "6 OR 3 == 7")
-  tf.assert(B("6"):bxor(B("3")) == B("5"), "6 XOR 3 == 5")
-  tf.assert(B("2"):shl(3) == B("16"), "2 << 3 == 16")
-  tf.assert(B("16"):shr(2) == B("4"), "16 >> 2 == 4")
-  io.stderr:write("Tests completed. Failures: " .. tostring(tf.fails()) .. "\n")
+  tf.assert_equal(type(f), "number", "float conversion returns number")
+  tf.assert_equal(type(note), "string", "conversion note is string")
+  tf.assert_equal(B("6"):band(B("3")), B("2"), "6 AND 3 == 2")
+  tf.assert_equal(B("6"):bor(B("3")), B("7"), "6 OR 3 == 7")
+  tf.assert_equal(B("6"):bxor(B("3")), B("5"), "6 XOR 3 == 5")
+  tf.assert_equal(B("2"):shl(3), B("16"), "2 << 3 == 16")
+  tf.assert_equal(B("16"):shr(2), B("4"), "16 >> 2 == 4")
+  tf.assert_equal(B("42"), B("42"), "assert_equal works with Bignums")
+  tf.assert_not_equal(B("42"), B("43"), "assert_not_equal works with Bignums")
+  tf.assert_raise(function()
+    return B("not a number"), "Should raise error on invalid string"
+  end)
+  tf.assert_no_raise(function()
+    return B("123"), "Should not raise error on valid string"
+  end)
+  tf.report()
   os.exit(tf.fails())
 end
 return Bignum

@@ -1,4 +1,5 @@
 local ffi = require("ffi")
+local test_factory = require("test_factory").test_factory
 ffi.cdef([[  typedef long time_t;
   typedef struct timeval {
     time_t tv_sec;
@@ -14,26 +15,6 @@ seed_rng = function()
   local usec = tonumber(tv.tv_usec)
   math.randomseed(sec * 1e6 + usec)
   return math.random()
-end
-local assert_factory
-assert_factory = function()
-  local fails = 0
-  local assert
-  assert = function(expr, msg)
-    if msg == nil then
-      msg = "Assertion failed"
-    end
-    if not (expr) then
-      io.stderr:write("FAIL: " .. tostring(msg) .. "\n")
-      fails = fails + 1
-    end
-  end
-  return {
-    assert = assert,
-    fails = function()
-      return fails
-    end
-  }
 end
 local default_validator
 default_validator = function()
@@ -100,6 +81,6 @@ parse_args = function(config, argv)
 end
 return {
   seed_rng = seed_rng,
-  assert_factory = assert_factory,
+  assert_factory = test_factory,
   parse_args = parse_args
 }
