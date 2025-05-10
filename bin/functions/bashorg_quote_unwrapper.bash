@@ -1,6 +1,11 @@
 gawk -F'\t' -v OFS='\t' 'function is_username(line) {
   # Match <username>, (username), [username], username: (word with colon+space), * , *** or a bracketed timestamp
   return line ~ /^((<[^>]{1,30}>)|(\([^\)]{1,30}\))|(\[[^\]]{1,30}\])|([A-Za-z_^\|\[\]`\\\-][A-Za-z0-9_^\|\[\]`\\\-]{1,30} ?: )|(\* )|(\*\*\*)|\[[0-9]{1,2}:[0-9]{1,2}(:[0-9]{1,2})?:?((a|p)m?)?\])/
+  # The following change identified more usernames, but also had some false positives. The only addition was a space as part of the username.
+  # Have to investigate later how best to do this.
+  # Here is an example of a line that is not currently (using the above regex) split:
+  # CwD | Asbestos: triangle over triangle is equal to square diveded by - y x CwD | Asbestos: what is z CwD | Asbestos: youre like CwD | Asbestos: wtf CwD | Asbestos: there
+  # return line ~ /^((<[^>]{1,30}>)|(\([^\)]{1,30}\))|(\[[^\]]{1,30}\])|([A-Za-z_^\|\[\]`\\\-][A-Za-z0-9_^\|\[\]`\\\- ]{1,30} ?: )|(\* )|(\*\*\*)|\[[0-9]{1,2}:[0-9]{1,2}(:[0-9]{1,2})?:?((a|p)m?)?\])/
 }
 {
   quote = $3
