@@ -14,7 +14,7 @@ repeat() {
 export -f repeat
 
 if [ "$RUN_DOTFILE_TESTS" == "true" ]; then
-  source_relative_once assert.bash
+  source_relative_once $HOME/dotfiles/bin/functions/assert.bash
 
   assert "$(repeat 3 "echo -n \"hi \"")" == 'hi hi hi '
   # ensure return code is summed up from failed commands

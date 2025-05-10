@@ -36,7 +36,7 @@ export -f hexbin
 
 if [ "$RUN_DOTFILE_TESTS" == "true" ]; then
   # this is at the bottom because assert depends on binhex/hexbin
-  source_relative_once assert.bash
+  source_relative_once $HOME/dotfiles/bin/functions/assert.bash
   assert "$(binhex "Peter")" == "5065746572" "binhex function should encode binary strings to hex"
   assert "$(hexbin "5065746572")" == "Peter" "hexbin function should decode binary from hex"
   assert "$(binhex "Peter" | hexbin)" == "Peter" "hexbin function should accept a pipe"

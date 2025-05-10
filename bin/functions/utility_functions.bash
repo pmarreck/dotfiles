@@ -16,8 +16,8 @@ export -f needs
 [ -z "${AWK}" ] && export AWK=$(command -v frawk || command -v gawk || command -v awk)
 
 if truthy RUN_DOTFILE_TESTS; then
-  source_relative_once assert.bash
-  source_relative_once test_reporter.bash
+  source_relative_once $HOME/dotfiles/bin/functions/assert.bash
+  source_relative_once $HOME/dotfiles/bin/functions/test_reporter.bash
 fi
 
 save_shellenv() {
@@ -535,17 +535,17 @@ fail() {
 export -f fail
 
 # mute stdout and stderr and only return the return code
-success?() {
+successful() {
   "$@" >/dev/null 2>&1
   return $?
 }
-export -f success?
+export -f successful
+
 # mute stdout and stderr and only return the return code
-error?() {
-  ! success? "$@"
-  return $?
+error() {
+  ! successful "$@"
 }
-export -f error?
+export -f error
 
 remove_z_library_attrib() {
   local files

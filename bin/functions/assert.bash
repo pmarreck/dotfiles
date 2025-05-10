@@ -76,4 +76,4 @@ assert() {
 export -f assert
 
 # this is at the bottom because it depends on assert
-source_relative_once binhex.bash
+source_relative_once $HOME/dotfiles/bin/functions/binhex.bash

@@ -53,7 +53,7 @@ fsattr() {
 export -f fsattr
 
 if [ "$RUN_DOTFILE_TESTS" == "true" ]; then
-  source_relative_once assert.bash
+  source_relative_once $HOME/dotfiles/bin/functions/assert.bash
   # fsattr on the fly test suite
   # this setup function takes a PID as an argument and uses it to create a file unique to the process
   # ... Because prior to this I actually had fails here firing up multiple shells at the same time, facepalm.gif

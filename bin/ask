@@ -407,14 +407,14 @@ ask() {
   fi
 } && export -f ask
 
-source_relative_once functions/truthy.bash
+source_relative_once $HOME/dotfiles/bin/functions/truthy.bash
 
 if truthy RUN_DOTFILE_TESTS; then
   # IMPORTANT!
   # how do we even test this function? Pass in a mocked curl somehow?
-  source_relative_once functions/assert.bash
-  source_relative_once functions/test_reporter.bash
-  source_relative_once functions/utility_functions.bash
+  source_relative_once $HOME/dotfiles/bin/functions/assert.bash
+  source_relative_once $HOME/dotfiles/bin/functions/test_reporter.bash
+  source_relative_once $HOME/dotfiles/bin/functions/utility_functions.bash
 
   # Set up test environment
   temp_json_out=$(mktemp)

@@ -84,7 +84,7 @@ fi
 [ "`type -t source_relative_once`" = "function" ] || . "$HOME/dotfiles/bin/functions/source_relative.bash"
 
 # Pull in path configuration
-source_relative_once .pathconfig
+source_relative_once $HOME/.pathconfig
 
 # Warp terminal seems to have nonstandard behavior and non-gnu sed breaks things
 # so we are using this workaround:

@@ -12,17 +12,15 @@ $INTERACTIVE_SHELL && $LOGIN_SHELL && echo "$DISTRO_PRETTY"
 # shellcheck disable=SC1090
 [ "`type -t source_relative_once`" = "function" ] || . "$HOME/dotfiles/bin/functions/source_relative.bash"
 # [ -n "$DEBUG_SHELLCONFIG" ] && ! [ "`type -t source_relative_once`" = "function" ] && echo "sourced source_relative.bash"
-source_relative_once bin/functions/truthy.bash
+source_relative_once $HOME/dotfiles/bin/functions/truthy.bash
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced truthy.bash"
 # The only functions defined here should be the ones that are needed everywhere
 # and are not specific to a particular shell (e.g. bash, zsh, etc.)
 
-source_relative_once bin/functions/utility_functions.bash
-# [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced utility_functions.bash"
-source_relative_once bin/functions/binhex.bash
+source_relative_once $HOME/dotfiles/bin/functions/binhex.bash
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced binhex.bash"
 
-source_relative_once bin/functions/nix-hash-retrievals.bash
+source_relative_once $HOME/dotfiles/bin/functions/nix-hash-retrievals.bash
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced nix-hash-retrievals.bash"
 
 # config for Visual Studio Code
@@ -47,7 +45,7 @@ tabs -2
 # Linux-specific stuff
 if [ "${PLATFORM}" = "linux" ]; then
   [ -n "$DEBUG_SHELLCONFIG" ] && echo "linux platform detected"
-  source_relative_once bin/functions/fsattr.bash
+  source_relative_once $HOME/dotfiles/bin/functions/fsattr.bash
   # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced fsattr.bash"
   # provide a universal "open" on linux to open a path in the file manager
   open() {
@@ -71,14 +69,14 @@ if [ "${PLATFORM}" = "linux" ]; then
     PS_PERSONALITY=linux ps -ewwo pid,%cpu,%mem,nice,pri,rtprio,args --sort=-pcpu,-pid | $AWK -v filter="$1" 'NR==1 || tolower($0) ~ tolower(filter)' | less -e --header=1
   }
   export -f list-procs
-  source_relative_once bin/functions/nvidia.bash
+  source_relative_once $HOME/dotfiles/bin/functions/nvidia.bash
   # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced nvidia.bash"
 fi
 
-source_relative_once bin/functions/get_all_git_stati.sh
+source_relative_once $HOME/dotfiles/bin/functions/get_all_git_stati.sh
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced get_all_git_stati.sh"
 
-source_relative_once bin/functions/compsavings.bash
+source_relative_once $HOME/dotfiles/bin/functions/compsavings.bash
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced compsavings.bash"
 
 # because I always forget how to do this...
@@ -95,28 +93,28 @@ write_iso() {
 }
 export -f write_iso
 
-source_relative_once bin/functions/cpv_copy_verbose.sh
+source_relative_once $HOME/dotfiles/bin/functions/cpv_copy_verbose.sh
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced cpv_copy_verbose.sh"
 
-source_relative_once bin/functions/date_difference_days.bash
+source_relative_once $HOME/dotfiles/bin/functions/date_difference_days.bash
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced date_difference_days.bash"
 
-source_relative_once bin/functions/calc.bash
+source_relative_once $HOME/dotfiles/bin/functions/calc.bash
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced calc.bash"
 
-source_relative_once bin/functions/encrypt_decrypt.sh
+source_relative_once $HOME/dotfiles/bin/functions/encrypt_decrypt.sh
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced encrypt_decrypt.sh"
 
-source_relative_once bin/functions/job_control.bash
+source_relative_once $HOME/dotfiles/bin/functions/job_control.bash
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced job_control.bash"
 
-source_relative_once bin/functions/randompass.sh
+source_relative_once $HOME/dotfiles/bin/functions/randompass.sh
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced randompass.sh"
 
-source_relative_once bin/functions/random_color.bash
+source_relative_once $HOME/dotfiles/bin/functions/random_color.bash
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced random_color.bash"
 
-source_relative_once bin/functions/executables.bash
+source_relative_once $HOME/dotfiles/bin/functions/executables.bash
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced executables.bash"
 
 # which hack, so it also shows defined aliases and functions that match
@@ -130,47 +128,50 @@ source_relative_once bin/functions/executables.bash
 # }
 # Note: Superseded by "show" function below
 
-source_relative_once bin/functions/show.sh
+source_relative_once $HOME/dotfiles/bin/functions/show.sh
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced show.sh"
 
-source_relative_once bin/functions/dragon.sh
+source_relative_once $HOME/dotfiles/bin/functions/dragon.sh
+[ "`type -t dragon`" != "function" ] && . "$HOME/dotfiles/bin/functions/dragon.sh"
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced dragon.sh"
 
-source_relative_once bin/functions/ds_bore.sh
+source_relative_once $HOME/dotfiles/bin/functions/ds_bore.sh
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced ds_bore.sh"
 
-source_relative_once bin/functions/warhammer_quote.bash
+source_relative_once $HOME/dotfiles/bin/functions/warhammer_quote.bash
+[ "`type -t warhammer_quote`" != "function" ] && . "$HOME/dotfiles/bin/functions/warhammer_quote.bash"
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced warhammer_quote.bash"
 
 # source_relative_once bin/functions/bashorg_quote.bash
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced bashorg_quote.bash"
 
-source_relative_once bin/functions/mandelbrot.sh
+source_relative_once $HOME/dotfiles/bin/functions/mandelbrot.sh
+[ "`type -t mandelbrot`" != "function" ] && . "$HOME/dotfiles/bin/functions/mandelbrot.sh"
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced mandelbrot.sh"
 
 # A solution to the nix problem of finding standard libraries "loosely"
-source_relative_once bin/functions/gmp_path.bash
+source_relative_once $HOME/dotfiles/bin/functions/gmp_path.bash
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced gmp_path.bash"
 
-source_relative_once bin/functions/clock.bash
+source_relative_once $HOME/dotfiles/bin/functions/clock.bash
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced clock.bash"
 
-source_relative_once bin/functions/weather.bash
+source_relative_once $HOME/dotfiles/bin/functions/weather.bash
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced weather.bash"
 
-source_relative_once bin/functions/please.bash
+source_relative_once $HOME/dotfiles/bin/functions/please.bash
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced please.bash"
 
-source_relative_once bin/functions/grandfather_clock_chime.sh
+source_relative_once $HOME/dotfiles/bin/functions/grandfather_clock_chime.sh
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced grandfather_clock_chime.sh"
 
-source_relative_once bin/ask
+source_relative_once $HOME/dotfiles/bin/ask
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced ask"
 
-source_relative_once bin/functions/rpn.bash
+source_relative_once $HOME/dotfiles/bin/functions/rpn.bash
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced rpn.bash"
 
-source_relative_once bin/String.split
+source_relative_once $HOME/dotfiles/bin/String.split
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced String.split"
 
 # crypto market data. can pass a symbol in or just get the current overall market data
@@ -280,16 +281,16 @@ csv() {
 export -f csv
 
 
-source_relative_once bin/functions/otp_version.sh
+source_relative_once $HOME/dotfiles/bin/functions/otp_version.sh
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced otp_version.sh"
 
-source_relative_once bin/functions/pman_nice_man_pages.sh
+source_relative_once $HOME/dotfiles/bin/functions/pman_nice_man_pages.sh
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced pman_nice_man_pages.sh"
 
-source_relative_once bin/functions/portopen_fileopen.sh
+source_relative_once $HOME/dotfiles/bin/functions/portopen_fileopen.sh
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced portopen_fileopen.sh"
 
-source_relative_once bin/functions/print_x_times.sh
+source_relative_once $HOME/dotfiles/bin/functions/print_x_times.sh
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced print_x_times.sh"
 
 # only enable this on arch somehow
@@ -358,46 +359,47 @@ source_relative_once bin/functions/print_x_times.sh
 #   git bisect reset;
 # }
 
-source_relative_once bin/functions/pg_postgres_wrapper.sh
+source_relative_once $HOME/dotfiles/bin/functions/pg_postgres_wrapper.sh
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced pg_postgres_wrapper.sh"
 
-source_relative_once bin/functions/notify.sh
+source_relative_once $HOME/dotfiles/bin/functions/notify.sh
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced notify.sh"
 
-source_relative_once bin/functions/ff_fast_find.sh
+source_relative_once $HOME/dotfiles/bin/functions/ff_fast_find.sh
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced ff_fast_find.sh"
 
-source_relative_once bin/functions/git_commit_ai.bash
+source_relative_once $HOME/dotfiles/bin/functions/git_commit_ai.bash
+[ "`type -t git_commit_ai`" != "function" ] && . "$HOME/dotfiles/bin/functions/git_commit_ai.bash"
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced git_commit_ai.bash"
 
-source_relative_once bin/functions/Time.now.to_f.sh
+source_relative_once $HOME/dotfiles/bin/functions/Time.now.to_f.sh
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced Time.now.to_f.sh"
 
-source_relative_once bin/functions/note_time_diff.sh
+source_relative_once $HOME/dotfiles/bin/functions/note_time_diff.sh
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced note_time_diff.sh"
 
-source_relative_once bin/functions/div.sh
+source_relative_once $HOME/dotfiles/bin/functions/div.sh
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced div.sh"
 
-source_relative_once bin/functions/flip_a_coin.sh
+source_relative_once $HOME/dotfiles/bin/functions/flip_a_coin.sh
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced flip_a_coin.sh"
 
-source_relative_once bin/functions/roll_a_die.sh
+source_relative_once $HOME/dotfiles/bin/functions/roll_a_die.sh
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced roll_a_die.sh"
 
-source_relative_once bin/functions/repeat_command.bash
+source_relative_once $HOME/dotfiles/bin/functions/repeat_command.bash
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced repeat_command.bash"
 
-source_relative_once bin/functions/uuidv7.sh
+source_relative_once $HOME/dotfiles/bin/functions/uuidv7.sh
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced uuidv7.sh"
 
-source_relative_once bin/functions/kill-steam-proton-pids.bash
+source_relative_once $HOME/dotfiles/bin/functions/kill-steam-proton-pids.bash
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced kill-steam-proton-pids.bash"
 
-source_relative_once bin/functions/whatismyip.sh
+source_relative_once $HOME/dotfiles/bin/functions/whatismyip.sh
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced whatismyip.sh"
 
-source_relative_once bin/functions/pdf_utils.bash
+source_relative_once $HOME/dotfiles/bin/functions/pdf_utils.bash
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced pdf_utils.bash"
 
 # command prompt
@@ -406,7 +408,7 @@ source_relative_once bin/functions/pdf_utils.bash
 
 # Pull in path configuration AGAIN because macos keeps mangling it
 # (also did it in .bashrc)
-source_relative_once .pathconfig
+source_relative_once $HOME/.pathconfig
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced .pathconfig"
 
 # The following are functions meant to override bsd equivalents
@@ -502,7 +504,8 @@ just_one_taoup() {
 }
 export -f just_one_taoup
 
-source_relative_once bin/times_older_than
+source_relative_once $HOME/dotfiles/bin/times_older_than
+[ "`type -t times_older_than`" != "function" ] && . "$HOME/dotfiles/bin/times_older_than"
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced times_older_than"
 
 times_older_than_samson() {

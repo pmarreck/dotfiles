@@ -50,7 +50,7 @@ EOF
 }
 export -f _generate_curl_api_request_for_please
 
-source_relative_once "../clip"
+source_relative_once $HOME/dotfiles/bin/clip
 
 please() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return

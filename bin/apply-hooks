@@ -20,7 +20,7 @@
 # set -o pipefail
 # set -x
 
-source_relative_once functions/utility_functions.bash # to get array_contains_element
+source_relative_once $HOME/dotfiles/bin/functions/utility_functions.bash # to get array_contains_element
 
 needs() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
@@ -143,6 +143,7 @@ fi
 # declare -p PROMPT_COMMAND; declare -p precmd_functions
 
 ## SET UP CUSTOM HOOKS HERE
+[ "`type -t array_contains_element`" = "function" ] || . "${HOME}/dotfiles/bin/functions/utility_functions.bash"
 # set up default terminal directory using OSC 7
 if array_contains_element precmd_functions __wezterm_osc7_home; then
   :

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
-source_relative_once functions/utility_functions.bash
-source_relative_once functions/assert.bash
+source_relative_once $HOME/dotfiles/bin/functions/utility_functions.bash
+source_relative_once $HOME/dotfiles/bin/functions/assert.bash
 
 clip() {
   # Test suite for the clip function
@@ -36,7 +36,7 @@ clip() {
     return
   fi
 
-  if success? type pbcopy; then
+  if successful type pbcopy; then
     if [ -t 0 ]; then
       pbpaste
     else

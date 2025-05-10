@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-
-[ -n "${DEBUG_SHELLCONFIG}" ] && echo "Entering $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")" || $INTERACTIVE_SHELL && $LOGIN_SHELL && append_dotfile_progress "P"
+[ -n "${DEBUG_SHELLCONFIG}" ] && echo "Entering $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")" || $INTERACTIVE_SHELL && $LOGIN_SHELL # && append_dotfile_progress "P"
 [ -n "${DEBUG_PATHCONFIG}" ] && echo "PATH is: $PATH"
 
 # All path configs here should replace any existing version of themselves in the PATH before appending
 # (idempotent)
 
-source_relative_once bin/functions/prepend_path.bash
+source_relative_once "${HOME}/dotfiles/bin/functions/prepend_path.bash"
+# [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced prepend_path.bash"
 
 # gigalixir and other pip3 --user installed tools, per XDG spec
 [ -d $HOME/.local/bin ] && prepend_path $HOME/.local/bin
@@ -22,13 +22,13 @@ source_relative_once bin/functions/prepend_path.bash
 
 # where is this garbage in my PATH coming from?
 IGNORE_EXCLUDE_PATH_WARNINGS=true exclude_path '~/.dotnet/tools'
-exclude_path '/usr/local/share/dotnet'
+exclude_path '/usr/local/share/dotnet'  
 # exclude_path '/Library/Frameworks/Mono.framework/Versions/Current/Commands' # it keeps reinserting itself??
 # A note on the below: https://support.apple.com/guide/deployment/rapid-security-responses-dep93ff7ea78/web
-exclude_path '/System/Cryptexes/App/usr/bin'
-exclude_path '/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin'
-exclude_path '/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin'
-exclude_path '/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin'
+exclude_path '/System/Cryptexes/App/usr/bin' || echo "exclude_path not defined in .pathconfig"
+exclude_path '/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin' || echo "exclude_path not defined in .pathconfig"
+exclude_path '/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin' || echo "exclude_path not defined in .pathconfig"
+exclude_path '/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin' || echo "exclude_path not defined in .pathconfig"
 
 # Nix
 # Prefer Nix stuff to both system and homebrew

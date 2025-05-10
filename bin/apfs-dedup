@@ -2,9 +2,8 @@
 
 # set -euo pipefail
 
-success? () {
+successful() {
   "$@" > /dev/null 2>&1;
-  return $?
 }
 
 # Parse command-line arguments
@@ -122,15 +121,15 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Dependencies check
-success? gum -v || { echo "Error: 'gum' is required."; exit 1; }
-success? xxhsum -V || { echo "Error: 'xxHash' is required."; exit 1; }
+successful gum -v || { echo "Error: 'gum' is required."; exit 1; }
+successful xxhsum -V || { echo "Error: 'xxHash' is required."; exit 1; }
 NUMFMT=gnumfmt
-if success? numfmt --version; then
+if successful numfmt --version; then
   NUMFMT=numfmt
 fi
-success? $NUMFMT --version || { echo "Error: 'numfmt' or 'gnumfmt' is required."; exit 1; }
+successful $NUMFMT --version || { echo "Error: 'numfmt' or 'gnumfmt' is required."; exit 1; }
 export NUMFMT
-success? gcc -v || { echo "Error: 'gcc' is required."; exit 1; }
+successful gcc -v || { echo "Error: 'gcc' is required."; exit 1; }
 
 # Function to check if two files are cloned on APFS
 # Returns 0 (true) if they are cloned, 1 (false) if not

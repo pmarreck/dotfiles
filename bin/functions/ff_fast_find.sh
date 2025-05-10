@@ -40,8 +40,8 @@ ff() {
 export -f ff
 
 if [ "$RUN_DOTFILE_TESTS" == "true" ]; then
-  source_relative_once assert.bash
-  source_relative_once randompass.sh
+  source_relative_once $HOME/dotfiles/bin/functions/assert.bash
+  source_relative_once $HOME/dotfiles/bin/functions/randompass.sh
   # inline ff test
   _fftest() {
     local - # scant docs on this but this apparently automatically resets shellopts when the function exits

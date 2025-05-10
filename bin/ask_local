@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-source_relative_once "ask"
+source_relative_once $HOME/dotfiles/bin/ask
 
 # export DEFAULT_LOCAL_AI_MODEL="athene-v2:latest"
 export DEFAULT_LOCAL_AI_MODEL=${DEFAULT_LOCAL_AI_MODEL:-qwen2.5-coder:32b}

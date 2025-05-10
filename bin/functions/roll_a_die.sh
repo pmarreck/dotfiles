@@ -17,7 +17,7 @@ roll_a_die() {
 export -f roll_a_die
 
 if [ "$RUN_DOTFILE_TESTS" == "true" ]; then
-  source_relative_once assert.bash
+  source_relative_once $HOME/dotfiles/bin/functions/assert.bash
 
   assert $(RANDOM=5 roll_a_die) == "6"
   assert $(RANDOM=6 roll_a_die) == "1"

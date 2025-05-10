@@ -20,7 +20,7 @@ div() {
 }
 export -f div
 if [ "$RUN_DOTFILE_TESTS" == "true" ]; then
-  source_relative_once assert.bash
+  source_relative_once $HOME/dotfiles/bin/functions/assert.bash
 
   assert "$(div 22 15)" == "1.46"
   assert "$(div 1234234 121233333 5)" == "0.01018"

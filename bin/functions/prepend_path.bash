@@ -1,4 +1,4 @@
-source_relative_once assert.bash
+source_relative_once $HOME/dotfiles/bin/functions/assert.bash
 
 # function to find necessary binaries in common locations in case PATH is borked
 find_binary() {

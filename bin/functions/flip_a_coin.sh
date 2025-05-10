@@ -4,7 +4,7 @@ flip_a_coin() {
 }
 export -f flip_a_coin
 if [ "$RUN_DOTFILE_TESTS" == "true" ]; then
-  source_relative_once assert.bash
+  source_relative_once $HOME/dotfiles/bin/functions/assert.bash
 
   # testing this is interesting...
   assert $(RANDOM=0 flip_a_coin) == "tails"

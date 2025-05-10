@@ -32,8 +32,20 @@ shopt -q login_shell && LOGIN_SHELL=true || LOGIN_SHELL=false
 # shellcheck disable=SC1090
 [ "`type -t source_relative_once`" = "function" ] || . "$HOME/dotfiles/bin/functions/source_relative.bash"
 
+# truthiness testing is used everywhere
+[ "`type -t truthy`" = "function" ] || . "${HOME}/dotfiles/bin/functions/truthy.bash"
+# [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced truthy.bash"
+
+# prepending paths is also used everywhere
+[ "`type -t prepend_path`" = "function" ] || . "${HOME}/dotfiles/bin/functions/prepend_path.bash"
+# [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced prepend_path.bash"
+
+# utility functions
+source_relative_once "${HOME}/dotfiles/bin/functions/utility_functions.bash"
+# [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced utility_functions.bash"
+
 # Pull in path configuration
-source_relative_once .pathconfig
+source_relative_once $HOME/.pathconfig
 
 # Warp terminal seems to have nonstandard behavior and non-gnu sed breaks things
 # so we are using this workaround:
@@ -162,11 +174,10 @@ edit_function() {
 }
 
 # Silence function - runs a command silently but preserves exit code
-# (Note that there is another function called "success?" in functions/utility_functions.bash
+# (Note that there is another function called "successful" in functions/utility_functions.bash
 # that does the same thing.)
 silence() {
   "$@" >/dev/null 2>&1
-  return $?
 }
 
 # control globbing/shell expansion on a case-by-case basis
@@ -610,10 +621,10 @@ needs delta "cargo install git-delta"
 # source `blesh-share`/ble.sh
 
 # environment vars config
-source_relative_once .envconfig
+source_relative_once $HOME/.envconfig
 
 # source posix profile
-[[ -s "$HOME/.profile" ]] && source_relative_once .profile # Load the default .profile
+[[ -s "$HOME/.profile" ]] && source_relative_once $HOME/.profile # Load the default .profile
 
 # Load hooks (skip during rehash to avoid issues)
 if [[ "${REHASHING:-false}" != "true" ]]; then

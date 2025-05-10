@@ -44,7 +44,7 @@ if needs bc ; then
   export -f calc
 
   if ${RUN_DOTFILE_TESTS:-false}; then
-    source_relative_once assert.bash
+    source_relative_once $HOME/dotfiles/bin/functions/assert.bash
 
     assert "$(calc 2*4)" == 8 "simple calculations with calc should work"
     assert "$(calc 4 * 23)" == 92 "simple calculations with calc should not glob (requires globbing to be off)"

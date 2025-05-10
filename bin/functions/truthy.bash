@@ -60,8 +60,8 @@ fi
 
 # tests
 if truthy RUN_DOTFILE_TESTS; then
-	source_relative_once assert.bash
-	source_relative_once test_reporter.bash
+	source_relative_once $HOME/dotfiles/bin/functions/assert.bash
+	source_relative_once $HOME/dotfiles/bin/functions/test_reporter.bash
 
 	test_truthy() {
 		# Set up test variables

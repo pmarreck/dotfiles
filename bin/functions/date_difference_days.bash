@@ -15,7 +15,7 @@ date_difference_days() {
 export -f date_difference_days
 
 if [ "$RUN_DOTFILE_TESTS" == "true" ]; then
-  source_relative_once assert.bash
+  source_relative_once $HOME/dotfiles/bin/functions/assert.bash
 
   assert "$(date_difference_days 1972-04-05 2024-09-24)" == "19164" "Peter's days alive test"
   # assert "$(calc "define fac(x) { if (x == 0) return (1); return (fac(x-1) * x); }; fac(5)")" == 120 "recursive functions with calc should work"
