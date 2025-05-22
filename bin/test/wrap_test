@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+
+wrap_test() {
+  local test_fail_count=0
+  local test_output=""
+  local t input expected got
+
+  test_fail() {
+    ((test_fail_count++))
+    test_output+="$(red_text "[FAIL]") $1; expected: '$2'; got: '$3'\n"
+  }
+  test_success() {
+    test_output+="$(green_text "[PASS]") $1\n"
+  }
+
+  # TEST CASES
+  t="wrap wraps at default terminal width (simulate 10 cols)"
+  input="foo bar baz quux"
+  expected="foo bar 
+baz quux"
+  got=$(COLUMNS=10 tput cols 2>/dev/null 1>&2; printf '%s' "$input" | wrap 10)
+  silently assert "$got" == "$expected" "$t" && test_success "$t" || test_fail "$t" "$expected" "$got"
+
+  t="wrap wraps at custom width 5"
+  input="abcdefghij"
+  expected="abcde
+fghij"
+  got=$(printf '%s' "$input" | wrap 5)
+  silently assert "$got" == "$expected" "$t" && test_success "$t" || test_fail "$t" "$expected" "$got"
+
+  t="wrap leaves already-wrapped input unchanged (width 10)"
+  input="foo bar \nbaz quux"
+  expected="foo bar 
+baz quux"
+  got=$(printf '%b' "$input" | wrap 10)
+  silently assert "$got" == "$expected" "$t" && test_success "$t" || test_fail "$t" "$expected" "$got"
+
+  t="wrap handles empty input"
+  input=""
+  expected=""
+  got=$(printf '%s' "$input" | wrap 10)
+  silently assert "$got" == "$expected" "$t" && test_success "$t" || test_fail "$t" "$expected" "$got"
+
+  # END TEST CASES
+
+  if [ $test_fail_count -gt 0 ]; then
+    echo -e "$test_output"
+    puts --red "Test of wrap failed: $test_fail_count failures"
+  else
+    echo -e "$test_output"
+    puts --green "Test of wrap passed!"
+  fi
+  return $test_fail_count
+}
+
+if [ "$(basename "${0##\-}")" = "wrap_test" ]; then
+  wrap_test
+fi

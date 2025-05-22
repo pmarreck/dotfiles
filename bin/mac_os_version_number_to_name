@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+
+# Convert macOS version number to its marketing name
+mac_os_version_number_to_name() {
+	# Get macOS version
+	local version
+	local distribution
+	
+	# If a version is provided as an argument, use it, otherwise try to get it from the system
+	if [ -n "$1" ]; then
+		version="$1"
+	elif command -v sw_vers >/dev/null 2>&1; then
+		version=$(sw_vers -productVersion)
+	else
+		echo "Error: This is not macOS and no version was provided as an argument" >&2
+		return 1
+	fi
+	
+	# Map macOS version to distribution name
+	case $version in
+		16.*) distribution="<Please Update Me>" ;;
+		15.*) distribution="Sequoia" ;;
+		14.*) distribution="Sonoma" ;;
+		13.*) distribution="Ventura" ;;
+		12.*) distribution="Monterey" ;;
+		11.*) distribution="Big Sur" ;;
+		10.15*) distribution="Catalina" ;;
+		10.14*) distribution="Mojave" ;; # last version to support 32-bit Mac apps
+		10.13*) distribution="High Sierra" ;;
+		10.12*) distribution="Sierra" ;;
+		10.11*) distribution="El Capitan" ;;
+		10.10*) distribution="Yosemite" ;;
+		10.9*) distribution="Mavericks" ;;
+		10.8*) distribution="Mountain Lion" ;;
+		10.7*) distribution="Lion" ;;
+		10.6*) distribution="Snow Leopard" ;;
+		10.5*) distribution="Leopard" ;;
+		10.4*) distribution="Tiger" ;;
+		10.3*) distribution="Panther" ;;
+		10.2*) distribution="Jaguar" ;;
+		10.1*) distribution="Puma" ;;
+		10.0*) distribution="Cheetah" ;;
+		*) distribution="Unknown" ;;
+	esac
+	
+	echo "$version ($distribution)"
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

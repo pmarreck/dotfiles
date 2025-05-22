@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+
+# Generic test file for color text functions
+# Usage: TESTCOLOR=colorname:colorcode color_text_test
+# Example: TESTCOLOR=green:32 color_text_test
+
+# Check if TESTCOLOR is set
+if [ -z "$TESTCOLOR" ]; then
+  echo "Error: TESTCOLOR environment variable not set"
+  echo "Usage: TESTCOLOR=colorname:colorcode color_text_test"
+  echo "Example: TESTCOLOR=green:32 color_text_test"
+  exit 1
+fi
+
+# Parse the TESTCOLOR variable
+COLOR_NAME=${TESTCOLOR%%:*}
+COLOR_CODE=${TESTCOLOR##*:}
+
+# Validate the input
+if [ -z "$COLOR_NAME" ] || [ -z "$COLOR_CODE" ]; then
+  echo "Error: Invalid TESTCOLOR format"
+  echo "Usage: TESTCOLOR=colorname:colorcode color_text_test"
+  echo "Example: TESTCOLOR=green:32 color_text_test"
+  exit 1
+fi
+
+# Function name to test (e.g., green_text, red_text, etc.)
+FUNCTION_NAME="${COLOR_NAME}_text"
+
+# Compare the hexdump output to avoid escape sequence interpretation issues
+result="$($FUNCTION_NAME "test" | hexdump -C)"
+expected="$(printf "\033[${COLOR_CODE}mtest\033[0m" | hexdump -C)"
+
+if [ "$result" = "$expected" ]; then
+  # Silent success
+  exit 0
+else
+  echo "✗ ${FUNCTION_NAME} failed (hexdump comparison)"
+  echo "Expected hexdump:"
+  echo "$expected"
+  echo "Got hexdump:"
+  echo "$result"
+  
+  # Show the actual output for visual verification
+  echo -e "\nVisual verification:"
+  echo -n "Expected (should be ${COLOR_NAME}): "
+  printf "\033[${COLOR_CODE}mtest\033[0m\n"
+  echo -n "Actual output: "
+  $FUNCTION_NAME "test"
+  echo
+  exit 1
+fi

@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+
+# Test the isacolortty function
+test_isacolortty() {
+  TERM=xterm-256color isacolortty
+  assert "$?" == "0"
+  TERM=dumb isacolortty
+  assert "$?" == "1"
+}
+
+# Run the test if this script is executed directly
+if ! (return 0 2>/dev/null); then
+  test_isacolortty
+fi

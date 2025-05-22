@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+
+# Test the repeat function
+test_repeat() {
+  # Test repeating a command multiple times
+  assert "$(repeat 3 "echo -n \"hi \"")" == 'hi hi hi '
+  
+  # Test that return code is summed up from failed commands
+  assert "$(repeat 3 false; echo $?)" == "3"
+}
+
+# Run the test if this script is executed directly
+if ! (return 0 2>/dev/null); then
+  test_repeat
+fi

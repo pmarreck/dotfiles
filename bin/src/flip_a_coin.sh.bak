@@ -1,0 +1,9 @@
+flip_a_coin() {
+  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  (( RANDOM % 2 )) && echo "heads" || echo "tails"
+}
+if [ "$RUN_DOTFILE_TESTS" == "true" ]; then
+  # testing this is interesting...
+  assert $(RANDOM=0 flip_a_coin) == "tails"
+  assert $(RANDOM=1 flip_a_coin) == "heads"
+fi

@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+
+test_trim() {
+  assert "$(ltrim "  foo  ")" == "foo  "
+  assert "$(rtrim "  foo  ")" == "  foo"
+  assert "$(trim "  foo  ")" == "foo"
+}
+
+# Run the tests if this file is executed directly
+if [ "$(basename "${0##\-}")" = "trim_test" ]; then
+  test_trim
+fi

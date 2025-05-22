@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+
+tac() {
+	local whichtac
+	# prefer gtac, fall back to tac
+	if type -P gtac &> /dev/null; then
+		whichtac=gtac
+	elif type -P tac &> /dev/null; then
+		whichtac=tac
+	else
+		echo "Error: Neither gtac nor tac command is available." >&2
+		return 1
+	fi
+	$whichtac "$@"
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

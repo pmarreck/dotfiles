@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+
+# am I the only one who constantly forgets the correct order of arguments to `ln`?
+lnwtf() {
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	echo 'ln -s path_of_thing_to_link_to [name_of_link]'
+	echo '(If you omit the latter, it puts a basename-named link in the current directory)'
+	echo "This function is defined in $0"
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

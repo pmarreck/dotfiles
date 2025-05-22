@@ -39,164 +39,164 @@ fontsize=$((tilewidth/20))
 
 # Sanity check and compatibility
 if [[ ${BASH_VERSINFO[0]} -gt 3 ]]; then
-    timeout=0.25		# How long to wait for terminal to respond.
+	timeout=0.25		# How long to wait for terminal to respond.
 else
-    timeout=1			# Bash 3's `read` could not handle decimals.
+	timeout=1			# Bash 3's `read` could not handle decimals.
 fi
 
 if ! command -v montage >/dev/null; then
-    echo "Please install ImageMagick" >&2
-    exit 1
+	echo "Please install ImageMagick" >&2
+	exit 1
 fi
 
 cleanup() {
-    echo -n $'\e\\'		# Escape sequence to stop SIXEL.
-    stty echo			# Reset terminal to show characters.
-    exit 0
+	echo -n $'\e\\'		# Escape sequence to stop SIXEL.
+	stty echo			# Reset terminal to show characters.
+	exit 0
 }
 trap cleanup SIGINT SIGHUP SIGABRT EXIT
 
 autodetect() {
-    # Various terminal automatic configuration routines.
+	# Various terminal automatic configuration routines.
 
-    # Don't show escape sequences the terminal doesn't understand.
-    stty -echo			# Hush-a Mandara Ni Pari
+	# Don't show escape sequences the terminal doesn't understand.
+	stty -echo			# Hush-a Mandara Ni Pari
 
-    # TERMINAL COLOR AUTODETECTION.
-    # Find out how many color registers the terminal has
-    IFS=";"  read -a REPLY -s -t ${timeout} -d "S" -p $'\e[?1;1;0S' >&2
-    [[ ${REPLY[1]} == "0" ]] && numcolors=${REPLY[2]}
+	# TERMINAL COLOR AUTODETECTION.
+	# Find out how many color registers the terminal has
+	IFS=";"  read -a REPLY -s -t ${timeout} -d "S" -p $'\e[?1;1;0S' >&2
+	[[ ${REPLY[1]} == "0" ]] && numcolors=${REPLY[2]}
 
-    # BUG WORKAROUND: mlterm does not report number of colors.
-    if [[ $TERM =~ mlterm ]]; then numcolors=1024; fi
+	# BUG WORKAROUND: mlterm does not report number of colors.
+	if [[ $TERM =~ mlterm ]]; then numcolors=1024; fi
 
-    # Increase colors, if needed
-    if [[ $numcolors -lt 256 ]]; then
-    # Attempt to set the number of colors to 256.
-    # This will work for xterm, but fail on a real vt340.
-    IFS=";"  read -a REPLY -s -t ${timeout} -d "S" -p $'\e[?1;3;256S' >&2
-    [[ ${REPLY[1]} == "0" ]] && numcolors=${REPLY[2]}
-    fi
+	# Increase colors, if needed
+	if [[ $numcolors -lt 256 ]]; then
+	# Attempt to set the number of colors to 256.
+	# This will work for xterm, but fail on a real vt340.
+	IFS=";"  read -a REPLY -s -t ${timeout} -d "S" -p $'\e[?1;3;256S' >&2
+	[[ ${REPLY[1]} == "0" ]] && numcolors=${REPLY[2]}
+	fi
 
-    # Query the terminal background and foreground colors.
-    IFS=";:/"  read -a REPLY -r -s -t ${timeout} -d "\\" -p $'\e]11;?\e\\' >&2
-    if [[ ${REPLY[1]} =~ ^rgb ]]; then
-    # Return value format: $'\e]11;rgb:ffff/0000/ffff\e\\'.
-    # ImageMagick wants colors formatted as #ffff0000ffff.
-    background='#'${REPLY[2]}${REPLY[3]}${REPLY[4]%%$'\e'*}
-    IFS=";:/"  read -a REPLY -r -s -t ${timeout} -d "\\" -p $'\e]10;?\e\\' >&2
-    if [[ ${REPLY[1]} =~ ^rgb ]]; then
-        foreground='#'${REPLY[2]}${REPLY[3]}${REPLY[4]%%$'\e'*}
-        # Check for "Reverse Video".
-        IFS=";?$"  read -a REPLY -s -t ${timeout} -d "y" -p $'\e[?5$p'
-        if [[ ${REPLY[2]} == 1 || ${REPLY[2]} == 3 ]]; then
-        temp=$foreground
-        foreground=$background
-        background=$temp
-        fi
-    fi
-    fi
+	# Query the terminal background and foreground colors.
+	IFS=";:/"  read -a REPLY -r -s -t ${timeout} -d "\\" -p $'\e]11;?\e\\' >&2
+	if [[ ${REPLY[1]} =~ ^rgb ]]; then
+	# Return value format: $'\e]11;rgb:ffff/0000/ffff\e\\'.
+	# ImageMagick wants colors formatted as #ffff0000ffff.
+	background='#'${REPLY[2]}${REPLY[3]}${REPLY[4]%%$'\e'*}
+	IFS=";:/"  read -a REPLY -r -s -t ${timeout} -d "\\" -p $'\e]10;?\e\\' >&2
+	if [[ ${REPLY[1]} =~ ^rgb ]]; then
+		foreground='#'${REPLY[2]}${REPLY[3]}${REPLY[4]%%$'\e'*}
+		# Check for "Reverse Video".
+		IFS=";?$"  read -a REPLY -s -t ${timeout} -d "y" -p $'\e[?5$p'
+		if [[ ${REPLY[2]} == 1 || ${REPLY[2]} == 3 ]]; then
+		temp=$foreground
+		foreground=$background
+		background=$temp
+		fi
+	fi
+	fi
 
-    # Try dtterm WindowOps to find out the window size.
-    IFS=";" read -a REPLY -s -t ${timeout} -d "t" -p $'\e[14t' >&2
-    if [[ $? == 0  &&  ${REPLY[2]} -gt 0 ]]; then
-    width=${REPLY[2]}
-    fi
+	# Try dtterm WindowOps to find out the window size.
+	IFS=";" read -a REPLY -s -t ${timeout} -d "t" -p $'\e[14t' >&2
+	if [[ $? == 0  &&  ${REPLY[2]} -gt 0 ]]; then
+	width=${REPLY[2]}
+	fi
 
-    # BUG WORKAROUND: XTerm cannot show images wider than 1000px.
-    # Remove this hack once XTerm gets fixed. Last checked: XTerm(327)
-    if [[ $TERM =~ xterm && $tilesize -ge 1000 ]]; then tilesize=1000; fi
+	# BUG WORKAROUND: XTerm cannot show images wider than 1000px.
+	# Remove this hack once XTerm gets fixed. Last checked: XTerm(327)
+	if [[ $TERM =~ xterm && $tilesize -ge 1000 ]]; then tilesize=1000; fi
 
-    [ -n "$DEBUG" ] && echo "width=$width"
-    # Space on either side of each tile is less than 0.5% of total screen width
-    tilexspace=$((width/201))
-    [ -n "$DEBUG" ] && echo "tilexspace=$tilexspace"
-    tileyspace=$((tilexspace/2 + 10))
-    [ -n "$DEBUG" ] && echo "tileyspace=$tileyspace"
-    # Figure out how many tiles we can fit per row. ("+ 1" is for -shadow).
-    numtiles=$((width/(tilewidth + 2*tilexspace + 1)))
-    [ -n "$DEBUG" ] && echo "numtiles=$numtiles"
+	[ -n "$DEBUG" ] && echo "width=$width"
+	# Space on either side of each tile is less than 0.5% of total screen width
+	tilexspace=$((width/201))
+	[ -n "$DEBUG" ] && echo "tilexspace=$tilexspace"
+	tileyspace=$((tilexspace/2 + 10))
+	[ -n "$DEBUG" ] && echo "tileyspace=$tileyspace"
+	# Figure out how many tiles we can fit per row. ("+ 1" is for -shadow).
+	numtiles=$((width/(tilewidth + 2*tilexspace + 1)))
+	[ -n "$DEBUG" ] && echo "numtiles=$numtiles"
 }
 
 main() {
-    # Discover and setup the terminal
-    autodetect
+	# Discover and setup the terminal
+	autodetect
 
-    if [[ $# == 0 ]]; then
-        # No command line args? Use a sorted list of image files in CWD.
-        shopt -s nullglob nocaseglob nocasematch
-        set - *{jpg,jpeg,png,gif,tiff,tif,p?m,x[pb]m,bmp,ico,svg,eps}
-        [[ $# != 0 ]] || exit
-        
-        # Read sorted filenames into array
-        declare -a files
-        while IFS= read -r line; do
-            files+=("$line")
-        done < <(printf "%s\n" "$@" | sort)
+	if [[ $# == 0 ]]; then
+		# No command line args? Use a sorted list of image files in CWD.
+		shopt -s nullglob nocaseglob nocasematch
+		set - *{jpg,jpeg,png,gif,tiff,tif,p?m,x[pb]m,bmp,ico,svg,eps}
+		[[ $# != 0 ]] || exit
+		
+		# Read sorted filenames into array
+		declare -a files
+		while IFS= read -r line; do
+			files+=("$line")
+		done < <(printf "%s\n" "$@" | sort)
 
-        # Only show first frame of animated GIFs if filename not specified.
-        for x in ${!files[@]}; do
-            if [[ ${files[$x]} =~ gif$ ]]; then
-                files[$x]+="[0]"
-            fi
-        done
-        set - "${files[@]}"
-    fi
+		# Only show first frame of animated GIFs if filename not specified.
+		for x in ${!files[@]}; do
+			if [[ ${files[$x]} =~ gif$ ]]; then
+				files[$x]+="[0]"
+			fi
+		done
+		set - "${files[@]}"
+	fi
 
-    # Resize on load: Save memory by appending this suffix to every filename.
-    resize="[${tilewidth}x${tileheight}]"
+	# Resize on load: Save memory by appending this suffix to every filename.
+	resize="[${tilewidth}x${tileheight}]"
 
 
-    imoptions="-tile ${numtiles}x1" # Each montage is 1 row x $numtiles columns
-    imoptions+=" -geometry ${tilewidth}x${tileheight}>+${tilexspace}+${tileyspace}" # Size of each tile and spacing
-    imoptions+=" -background $background -fill $foreground" # Use terminal's colors
-    imoptions+=" -auto-orient "	# Properly rotate JPEGs from cameras
-    if [[ $numcolors -gt 16 ]]; then
-    imoptions+=" -shadow "		# Just for fun :-)
-    fi
+	imoptions="-tile ${numtiles}x1" # Each montage is 1 row x $numtiles columns
+	imoptions+=" -geometry ${tilewidth}x${tileheight}>+${tilexspace}+${tileyspace}" # Size of each tile and spacing
+	imoptions+=" -background $background -fill $foreground" # Use terminal's colors
+	imoptions+=" -auto-orient "	# Properly rotate JPEGs from cameras
+	if [[ $numcolors -gt 16 ]]; then
+	imoptions+=" -shadow "		# Just for fun :-)
+	fi
 
-    # See top of this file to change fontfamily and fontsize.
-    [[ "$fontfamily" ]]  &&  imoptions+=" -font $fontfamily "
-    [[ "$fontsize" ]] &&     imoptions+=" -pointsize $fontsize "
+	# See top of this file to change fontfamily and fontsize.
+	[[ "$fontfamily" ]]  &&  imoptions+=" -font $fontfamily "
+	[[ "$fontsize" ]] &&     imoptions+=" -pointsize $fontsize "
 
-    # Create and display montages one row at a time.
-    while [ $# -gt 0 ]; do
-        # While we still have images to process...
-    onerow=()
-    goal=$(($# - numtiles)) # How many tiles left after this row
-    while [ $# -gt 0  -a  $# -gt $goal ]; do
-        len=${#onerow[@]}
-        onerow[len++]="-label"
-        onerow[len++]=$(processlabel "$1")
-        onerow[len++]="$1"
-        shift
-    done
-    montage "${onerow[@]}"  $imoptions gif:-  \
-        | magick - -colors $numcolors sixel:-
-    done
+	# Create and display montages one row at a time.
+	while [ $# -gt 0 ]; do
+		# While we still have images to process...
+	onerow=()
+	goal=$(($# - numtiles)) # How many tiles left after this row
+	while [ $# -gt 0  -a  $# -gt $goal ]; do
+		len=${#onerow[@]}
+		onerow[len++]="-label"
+		onerow[len++]=$(processlabel "$1")
+		onerow[len++]="$1"
+		shift
+	done
+	montage "${onerow[@]}"  $imoptions gif:-  \
+		| magick - -colors $numcolors sixel:-
+	done
 }
 
 processlabel() {
-    # This routine is all about appeasing ImageMagick.
-    # 1. Remove silly [0] suffix. Quote percent backslash, and at sign.
-    # 2. Replace control characters with question marks.
-    # 3. If a filename is too long, remove extension (.jpg).
-    # 4. Split long filenames with newlines (recursively)
-    span=45			# filenames longer than span will be split
-    echo -n "$1" |
-    $SED 's|\[0]$||;' | tr '[:cntrl:]' '?' |
-    awk -v span=$span -v ORS=""  '
-    function halve(s,      l,h) { 	# l and h are locals
-        l=length(s);  h=int(l/2);
-        if (l <= span) { return s; }
-        return halve(substr(s, 1, h))  "\n"  halve(substr(s, h+1));
-    }
-    {
-      if ( length($0) > span ) gsub(/\..?.?.?.?$/, "");
-      print halve($0);
-        }
-        ' |
-    $SED 's|%|%%|g; s|\\|\\\\|g; s|@|\\@|g;'
+	# This routine is all about appeasing ImageMagick.
+	# 1. Remove silly [0] suffix. Quote percent backslash, and at sign.
+	# 2. Replace control characters with question marks.
+	# 3. If a filename is too long, remove extension (.jpg).
+	# 4. Split long filenames with newlines (recursively)
+	span=45			# filenames longer than span will be split
+	echo -n "$1" |
+	$SED 's|\[0]$||;' | tr '[:cntrl:]' '?' |
+	awk -v span=$span -v ORS=""  '
+	function halve(s,      l,h) { 	# l and h are locals
+		l=length(s);  h=int(l/2);
+		if (l <= span) { return s; }
+		return halve(substr(s, 1, h))  "\n"  halve(substr(s, h+1));
+	}
+	{
+	  if ( length($0) > span ) gsub(/\..?.?.?.?$/, "");
+	  print halve($0);
+		}
+		' |
+	$SED 's|%|%%|g; s|\\|\\\\|g; s|@|\\@|g;'
 }
 
 ####

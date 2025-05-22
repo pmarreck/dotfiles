@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+
+randompass() {
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	if [[ $# -eq 0 || "$1" == "--help" ]]; then
+		echo "Usage: randompass <length>"
+		echo "This function is defined in $BASH_SOURCE"
+		echo "You can override the default character set CHARSET_ALNUM_SANE by passing in PWCHARSET=<charset> as env"
+		echo "where <charset> is one or more of:"
+		echo "CHARSET_LOWER, CHARSET_UPPER, CHARSET_NUM, CHARSET_ALPHA, CHARSET_ALNUM, CHARSET_ALNUM_SANE, CHARSET_PUNC, CHARSET_HEX"
+		[ $# -eq 0 ] && return 1 # only error if insufficient input
+		return 0
+	fi
+	needs shuf "please install coreutils" || return 1
+	RANDOM_SOURCE="${RANDOM_SOURCE:-/dev/random}"
+	# globbing & history expansion here is a pain, so we store its state, temp turn it off & restore it later
+	local maybeglob="$(shopt -po noglob histexpand)"
+	set -o noglob # turn off globbing
+	set +o histexpand # turn off history expansion
+	# allow overriding the password character set with env var PWCHARSET
+	# NOTE that we DELETE THE CAPITAL O, CAPITAL I, LOWERCASE L CHARACTERS
+	# DUE TO SIMILARITY TO 1 AND 0 (which we leave in)
+	# (but only if you use the default "sane alnum" set)
+	local PWCHARSET="${PWCHARSET:-$CHARSET_ALNUM_SANE}"
+	# ...but also intersperse it with spaces so that the -e option to shuf works.
+	# Using awk to split the character set into a space-separated string of characters.
+	# Saw some noise that empty field separator will cause awk problems,
+	# but it's concise and fast and works, so... &shrug;
+	# printf is necessary due to some of the punctuation characters being interpreted when using echo
+	local characterset=$(printf "%s" "$PWCHARSET" | awk NF=NF FS="")
+	# using /dev/random to enforce entropy, but use urandom if you want speed
+	{ shuf --random-source=$RANDOM_SOURCE -n $1 -er $characterset; } | tr -d '\n'
+	echo
+	# restore any globbing state
+	eval "$maybeglob"
+	# cat /dev/urandom | LC_ALL=C tr -dc 'a-zA-Z0-9\!\@\#\$\%\&\*\?' | fold -w $1 | head -n 1
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

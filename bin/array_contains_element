@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+
+array_contains_element() {
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	# declare -n array=$1
+	# We can't use nameref, so use eval to indirectly reference the array
+	eval 'array=("${'"$1"'[@]}")'
+	element="$2"
+
+	# Loop through the array and check if the element exists
+	for item in "${array[@]}"; do
+		if [[ "$item" == "$element" ]]; then
+			# Element found in array, exit with 0
+			return 0
+		fi
+	done
+
+	# If we got here, the element was not found in the array, exit with 1
+	return 1
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

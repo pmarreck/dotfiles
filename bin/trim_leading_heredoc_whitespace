@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+
+trim_leading_heredoc_whitespace() {
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	#  echo "Debug: Function started" >&2
+	# For some reason, frawk screws this up. No time to troubleshoot.
+	needs gawk "please install gawk (GNU awk) to run this function" && \
+	gawk '
+	BEGIN { shortest = -1 }
+	{
+		lines[NR] = $0
+		#  print "Debug: Processing line: [" $0 "]" > "/dev/stderr"
+		#  print "Debug: Line length: " length($0) > "/dev/stderr"
+		match($0, /[^[:space:]]/);
+		#  print "Debug: RSTART = " RSTART > "/dev/stderr"
+		if (RSTART > 0) {
+			if (shortest == -1 || RSTART - 1 < shortest) {
+				shortest = RSTART - 1
+			#  print "Debug: shortest updated to " shortest > "/dev/stderr"
+			}
+		} else {
+			#  print "Debug: No match found in this line" > "/dev/stderr"
+		}
+	}
+	END \
+	{
+		#  print "Debug: END block reached, shortest = " shortest > "/dev/stderr"
+		if (shortest >= 0) {
+			for (i=1; i<=NR; i++) {
+				if (length(lines[i]) > shortest) {
+					print substr(lines[i], shortest + 1)
+				} else {
+					print ""
+				}
+			}
+		} else {
+			#  print "Debug: No processing done (shortest < 0)" > "/dev/stderr"
+		}
+	}
+	'
+	#  echo "Debug: Function ended" >&2
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

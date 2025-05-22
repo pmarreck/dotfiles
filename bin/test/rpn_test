@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+
+# Test the rpn function
+test_rpn_case() {
+	local input="$1"
+	local expected="$2"
+	local result
+	result=$(echo "$input" | rpn 2>&1)
+	if [[ "$result" == "$expected" ]]; then
+		echo "✓ Test passed: '$input' -> '$result'"
+		return 0
+	else
+		echo "✗ Test failed in $(dirname "${BASH_SOURCE[0]}/$(basename "${BASH_SOURCE[0]}")"): '$input'" >&2
+		echo "  Expected: '$expected'" >&2
+		echo "  Got:      '$result'" >&2
+		return 1
+	fi
+}
+
+rpn_test() {
+	local errors=0
+	# Basic arithmetic
+	test_rpn_case "2 3 + ." "5"
+	((errors += $?)) || true
+	test_rpn_case "5 3 - ." "2"
+	((errors += $?)) || true
+	test_rpn_case "4 2 \* ." "8"
+	((errors += $?)) || true
+	test_rpn_case "6 2 / ." "3"
+	((errors += $?)) || true
+
+	# Stack operations
+	test_rpn_case "2 dup + ." "4"
+	((errors += $?)) || true
+	test_rpn_case "1 2 swap + ." "3"
+	((errors += $?)) || true
+	test_rpn_case "1 2 3 drop + ." "3"
+	((errors += $?)) || true
+
+	# Complex operations
+	test_rpn_case "15 7 1 1 + - / 3 \* 2 1 1 + + - ." "5"
+	((errors += $?)) || true
+
+	# Strings
+	test_rpn_case "\"hello\" ." "hello"
+	((errors += $?)) || true
+
+	# Bitwise operations
+	test_rpn_case "1 2 and ." "0"
+	((errors += $?)) || true
+	test_rpn_case "1 2 or ." "3"
+	((errors += $?)) || true
+	test_rpn_case "1 3 xor ." "2"
+	((errors += $?)) || true
+
+	# Peek prints
+	test_rpn_case "69 .s .s ." "69
+69
+69"
+	((errors += $?)) || true
+
+	# Does not error when only 1 item left on stack and assumes dot
+	test_rpn_case "69 1 \*" "69"
+	((errors += $?)) || true
+
+	# Error cases
+	test_rpn_case "+" "Error: Stack underflow"
+	((errors += $?)) || true
+	test_rpn_case "1 2 + +" "Error: Stack underflow"
+	((errors += $?)) || true
+	test_rpn_case "1 0 /" "Error: Division by zero"
+	((errors += $?)) || true
+
+	return $errors
+}
+
+# Run the tests if this file is executed directly
+if ! (return 0 2>/dev/null); then
+  rpn_test
+fi

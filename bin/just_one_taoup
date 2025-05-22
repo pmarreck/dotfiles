@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+
+just_one_taoup() {
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	# ChatGPT4 wrote 99% of this. I preserved the conversation with it about it: https://gist.github.com/pmarreck/339fb955a74caed692b439038c9c1c9d
+	# needs taoup please install taoup && taoup \
+	# Refresh the taoup.ansi file occasionally via taoup > ~/dotfiles/bin/taoup.ansi. Last updated 2024-10-12.
+	# Caching it this way avoids needing either taoup OR ruby and saves on ruby processing.
+	
+	# Get the directory where this script is located
+	local SCRIPT_PATH=$(dirname "$(readlink -f "$BASH_SOURCE")")
+	
+	$AWK -v seed=`date +%N` '
+		BEGIN{
+			srand(seed)
+		}
+		/^-{3,}/{
+			header=$0; next
+		}
+		!/^$/{
+			lines[count++]=$0;
+			headers[count-1]=header;
+		}
+		END{
+			randIndex=int(rand()*count);
+			print headers[randIndex];
+			print lines[randIndex];
+		}
+	' "$SCRIPT_PATH/data/taoup.ansi"
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

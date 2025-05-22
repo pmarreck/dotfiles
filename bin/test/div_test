@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+
+# Test the div function
+test_div() {
+  # Test basic division with default precision (2 decimal places)
+  assert "$(div 22 15)" == "1.46"
+  
+  # Test division with specified precision (5 decimal places)
+  assert "$(div 1234234 121233333 5)" == "0.01018"
+}
+
+# Run the test if this script is executed directly
+if ! (return 0 2>/dev/null); then
+  test_div
+fi

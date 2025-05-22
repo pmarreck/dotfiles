@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+
+xor_diff() {
+	local original=$1
+	local current=$2
+
+	# Split the permission bits into user, group, and other
+	local original_user=$(( (original / 100) % 10 ))
+	local original_group=$(( (original / 10) % 10 ))
+	local original_other=$(( original % 10 ))
+
+	local current_user=$(( (current / 100) % 10 ))
+	local current_group=$(( (current / 10) % 10 ))
+	local current_other=$(( current % 10 ))
+
+	# XOR each component individually
+	local diff_user=$(( current_user - original_user ))
+	local diff_group=$(( current_group - original_group ))
+	local diff_other=$(( current_other - original_other ))
+	# Combine the diffs back into a single value
+	echo "$diff_user$diff_group$diff_other"
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+
+# Test the binhex function
+binhex_test() {
+  # Test encoding a string to hex
+  assert "$(binhex "Peter")" == "5065746572" "binhex function should encode binary strings to hex"
+  
+  # Test accepting a pipe
+  assert "$(hexbin "5065746572" | binhex)" == "5065746572" "binhex function should accept a pipe"
+}
+
+# Run the test if this script is executed directly
+if ! (return 0 2>/dev/null); then
+  "$(basename "${0##-}")"
+fi

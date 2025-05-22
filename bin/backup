@@ -5,7 +5,6 @@ date=`date "+%Y-%m-%dT%H_%M_%S"`
 if [ "$1" = "--help" ]; then
    echo USAGE:
    echo "backup /path/to/source /path/to/backups"
-   echo "Do not end with slashes."
    exit
 fi
 
@@ -19,8 +18,14 @@ then
     exit
   fi
 else
-  HOME=$1
-  DESTINATION=$2
+  # Trim any trailing slashes
+  HOME=${1%/}
+  DESTINATION=${2%/}
+  # Verify they are both real directories
+  if [ ! -d "$HOME" ] || [ ! -d "$DESTINATION" ]; then
+    echo "One or both of the paths provided is not a directory."
+    exit 1
+  fi
 fi
 
 if [ -e "$DESTINATION/current" ]

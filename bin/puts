@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+
+puts() {
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	local print_fmt end_fmt print_spec fd newline
+	print_fmt=''
+	end_fmt=''
+	print_spec='%s'
+	newline='\n'
+	fd='1'
+	while true; do
+		case "${1}" in
+			(--help)
+				cat << EOF
+Usage: puts [OPTIONS] [TEXT]
+
+A utility function for formatted text output.
+
+Options:
+	--help     Display this help message
+	--green    Print text in green color
+	--yellow   Print text in yellow color
+	--orange   Print text in orange color
+	--red      Print text in red color
+	--stderr   Output to stderr instead of stdout
+	-n         Do not append a newline
+	-e         Interpret backslash escapes (like \\n, \\t)
+	-en, -ne   Combine -e and -n options
+	-E         Do not interpret backslash escapes (default)
+EOF
+				return 0
+				;;
+			(--green)   print_fmt='\e[32m'; end_fmt='\e[0m' ;;
+			(--yellow)  print_fmt='\e[93m'; end_fmt='\e[0m' ;;
+			(--orange)  print_fmt='\e[38;5;208m'; end_fmt='\e[0m' ;;
+			(--red)     print_fmt='\e[31m'; end_fmt='\e[0m' ;;
+			(--stderr)  fd='2' ;;
+			(-n)        newline='' ;;
+			(-e)        print_spec='%b' ;;
+			(-en|-ne)   print_spec='%b'; newline='' ;;
+			(-E)        print_spec='%s' ;;
+			(-*)        fail "Unknown format specifier: ${1}" ;;
+			(*)         break ;;
+		esac
+		shift
+	done
+
+	# If we're not interactive/color, override print_fmt and end_fmt to remove ansi
+	isacolortty || unset -v print_fmt end_fmt
+
+	# shellcheck disable=SC2059
+	printf -- "${print_fmt}${print_spec}${end_fmt}${newline}" "${*}" >&$fd
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

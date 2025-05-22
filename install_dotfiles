@@ -2,6 +2,7 @@
 
 # Declare an array of strings
 declare -a dotfiles=(
+    .aliases
     .ansiweatherrc
     .bash_profile
     .bashrc
@@ -22,8 +23,6 @@ declare -a dotfiles=(
     .secrets.gpg
     .tool-versions
     .wezterm.lua
-    inthebeginning.jpg
-    manual_configuration_changelog.txt
 )
 echo "List of dotfiles to install:"
 echo "${dotfiles[@]}"

@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+
+# my version of find file
+# ff [[<start path, defaults to .>] <searchterm>] (ff with no arguments lists all files recursively from $PWD)
+# so fd on linux when installed via apt has the name fdfind, complicating matters
+fdbin=fd
+command -v $fdbin >/dev/null 2>&1 || fdbin=fdfind
+command -v $fdbin >/dev/null 2>&1 || fdbin=fd
+
+ff() {
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	needs $fdbin cargo install fd-find or apt install fd-find \(binary is named fdfind then\)
+	case $1 in
+	-h | --help)
+		echo "Find File (pmarreck wrapper function)"
+		echo 'Usage: ff [<start path> <searchterm> | "<searchterm>" <start path> | <searchterm>]'
+		echo '(defaults to starting in current directory if no valid directory argument is provided)'
+		echo "This function is defined in ${BASH_SOURCE[0]}"
+		echo '(ff with no arguments lists all files recursively from $PWD)'
+		;;
+	*)
+		local dir=""
+		local term=""
+		# I did this logic because I got tired of remembering whether the (optional) directory argument was
+		# the first or second argument, lol. (Computers are smart, they can make this easier!)
+		# If either of the first 2 arguments is a valid directory, use that as the directory argument
+		# and use the other argument (or the rest of the arguments if the directory argument was the first argument)
+		# as the search query.
+		# If no valid directory argument is provided, default to the current directory
+		# and use all arguments as a search term.
+		[ -d "$2" ] && dir="$2" && term="$1"
+		[ -d "$1" ] && dir="$1" && shift && term="$*"
+		[ -z "$dir" ] && dir="$PWD" && term="$*" && echo -e "${ANSI}${TXTYLW}Searching from current directory ${PWD}...${ANSI}${TXTRST}" >&2
+		# search all hidden and gitignore'd files
+		# Note: Not including -jN argument (where N is a lowish number)
+		# currently results in massive slowdown due to bug: https://github.com/sharkdp/fd/issues/1131
+		# I made it -j2 after some testing
+		>&2 echo -e "${ANSI}${TXTYLW}${fdbin} -j2 -HI \"${term}\" \"${dir}\"${ANSI}${TXTRST}"
+		$fdbin -j2 -HI "$term" "$dir"
+		;;
+	esac
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

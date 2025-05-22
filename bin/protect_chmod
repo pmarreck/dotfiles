@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+
+protect_chmod() {
+	local mode="$1"
+	local file="$2"
+
+	local absfile
+	absfile=$(get_abs_path "$file") && debug "Absolute path for $file: $absfile"
+
+	if [[ -e "$absfile" ]]; then
+		debug "File found: $absfile"
+		original_perms=$(stat -c "%a" "$absfile") && debug "Original permissions for $absfile: $original_perms"
+		chmod "$mode" "$absfile" && debug "Ran chmod $mode on $absfile"
+		current_perms=$(stat -c "%a" "$absfile") && debug "Current permissions for $absfile after chmod: $current_perms"
+
+		if [[ "$original_perms" -ne "$current_perms" ]]; then
+			diff=$(xor_diff $original_perms $current_perms)
+			debug "Calculated diff: $diff"
+			log_undo "$diff" "$absfile"
+		else
+			debug "No change in permissions; skipping undo log"
+		fi
+	else
+		error_exit "File not found: $file"
+	fi
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

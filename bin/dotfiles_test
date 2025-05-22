@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+
+# dotfiles_test - Run all tests in the bin/test directory
+# Accumulates error counts and provides a summary
+
+# Colors for output
+GREEN="\033[0;32m"
+RED="\033[0;31m"
+YELLOW="\033[0;33m"
+RESET="\033[0m"
+
+# Get the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TEST_DIR="$SCRIPT_DIR/test"
+
+# Check if test directory exists
+if [ ! -d "$TEST_DIR" ]; then
+	echo -e "${RED}Error: Test directory not found at $TEST_DIR${RESET}" >&2
+	exit 1
+fi
+
+# Initialize counters
+total_tests=0
+passed_tests=0
+failed_tests=0
+error_count=0
+failed_test_names=()
+
+# Function to run a single test file
+run_test() {
+	local test_file="$1"
+	local test_name="$(basename "$test_file")"
+	
+	# Skip files that start with underscore as they are helper files, not direct tests
+	if [[ "$test_name" == _* ]]; then
+		echo -e "${YELLOW}Skipping helper file: $test_name${RESET}"
+		return 0
+	fi
+	
+	echo -e "${YELLOW}Running test: $test_name${RESET}"
+	
+	# Source the test file in a subshell to avoid polluting the environment
+	# Capture both stdout and stderr
+	output=$(bash -c "source \"$test_file\" 2>&1")
+	local test_exit_code=$?
+	
+	# Increment test count
+	((total_tests++))
+	
+	# Check if test passed
+	if [ $test_exit_code -eq 0 ]; then
+		echo -e "${GREEN}✓ PASS: $test_name${RESET}"
+		((passed_tests++))
+	else
+		echo -e "${RED}✗ FAIL: $test_name (exit code: $test_exit_code)${RESET}"
+		echo "$output" | sed 's/^/    /'
+		((failed_tests++))
+		((error_count += test_exit_code))
+		failed_test_names+=("$test_name")
+	fi
+	
+	echo ""
+}
+
+# Find all test files and run them
+echo -e "${YELLOW}===== Running all dotfiles tests =====${RESET}"
+echo ""
+
+# Find all test files in the test directory (files ending with _test)
+test_files=()
+while IFS= read -r -d '' file; do
+	# Skip files that start with underscore
+	filename=$(basename "$file")
+	if [[ "$filename" != _* ]]; then
+		test_files+=("$file")
+	fi
+done < <(find "$TEST_DIR" -type f -name "*_test" -print0 2>/dev/null)
+
+# Sort test files for consistent execution order
+IFS=$'\n' sorted_test_files=($(sort <<<"${test_files[*]}"))
+unset IFS
+
+# Run each test file
+for test_file in "${sorted_test_files[@]}"; do
+	run_test "$test_file"
+done
+
+# Print summary
+echo -e "${YELLOW}===== Test Summary =====${RESET}"
+echo -e "Total tests: $total_tests"
+echo -e "Passed: ${GREEN}$passed_tests${RESET}"
+
+if [ $failed_tests -gt 0 ]; then
+	echo -e "Failed: ${RED}$failed_tests${RESET}"
+	echo -e "Total error count: ${RED}$error_count${RESET}"
+	echo -e "\n${RED}Failed tests:${RESET}"
+	
+	# Group failures by error pattern for easier debugging
+	declare -A failure_patterns
+	for i in "${!failed_test_names[@]}"; do
+		name=${failed_test_names[$i]}
+		echo -e "\n${RED}[$((i+1))/${#failed_test_names[@]}] $name:${RESET}"
+		
+		# Run the test again to get the error output
+		test_output=$(bash -c "source \"$TEST_DIR/$name\" 2>&1")
+		echo "$test_output" | sed 's/^/    /'
+		
+		# Extract a simplified error pattern
+		error_pattern=$(echo "$test_output" | grep -v "^\s*$" | tail -n 1)
+		if [[ -n "$error_pattern" ]]; then
+			if [[ -z "${failure_patterns[$error_pattern]}" ]]; then
+				failure_patterns[$error_pattern]="$name"
+			else
+				failure_patterns[$error_pattern]="${failure_patterns[$error_pattern]}, $name"
+			fi
+		fi
+	done
+	
+	# Show common error patterns
+	if [ ${#failure_patterns[@]} -gt 0 ]; then
+		echo -e "\n${YELLOW}Common error patterns:${RESET}"
+		for pattern in "${!failure_patterns[@]}"; do
+			echo -e "  ${RED}$pattern${RESET}"
+			echo -e "    Affects: ${failure_patterns[$pattern]}"
+		done
+	fi
+	
+	exit $error_count
+else
+	echo -e "${GREEN}All tests passed!${RESET}"
+	exit 0
+fi

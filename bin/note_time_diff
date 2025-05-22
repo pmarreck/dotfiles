@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+
+note_time_diff() {
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	case $1 in
+	--start)
+		_start_time=$(Time.now.to_f)
+		_interstitial_time=$_start_time
+		echo "timestart: $_start_time"
+		;;
+	--end)
+		local _end_time=$(Time.now.to_f)
+		local totaltimediff=$(echo "scale=10;$_end_time - $_start_time" | bc)
+		local timediff=$(echo "scale=10;$_end_time - $_interstitial_time" | bc)
+		echo "timediff: $timediff"
+		echo "time_end: $_end_time"
+		echo "totaltimediff: $totaltimediff"
+		unset _start_time
+		unset _interstitial_time
+		;;
+	*)
+		local _now=$(Time.now.to_f)
+		local timediff=$(echo "scale=10;$_now - $_interstitial_time" | bc)
+		echo "timediff: $timediff $1"
+		_interstitial_time=$_now
+		;;
+	esac
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

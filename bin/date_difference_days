@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+
+date_difference_days() {
+	local date1="$1"
+	local date2="$2"
+
+	# Convert dates to Unix timestamps (seconds since 1970-01-01)
+	local ts1=$(date -d "$date1" +%s)
+	local ts2=$(date -d "$date2" +%s)
+
+	# Compute the difference in seconds and convert to days
+	local diff_seconds=$((ts2 - ts1))
+	local diff_days=$((diff_seconds / 86400))
+
+	echo "$diff_days"
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

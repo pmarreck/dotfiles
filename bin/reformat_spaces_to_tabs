@@ -8,81 +8,217 @@
 # run: `tabs -2` (or whatever width you want), possibly in your dotfiles.
 
 # is AWK set to anything? If not, prefer frawk, then gawk, then awk
-[ -z "${AWK}" ] && export AWK=$(command -v frawk || command -v gawk || command -v awk)
+# [ -z "${AWK}" ] && export AWK=$(command -v frawk || command -v gawk || command -v awk)
 
 reformat_spaces_to_tabs() {
+	local AWK=$(command -v gawk || command -v awk)
 	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	
+	# Parse arguments
+	local in_place=false
+	local files=()
+	
+	# Process arguments
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+			-i|--in-place)
+				in_place=true
+				shift
+				;;
+			*)
+				# Check if file exists
+				if [ -f "$1" ]; then
+					# Check if it's a text file
+					if file -b --mime-type "$1" | grep -q "^text/"; then
+						files+=("$1")
+					else
+						echo "Warning: Not a text file: $1" >&2
+					fi
+				else
+					echo "Warning: File not found: $1" >&2
+				fi
+				shift
+				;;
+		esac
+	done
+	
+	# If no files provided, show usage
+	if [ ${#files[@]} -eq 0 ]; then
+		echo "Usage: reformat_spaces_to_tabs [-i|--in-place] file1 [file2 ...]"
+		echo "  -i, --in-place    Modify files in place instead of printing to stdout"
+		return 1
+	fi
+	
+	# Process each file
+	for file in "${files[@]}"; do
+		_process_file "$file" "$in_place"
+	done
+}
+
+# Helper function to process a single file
+_process_file() {
 	local file="$1"
+	local in_place="$2"
+	
+	# Double-check that it's a text file (in case this function is called directly)
+	if ! file -b --mime-type "$file" | grep -q "^text/"; then
+		echo "Error: Not a text file: $file" >&2
+		return 1
+	fi
 	function determine_tab_size_in_spaces() {
 		$AWK '
 			{
-				# Match the leading spaces and count the occurrences
-				match($0, /^ */);
-				indents[RLENGTH]++;
-			}
-			END {
-				# Find the 3 most common indentation levels
-				max_count = 0;
-				max_indent = 0;
-				second_max_indent = 0;
-				third_max_indent = 0;
-				for (indent in indents) {
-					if (indents[indent] > max_count && indent > 0) {
-						third_max_indent = second_max_indent;
-						second_max_indent = max_indent;
-						max_indent = indent;
-						max_count = indents[indent];
+				# Skip empty lines and lines without leading spaces
+				if (length($0) > 0 && ($0 ~ /^ / || $0 ~ /^\t/)) {
+					# Match the leading spaces and tally the occurrences
+					match($0, /^ */);
+					if (RLENGTH > 0) {
+						space_indents[RLENGTH]++;
+					}
+					# Match the leading tabs and tally the occurrences
+					match($0, /^\t*/);
+					if (RLENGTH > 0) {
+						tab_indents[RLENGTH]++;
 					}
 				}
-				# Determine what the greatest common divisor is for the most common indentation levels,
-				# handling up to 8 spaces (which is what my terminal outputs, which is ridiculous)
-				if (max_indent % 8 == 0 && second_max_indent % 8 == 0 && third_max_indent % 8 == 0) {
-					print 8;
-				} else if (max_indent % 7 == 0 && second_max_indent % 7 == 0 && third_max_indent % 7 == 0) {
-					print 7;
-				} else if (max_indent % 6 == 0 && second_max_indent % 6 == 0 && third_max_indent % 6 == 0) {
-					print 6;
-				} else if (max_indent % 5 == 0 && second_max_indent % 5 == 0 && third_max_indent % 5 == 0) {
-					print 5;
-				} else if (max_indent % 4 == 0 && second_max_indent % 4 == 0 && third_max_indent % 4 == 0) {
-					print 4;
-				} else if (max_indent % 3 == 0 && second_max_indent % 3 == 0 && third_max_indent % 3 == 0) {
-					print 3;
-				} else if (max_indent % 2 == 0 && second_max_indent % 2 == 0 && third_max_indent % 2 == 0) {
-					print 2;
-				} else if (max_indent == 0) {
+			}
+			END {
+				# Find the 3 most common indentation levels of tabs and spaces
+				max_count_spaces = 0;
+				max_count_tabs = 0;
+				max_indent_spaces = 0;
+				max_indent_tabs = 0;
+				second_max_indent_spaces = 0;
+				second_max_indent_tabs = 0;
+				third_max_indent_spaces = 0;
+				third_max_indent_tabs = 0;
+				
+				# Sort space indents by frequency to find top 3
+				for (indent in space_indents) {
+					if (space_indents[indent] > max_count_spaces && indent > 0) {
+						third_max_indent_spaces = second_max_indent_spaces;
+						second_max_indent_spaces = max_indent_spaces;
+						max_indent_spaces = indent;
+						max_count_spaces = space_indents[indent];
+					}
+				}
+				
+				# Sort tab indents by frequency to find top 3
+				for (indent in tab_indents) {
+					if (tab_indents[indent] > max_count_tabs && indent > 0) {
+						third_max_indent_tabs = second_max_indent_tabs;
+						second_max_indent_tabs = max_indent_tabs;
+						max_indent_tabs = indent;
+						max_count_tabs = tab_indents[indent];
+					}
+				}
+				
+				# Debug output to help with troubleshooting
+				# printf "Found space indents: %d, %d, %d\n", max_indent_spaces, second_max_indent_spaces, third_max_indent_spaces > "/dev/stderr";
+				# printf "Found tab indents: %d, %d, %d\n", max_indent_tabs, second_max_indent_tabs, third_max_indent_tabs > "/dev/stderr";
+				
+				# If tabs are more common than spaces, return 0
+				if (max_count_tabs > max_count_spaces) {
+					print "Tabs are more common than spaces in file '$1'" > "/dev/stderr";
 					print 0;
-				} else {
-					print 1;
+				}
+				else {
+					# Determine what the greatest common divisor is for the most common indentation levels
+					# This filters out oddball indentations that would throw off the calculation
+					if (max_indent_spaces % 8 == 0 && second_max_indent_spaces % 8 == 0 && third_max_indent_spaces % 8 == 0) {
+						print 8;
+					} else if (max_indent_spaces % 7 == 0 && second_max_indent_spaces % 7 == 0 && third_max_indent_spaces % 7 == 0) {
+						print 7;
+					} else if (max_indent_spaces % 6 == 0 && second_max_indent_spaces % 6 == 0 && third_max_indent_spaces % 6 == 0) {
+						print 6;
+					} else if (max_indent_spaces % 5 == 0 && second_max_indent_spaces % 5 == 0 && third_max_indent_spaces % 5 == 0) {
+						print 5;
+					} else if (max_indent_spaces % 4 == 0 && second_max_indent_spaces % 4 == 0 && third_max_indent_spaces % 4 == 0) {
+						print 4;
+					} else if (max_indent_spaces % 3 == 0 && second_max_indent_spaces % 3 == 0 && third_max_indent_spaces % 3 == 0) {
+						print 3;
+					} else if (max_indent_spaces % 2 == 0 && second_max_indent_spaces % 2 == 0 && third_max_indent_spaces % 2 == 0) {
+						print 2;
+					} else if (max_indent_spaces == 0) {
+						print 0;
+					} else {
+						# Default to smallest indent if no pattern found
+						print 1;
+					}
 				}
 			}
 		' "$1"
 	}
 	local indent=$(determine_tab_size_in_spaces "$file")
+	
+	# Debug output to help troubleshoot indent detection
+	# echo "Detected indent size: $indent for $file" >&2
+
 	if (( indent > 0 )); then
-		# >&2 echo "Indent size: $indent"
 		indent_spaces=$(printf "%${indent}s")
-		$AWK -v indent="$indent_spaces" '
-		{
-			while (match($0, "^\t*"indent)) {
-				$0 = gensub("^(\t*)"indent, "\\1\t", "g");
-			}
-			print;
-		}' "$file" #> "$file.tmp" && mv "$file.tmp" "$file"
+		if [ "$in_place" = "true" ]; then
+			# Create a backup of the original file
+			local backup_file="${file}.maybe-no-tabs"
+			cp -p "$file" "$backup_file"
+			
+			# Save file permissions (cross-platform compatible)
+			local STAT=$(command -v gstat || command -v stat)
+			local stat_format="%a"
+			# Check if we're on macOS (BSD stat)
+			if [[ "$OSTYPE" == "darwin"* ]] && [[ "$STAT" == *"/stat" ]]; then
+				stat_format="-f %A"
+				local file_perms=$($STAT $stat_format "$file")
+			else
+				local file_perms=$($STAT -c "%a" "$file")
+			fi
+			
+			# Process in-place
+			$AWK -v indent="$indent_spaces" '
+			{
+				while (match($0, "^\t*"indent)) {
+					$0 = gensub("^(\t*)"indent, "\\1\t", "g");
+				}
+				print;
+			}' "$file" > "$file.new"
+			
+			# Apply original permissions to the new file
+			chmod "$file_perms" "$file.new"
+			
+			# Replace the original file
+			mv "$file.new" "$file"
+			echo "Reformatted: $file (indent size: $indent)"
+		else
+			# Output to stdout
+			$AWK -v indent="$indent_spaces" '
+			{
+				while (match($0, "^\t*"indent)) {
+					$0 = gensub("^(\t*)"indent, "\\1\t", "g");
+				}
+				print;
+			}' "$file"
+		fi
 	else
 		# >&2 echo "Indent size: 0"
-		cat "$file"
+		if [ "$in_place" = "true" ]; then
+			echo "No changes needed for: $file"
+		else
+			cat "$file"
+		fi
 	fi
 }
 
 # Export the function so it can be used by find -exec
-export -f reformat_spaces_to_tabs
 
 # Run the function, passing along any args, if this file was run directly (such as via sudo) instead of as an include
 # Sometimes, $0 contains a leading dash to indicate an interactive (or is it login?) shell,
 # which is apparently an old convention (which also broke the basename call on OS X)
-_me=$(basename "${0##\-}")
-if [ "$_me" = "reformat_spaces_to_tabs" ]; then
-	$_me "$@"
+if ! (return 0 2>/dev/null); then
+  # Check if we are running tests
+  if [ "$1" = "--test" ]; then
+    # Run tests from the test file
+    . "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+  else
+    # If called directly, pass all arguments to the function
+    $(basename "${0##\-}") "$@"
+  fi
 fi
-unset _me

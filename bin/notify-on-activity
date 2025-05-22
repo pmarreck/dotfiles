@@ -6,6 +6,6 @@
 
 shopt -s lastpipe
 while read input; do   # < <(cat -)
-  echo $input
-  tput bel
+	echo $input
+	tput bel
 done < /dev/stdin

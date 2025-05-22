@@ -1,50 +1,36 @@
 #!/usr/bin/env bash
 
-# graceful dependency enforcement
-# Usage: needs <executable> [provided by <packagename>]
-# only redefines it here if it's not already defined
->/dev/null declare -F needs || \
-needs() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-  local bin=$1
-  shift
-  command -v "$bin" >/dev/null 2>&1 || { echo >&2 "I require $bin but it's not installed or in PATH; $*"; return 1; }
-}
-
-. "$HOME/dotfiles/bin/functions/source_relative.bash"
-source_relative_once $HOME/dotfiles/bin/datetimestamp
 # Uses the OpenAI image generation API to generate an image from a prompt
 # and output it to the terminal via the sixel protocol.
 # Example usage: imagine a cow jumping over the moon
 imagine() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-  needs magick Please install ImageCraptastick I mean ImageMagick
-  local prompt geometry create_img url rand_num stamp filename response maybe_error
-  prompt="$@"
-  geometry=${GEOMETRY:-512x512} # options: 256x256, 512x512, or 1024x1024
-  create_img=$(curl https://api.openai.com/v1/images/generations -s \
-    -H "Content-Type: application/json" \
-    -H "Authorization: Bearer $OPENAI_API_KEY" \
-    -d "{\"prompt\": \"$prompt\", \"n\": 1, \"size\": \"$geometry\"}"
-  )
-  if echo "$create_img" | jq -e '.error' >/dev/null; then
-    echo -n "Error: " >&2
-    echo "$create_img" | jq -r '.error.message' >&2
-    return 1
-  fi
-  (( DEBUG )) && echo $create_img | jq >&2
-  url=$(echo $create_img | jq -r '.data[0].url')
-  # rand_num=$(shuf -i 1-1000000 -n 1)
-  stamp=$(DATETIMESTAMPFORMAT="+%Y%m%d%H%M%S%N" datetimestamp)
-  filename=$(gmktemp -t "img-${stamp}-XXXX" --suffix .png)
-  response=$(curl -s $url -o "$filename")
-  (( DEBUG )) && echo "debug: $response" >&2
-  magick "$filename" -geometry $geometry sixel:-
-  echo "This image is currently stored temporarily at: $filename" >&2
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	needs magick Please install ImageCraptastick I mean ImageMagick
+	local prompt geometry create_img url rand_num stamp filename response maybe_error
+	prompt="$@"
+	geometry=${GEOMETRY:-512x512} # options: 256x256, 512x512, or 1024x1024
+	create_img=$(curl https://api.openai.com/v1/images/generations -s \
+		-H "Content-Type: application/json" \
+		-H "Authorization: Bearer $OPENAI_API_KEY" \
+		-d "{\"prompt\": \"$prompt\", \"n\": 1, \"size\": \"$geometry\"}"
+	)
+	if echo "$create_img" | jq -e '.error' >/dev/null; then
+		echo -n "Error: " >&2
+		echo "$create_img" | jq -r '.error.message' >&2
+		return 1
+	fi
+	(( DEBUG )) && echo $create_img | jq >&2
+	url=$(echo $create_img | jq -r '.data[0].url')
+	# rand_num=$(shuf -i 1-1000000 -n 1)
+	stamp=$(DATETIMESTAMPFORMAT="+%Y%m%d%H%M%S%N" datetimestamp)
+	filename=$(gmktemp -t "img-${stamp}-XXXX" --suffix .png)
+	response=$(curl -s $url -o "$filename")
+	(( DEBUG )) && echo "debug: $response" >&2
+	magick "$filename" -geometry $geometry sixel:-
+	echo "This image is currently stored temporarily at: $filename" >&2
 }
 
 # Export the function so it can be used by find -exec
-export -f imagine
 
 # Run the function, passing along any args, if this file was run directly (such as via sudo) instead of as an include
 # Sometimes, $0 contains a leading dash to indicate an interactive (or is it login?) shell,
@@ -54,3 +40,14 @@ if [ "$_me" = "imagine" ]; then
 	$_me "$@"
 fi
 unset _me
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

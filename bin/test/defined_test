@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+
+# Test the defined function
+test_defined() {
+  # Define a test variable, function, and alias for testing
+  local test_var="test value"
+  test_function() {
+    echo "This is a test function"
+  }
+  alias test_alias="echo 'This is a test alias'"
+  
+  # Test with a defined variable
+  defined "test_var"
+  assert "$?" == "0"
+  
+  # Test with a defined function
+  defined "test_function"
+  assert "$?" == "0"
+  
+  # Test with a defined alias
+  defined "test_alias"
+  assert "$?" == "0"
+  
+  # Test with a builtin
+  defined "echo"
+  assert "$?" == "0"
+  
+  # Test with an executable in PATH
+  defined "bash"
+  assert "$?" == "0"
+  
+  # Test with an undefined name
+  defined "undefined_name_that_should_not_exist"
+  assert "$?" == "1"
+  
+  # Clean up
+  unalias test_alias
+}
+
+# Run the test if this script is executed directly
+if ! (return 0 2>/dev/null); then
+  test_defined
+fi

@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+
+whatismyipv6() {
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	
+	# Function to get the best IPv6 address based on priority
+	get_best_ipv6() {
+		local output="$1"
+		local global_ip=""
+		local ula_ip=""
+		local link_ip=""
+		
+		# Try to find a global unicast address (2000::/3) first
+		global_ip=$(echo "$output" | awk '/inet6/ && /global/ && $2 ~ /^2/ {gsub("/.*", "", $2); print $2; exit}')
+		
+		# If no global address, try ULA (Unique Local Address, fd00::/8)
+		if [ -z "$global_ip" ]; then
+			ula_ip=$(echo "$output" | awk '/inet6/ && /global/ && $2 ~ /^fd/ {gsub("/.*", "", $2); print $2; exit}')
+			
+			# If no ULA, try link-local as last resort
+			if [ -z "$ula_ip" ]; then
+				link_ip=$(echo "$output" | awk '/inet6/ && /link/ && $2 !~ /::1/ {gsub("/.*", "", $2); print $2; exit}')
+				return 0
+			fi
+			return 0
+		fi
+		return 0
+	}
+	
+	if command -v ip >/dev/null 2>&1; then
+		# Modern Linux systems
+		output=$(ip -6 addr show)
+		get_best_ipv6 "$output"
+		
+		# Determine which IP to use based on availability
+		if [ -n "$global_ip" ]; then
+			ip="$global_ip"
+			echo "Found global unicast IPv6 address (2000::/3)" >&2
+		elif [ -n "$ula_ip" ]; then
+			ip="$ula_ip"
+			echo "No global IPv6 address found. Using ULA (Unique Local Address, fd00::/8)" >&2
+		elif [ -n "$link_ip" ]; then
+			ip="$link_ip"
+			echo "No global or ULA IPv6 address found. Using link-local address (fe80::/10)" >&2
+		fi
+		
+	elif command -v ifconfig >/dev/null 2>&1; then
+		# Systems with ifconfig
+		output=$(ifconfig)
+		get_best_ipv6 "$output"
+		
+		# Determine which IP to use based on availability
+		if [ -n "$global_ip" ]; then
+			ip="$global_ip"
+			echo "Found global unicast IPv6 address (2000::/3)" >&2
+		elif [ -n "$ula_ip" ]; then
+			ip="$ula_ip"
+			echo "No global IPv6 address found. Using ULA (Unique Local Address, fd00::/8)" >&2
+		elif [ -n "$link_ip" ]; then
+			ip="$link_ip"
+			echo "No global or ULA IPv6 address found. Using link-local address (fe80::/10)" >&2
+		fi
+		
+	else
+		echo "Neither ifconfig nor ip command is available." >&2
+		return 1
+	fi
+	
+	if [[ -z "$ip" ]]; then
+		echo "Could not determine IPv6 address." >&2
+		return 1
+	else
+		echo "$ip"
+	fi
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+  # Check if we are running tests
+  if [ "$1" = "--test" ]; then
+    # Run tests from the test file
+    . "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+  else
+    # If called directly, pass all arguments to the function
+    whatismyipv6 "$@"
+  fi
+fi

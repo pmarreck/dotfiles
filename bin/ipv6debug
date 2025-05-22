@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+
+# Simple script to debug IPv6 address detection
+echo "=== Raw output from ip -6 addr show ==="
+ip -6 addr show
+
+echo -e "\n=== Testing ULA pattern ==="
+ip -6 addr show | grep "inet6" | grep "global"
+
+echo -e "\n=== Testing with awk for ULA addresses ==="
+ip -6 addr show | awk '/inet6/ && /global/ && $2 ~ /^fd/ {print "Found ULA:", $2}'
+
+echo -e "\n=== Testing with awk for link-local addresses ==="
+ip -6 addr show | awk '/inet6/ && /link/ && $2 !~ /::1/ {print "Found link-local:", $2}'

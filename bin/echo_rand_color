@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+
+# Dynamically select the appropriate random color function based on terminal capabilities
+echo_rand_color() {
+	# Get the maximum color support for the current terminal
+	local bits=$(max_bits_color_support)
+	
+	# Call the appropriate function based on terminal capabilities
+	if [ "$bits" == "24" ]; then
+		echo_rand_24bit_color "$@"
+	elif [ "$bits" == "8" ]; then
+		echo_rand_8bit_color "$@"
+	else
+		echo_rand_4bit_color "$@"
+	fi
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

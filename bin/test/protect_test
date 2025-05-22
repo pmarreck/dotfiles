@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+
+test_protect() {
+  echo "Running tests..."
+  local test_dir=$(mktemp -d -t test_protect_dir.XXXXXX)
+  local test_file="$test_dir/testfile.txt"
+  touch "$test_file"
+  chmod 644 "$test_file"
+  protect chmod u+x "$test_file"
+  local current_perms=$(stat -c "%a" "$test_file")
+  if [[ "$current_perms" == "744" ]]; then
+    echo "Test passed: chmod u+x"
+  else
+    echo "Test failed: chmod u+x"
+  fi
+  protect undo
+  local reverted_perms=$(stat -c "%a" "$test_file")
+  if [[ "$reverted_perms" == "644" ]]; then
+    echo "Test passed: undo chmod u+x"
+  else
+    echo "Test failed: undo chmod u+x"
+  fi
+  rm -rf "$test_dir"
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+  # Check if we are running tests
+  if [ "$1" = "--test" ]; then
+    # Run tests from the test file
+    . "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+  else
+    # If called directly, pass all arguments to the function
+    $(basename "${0##\-}") "$@"
+  fi
+fi

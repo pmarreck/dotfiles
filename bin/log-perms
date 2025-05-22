@@ -20,23 +20,23 @@ timestamp=$(date +%Y%m%d%H%M%S)
 
 # Find all files, directories, symlinks and hardlinks
 sudo find . -type f -o -type d -o -type l | while read -r file; do
-  # Skip the ./ at the start of every filename given by find
-  file="${file#./}"
+	# Skip the ./ at the start of every filename given by find
+	file="${file#./}"
 
-  # Get the user, group and permissions of the file
-  user=$(sudo gstat -c "%U" "$file")
-  group=$(sudo gstat -c "%G" "$file")
-  perm=$(sudo gstat -c "%a" "$file")
+	# Get the user, group and permissions of the file
+	user=$(sudo gstat -c "%U" "$file")
+	group=$(sudo gstat -c "%G" "$file")
+	perm=$(sudo gstat -c "%a" "$file")
 
-  # Create the directory if it doesn't exist
-  mkdir -p "${curdir}/log_perms-$timestamp/$group/$user"
-  # if [ ! -d "${curdir}/log_perms-$timestamp/$group/$user" ]; then
-  #   mkdir -p "${curdir}/log_perms-$timestamp/$group/$user"
-  #   chown "$loggedinuser":"$loggedingroup" "${curdir}/log_perms-$timestamp/$group/$user"
-  # fi
+	# Create the directory if it doesn't exist
+	mkdir -p "${curdir}/log_perms-$timestamp/$group/$user"
+	# if [ ! -d "${curdir}/log_perms-$timestamp/$group/$user" ]; then
+	#   mkdir -p "${curdir}/log_perms-$timestamp/$group/$user"
+	#   chown "$loggedinuser":"$loggedingroup" "${curdir}/log_perms-$timestamp/$group/$user"
+	# fi
 
-  # Log the file and its permission
-  echo "/$file" >> "${curdir}/log_perms-$timestamp/$group/$user/$perm"
+	# Log the file and its permission
+	echo "/$file" >> "${curdir}/log_perms-$timestamp/$group/$user/$perm"
 done
 
 popd

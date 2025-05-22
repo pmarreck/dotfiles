@@ -3,19 +3,19 @@ compressor=$(which lz4)
 
 for f in "$@"
 do
-  # echo $f
-  fout="${f%/}"  # strip trailing slash
-  # echo $fout
-  path="${fout%/*}" # strip everything after the last slash which includes the filename
-  # echo $path
-  # cd into the path if it is a directory
-  if [ -d "$path" ]; then
-    cd "$path"
-  fi
-  filename="${fout##/*/}"  # deletes entire path before last filename, hopefully
-  # echo $filename
-  tar cp -f "$filename.tar" "./$filename"
-    $compressor -9 "$filename.tar" "$filename.tar.lz4"
-  rm "$filename.tar"
-  # echo "$f > $filename.tar.lz4" >> $HOME/lz4compressedfiles.log
+	# echo $f
+	fout="${f%/}"  # strip trailing slash
+	# echo $fout
+	path="${fout%/*}" # strip everything after the last slash which includes the filename
+	# echo $path
+	# cd into the path if it is a directory
+	if [ -d "$path" ]; then
+		cd "$path"
+	fi
+	filename="${fout##/*/}"  # deletes entire path before last filename, hopefully
+	# echo $filename
+	tar cp -f "$filename.tar" "./$filename"
+		$compressor -9 "$filename.tar" "$filename.tar.lz4"
+	rm "$filename.tar"
+	# echo "$f > $filename.tar.lz4" >> $HOME/lz4compressedfiles.log
 done

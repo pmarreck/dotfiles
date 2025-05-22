@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+
+repeat() {
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	# add --help option
+	case "$1" in
+		-h|--help)
+			echo "Usage: repeat <count:integer> <command>" >&2
+			return 0
+			;;
+		*)
+			;;
+	esac
+	local count=$1
+	local retcodes=0
+	shift
+	local cmd="$@"
+	for ((i = 0; i < count; i++)); do
+		eval "$cmd"
+		(( retcodes+=$? ))
+	done
+	return $retcodes
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

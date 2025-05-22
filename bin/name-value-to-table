@@ -5,133 +5,133 @@
 -- --help, --test, and optional --key-width <n> --val-width <n>.
 
 print_help = ->
-  print [[
+	print [[
 Usage: name-value-to-table [-i file] [-o file] [--key-width N] [--val-width N]
 Options:
-  -i, --input <file>    Input file (default: - for stdin)
-  -o, --output <file>   Output file (default: - for stdout)
-  --key-width <N>       Key column width (default: auto)
-  --val-width <N>       Value column width (default: auto)
-  --help                Show this help
-  --test                Run tests
+	-i, --input <file>    Input file (default: - for stdin)
+	-o, --output <file>   Output file (default: - for stdout)
+	--key-width <N>       Key column width (default: auto)
+	--val-width <N>       Value column width (default: auto)
+	--help                Show this help
+	--test                Run tests
 ]]
 
 is_valid_var = (line) ->
-  return false unless type(line) == "string"
-  key, val = line\match "^([^=]+)=(.*)$"
-  return false unless key and val
-  return false unless key\match "^[a-zA-Z_][a-zA-Z0-9_%?]*$"
-  return false if key\match("%%$") and val\match("^%(") -- extra parentheses to handle nil safety
-  true
+	return false unless type(line) == "string"
+	key, val = line\match "^([^=]+)=(.*)$"
+	return false unless key and val
+	return false unless key\match "^[a-zA-Z_][a-zA-Z0-9_%?]*$"
+	return false if key\match("%%$") and val\match("^%(") -- extra parentheses to handle nil safety
+	true
 
 parse_pairs = (lines) ->
-  result = {}
-  for line in *lines
-    if is_valid_var(line)
-      k, v = line\match "^([^=]+)=(.*)$"
-      table.insert(result, {k: k, v: v})
-  result
+	result = {}
+	for line in *lines
+		if is_valid_var(line)
+			k, v = line\match "^([^=]+)=(.*)$"
+			table.insert(result, {k: k, v: v})
+	result
 
 max_widths = (pairs) ->
-  return 1, 1 if #pairs == 0
-  k, v = 0, 0
-  for p in *pairs
-    k = math.max k, #p.k
-    v = math.max v, #p.v
-  k, v
+	return 1, 1 if #pairs == 0
+	k, v = 0, 0
+	for p in *pairs
+		k = math.max k, #p.k
+		v = math.max v, #p.v
+	k, v
 
 truncate = (str, maxlen) ->
-  if #str > maxlen
-    str\sub(1, maxlen-1) .. "…" -- Unicode ellipsis
-  else
-    str
+	if #str > maxlen
+		str\sub(1, maxlen-1) .. "…" -- Unicode ellipsis
+	else
+		str
 
 MAX_WIDTH = 99
 
 clamp_width = (w) ->
-  w = tonumber(w) or 1
-  if w < 1
-    1
-  elseif w > MAX_WIDTH
-    MAX_WIDTH
-  else
-    math.floor w
+	w = tonumber(w) or 1
+	if w < 1
+		1
+	elseif w > MAX_WIDTH
+		MAX_WIDTH
+	else
+		math.floor w
 
 table_output = (pairs, keyw, valw, out) ->
-  if #pairs == 0
-    out\write "(No valid name=value pairs found.)\n"
-    return
-  keyw = clamp_width keyw
-  valw = clamp_width valw
-  if os.getenv("NVTABLE_DEBUG")
-    io.stderr\write "[DEBUG] keyw=#{keyw} valw=#{valw}\n"
-  fmt = string.format "%%-#{keyw}s | %%-#{valw}s\n"
-  out\write(fmt\format("KEY", "VALUE"))
-  out\write(string.rep("-", keyw) .. "-+-" .. string.rep("-", valw) .. "\n")
-  for p in *pairs
-    out\write(fmt\format(truncate(p.k, keyw), truncate(p.v, valw)))
+	if #pairs == 0
+		out\write "(No valid name=value pairs found.)\n"
+		return
+	keyw = clamp_width keyw
+	valw = clamp_width valw
+	if os.getenv("NVTABLE_DEBUG")
+		io.stderr\write "[DEBUG] keyw=#{keyw} valw=#{valw}\n"
+	fmt = string.format "%%-#{keyw}s | %%-#{valw}s\n"
+	out\write(fmt\format("KEY", "VALUE"))
+	out\write(string.rep("-", keyw) .. "-+-" .. string.rep("-", valw) .. "\n")
+	for p in *pairs
+		out\write(fmt\format(truncate(p.k, keyw), truncate(p.v, valw)))
 
 run = (input_path, output_path, keyw, valw) ->
-  inp = if input_path == "-" or not input_path
-    io.stdin
-  else
-    assert(io.open(input_path, "r"), "Cannot open input file")
-  out = if output_path == "-" or not output_path
-    io.stdout
-  else
-    assert(io.open(output_path, "w"), "Cannot open output file")
-  lines = for line in inp\lines!
-    line
-  pairs = parse_pairs lines
-  -- Sort pairs by key (alphabetically)
-  table.sort pairs, (a, b) -> a.k < b.k
-  if not keyw or not valw
-    keyw1, valw1 = max_widths pairs
-    keyw = keyw or keyw1
-    valw = valw or valw1
-  table_output pairs, keyw, valw, out
-  inp\close! unless inp == io.stdin
-  out\close! unless out == io.stdout
+	inp = if input_path == "-" or not input_path
+		io.stdin
+	else
+		assert(io.open(input_path, "r"), "Cannot open input file")
+	out = if output_path == "-" or not output_path
+		io.stdout
+	else
+		assert(io.open(output_path, "w"), "Cannot open output file")
+	lines = for line in inp\lines!
+		line
+	pairs = parse_pairs lines
+	-- Sort pairs by key (alphabetically)
+	table.sort pairs, (a, b) -> a.k < b.k
+	if not keyw or not valw
+		keyw1, valw1 = max_widths pairs
+		keyw = keyw or keyw1
+		valw = valw or valw1
+	table_output pairs, keyw, valw, out
+	inp\close! unless inp == io.stdin
+	out\close! unless out == io.stdout
 
 run_tests = ->
-  print "Running tests..."
-  testlines = {"FOO=bar", "BAZ=qux", "LONG_NAME=some_value", "INVALID LINE", "_Q=ok"}
-  pairs = parse_pairs testlines
-  assert #pairs == 4, "Should parse 4 valid pairs"
-  assert pairs[1].k == "FOO" and pairs[1].v == "bar", "First pair correct"
-  assert pairs[3].k == "LONG_NAME", "Long name parsed"
-  k, v = max_widths pairs
-  assert k == 9 and v == 10, "Max widths correct"
-  assert truncate("abcdefg", 5) == "abcd…", "Truncation correct"
-  print "All tests passed."
+	print "Running tests..."
+	testlines = {"FOO=bar", "BAZ=qux", "LONG_NAME=some_value", "INVALID LINE", "_Q=ok"}
+	pairs = parse_pairs testlines
+	assert #pairs == 4, "Should parse 4 valid pairs"
+	assert pairs[1].k == "FOO" and pairs[1].v == "bar", "First pair correct"
+	assert pairs[3].k == "LONG_NAME", "Long name parsed"
+	k, v = max_widths pairs
+	assert k == 9 and v == 10, "Max widths correct"
+	assert truncate("abcdefg", 5) == "abcd…", "Truncation correct"
+	print "All tests passed."
 
 args = {...}
 i = 1
 input_path, output_path, keyw, valw = "-", "-", nil, nil
 while i <= #args
-  arg = args[i]
-  if arg == "-i" or arg == "--input"
-    i += 1
-    input_path = args[i]
-  elseif arg == "-o" or arg == "--output"
-    i += 1
-    output_path = args[i]
-  elseif arg == "--key-width"
-    i += 1
-    keyw = args[i]
-  elseif arg == "--val-width"
-    i += 1
-    valw = args[i]
-  elseif arg == "--help"
-    print_help!
-    os.exit 0
-  elseif arg == "--test"
-    run_tests!
-    os.exit 0
-  else
-    io.stderr\write "Unknown argument: #{tostring arg}\n"
-    print_help!
-    os.exit 1
-  i += 1
+	arg = args[i]
+	if arg == "-i" or arg == "--input"
+		i += 1
+		input_path = args[i]
+	elseif arg == "-o" or arg == "--output"
+		i += 1
+		output_path = args[i]
+	elseif arg == "--key-width"
+		i += 1
+		keyw = args[i]
+	elseif arg == "--val-width"
+		i += 1
+		valw = args[i]
+	elseif arg == "--help"
+		print_help!
+		os.exit 0
+	elseif arg == "--test"
+		run_tests!
+		os.exit 0
+	else
+		io.stderr\write "Unknown argument: #{tostring arg}\n"
+		print_help!
+		os.exit 1
+	i += 1
 
 run input_path, output_path, keyw, valw

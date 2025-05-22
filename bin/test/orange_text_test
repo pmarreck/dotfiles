@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+
+# Test file for orange_text function
+# Simply calls the generic color_text_test with appropriate color settings
+
+TESTCOLOR="orange:38;5;208" "$HOME/dotfiles/bin/test/color_text_test"

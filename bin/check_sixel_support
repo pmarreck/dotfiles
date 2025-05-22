@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+
+check_sixel_support() {
+		[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+		# Check if the terminal supports Sixel via infocmp
+		if infocmp -1 | grep -q "sixel"; then
+				[ -n "$DEBUG_SHELLCONFIG" ] && echo "Sixel support detected via terminfo." >&2
+				return 0
+		fi
+		# Check specific terminals that might not report via infocmp
+		if [[ "$TERM_PROGRAM" == "WezTerm" ]]; then
+				[ -n "$DEBUG_SHELLCONFIG" ] && echo "WezTerm detected, which supports Sixel." >&2
+				return 0
+		fi
+		if [[ "$TERM_PROGRAM" == "Apple_Terminal" ]]; then
+				[ -n "$DEBUG_SHELLCONFIG" ] && echo "Apple Terminal detected, which does not support Sixel." >&2
+				return 1
+		fi
+		if [[ "$WSLENV" ]]; then
+				[ -n "$DEBUG_SHELLCONFIG" ] && echo "WSL detected. Sixel support depends on the Windows terminal used." >&2
+				return 2
+		fi
+		if [[ "$ALACRITTY_LOG" || "$ALACRITTY_WINDOW_ID" ]]; then
+				[ -n "$DEBUG_SHELLCONFIG" ] && echo "Alacritty detected, which does not support Sixel as of 2024." >&2
+				return 1
+		fi
+		if [[ "$TERM" == "xterm-256color" ]]; then
+				parent_process=$(ps -p $PPID -o comm=)
+				if [[ "$parent_process" == *"cool-retro-term"* ]]; then
+						[ -n "$DEBUG_SHELLCONFIG" ] && echo "cool-retro-term detected, which does not support Sixel." >&2
+						return 1
+				fi
+		fi
+		if [[ "$TERM_PROGRAM" == "WarpTerminal" ]]; then
+				[ -n "$DEBUG_SHELLCONFIG" ] && echo "Warp terminal detected, which does not support Sixel as of 2024." >&2
+				return 1
+		fi
+		if [[ "$TERM_PROGRAM" == "Hyper" ]]; then
+				[ -n "$DEBUG_SHELLCONFIG" ] && echo "Hyper terminal detected, which does not support Sixel as of 2024,\
+	but check again soon because sixel support was added to xterm.js, which Hyper uses." >&2
+				return 1
+		fi
+		if [[ "$TERM_PROGRAM" == "ghostty" ]]; then
+				[ -n "$DEBUG_SHELLCONFIG" ] && echo "Ghostty terminal detected, which does not support Sixel as of 2024." >&2
+				return 1
+		fi
+		# Fall back on the assumption that these might work
+		case "$TERM" in
+				xterm-256color|xterm-kitty|mlterm|yaft|wezterm)
+						[ -n "$DEBUG_SHELLCONFIG" ] && echo "Terminal ($TERM) likely supports Sixel graphics." >&2
+						return 0
+						;;
+		esac
+		echo "Unable to determine Sixel support. TERM: $TERM, TERM_PROGRAM: $TERM_PROGRAM" >&2
+		return 2
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+		# Check if we are running tests
+		if [ "$1" = "--test" ]; then
+				# Run tests from the test file
+				. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+		else
+				# If called directly, pass all arguments to the function
+				$(basename "${0##\-}") "$@"
+		fi
+fi

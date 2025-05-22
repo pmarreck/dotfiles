@@ -7,27 +7,27 @@ mkdir -p "$dir_of_input_file"
 
 # Check if the input file exists
 if [ ! -f "$input_file" ]; then
-    echo "Input file does not exist: $input_file"
-    exit 1
+	echo "Input file does not exist: $input_file"
+	exit 1
 fi
 
 # Iterate through each line in the file
 while IFS= read -r line
 do
-    # Expand environment variables in the line
-    directory_path=$(eval echo "$line")
-    echo "Refreshing directory: $directory_path"
-    # Check if the directory exists
-    if [ -d "$directory_path" ]; then
-        # Use find to touch all files in the directory, properly handling spaces
-        if [[ "$DEBUG_LIST_FILES" == "true" ]]; then
-            # Output files as they are being touched for debugging
-            find "$directory_path" -type f -exec bash -c 'touch -a "$0" && echo "Touched: $0"' {} \;
-        else
-            # Just touch the files without outputting names
-            find "$directory_path" -type f -exec touch -a {} +
-        fi
-    else
-        echo "Directory does not exist: $directory_path"
-    fi
+	# Expand environment variables in the line
+	directory_path=$(eval echo "$line")
+	echo "Refreshing directory: $directory_path"
+	# Check if the directory exists
+	if [ -d "$directory_path" ]; then
+		# Use find to touch all files in the directory, properly handling spaces
+		if [[ "$DEBUG_LIST_FILES" == "true" ]]; then
+			# Output files as they are being touched for debugging
+			find "$directory_path" -type f -exec bash -c 'touch -a "$0" && echo "Touched: $0"' {} \;
+		else
+			# Just touch the files without outputting names
+			find "$directory_path" -type f -exec touch -a {} +
+		fi
+	else
+		echo "Directory does not exist: $directory_path"
+	fi
 done < "$input_file"

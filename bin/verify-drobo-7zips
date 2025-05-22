@@ -2,101 +2,101 @@
 
 # Help function
 show_help() {
-  cat << EOF
+	cat << EOF
 Usage: $(basename "$0") [OPTIONS]
 
 Options:
-  --search-dir DIR     Directory to search for archives (default: /Volumes/GigaChad/Drobo)
-  --good-log FILE     Log file for verified archives (default: ~/good-drobo-files.txt)
-  --bad-log FILE      Log file for failed archives (default: ~/bad-drobo-files.txt)
-  --help             Show this help message
+	--search-dir DIR     Directory to search for archives (default: /Volumes/GigaChad/Drobo)
+	--good-log FILE     Log file for verified archives (default: ~/good-drobo-files.txt)
+	--bad-log FILE      Log file for failed archives (default: ~/bad-drobo-files.txt)
+	--help             Show this help message
 
 The script will verify the integrity of .7z and .zip files in the search directory.
 Previously verified files will be skipped. Results are appended to the log files.
 EOF
-  exit 0
+	exit 0
 }
 
 # Function to verify file integrity
 verify_file() {
-  local file="$1"
-  local good_log="$2"
-  local bad_log="$3"
+	local file="$1"
+	local good_log="$2"
+	local bad_log="$3"
 
-  # Check if file was previously processed
-  if grep -Fxq "$file" "$good_log"; then
-    echo "Previously verified: $file"
-    return 0
-  elif grep -Fxq "$file" "$bad_log"; then
-    echo "Previously FAILED: $file"
-    return 1
-  fi
+	# Check if file was previously processed
+	if grep -Fxq "$file" "$good_log"; then
+		echo "Previously verified: $file"
+		return 0
+	elif grep -Fxq "$file" "$bad_log"; then
+		echo "Previously FAILED: $file"
+		return 1
+	fi
 
-  echo "Verifying integrity of: $file"
+	echo "Verifying integrity of: $file"
 
-  local success=true
-  if [[ "$file" == *.7z ]]; then
-    7z t "$file" > /dev/null || success=false
-  elif [[ "$file" == *.zip ]]; then
-    unzip -tq "$file" > /dev/null || success=false
-  else
-    echo "Unsupported file type: $file"
-    return 1
-  fi
+	local success=true
+	if [[ "$file" == *.7z ]]; then
+		7z t "$file" > /dev/null || success=false
+	elif [[ "$file" == *.zip ]]; then
+		unzip -tq "$file" > /dev/null || success=false
+	else
+		echo "Unsupported file type: $file"
+		return 1
+	fi
 
-  if [[ "$success" == "false" ]]; then
-    echo "$file" >> "$bad_log"
-    echo "FAILED: $file"
-    return 1
-  else
-    echo "$file" >> "$good_log"
-    return 0
-  fi
+	if [[ "$success" == "false" ]]; then
+		echo "$file" >> "$bad_log"
+		echo "FAILED: $file"
+		return 1
+	else
+		echo "$file" >> "$good_log"
+		return 0
+	fi
 }
 
 # Main logic
 main() {
-  local search_dir="/Volumes/GigaChad/Drobo"
-  local good_log="$HOME/good-drobo-files.txt"
-  local bad_log="$HOME/bad-drobo-files.txt"
+	local search_dir="/Volumes/GigaChad/Drobo"
+	local good_log="$HOME/good-drobo-files.txt"
+	local bad_log="$HOME/bad-drobo-files.txt"
 
-  # Parse command line arguments
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --help)
-        show_help
-        ;;
-      --search-dir)
-        search_dir="$2"
-        shift 2
-        ;;
-      --good-log)
-        good_log="$2"
-        shift 2
-        ;;
-      --bad-log)
-        bad_log="$2"
-        shift 2
-        ;;
-      *)
-        echo "Unknown option: $1"
-        show_help
-        ;;
-    esac
-  done
+	# Parse command line arguments
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+			--help)
+				show_help
+				;;
+			--search-dir)
+				search_dir="$2"
+				shift 2
+				;;
+			--good-log)
+				good_log="$2"
+				shift 2
+				;;
+			--bad-log)
+				bad_log="$2"
+				shift 2
+				;;
+			*)
+				echo "Unknown option: $1"
+				show_help
+				;;
+		esac
+	done
 
-  # Ensure log files exist
-  touch "$good_log" "$bad_log"
+	# Ensure log files exist
+	touch "$good_log" "$bad_log"
 
-  # Find and verify files
-  find "$search_dir" \( -name "*.7z" -o -name "*.zip" \) -print0 |
-    while IFS= read -r -d '' file; do
-      verify_file "$file" "$good_log" "$bad_log"
-    done
+	# Find and verify files
+	find "$search_dir" \( -name "*.7z" -o -name "*.zip" \) -print0 |
+		while IFS= read -r -d '' file; do
+			verify_file "$file" "$good_log" "$bad_log"
+		done
 
-  echo "Verification complete."
-  echo "Good files logged in: $good_log"
-  echo "Failed files logged in: $bad_log"
+	echo "Verification complete."
+	echo "Good files logged in: $good_log"
+	echo "Failed files logged in: $bad_log"
 }
 
 # Run the main function with all arguments

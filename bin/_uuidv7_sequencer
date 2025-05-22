@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+
+_uuidv7_sequencer() {
+	# Get current timestamp in milliseconds
+	_uuidv7_current_time_ms=$(date +%s%3N)
+	# Check if timestamp has changed and reset sequence counter if it has
+	if [ "$_uuidv7_current_time_ms" != "$_uuidv7_last_time_ms" ]; then
+		_uuidv7_sequence_counter=$(_uuidv7_sequence_init) # Reset and randomize within first half of the sequence space
+	else
+		_uuidv7_sequence_counter=$((_uuidv7_sequence_counter + 1))
+		if [ $_uuidv7_sequence_counter -gt 0xFFFF ]; then
+				_uuidv7_sequence_counter=0
+		fi
+	fi
+	_uuidv7_last_time_ms=$current_time_ms
+	echo $_uuidv7_sequence_counter
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

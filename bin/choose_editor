@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+
+choose_editor() {
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	if [[ -n "$VISUAL" && -t 1 ]]; then
+		# If VISUAL is set and the terminal is interactive
+		$VISUAL $*
+	elif [[ -n "$EDITOR" ]]; then
+		# Otherwise, fall back to EDITOR if it's set
+		$EDITOR $*
+	else
+		# Fallback to a sensible default, like vi or nano
+		nano $*
+	fi
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

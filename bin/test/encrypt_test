@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+
+test_encrypt_decrypt() {
+  local test_string="This is a test string with special chars: !@#$%^&*()_+"
+  local test_password="testpassword123"
+  local temp_file
+  temp_file=$(mktemp)
+  
+  echo -e "\n${ANSI}${TXTYLW}Running encryption/decryption test...${ANSI}${TXTRST}"
+  
+  # Test string encryption/decryption
+  echo -e "${ANSI}${TXTYLW}Test 1: String encryption/decryption${ANSI}${TXTRST}"
+  local encrypted
+  local decrypted
+  
+  encrypted=$(echo -n "$test_string" | encrypt -i - -o - -p "$test_password" 2>/dev/null | base64)
+  if [[ $? -ne 0 ]]; then
+    echo -e "${ANSI}${TXTRED}✗ Encryption failed${ANSI}${TXTRST}"
+    rm -f "$temp_file"
+    return 1
+  fi
+  
+  decrypted=$(echo -n "$encrypted" | base64 -d | decrypt -i - -o - -p "$test_password" 2>/dev/null)
+  if [[ $? -ne 0 ]]; then
+    echo -e "${ANSI}${TXTRED}✗ Decryption failed${ANSI}${TXTRST}"
+    rm -f "$temp_file"
+    return 1
+  fi
+  
+  if [[ "$decrypted" == "$test_string" ]]; then
+    echo -e "${ANSI}${TXTGRN}✓ String encryption/decryption test passed${ANSI}${TXTRST}"
+  else
+    echo -e "${ANSI}${TXTRED}✗ String encryption/decryption test failed${ANSI}${TXTRST}"
+    echo "Expected: $test_string"
+    echo "Got: $decrypted"
+    rm -f "$temp_file"
+    return 1
+  fi
+  
+  # Test file encryption/decryption
+  echo -e "${ANSI}${TXTYLW}Test 2: File encryption/decryption${ANSI}${TXTRST}"
+  echo -n "$test_string" > "$temp_file"
+  
+  encrypt -i "$temp_file" -o "$temp_file.gpg" -p "$test_password" >/dev/null 2>&1
+  if [[ $? -ne 0 ]]; then
+    echo -e "${ANSI}${TXTRED}✗ File encryption failed${ANSI}${TXTRST}"
+    rm -f "$temp_file" "$temp_file.gpg"
+    return 1
+  fi
+  
+  decrypted=$(decrypt -i "$temp_file.gpg" -o - -p "$test_password" 2>/dev/null)
+  if [[ $? -ne 0 ]]; then
+    echo -e "${ANSI}${TXTRED}✗ File decryption failed${ANSI}${TXTRST}"
+    rm -f "$temp_file" "$temp_file.gpg"
+    return 1
+  fi
+  
+  if [[ "$decrypted" == "$test_string" ]]; then
+    echo -e "${ANSI}${TXTGRN}✓ File encryption/decryption test passed${ANSI}${TXTRST}"
+  else
+    echo -e "${ANSI}${TXTRED}✗ File encryption/decryption test failed${ANSI}${TXTRST}"
+    echo "Expected: $test_string"
+    echo "Got: $decrypted"
+    rm -f "$temp_file" "$temp_file.gpg"
+    return 1
+  fi
+  
+  # Cleanup
+  rm -f "$temp_file" "$temp_file.gpg"
+  echo -e "${ANSI}${TXTGRN}All tests passed successfully!${ANSI}${TXTRST}"
+  return 0
+}
+
+# Run the test function if this file is executed directly
+if ! (return 0 2>/dev/null); then
+  test_encrypt_decrypt
+fi

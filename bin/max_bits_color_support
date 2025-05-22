@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+
+max_bits_color_support() {
+		if [[ "$COLORTERM" =~ ^(truecolor|24bit)$ ]]; then
+				echo 24
+		elif [[ "$TERM" =~ ^(.*-256color|.*-direct)$ ]] || [[ "${COLORTERM}" == "direct" ]]; then
+				echo 8
+		else
+				echo 4
+		fi
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

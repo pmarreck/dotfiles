@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+
+notify() {
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	curl -s -F "token=$PUSHOVER_NOTIFICATION_TOKEN" \
+	-F "user=$PUSHOVER_NOTIFICATION_USER" \
+	-F "message=$1" https://api.pushover.net/1/messages.json
+	# -F "title=YOUR_TITLE_HERE" \
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

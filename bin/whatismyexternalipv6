@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+
+whatismyexternalipv6() {
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	needs curl "Please install curl"
+
+	local services=(
+		"https://api64.ipify.org"
+		"https://ifconfig.co/ip"
+		"https://v6.ident.me"
+	)
+
+	local ip=""
+	local timeout=5
+
+	for service in "${services[@]}"; do
+		if ip=$(curl -6 -s --max-time "$timeout" "$service" 2>/dev/null); then
+			# Validate IPv6 format (basic check for at least one colon)
+			if [[ $ip == *:* ]]; then
+				echo "$ip"
+				return 0
+			fi
+		fi
+	done
+
+	echo "Could not determine external IPv6 address." >&2
+	return 1
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+  # Check if we are running tests
+  if [ "$1" = "--test" ]; then
+    # Run tests from the test file
+    . "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+  else
+    # If called directly, pass all arguments to the function
+    $(basename "${0##\-}") "$@"
+  fi
+fi

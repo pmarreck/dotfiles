@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+
+wrap() {
+	# take an argument of colwidth but default to current terminal width
+	local colwidth=${1:-$(tput cols)}
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	# this expects contents to be piped in via stdin
+	fold -s -w $colwidth
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		exec "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

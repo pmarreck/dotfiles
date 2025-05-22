@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+
+shuf() {
+	local whichshuf
+	# prefer gshuf, fall back to shuf
+	if type -P gshuf &> /dev/null; then
+		whichshuf=gshuf
+	elif type -P shuf &> /dev/null; then
+		whichshuf=shuf
+	else
+		echo "Error: Neither gshuf nor shuf command is available." >&2
+		return 1
+	fi
+	$whichshuf "$@"
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

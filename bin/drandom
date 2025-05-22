@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+
+drandom() {
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	needs sha256sum || return 1
+	# if unset, initialize to hash of nanoseconds since epoch,
+	# otherwise, set to hash of previous seed
+	if [ -z $DRANDOM_SEED ]; then
+		export DRANDOM_SEED="$(date +%s%N | sha256sum | cut -d' ' -f1)"
+	else
+		export DRANDOM_SEED="$(echo -n $DRANDOM_SEED | sha256sum | cut -d' ' -f1)"
+	fi
+	case "$1" in
+		--hex)
+			echo $DRANDOM_SEED
+			;;
+		-h|--help)
+			echo "drandom is a deterministic random number generator."
+			echo "Usage: [DRANDOM_SEED=<whatever>] drandom [--hex]"
+			echo "Outputs an integer between 0 and 2^256-1 or an equivalent hex string if --hex is specified"
+			echo "If no seed is specified, it will be seeded to the sha256 hash of the nanoseconds since epoch on first run."
+			;;
+		*)
+			# convert to unsigned int from 256-bit hex
+			printf "%u\n" $((16#$DRANDOM_SEED))
+			;;
+	esac
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

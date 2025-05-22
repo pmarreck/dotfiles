@@ -1,3 +1,5 @@
+#!/usr/bin/env bash
+
 rm -rf "/Users/pmarreck/Library/WebKit/com.avapls.Ava-PLS/"
 rm -rf "/Users/pmarreck/Library/Application Support/AvaPLS/"
 rm -rf "/Users/pmarreck/Library/Saved Application State/com.avapls.Ava-PLS.savedState/"

@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+
+demo_colors() {
+		echo "4-bit color demo:"
+		for i in {1..5}; do
+				echo_rand_4bit_color "Hello, World!"
+		done
+		echo -e "\n8-bit color demo:"
+		for i in {1..5}; do
+				echo_rand_8bit_color "Hello, World!"
+		done
+		echo -e "\n24-bit color demo:"
+		for i in {1..5}; do
+				echo_rand_24bit_color "Hello, World!"
+		done
+		echo -e "\nCurrent terminal support: $(max_bits_color_support)bit"
+		echo "Default echo_rand_color demo:"
+		for i in {1..5}; do
+				echo_rand_color "Hello, World!"
+		done
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

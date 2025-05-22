@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+
+# Test the Time.now.to_f function
+test_time_now_to_f() {
+  # Test that the function returns a floating point number
+  local result=$(Time.now.to_f)
+  
+  # Check that it contains a decimal point
+  echo "$result" | grep -q "\."
+  assert "$?" == "0" "Time.now.to_f should return a value with a decimal point"
+  
+  # Check that it's a valid number
+  echo "$result" | grep -q "^[0-9]\+\.[0-9]\+$"
+  assert "$?" == "0" "Time.now.to_f should return a valid floating point number"
+}
+
+# Run the test if this script is executed directly
+if ! (return 0 2>/dev/null); then
+  test_time_now_to_f
+fi

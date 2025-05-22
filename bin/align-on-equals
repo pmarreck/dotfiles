@@ -15,28 +15,28 @@
 # biggername = biggervalue
 
 BEGIN {
-  FS = "=" # set the field separator to "="
-  max_length = 0 # initialize the maximum key length to zero
-  kl = 0 # initialize the key length to zero
-  num_valid = 0 # initialize the number of valid lines to zero
+	FS = "=" # set the field separator to "="
+	max_length = 0 # initialize the maximum key length to zero
+	kl = 0 # initialize the key length to zero
+	num_valid = 0 # initialize the number of valid lines to zero
 }
 
 {
-  kl = length($1)
-  # Skip lines where the key length is zero
-  if (kl == 0) {
-    next
-  }
-  num_valid++ # increment the number of valid lines
-  keys[NR] = $1 # store the key in an array
-  values[NR] = $2 # store the value in an array
-  if (kl > max_length) {
-    max_length = kl # update the maximum key length if necessary
-  }
+	kl = length($1)
+	# Skip lines where the key length is zero
+	if (kl == 0) {
+		next
+	}
+	num_valid++ # increment the number of valid lines
+	keys[NR] = $1 # store the key in an array
+	values[NR] = $2 # store the value in an array
+	if (kl > max_length) {
+		max_length = kl # update the maximum key length if necessary
+	}
 }
 
 END {
-  for (i = 1; i <= num_valid; i++) {
-    printf("%-" max_length "s = %s\n", keys[i], values[i]) # use printf to format the output
-  }
+	for (i = 1; i <= num_valid; i++) {
+		printf("%-" max_length "s = %s\n", keys[i], values[i]) # use printf to format the output
+	}
 }

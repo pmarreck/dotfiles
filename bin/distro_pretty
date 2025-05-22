@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+
+# Get the pretty Linux distribution name or return "macOS <distribution>" on macOS
+distro_pretty() {
+	# the awk call on linux fails with frawk, so we prefer gawk if available
+	AWK=$(command -v gawk || command -v awk)
+	SED=${SED:-$(command -v gsed || command -v sed)}
+	local os_release_file="${1:-/etc/os-release}"
+	
+	# Check if we're on macOS
+	if [ "$(uname)" = "Darwin" ]; then
+		if command -v mac_os_version_number_to_name >/dev/null 2>&1; then
+			echo "macOS $(mac_os_version_number_to_name | $SED 's/^[0-9.]* (\(.*\))$/\1/')"
+		else
+			echo "macOS"
+		fi
+		return 0
+	fi
+	
+	# Check if we're on Windows (MSYS/Cygwin/MinGW)
+	if [[ "$OSTYPE" == msys* || "$OSTYPE" == cygwin* || "$OSTYPE" == mingw* ]]; then
+		echo "Windows (why are you using Windows?)"
+		return 0
+	fi
+	
+	# For Linux, read from os-release file
+	if [ -f "$os_release_file" ]; then
+		$AWK -F'=' '/^PRETTY_NAME=/{gsub(/"/, "", $2); print $2}' "$os_release_file"
+		return 0
+	else
+		echo "Unknown" >&2
+		return 1
+	fi
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

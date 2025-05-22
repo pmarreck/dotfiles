@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+
+test_strip_ansi() {
+  # Test with printf-generated ANSI sequences
+  assert "$(printf '\e[31mRed text\e[0m' | strip_ansi)" == "Red text"
+  # Test with literal ANSI sequences
+  assert "$(echo -e '\e[93mYellow text\e[0m' | strip_ansi)" == "Yellow text"
+  # Test with complex ANSI sequences
+  assert "$(printf '\e[1;31;42mBold red on green\e[0m' | strip_ansi)" == "Bold red on green"
+}
+  
+# Run the tests if this file is executed directly
+if ! (return 0 2>/dev/null); then
+  test_strip_ansi
+fi

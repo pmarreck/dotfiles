@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+
+protect() {
+	local cmd="$1"
+	shift
+
+	case "$cmd" in
+		chmod)
+			debug "chmod command detected"
+			local mode="$1"
+			shift
+			expanded_files=$(expand_globs "$@") && debug "Expanded files: $expanded_files"
+			while IFS= read -r file; do
+				protect_chmod "$mode" "$file" && debug "protect_chmod did not error on file $file"
+			done <<< "$expanded_files"
+			;;
+		undo)
+			debug "undo command detected"
+			local diff
+			local file
+			while IFS='|' read -r diff file; do
+				[[ -z "$diff" || -z "$file" ]] && continue  # Skip empty lines
+				if [[ -e "$file" ]]; then
+					current_perms=$(stat -c "%a" "$file") && debug "Current permissions for $file: $current_perms"
+
+					# Calculate original permissions using XOR diff
+					original_user=$(( ((current_perms / 100) % 10 - (diff / 100) % 10 + 8) % 8 ))
+					original_group=$(( ((current_perms / 10) % 10 - (diff / 10) % 10 + 8) % 8 ))
+					original_other=$(( (current_perms % 10 - diff % 10 + 8) % 8 ))
+					original_perms="$original_user$original_group$original_other"
+					debug "Calculated original permissions: $original_perms"
+					debug "Calculated original permissions: $original_perms"
+					chmod "$original_perms" "$file" && debug "Reverted permissions on $file to $original_perms"
+				else
+					error_exit "File not found during undo: $file"
+				fi
+			done < "$UNDO_LOG"
+			;;
+		*)
+			error_exit "Not sure how to undo command: $cmd"
+			;;
+	esac
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

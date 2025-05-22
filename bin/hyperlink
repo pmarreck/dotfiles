@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+
+# Create a terminal hyperlink
+# See: https://wezfurlong.org/wezterm/hyperlinks.html
+hyperlink() {
+	printf '\e]8;;'
+	printf "$1"
+	printf '\e\\'
+	printf "$2"
+	printf '\e]8;;\e\\\n'
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

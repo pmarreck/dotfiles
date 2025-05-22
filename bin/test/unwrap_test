@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+
+# debug "we are in unwrap_test script"
+# Test harness for unwrap
+unwrap_test() {
+  # debug "we are executing unwrap_test"
+  local test_fail_count=0
+  local test_output=""
+  local t
+  local input
+  local expected
+  local got
+
+  test_fail() {
+    ((test_fail_count++))
+    test_output+="$(red_text "[FAIL]") $1; expected: '$2'; got: '$3'\n"
+  }
+  test_success() {
+    test_output+="$(green_text "[PASS]") $1\n"
+  }
+
+  # TEST CASES
+  t="unwrap joins two lines with a space and trims trailing space"
+  input="foo\nbar\n"
+  expected="foo bar"
+  got=$(printf '%b' "$input" | unwrap)
+  silently assert "$got" == "$expected" "$t" && test_success "$t" || test_fail "$t" "$expected" "$got"
+
+  t="unwrap collapses multiple spaces and newlines into a single space"
+  input="foo   \n   bar\n   baz"
+  expected="foo bar baz"
+  got=$(printf '%b' "$input" | unwrap)
+  silently assert "$got" == "$expected" "$t" && test_success "$t" || test_fail "$t" "$expected" "$got"
+
+  t="unwrap leaves single-line input unchanged"
+  input="foo bar baz"
+  expected="foo bar baz"
+  got=$(printf '%b' "$input" | unwrap)
+  silently assert "$got" == "$expected" "$t" && test_success "$t" || test_fail "$t" "$expected" "$got"
+
+  t="unwrap handles empty input"
+  input=""
+  expected=""
+  got=$(printf '%b' "$input" | unwrap)
+  silently assert "$got" == "$expected" "$t" && test_success "$t" || test_fail "$t" "$expected" "$got"
+
+  # END TEST CASES
+
+  if [ $test_fail_count -gt 0 ]; then
+    echo -e "$test_output"
+    puts --red "Test of unwrap failed: $test_fail_count failures"
+  else
+    echo -e "$test_output"
+    puts --green "Test of unwrap passed!"
+  fi
+  return $test_fail_count
+}
+
+# Run the tests if this file is executed directly
+if [ "$(basename "${0##\-}")" = "unwrap_test" ]; then
+  # debug "we are running unwrap_test because the basename is unwrap_test"
+  unwrap_test
+else
+  : # debug "we are not running unwrap_test because the basename is not unwrap_test"
+fi
+# debug "we are leaving unwrap_test script"

@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+
+# Use a local LLM for generating AI-powered git commit messages
+git_commit_ai_local() {
+	OPENAI_MODEL="$DEFAULT_LOCAL_AI_MODEL" \
+	OPENAI_HOST="$DEFAULT_LOCAL_AI_HOST" \
+	OPENAI_PATH="/api/chat" \
+	OPENAI_PROTOCOL="http" \
+	OPENAI_API_KEY="fake" \
+	git_commit_ai
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

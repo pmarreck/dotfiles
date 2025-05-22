@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+
+# Test file for ltrim and related functions
+
+# Add your tests here
+echo "Testing rtrim..."
+
+# Example test
+result=$(rtrim "   test input  ")
+expected="   test input"
+if [ "$result" = "$expected" ]; then
+  echo "✓ rtrim works as expected"
+else
+  echo "✗ rtrim failed"
+  echo "Expected: '$expected'"
+  echo "Got: '$result'"
+  exit 1
+fi

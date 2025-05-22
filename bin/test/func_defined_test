@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+
+# Test the func_defined function
+test_func_defined() {
+  # Define a test function
+  test_function() {
+    echo "This is a test function"
+  }
+  
+  # Test with a defined function
+  func_defined "test_function"
+  assert "$?" == "0"
+  
+  # Test with an undefined function
+  func_defined "undefined_function_name_that_should_not_exist"
+  assert "$?" == "1"
+}
+
+# Run the test if this script is executed directly
+if ! (return 0 2>/dev/null); then
+  test_func_defined
+fi

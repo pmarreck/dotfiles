@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+
+sequentialize() {
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+
+	function _seq_usage {
+		echo "Usage: sequentialize \"<command with {} placeholder>\" <args...>"
+		echo "       sequentialize [-h|--help]"
+		echo "       sequentialize test"
+	}
+
+	function _seq_example {
+		echo "Example: sequentialize \"echo -n {}\" foo bar baz  #=> foobarbaz"
+	}
+
+	function _seq_help {
+		echo "sequentialize: Executes the given command sequentially, replacing any '{}' in the first argument"
+		echo "with each of the subsequent arguments."
+		echo "(I wanted something with a nicer API than xargs...)"
+		_seq_usage
+		_seq_example
+	}
+
+	function _seq_test {
+		local expected_out expected_err actual_out actual_err
+		# Test 1: Basic sequential execution
+		expected_out=$'hello\nworld'
+		actual_out=$(sequentialize "echo {}" "hello" "world")
+		if [[ "$actual_out" != "$expected_out" ]]; then
+			printf "Test 1 failed:\nExpected: '%s'\nGot:      '%s'\n" "$expected_out" "$actual_out" >&2
+			return 1
+		fi
+
+		# Test 2: ANSI color codes
+		expected_out=$'\033[32mgreen\033[0m\n\033[31mred\033[0m'
+		actual_out=$(sequentialize 'echo -e "\033[32m{}\033[0m"' "green" && sequentialize 'echo -e "\033[31m{}\033[0m"' "red")
+		if [[ "$actual_out" != "$expected_out" ]]; then
+			echo "Test 2 failed: ANSI codes not preserved" >&2
+			printf "Expected (hex): %s\n" "$(echo -n "$expected_out" | xxd -p)" >&2
+			printf "Got (hex):      %s\n" "$(echo -n "$actual_out" | xxd -p)" >&2
+			printf "Expected (raw): '%s'\n" "$expected_out" >&2
+			printf "Got (raw):      '%s'\n" "$actual_out" >&2
+			return 1
+		fi
+
+		# Test 3: stderr output
+		expected_err=$'error1\nerror2'
+		actual_err=$(sequentialize "echo {} >&2" "error1" "error2" 2>&1)
+		if [[ "$actual_err" != "$expected_err" ]]; then
+			printf "Test 3 failed:\nExpected: '%s'\nGot:      '%s'\n" "$expected_err" "$actual_err" >&2
+			return 1
+		fi
+
+		return 0
+	}
+
+	case "$1" in
+		-h|--help)
+			_seq_usage
+			return 0
+			;;
+		test)
+			_seq_test
+			return $?
+			;;
+	esac
+
+	if [ $# -lt 2 ]; then
+		echo "Error: At least 2 arguments required (command and at least one argument)" >&2
+		_seq_usage >&2
+		return 2
+	fi
+
+	local cmd="$1"
+	shift
+	local total_exit_code=0
+	for arg in "$@"; do
+		eval "${cmd//\{\}/\"$arg\"}"
+		total_exit_code=$((total_exit_code + $?))
+	done
+	return $total_exit_code
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+  # Check if we are running tests
+  if [ "$1" = "--test" ]; then
+    # Run tests from the test file
+    . "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+  else
+    # If called directly, pass all arguments to the function
+    $(basename "${0##\-}") "$@"
+  fi
+fi

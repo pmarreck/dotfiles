@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+
+list-nics() {
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	
+	# Detect OS
+	if [[ "$OSTYPE" == "darwin"* ]]; then
+		# On macOS, use networksetup
+		networksetup -listallhardwareports | grep -E 'Device: (en|lo|wl)' | $AWK '{print $2}'
+	else
+		# On Linux
+		# ip -o link show | awk -F': ' '{print $2}' | sed 's/@.*//' 
+		# the above was missing altnames.
+		# this is a bit hacky but there are many ways to skin this cat
+		ip link show | $AWK '{print $2}' | $SED 's/://' | grep -E '^(lo|en|wl)'
+	fi
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

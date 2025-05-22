@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+
+get_all_git_stati() {
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return;
+	# needs rg "install ripgrep"; # rg is faster but keeps timing out and I don't know how to change its timeout
+	needs fd "install fd-find" # you can easily rewrite this with the built-in 'find' if you must:
+	# find . -maxdepth 10 -mindepth 0 -type d -exec sh -c '(cd "{}" && [ -d .git ] && echo "{}" && git diff --shortstat && echo)' 2>/dev/null \; || return 0
+	fd '.git' ~ --base-directory $HOME \
+		--glob --type d --one-file-system --owner $USER --show-errors --absolute-path \
+		--hidden --threads 4 --no-follow --prune --max-depth 12 --min-depth 0 \
+		--exclude '*com~apple~CloudDocs*' --exclude '*/Library/CloudStorage*' --exec get_git_status
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+  # Check if we are running tests
+  if [ "$1" = "--test" ]; then
+    # Run tests from the test file
+    . "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+  else
+    # If called directly, pass all arguments to the function
+    $(basename "${0##\-}") "$@"
+  fi
+fi

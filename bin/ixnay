@@ -1,0 +1,729 @@
+#!/usr/bin/env bash
+
+set -o pipefail;
+
+##########################
+# IXNAY: A Saner Nix TUI #
+##########################
+
+# Nix has a terrible UI/UX, so...
+# Note: May need to run as sudo for some ops. See note below.
+# Second note: Now assumes flakes are enabled
+
+#help IXNAY: A sane, beginner-friendly wrapper for nix-shell, nix and friends, etc.
+#help
+#help Environment Variable Configuration:
+#help    Set the IXNAY_MUTE_CMD_ECHO env variable to stop ixnay from printing out the
+#help    underlying command it will run before it runs it.
+#help    Set the SWITCH_NOW env variable in conjunction with 'ixnay reify' to switch to the new
+#help    config now instead of requiring a reboot (I've found that especially for things like GPU
+#help    driver updates, it's safer to wait for a reboot, especially if you use Steam Proton
+#help    for gaming, which will stay out-of-sync until you reboot. So that is the default behavior.)
+#help    Set the DRY_RUN env variable to see the underlying command ixnay would run
+#help    without actually running the command.
+#help
+#help Usage: ixnay <command> [<args>] [<options>]
+
+# Only define support functions if they aren't already defined in my environment (or yours)
+# I use this pattern locally in all my personal functions to edit them via "edit <functionname>"
+# which drops me into the first line of the function to edit in my $EDITOR
+# Feel free to delete if this is polluting your namespace!
+if ! [[ "$(type -t edit_function)" =~ function ]]; then
+	needs() {
+		[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+		local bin="$1"
+		shift
+		command -v "$bin" > /dev/null 2>&1 || {
+			printf "%s is required but it's not installed or in PATH; %s\n" "$bin" "$*" 1>&2
+			return 1
+		}
+	}
+	contains() {
+		[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+		local word
+		for word in $1; do
+			if [[ "$word" == "$2" ]]; then
+				return 0
+			fi
+		done
+		return 1
+	}
+	edit() {
+		[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+		if contains "$(compgen -A function)" $1; then
+			EDIT=1 $1
+		else
+			$EDITOR "$@"
+		fi
+	}
+	edit_function() {
+		[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+		needs rg "please install ripgrep!" || return 1
+		local function_name
+		function_name="$1"
+		function_name="${function_name//\?/\\?}"
+		local file="$2"
+		if [ -z "$function_name" ] || [ -z "$file" ]; then
+			if [ -z "$EDIT_WARNED" ]; then
+				echo "Warning: Edit functionality is only available in Bash, or invalid function/source reference." 1>&2
+				EDIT_WARNED=1
+			fi;
+			return 1
+		fi
+		local fl=$(rg -n -e "${function_name} *\(\) *\{" -e "function +${function_name}(?: *\(\))? *\{" "$file" | tail -n1 | cut -d: -f1)
+		$EDITOR "$file":$fl
+	}
+fi
+
+function caution() {
+	# ANSI coloring
+	# Color constants
+	local ANSI="\033["
+	# local TXTRED='0;31m' # Red
+	local TXTYLW='0;33m' # Yellow
+	# local TXTGRN='0;32m' # Green
+	local TXTRST='0m'    # Text Reset, disable coloring
+	printf "%b%s%b\n" "${ANSI}${TXTYLW}" "$1" "${ANSI}${TXTRST}" >&2
+}
+
+is_nix_multi_user_install() {
+	# Check if the nix-daemon service is running (multi-user mode)
+	if [ -f /etc/systemd/system/nix-daemon.service ] || [ -f /run/systemd/system/nix-daemon.service ]; then
+		return 0  # Multi-user
+	fi
+	# Check for the existence of /nix/store and /etc/nix/nix.conf
+	if [ -d /nix/store ] && [ -f /etc/nix/nix.conf ]; then
+		return 0  # Multi-user
+	fi
+	return 1  # Not multi-user
+}
+
+is_nix_single_user_install() {
+	# Check if Nix is installed in the user's home directory
+	if [ -d "$HOME/.nix-profile" ] || [ -f "$HOME/.config/nix/nix.conf" ]; then
+		return 0  # Single-user
+	fi
+	return 1  # Not single-user
+}
+
+# Safely determine the type of Nix installation
+nix_install_type() {
+	# if it is a multi-user install and NOT a single-user install, return "multi-user"
+	if is_nix_multi_user_install && ! is_nix_single_user_install; then
+		echo "multi-user"
+	# if it is a single-user install and NOT a multi-user install, return "single-user"
+	elif is_nix_single_user_install && ! is_nix_multi_user_install; then
+		echo "single-user"
+	else
+		echo "unknown"
+	fi
+}
+
+is_managed_by_determinate_nix() {
+	# check if the nix install was managed by the Determinate Nix Installer
+	if [ -f "/nix/receipt.json" ]; then
+		return 0
+	else
+		return 1
+	fi
+}
+
+ixnay() {
+	# editing via "edit ixnay"
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	AWK=$(command -v gawk || command -v awk)
+	# if the path leads to awk instead of gawk, we warn the user
+	if [ "$(basename "$AWK")" = "awk" ]; then
+		caution "Warning: Using 'awk' instead of 'gawk'. Some features may not work as expected. Highly recommend installing gnu awk (gawk) instead."
+	fi
+	# distro detection
+	function distro() {
+		local dist_name
+		if [ "$(uname)" = "Darwin" ]; then
+			dist_name="macos"
+		elif grep -qEi "(Microsoft|WSL)" /proc/version &> /dev/null; then
+			dist_name="wsl"
+		else
+			dist_name=$($AWK -F'=' '/^NAME=/{gsub(/"/, "", $2); print $2}' ${1:-/etc/os-release})
+			dist_name="${dist_name,,}"
+			if ! [ "$dist_name" = "nixos" ]; then
+				dist_name="linux"
+			fi
+		fi
+		echo "$dist_name"
+	}
+	local DISTRO
+	DISTRO=$(distro)
+	# datetimestamp of a file
+	function datetimestampfile() {
+		stat -c '%y' "$1" | $AWK '{print $1$2}' | tr -d ':-' # | cut -d"." -f1 # to remove milliseconds
+	}
+	# log location
+	local XDG_CACHE_HOME="${XDG_CACHE_HOME:-$HOME/.cache}"
+	local IXNAY_LOGFILEDIR="${IXNAY_LOGFILEDIR:-$XDG_CACHE_HOME/ixnay}"
+	mkdir -p "$IXNAY_LOGFILEDIR"
+	local LOGFILE="$IXNAY_LOGFILEDIR/last_reify.log"
+	local SWITCH_OR_BOOT
+	# Default to switching on next boot instead of now
+	[ -n "${SWITCH_NOW}" ] && SWITCH_OR_BOOT="switch" || SWITCH_OR_BOOT="boot"
+	function _ixnay_help() {
+		# this is some cleverness that extracts the inline help text from all the case options
+		$AWK '
+			BEGIN {
+				if (!("platform" in PROCINFO)) {
+					print "Please run this script with GNU awk (gawk) earliest in your PATH.";
+					exit 1
+				}
+			}
+			/^\x20*#help($|\x20)/ {
+				sub(/^\x20+/, "", $0)
+				print substr($0, 7)
+				next
+			}
+			/#nodoc$/ { next }
+			/^\x20+(""|\*|(-?\\?[a-zA-Z\?]|(--)?[a-zA-Z0-9\-_]{2,})(\x20\|\x20(-?\\?[a-zA-Z\?]|(--)?[a-zA-Z0-9\-_]{2,}))*\x20?)\)/ {
+				sub(/^\x20+/,"", $0)
+				sub(/^\*\)/,"<arg>", $0)
+				sub(/^""/,"", $0)
+				sub(/\)\x20+#args\x20+/," ", $0)
+				sub(/\)\x20+#.*$/,"", $0)
+				sub(/\)\x20*$/,"", $0)
+				sub(/^\x20*/,"", $0)
+				print ""
+				print "ixnay " $0
+			}
+		' "$BASH_SOURCE"
+	}
+	local NIX_COMMAND=${NIX_COMMAND:-nix}
+	case $NIX_COMMAND in
+		nix-env) #nodoc
+			needs nix-env it comes as part of nix
+			needs nix-channel it comes as part of nix
+			needs nix-store it comes as part of nix
+			;;
+		nix) #nodoc
+			needs nix "it comes as part of nix with the \"experimental\" flakes configuration turned on"
+			;;
+	esac
+	case $1 in
+		help | --help | -h | -?)
+			#help -- The help you see here!
+			_ixnay_help
+			return 0
+			;;
+		channels)
+			#help -- Lists nix channels. Lists global channels if sudo'd in a multiuser setup.
+			#help    NOTE: Using Flakes instead of channels is advised.
+			caution "NOTE: Using Flakes instead of channels is advised."
+			[ -n "${IXNAY_MUTE_CMD_ECHO}" ] || caution "nix-channel --list"
+			[ -n "${DRY_RUN}" ] && return 0
+			nix-channel --list
+			;;
+		add-channel | add) #args <channelname> <url>
+			#help -- Adds channel <channelname> via <url>.
+			#help    NOTE: Using Flakes instead of channels is advised.
+			caution "NOTE: Using Flakes instead of channels is advised."
+			shift;
+			[ -n "${IXNAY_MUTE_CMD_ECHO}" ] || caution "nix-channel --add \"$2\" \"$1\""
+			[ -n "${DRY_RUN}" ] && return 0
+			nix-channel --add "$2" "$1"
+			;;
+		remove-channel | remove) #args <channelname>
+			#help -- Removes channel <channelname>.
+			#help    NOTE: Using Flakes instead of channels is advised.
+			caution "NOTE: Using Flakes instead of channels is advised."
+			shift;
+			[ -n "${IXNAY_MUTE_CMD_ECHO}" ] || caution "nix-channel --remove \"$1\""
+			[ -n "${DRY_RUN}" ] && return 0
+			nix-channel --remove "$1"
+			;;
+		sync) #args [<channelname>]
+			#help -- Updates channel <channelname> from the Internet; leave blank for all
+			#help -- You may need to sudo this to update global channels (such as on NixOS).
+			#help    NOTE: Using Flakes instead of channels is advised.
+			caution "NOTE: Using Flakes instead of channels is advised."
+			shift;
+			[ -n "${IXNAY_MUTE_CMD_ECHO}" ] || caution "nix-channel --update $1"
+			[ -n "${DRY_RUN}" ] && return 0
+			# shellcheck disable=SC2086
+			nix-channel --update $1
+			;;
+		reify | realize | apply | rebuild) #args [no-upgrade | no-update | no-up | --no-up | --no-upgrade | --no-update | here]
+			#help -- Reads the config files, sets up the new config, switches to the new config, optionally doesn't update from the Internet.
+			#help -- Also logs its output to IXNAY_LOGFILEDIR (defaults to $XDG_CACHE_HOME/ixnay), rotating it with a datetimestamp,
+			#help -- and then displays it.
+			#help -- NixOS required currently. May work with nix-darwin in the future.
+			#help -- (The "here" arg is a synonym for the other "no-upgrade" options.)
+			if [ "$DISTRO" = "nixos" ]; then
+				# make sure we're not just doing a dry run
+				if ! [ -n "${DRY_RUN}" ]; then
+					# rename the last logfile to its timestamp
+					if [ -f "$LOGFILE" ]; then
+						local LOGFILE_TIMESTAMP=$(datetimestampfile "$LOGFILE")
+						mv "$LOGFILE" "$IXNAY_LOGFILEDIR/${LOGFILE_TIMESTAMP}_reify.log"
+					else
+						mkdir -p "$IXNAY_LOGFILEDIR"
+						touch "$LOGFILE"
+					fi
+				fi
+				shift;
+				local success=0;
+				case $1 in
+					no-upgrade | no-update | no-up | --no-up | --no-upgrade | --no-update | here) #nodoc
+						[ "$IXNAY_MUTE_CMD_ECHO" ] || caution "sudo nixos-rebuild $SWITCH_OR_BOOT 2>&1 | tee \"$LOGFILE\""
+						[ -n "${DRY_RUN}" ] && return 0
+						sudo nixos-rebuild $SWITCH_OR_BOOT 2>&1 | tee "$LOGFILE"
+						success="$?"
+						;;
+					*) #nodoc
+						[ "$IXNAY_MUTE_CMD_ECHO" ] || caution "sudo nixos-rebuild $SWITCH_OR_BOOT --upgrade 2>&1 | tee \"$LOGFILE\""
+						[ -n "${DRY_RUN}" ] && return 0
+						sudo nixos-rebuild $SWITCH_OR_BOOT --upgrade 2>&1 | tee "$LOGFILE"
+						success="$?"
+						;;
+				esac
+				# if SWITCH_OR_BOOT is "boot", recommend rebooting
+				# as long as no errors
+				if [ "$success" = "0" ]; then
+					if [ "$SWITCH_OR_BOOT" = "boot" ]; then
+						caution "Note: You may want to reboot now to finish switching to the new configuration."
+					fi
+				else
+					caution "There was an error when attempting to apply the new configuration; see traceback above."
+					return $success
+				fi
+			elif [ "$DISTRO" = "macos" ]; then
+				caution "This command, when run on macOS, currently only supports nix-darwin with a flakes configuration that lives in ~/.config/nix"
+				needs darwin-rebuild
+				local has_darwin_installed="$?"
+				if [ "$has_darwin_installed" = "0" ]; then
+					[ "$IXNAY_MUTE_CMD_ECHO" ] || caution "darwin-rebuild switch --flake ~/.config/nix 2>&1 | tee \"$LOGFILE\""
+					[ -n "${DRY_RUN}" ] && return 0
+					darwin-rebuild switch --flake ~/.config/nix | tee "$LOGFILE"
+				else
+					[ "$IXNAY_MUTE_CMD_ECHO" ] || caution "nix run nix-darwin -- switch --flake ~/.config/nix 2>&1 | tee \"$LOGFILE\""
+					[ -n "${DRY_RUN}" ] && return 0
+					nix run nix-darwin -- switch --flake ~/.config/nix | tee "$LOGFILE"
+				fi
+			else
+				caution "This command applies an entire system configuration and thus requires NixOS. https://nixos.org/"
+				return 2
+			fi
+			;;
+		see | try) #args <packagename> [run [<execname> [<args>]]]
+			#help -- Downloads and installs a package, optionally runs it, optionally with a different name
+			#help    (defaults to the same name as the package), optionally with arguments. Makes it available
+			#help    in your shell by modifying PATH.
+			#help    Some 'see' usage examples:
+			#help    ixnay see mop run # downloads, installs and runs mop. assumes package & executable name are identical
+			#help    ixnay see mop # downloads and installs mop and makes it available in your shell
+			#help    ixnay try mop # downloads & installs mop package temporarily
+			#help    ixnay see mop run mopper [<args>] # downloads & installs mop package, but runs it with a different name and args
+			shift;
+			case $2 in
+				run) #nodoc
+					case $3 in
+						"") #nodoc
+							[ -n "${IXNAY_MUTE_CMD_ECHO}" ] || caution "nix-shell -p $1 --run $1"
+							[ -n "${DRY_RUN}" ] && return 0
+							# shellcheck disable=SC2086
+							nix-shell -p $1 --run $1
+							;;
+						*) #nodoc
+							local app="$1"
+							shift; shift;
+							[ -n "${IXNAY_MUTE_CMD_ECHO}" ] || caution "nix-shell -p $app --run \"$*\""
+							[ -n "${DRY_RUN}" ] && return 0
+							# shellcheck disable=SC2086
+							nix-shell -p $app --run "$*"
+							;;
+					esac
+					;;
+				*) #nodoc
+					[ -n "${IXNAY_MUTE_CMD_ECHO}" ] || caution "nix-shell -p $1"
+					[ -n "${DRY_RUN}" ] && return 0
+					# shellcheck disable=SC2086
+					nix-shell -p $1
+					;;
+			esac
+			;;
+		install | in | i) #args [unstable] [<repo>#]<packagename> [[repo>#]<packagename> ...]
+			#help -- Imperatively installs a package into your profile.
+			#help    If no repo name is specified, default to nixpkgs.
+			#help    (If "unstable" is specified, install from the nixpkgs-unstable channel
+			#help    and error if any package specifier specifies a channel.)
+			#help    Also handles github:owner/packagename style git references
+			#help    (gitlab and plain git should also work, but are not tested).
+			#help    Note: If you are on NixOS, this is not a recommended use because it is not declarative,
+			#help    but it works for people new to Nix or using the nix overlay install method,
+			#help    and it will be preserved from being garbage-collected (but you will lose it
+			#help    if your system dies and you neither have a backup nor have it declaratively
+			#help    named in a configuration file you source-control... which is why the latter
+			#help    is recommended!)
+			if [ -n "${NIXOS}" ]; then
+				caution "Note: Since you're on NixOS, is recommended to add a package to your global 'packages' config declaratively,"
+				caution "instead of installing it into your profile."
+			fi
+			shift;
+			case $1 in
+				"") #nodoc
+					# warn about the lack of an argument
+					caution "Warning: No package(s) specified for installation."
+					caution "Usage: ixnay install <packagename> [, <packagename>, ...]"
+					return 1
+					;;
+				*) #nodoc
+					# if the first argument is "unstable", set the channel to the unstable channel
+					local is_unstable=""
+					if [ "$1" = "unstable" ]; then
+						chan="github:nixos/nixpkgs/nixos-unstable#"
+						is_unstable="unstable "
+						shift;
+					else
+						chan="nixpkgs#"
+					fi
+					if [ -z "$1" ]; then
+						# no package specified; error out
+						caution "Warning: No package(s) specified for installation."
+						caution "Usage: ixnay install ${is_unstable}<packagename> [, <packagename>, ...]"
+						return 1
+					fi
+					# map over all $*, prefixing each with either "nixpkgs#" or "github:nixos/nixpkgs/nixos-unstable#" as necessary
+					local packages=""
+					for pack in "$@"; do
+						# check to make sure we do not have a channel or git url in the package name; error if unstable was specified,
+						# otherwise just use the entire package name as-is and do not prefix it with the channel
+						if [[ "$pack" =~ ^(git[a-z]{0,5}|https?): || "$pack" =~ '#' ]]; then
+							if [ -n "$is_unstable" ]; then
+								caution "Warning: $pack is not a valid package name when unstable channel was specified."
+								return 1
+							else
+								packages="${packages} ${pack}"
+							fi
+						else
+							packages="${packages} ${chan}${pack}"
+						fi
+					done
+					[ -n "${IXNAY_MUTE_CMD_ECHO}" ] || caution "$NIX_COMMAND profile install${packages}"
+					[ -n "${DRY_RUN}" ] && return 0
+					# shellcheck disable=SC2086
+					$NIX_COMMAND profile install${packages}
+					;;
+			esac
+			;;
+		u) #args <packagename>
+			#help -- Only used to clarify whether the user wants to uninstall or update a package.
+			#help    Asks you whether you wanted to "up"/"upgrade" or "un"/"uninstall" a package, and then does it.
+			echo "Did you mean to 'up'/'upgrade' or 'un'/'uninstall' a package?"
+			local user_choice
+			read -p "Enter 'un', 'uninstall'; or 'up', 'upgrade': [up] " user_choice
+			# if the user_choice is empty, set it to "up"
+			[ -z "$user_choice" ] && user_choice="up"
+			case "${user_choice,,}" in
+				up|upgrade) #nodoc
+					[ -n "${IXNAY_MUTE_CMD_ECHO}" ] || caution "ixnay up $2"
+					[ -n "${DRY_RUN}" ] && return 0
+					ixnay up "$2"
+					;;
+				un|uninstall) #nodoc
+					[ -n "${IXNAY_MUTE_CMD_ECHO}" ] || caution "ixnay un $2"
+					[ -n "${DRY_RUN}" ] && return 0
+					ixnay un "$2"
+					;;
+				*) #nodoc
+					caution "Invalid choice. Try 'ixnay help' for more information."
+					return 1
+					;;
+			esac
+			;;
+		uninstall | un | remove | rm) #args <packagename>
+			#help -- Imperatively uninstalls/removes a package from your profile.
+			#help    See the caveats/suggestions for "ixnay install".
+			if [ -n "${NIXOS}" ]; then
+				caution "Note: Since you're on NixOS, is recommended to manage packages via your global configuration declaratively,"
+				caution "instead of imperatively via your profile."
+			fi
+			shift;
+			local package=$1
+			# if the argument looks like a regex (surrounded by slashes), pass it to nix profile remove --regex
+			if [[ "$package" =~ ^/ && "$package" =~ /$ ]]; then
+				# remove the leading and trailing slashes
+				package=$(echo "$package" | sed 's/^\///; s/\/$//')
+				[ -n "${IXNAY_MUTE_CMD_ECHO}" ] || caution "nix profile remove --regex '$package'"
+				[ -n "${DRY_RUN}" ] && return 0
+				nix profile remove --regex $package
+			else
+				[ -n "${IXNAY_MUTE_CMD_ECHO}" ] || caution "nix profile remove $package"
+				[ -n "${DRY_RUN}" ] && return 0
+				nix profile remove "$package"
+			fi
+			;;
+		channel-update | channel-up | channel-sync | channel-upgrade | ch-update | ch-up | ch-sync | ch-upgrade)
+			#help -- Updates your channel(s) from the Internet.
+			#help    NOTE: Using Flakes instead of channels is advised.
+			caution "NOTE: Using Flakes instead of channels is advised."
+			[ -n "${IXNAY_MUTE_CMD_ECHO}" ] || caution "sudo nix-channel --update"
+			[ -n "${DRY_RUN}" ] && return 0
+			sudo nix-channel --update
+			;;
+		upgrade | up | update) #args [<packagename>[ <packagename>]* | nix]
+			#help -- Imperatively upgrades a package(s) in your profile.
+			#help    Or Nix itself if you specify 'nix' by itself.
+			#help    Or all Nix profile-installed packages if none specified, or if you specify '--all'.
+			shift;
+			local packages="$*"
+			# set packages to "--all" if it is empty
+			[ -z "$packages" ] && packages="--all"
+			[ -v DEBUG ] && caution "DEBUG: packages is $packages"
+			case $packages in
+				nix) #nodoc
+					# [ -n "${IXNAY_MUTE_CMD_ECHO}" ] || caution "nix-channel --update"
+					# nix-channel --update
+					# OK so it turns out that "nix upgrade-nix" is currently broken
+					# so we will use a workaround just for this case
+					# [ -n "${IXNAY_MUTE_CMD_ECHO}" ] || caution "nix upgrade-nix"
+					# nix upgrade-nix
+					# Record path to nix executable.
+
+					# Using this hosed my Nix install due to having used the Determinate Nix Installer,
+					# which I had forgotten, so for now I will just warn about its existence
+					# and to follow its own instructions for upgrading Nix itself.
+					# (The original code that was here was deleted.)
+					if is_managed_by_determinate_nix; then
+						caution "Warning: You have used the Determinate Nix Installer. Please follow its instructions for upgrading Nix itself."
+						caution "You can find it at https://github.com/DeterminateSystems/nix-installer"
+						caution "The command for this is likely:"
+						echo "sudo -i nix upgrade-nix"
+						caution "but may have changed (and was broken at one point)."
+						caution "The receipt file, which it uses to uninstall, is located at /nix/receipt.json"
+						caution "Here's your list of installed packages in the event you screw up Nix here and need to reinstall them:"
+						ixnay list
+						echo
+						caution "The command to reinstall all of the profile packages at once, if you end up needing to, would be:"
+						echo ixnay install $(ixnay list --only-profile)
+					else
+						caution "Due to the risk of breaking your Nix installation, you must upgrade Nix manually."
+						caution "Please follow the instructions at https://nixos.org/manual/nix/stable/installation/upgrading.html"
+						local unknown_diagnosis=""
+						local nit=nix_install_type
+						if [ $nit = "unknown" ]; then
+							if is_nix_single_user_install; then
+								unknown_diagnosis+="\nThere is evidence of a single-user Nix installation, such as a ~/.nix-profile directory or a ~/.config/nix/nix.conf file."
+							fi
+							if is_nix_multi_user_install; then
+								unknown_diagnosis+="\nThere is evidence of a multi-user Nix installation, such as a /nix/store directory and an /etc/nix/nix.conf file."
+							fi
+						fi
+						caution "Your Nix install type seems to be: $(nit)."
+						[ -n "$unknown_diagnosis" ] && caution "$unknown_diagnosis"
+						if [ $nit = "multi-user" ]; then
+							if [ $DISTRO = "macos" ]; then
+								caution "The correct command to upgrade multi-user Nix on macOS MAY be (warning: hairy!):"
+								echo "sudo -i sh -c 'nix-channel --update && nix-env --install --attr nixpkgs.nix && launchctl remove org.nixos.nix-daemon && launchctl load /Library/LaunchDaemons/org.nixos.nix-daemon.plist'"
+							else
+								caution "The correct command to upgrade multi-user Nix on $DISTRO MAY be (warning: hairy!):"
+								echo "sudo nix-channel --update; sudo nix-env --install --attr nixpkgs.nix nixpkgs.cacert; sudo systemctl daemon-reload; sudo systemctl restart nix-daemon"
+							fi
+						fi
+						if [ $nit = "single-user" ]; then
+							caution "The correct command to upgrade single-user Nix on $DISTRO is:"
+							echo "nix-channel --update; nix-env --install --attr nixpkgs.nix nixpkgs.cacert"
+						fi
+						if ! [ $nit = "unknown" ]; then
+							caution "I'll leave it to you to copy and paste the correct command for your system and Nix install type."
+						fi
+						caution "You also have the option of using the Determinate Nix Installer to manage Nix, which is significantly nicer,"
+						caution "but that requires you to have installed it in the first place via the Determinate Nix Installer."
+						caution "(If you want to use the Determinate Nix Installer, you can find it at https://github.com/DeterminateSystems/nix-installer,"
+						caution "but you will need to completely uninstall Nix \"the normal way\" first, which is a pain.)"
+						caution "Here's your list of installed packages in the event you screw up Nix here and need to reinstall them:"
+						ixnay list
+						caution "The command to reinstall all of the profile packages at once, if you end up needing to, would be:"
+						echo ixnay install $(ixnay list --only-profile)
+					fi
+					;;
+				*) #nodoc
+					# If the list of arguments contains "nix", remove it and warn the user about having to do it separately.
+					if [[ "$packages" =~ (^|[[:space:]])nix($|[[:space:]]) ]]; then
+						caution "Warning: You have specified 'nix' for upgrading as part of a list of packages. This must be done separately."
+						caution "Removing it from the list of packages to upgrade for now."
+						# Remove "nix" from the list of packages to upgrade.
+						packages=$(echo "$packages" | sed -E 's/(^|[[:space:]])nix($|[[:space:]])/ /g')
+					fi
+					[ -n "${IXNAY_MUTE_CMD_ECHO}" ] || caution "nix profile upgrade $packages"
+					[ -n "${DRY_RUN}" ] && return 0
+					# shellcheck disable=SC2048,SC2086
+					nix profile upgrade $packages
+					;;
+			esac
+			;;
+		wipe-history)
+			#help -- Wipes the non-current history of your profile(s).
+			[ -n "${IXNAY_MUTE_CMD_ECHO}" ] || caution "$NIX_COMMAND profile wipe-history"
+			[ -n "${DRY_RUN}" ] && return 0
+			$NIX_COMMAND profile wipe-history
+			;;
+		history)
+			#help -- Shows the history of your profile(s).
+			[ -n "${IXNAY_MUTE_CMD_ECHO}" ] || caution "$NIX_COMMAND profile history"
+			[ -n "${DRY_RUN}" ] && return 0
+			$NIX_COMMAND profile history
+			;;
+		rollback | rb)
+			#help -- Rolls back your profile(s) to the previous generation.
+			#help    (Undoes the last profile change.)
+			[ -n "${IXNAY_MUTE_CMD_ECHO}" ] || caution "$NIX_COMMAND profile rollback"
+			[ -n "${DRY_RUN}" ] && return 0
+			$NIX_COMMAND profile rollback
+			;;
+		list | l)
+			#help -- List local explicitly-installed packages (as well as global packages if on NixOS)
+			# Use awk to find all packages from the profile list
+			# shellcheck disable=SC2155
+			local packages=$($NIX_COMMAND profile list | $AWK -F. '
+				/Flake attribute:/{ print $NF }
+			')
+			shift;
+			if [ "$1" = "--only-profile" ]; then
+				if [ -z "$packages" ]; then
+					caution "There are no profile packages installed."
+					return 0
+				else
+					# Just print the packages, sorted and uniquified
+					echo "$packages" | sort -u
+					return 0
+				fi
+			fi
+			# Check if any profile packages were found
+			if [ -z "$packages" ]; then
+				caution "There are no profile packages installed."
+			else
+				echo "### Profile packages ###"
+				# Print the packages, sorted and uniquified
+				echo "$packages" | sort -u
+			fi
+			echo
+			echo "### System packages ###"
+			# this is a bit of a wonky way to get at this data, but it seems to work at least
+			# check for running on nixos; otherwise there are no system packages and we error
+			if [ "$DISTRO" = "nixos" ]; then
+				nix-store -q --tree /run/current-system | rg '^│   [├└]───' | $AWK -F/ '{ print $4 }' | $AWK -F' ' '{ print $1 }' | cut -c34- | sort -u
+			else
+				if [ "$DISTRO" = "macos" ]; then
+					caution "There are no system packages installed since this isn't NixOS (stay tuned for nix-darwin, though!)."
+				else
+					caution "There are no system packages installed since this isn't NixOS."
+				fi
+			fi
+			;;
+		locate | find | f) #args <packagename>
+			#help -- Locate an available package. It will return any names and versions
+			#help    across all defined channels, or suggest possibilities if spelled wrong or incomplete.
+			#help    May take a while to complete because nix-env is kind of a slow hacky mess.
+			#help    NOTE: This uses nix-env and channels, which are essentially deprecated currently;
+			#help          it is suggested to use "search" instead.
+			shift;
+			[ -n "${IXNAY_MUTE_CMD_ECHO}" ] || caution "nix-env -qaP $*"
+			[ -n "${DRY_RUN}" ] && return 0
+			# shellcheck disable=SC2048,SC2086
+			nix-env -qaP $*
+			if [ $? -ne 0 ]; then
+				caution "I see it errored. Locate/find not really recommended anymore. Try \`ixnay search\` instead."
+			fi
+			;;
+		search | s | query | q) #args <name_or_regex> [<name_or_regex> ...]
+			#help -- Searches all available packages, and their descriptions, in nixpkgs (downloading its DB first,
+			#help    if necessary) for a pattern, which may be a regex. Multiple patterns are AND'ed.
+			#help    This uses "nix search" instead of nix-env.
+			shift;
+			[ -n "${IXNAY_MUTE_CMD_ECHO}" ] || caution "nix search nixpkgs $*"
+			[ -n "${DRY_RUN}" ] && return 0
+			# filter out anything that says "evaluation warning"
+			# shellcheck disable=SC2048,SC2086
+			nix search nixpkgs $* 2>&1 | awk '!/evaluation warning|^evaluating/'
+			;;
+		optimize | optimise)
+			#help -- Replaces any duplicate files in the Nix store with hardlinks, saving space.
+			#help    Note that you can probably set this up to be done on a schedule via a config file option.
+			[ -n "${IXNAY_MUTE_CMD_ECHO}" ] || caution "nix store optimise"
+			[ -n "${DRY_RUN}" ] && return 0
+			nix store optimise
+			;;
+		clean | c | gc | garbage-collect | collect-garbage | purge)
+			#help -- Delete all unreachable paths in the Nix store (anything that nothing active
+			#help    is currently referencing), freeing up space.
+			#help    Note that this should not include packages installed into a profile.
+			[ -n "${IXNAY_MUTE_CMD_ECHO}" ] || caution "nix-collect-garbage"
+			[ -n "${DRY_RUN}" ] && return 0
+			nix-collect-garbage
+			;;
+		validate | valid | check | verify)
+			#help -- Validates the current contents of the Nix store.
+			[ -n "${IXNAY_MUTE_CMD_ECHO}" ] || caution "nix-store --verify --check-contents"
+			[ -n "${DRY_RUN}" ] && return 0
+			nix-store --verify --check-contents
+			;;
+		deps | dependencies) #args <packagename>
+			#help -- Lists all the dependencies of a package.
+			shift;
+			[ -n "${IXNAY_MUTE_CMD_ECHO}" ] || caution "nix-store -q --references \`which $1\`"
+			# nix-instantiate --eval --expr 'builtins.toJSON (import <nixos/nixos> {}).options.environment.systemPackages.definitionsWithLocations' --json | jq 'fromjson' -C
+			[ -n "${DRY_RUN}" ] && return 0
+			# shellcheck disable=SC2048,SC2086
+			nix-store -q --references `which $1`
+			;;
+		depends-on) #args <packagename>
+			#help -- Lists all the packages/derivations that depend on a package.
+			shift;
+			[ -n "${IXNAY_MUTE_CMD_ECHO}" ] || caution "nix-store -q --referrers \`which $1\`"
+			[ -n "${DRY_RUN}" ] && return 0
+			# shellcheck disable=SC2048,SC2086
+			nix-store -q --referrers `which $1`
+			;;
+		repair | doc | doctor)
+			#help -- Validates AND repairs the current contents of the Nix store.
+			#help    Also ensures you are using flakes if you are using nix profiles.
+			# verify nix profiles are configured to use flakes
+			if [ -z "$NIX_PROFILES" ]; then
+				caution "NIX_PROFILES is not set. Please set it to the right paths if you are using nix profiles."
+				caution "It is typically set to the following value, so setting it to this in your dotfiles may fix this:"
+				# echo "I will set it here temporarily:"
+				echo "export NIX_PROFILES=\"/nix/var/nix/profiles/default \$HOME/.nix-profile\""
+				# export NIX_PROFILES="/nix/var/nix/profiles/default /Users/$USER/.nix-profile"
+			fi
+			# confirm that ~/.config/nix/nix.conf exists and contains flakes
+			if [ ! -f "$HOME/.config/nix/nix.conf" ]; then
+				caution "nix.conf does not exist. Please create it and add the following line to it:"
+				echo "experimental-features = nix-command flakes"
+				caution "You can do this by running the following command:"
+				echo "mkdir -p \$HOME/.config/nix && echo \"experimental-features = nix-command flakes\" > \$HOME/.config/nix/nix.conf"
+				# mkdir -p "$HOME/.config/nix" && echo "experimental-features = nix-command flakes" > "$HOME/.config/nix/nix.conf"
+			else
+				if ! grep -q "experimental-features = nix-command flakes" "$HOME/.config/nix/nix.conf"; then
+					caution "nix.conf exists but does not contain the flakes experimental feature. Please add the following line to it:"
+					echo "experimental-features = nix-command flakes"
+					caution "You can do this by running the following command:"
+					echo "echo \"experimental-features = nix-command flakes\" >> $HOME/.config/nix/nix.conf"
+					# echo "experimental-features = nix-command flakes" >> "$HOME/.config/nix/nix.conf"
+				fi
+			fi
+			[ -n "${IXNAY_MUTE_CMD_ECHO}" ] || caution "sudo -H nix-store --verify --check-contents --repair"
+			[ -n "${DRY_RUN}" ] && return 0
+			sudo -H nix-store --verify --check-contents --repair
+			;;
+		"") #args [<nothing, or anything not understood>]
+			#help -- Prints this help message but returns 2 for bad usage
+			_ixnay_help
+			return 2
+			;;
+	esac
+}
+
+# run the function, passing along any args, if this file was run directly (such as via sudo) instead of as an include
+# sometimes, $0 contains a leading dash to indicate an interactive (or is it login?) shell,
+# which is apparently an old convention (which also broke the basename call on OS X)
+me=$(basename "${0##\-}")
+if [ "$me" = "ixnay" ]; then
+	# shellcheck disable=SC2048,SC2086
+	ixnay $*
+fi

@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# debug "we are in unwrap script"
+unwrap() {
+	# debug "we are in unwrap function"
+	local SED=${SED:-$(which sed)}
+
+	usage() {
+		echo "Usage: unwrap [STRING]"
+		echo "Joins all lines of input into a single line, replacing any combination of spaces and newlines with a single space."
+		echo
+		echo "  --help, -h   Show this help message and exit"
+		return ${1:-0}
+	}
+
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+
+	# Argument parsing
+	if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+		usage 0
+		return 0
+	fi
+
+	# If argument is given and not a double-hyphen switch, treat as input
+	if [[ $# -ge 1 && ! "$1" =~ ^-- ]]; then
+		# debug "argument provided, treating as input: $1"
+		printf %s "$1" | unwrap
+		return $?
+	fi
+
+	# If no stdin and no argument, print usage and exit 2
+	if [ -t 0 ]; then
+		# debug "no stdin and no argument, showing usage"
+		usage 2
+		return 2
+	fi
+
+	# this expects contents to be piped in via stdin
+	if ! [[ "$($SED --version 2>&1 | head -1)" =~ GNU ]]; then
+		echo "WARNING: function unwrap: The sed on PATH is not GNU sed, which may cause problems" >&2
+		SED="/run/current-system/sw/bin/sed"
+	fi
+	# Slurp all input into one pattern space, replace any combination of spaces/newlines with a single space, trim trailing space, and suppress the trailing newline
+	result=$($SED -E ':a;N;$!ba;s/( +\n +| *\n +| +\n *|\n)/ /g' | $SED -E 's/ +$//')
+	printf '%s' "$result"
+}
+
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# debug "detected running unwrap script directly"
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# debug "we are running unwrap tests"
+		# Run tests from the test file
+		exec "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		# debug "we are running unwrap function directly without tests"
+		$(basename "${0##\-}") "$@"
+	fi
+fi
+# debug "we are leaving unwrap script"

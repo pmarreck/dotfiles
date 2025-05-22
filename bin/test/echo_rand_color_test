@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+
+# Source the assert function for testing
+. "$HOME/dotfiles/bin/assert"
+
+# Test the echo_rand_color function
+test_echo_rand_color() {
+  # Test that the function produces output
+  local output=$(echo_rand_color "Test")
+  assert "$output" != ""
+  
+  # Test that the output contains the input text
+  echo "$output" | grep -q "Test"
+  assert "$?" == "0"
+  
+  # Test that the output contains ANSI color codes
+  echo "$output" | grep -q "\e\["
+  assert "$?" == "0"
+}
+
+# Run the test if this script is executed directly
+if ! (return 0 2>/dev/null); then
+  test_echo_rand_color
+fi

@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+
+asciidragon() {
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	# first store the escape code for the ANSI color
+	local esc=$(printf '\033')
+	# set foreground text color to green
+	echo -e "${esc}[0;32m"
+	# print the dragon
+	# uncomment the sed to preface and suffix runs of # with a background ansi mode of green
+	cat <<-'EOD' #| sed -E "s/(#+)/${esc}[42m\1${esc}[49m/g"
+										___====-_  _-====___
+							_--~~~#####//      \\#####~~~--_
+					 _-~##########// (    ) \\##########~-_
+					-############//  :\^^/:  \\############-
+				_~############//   (@::@)   \\############~_
+			 ~#############((     \\//     ))#############~
+			-###############\\    (^^)    //###############-
+		 -#################\\  / "" \  //#################-
+		-###################\\/      \//###################-
+	 _#/:##########/\######(   /\   )######/\##########:\#_
+	 :/ :#/\#/\#/\/  \#/\##\  :  :  /##/\#/  \/\#/\#/\#: \:
+	 "  :/  V  V  "   V  \#\: :  : :/#/  V   "  V  V  \:  "
+			"   "  "      "   \ : :  : : /   "      "  "   "
+EOD
+	echo -e "${esc}[0m"
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

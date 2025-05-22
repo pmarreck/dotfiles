@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+
+# Test the date_difference_days function
+test_date_difference_days() {
+  # Test with a known date difference
+  assert "$(date_difference_days 1972-04-05 2024-09-24)" == "19164" "Peter's days alive test"
+}
+
+# Run the test if this script is executed directly
+if ! (return 0 2>/dev/null); then
+  test_date_difference_days
+fi

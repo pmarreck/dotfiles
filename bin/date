@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+
+date() {
+	local whichdate
+	# prefer gdate, fall back to date
+	if type -P gdate &> /dev/null; then
+		whichdate=gdate
+	elif type -P date &> /dev/null; then
+		whichdate=date
+	else
+		echo "Error: Neither gdate nor date command is available." >&2
+		return 1
+	fi
+	$whichdate "$@"
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

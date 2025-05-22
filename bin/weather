@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+
+weather() {
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	needs curl
+	needs jq
+	needs bc
+	needs figlet # note that on ubuntu derivatives, this is shortcutted by default to "toilet"? Um, no. So check that.
+	if [ -z "$OPENWEATHERMAP_APPID" ]; then
+		echo "OPENWEATHERMAP_APPID is not set. Get an API key from http://openweathermap.org/appid and set it in your environment."
+		return 1
+	fi
+	# lat and lon are set for port washington, ny
+	# look them up at: http://www.latlong.net/
+	temp=`curl -s "http://api.openweathermap.org/data/2.5/weather?lat=40.82658&lon=-73.68312&appid=$OPENWEATHERMAP_APPID" | jq .main.temp`
+	# echo "temp in kelvin is: $temp"
+	temp=$(bc <<< "$temp*9/5-459.67") # convert from kelvin to F
+	echo "$temp F" | figlet -kcf big
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

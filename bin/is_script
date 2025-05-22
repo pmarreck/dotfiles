@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+
+is_script() {
+	file -L "$1" | grep -q 'text' &>/dev/null
+}
+
+if ! (return 0 2>/dev/null); then
+	is_script "$1"
+fi

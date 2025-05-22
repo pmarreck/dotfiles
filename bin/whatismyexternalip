@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+
+whatismyexternalip() {
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	needs curl "Please install curl"
+
+	# Array of IP service endpoints that return just the IP
+	local services=(
+		"https://api.ipify.org"
+		"https://ifconfig.me/ip"
+		"https://icanhazip.com"
+		"https://ident.me"
+	)
+
+	local ip=""
+	local timeout=5  # Timeout in seconds for each request
+
+	# Try each service until we get a valid IP
+	for service in "${services[@]}"; do
+		if ip=$(curl -s --max-time "$timeout" "$service" 2>/dev/null); then
+			# Validate IP format (basic check)
+			if [[ $ip =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+				echo "$ip"
+				return 0
+			fi
+		fi
+	done
+
+	echo "Could not determine external IP address." >&2
+	return 1
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+  # Check if we are running tests
+  if [ "$1" = "--test" ]; then
+    # Run tests from the test file
+    . "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+  else
+    # If called directly, pass all arguments to the function
+    $(basename "${0##\-}") "$@"
+  fi
+fi

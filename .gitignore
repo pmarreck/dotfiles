@@ -14,3 +14,5 @@ bin/steam
 bin/*launcher
 .codegpt
 .vscode
+
+**/.claude/settings.local.json

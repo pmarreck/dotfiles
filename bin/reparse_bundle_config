@@ -5,19 +5,19 @@ def nil.empty?; true; end
 
 if rails_version=ENV['rails_version'] && !rails_version.empty?
 elsif File.exists?('Gemfile')
-  rvl = File.readlines('Gemfile').detect{ |line| line =~ /["']rails["']/ }
-  rails_version = $1 if rvl =~ /([2-9]\.[0-9]+)\.?/
-  unless rails_version
-    puts "Couldn't figure out Rails version from Gemfile!"
-  end
+	rvl = File.readlines('Gemfile').detect{ |line| line =~ /["']rails["']/ }
+	rails_version = $1 if rvl =~ /([2-9]\.[0-9]+)\.?/
+	unless rails_version
+		puts "Couldn't figure out Rails version from Gemfile!"
+	end
 else
-  puts "No Gemfile or $rails_version to determine Rails version from!"
+	puts "No Gemfile or $rails_version to determine Rails version from!"
 end
 
 if ruby_version=ENV['rvm_ruby_string']
 else
-  require 'rbconfig'
-  ruby_version = "ruby-#{RUBY_VERSION}-p#{RUBY_PATCHLEVEL}"
+	require 'rbconfig'
+	ruby_version = "ruby-#{RUBY_VERSION}-p#{RUBY_PATCHLEVEL}"
 end
 
 require 'erb'
@@ -25,23 +25,23 @@ error_str = ""
 error_prelude = "cannot parse .bundle/config.erb: "
 errors = []
 if File.exists?('.bundle/config.erb')
-  if ruby_version.empty?
-    errors << "ruby_version is blank"
-  elsif rails_version==false || rails_version.empty?
-    errors << "rails_version is blank"
-  else
-    puts "parsing .bundle/config.erb given #{ruby_version} and rails #{rails_version}"
-    erb_result = ERB.new(File.readlines('.bundle/config.erb').join).result(binding)
-    File.open('.bundle/config','w'){|f| f.write(erb_result)}
-  end
+	if ruby_version.empty?
+		errors << "ruby_version is blank"
+	elsif rails_version==false || rails_version.empty?
+		errors << "rails_version is blank"
+	else
+		puts "parsing .bundle/config.erb given #{ruby_version} and rails #{rails_version}"
+		erb_result = ERB.new(File.readlines('.bundle/config.erb').join).result(binding)
+		File.open('.bundle/config','w'){|f| f.write(erb_result)}
+	end
 else
-  if !File.exists?('.bundle/config')
-    errors << "there is no .bundle/config path from the working directory"
-  end
+	if !File.exists?('.bundle/config')
+		errors << "there is no .bundle/config path from the working directory"
+	end
 end
 
 unless errors.empty?
-  error_str << error_prelude
-  error_str << errors.join(' and ')
-  puts error_str
+	error_str << error_prelude
+	error_str << errors.join(' and ')
+	puts error_str
 end

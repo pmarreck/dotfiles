@@ -53,7 +53,7 @@ get_git_status() {
 		echo "WARNING: Doesn't look like a Git repository: $proj_root" >&2
 	fi
 }
-export -f get_git_status
+
 
 # Run the function, passing along any args, if this file was run directly instead of as an include.
 # Sometimes, $0 contains a leading dash to indicate an interactive (or is it login?) shell,
@@ -63,3 +63,14 @@ if [ "$_me" = "get_git_status" ]; then
 	$_me "$@"
 fi
 unset _me
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+  # Check if we are running tests
+  if [ "$1" = "--test" ]; then
+    # Run tests from the test file
+    . "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+  else
+    # If called directly, pass all arguments to the function
+    $(basename "${0##\-}") "$@"
+  fi
+fi

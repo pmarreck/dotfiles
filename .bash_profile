@@ -18,24 +18,6 @@ else
   echo "Warning: Couldn't parse Bash version: $BASH_VERSION" >&2
 fi
 
-append_dotfile_progress() {
-    # Expand the abbreviated names
-    local expanded_name
-    case "$1" in
-        "bp") expanded_name=".bash_profile" ;;
-        "rc") expanded_name=".bashrc" ;;
-        "env") expanded_name=".envconfig" ;;
-        "P") expanded_name=".pathconfig" ;;
-        "prof") expanded_name=".profile" ;;
-        *) expanded_name="$1" ;;
-    esac
-
-    # Prevent duplicate entries
-    if [[ ! $LAST_DOTFILE_RUN =~ ${expanded_name}-loaded\; ]]; then
-        export LAST_DOTFILE_RUN="${LAST_DOTFILE_RUN:-}${expanded_name}-loaded;"
-    fi
-}
-
 # since .bash_profile is usually only included for non-login shells
 # (note: OS X Terminal ALWAYS runs as a login shell but still ALWAYS includes this file, but it's nonstandard)
 # set LOGIN_SHELL and INTERACTIVE_SHELL here but only if it wasn't already set
@@ -56,11 +38,11 @@ if [ -z ${SED+x} ]; then
   done
   # Warn if no GNU sed found
   if [ -z ${SED+x} ]; then
-    echo "Warning from .bashrc: No GNU sed found in PATH. This may result in problems. Using system's default sed." >&2
+    echo "Warning from .bash_profile: No GNU sed found in PATH. This may result in problems. Using system's default sed." >&2
     export SED=`which sed`
   fi
 fi
-# echo "SED in .bashrc:56 is: $SED"
+# echo "SED in .bash_profile:56 is: $SED"
 # Awk-ward! (see note below about "using the right awk"...)
 [ -z "${AWK+x}" ] && \
   export AWK=$(command -v frawk || command -v gawk || command -v awk)
@@ -81,10 +63,9 @@ fi
 # most things should be sourced via source_relative... except source_relative itself
 # if the function is not already defined, define it. use posix syntax for portability
 # shellcheck disable=SC1090
-[ "`type -t source_relative_once`" = "function" ] || . "$HOME/dotfiles/bin/functions/source_relative.bash"
 
 # Pull in path configuration
-source_relative_once $HOME/.pathconfig
+. $HOME/.pathconfig
 
 # Warp terminal seems to have nonstandard behavior and non-gnu sed breaks things
 # so we are using this workaround:
@@ -121,7 +102,7 @@ fi
 # source ~/.orbstack/shell/init.bash 2>/dev/null || :
 
 # enable tests if any script modification times are different
-source_relative_once "${HOME}/dotfiles/run_tests_on_change.sh"
+. "${HOME}/dotfiles/run_tests_on_change.sh"
 
 truthy DEBUG_SHELLCONFIG && echo "Exiting $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")"
 truthy DEBUG_PATHCONFIG && echo "$PATH" || :

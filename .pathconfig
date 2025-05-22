@@ -1,12 +1,9 @@
 #!/usr/bin/env bash
-[ -n "${DEBUG_SHELLCONFIG}" ] && echo "Entering $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")" || $INTERACTIVE_SHELL && $LOGIN_SHELL # && append_dotfile_progress "P"
+[ -n "${DEBUG_SHELLCONFIG}" ] && echo "Entering $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")" || $INTERACTIVE_SHELL && $LOGIN_SHELL && append_dotfile_progress "P"
 [ -n "${DEBUG_PATHCONFIG}" ] && echo "PATH is: $PATH"
 
 # All path configs here should replace any existing version of themselves in the PATH before appending
 # (idempotent)
-
-source_relative_once "${HOME}/dotfiles/bin/functions/prepend_path.bash"
-# [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced prepend_path.bash"
 
 # gigalixir and other pip3 --user installed tools, per XDG spec
 [ -d $HOME/.local/bin ] && prepend_path $HOME/.local/bin
@@ -56,6 +53,18 @@ prepend_path "$HOME/.codeium/windsurf/bin"
 # add my user bin to PATH
 # export PATH=$PATH:~/bin
 prepend_path $HOME/bin
+
+# Now exclude every path from PATH that does not actually exist.
+# I don't like this way of doing it, but it was the only way that worked easily.
+OLD_IFS=$IFS
+IFS=:
+for path in $PATH; do
+  if [ ! -d "$path" ]; then
+    exclude_path "$path"
+  fi
+done
+IFS=$OLD_IFS
+unset OLD_IFS
 
 # echo "PATH after config is $PATH"
 [ -n "${DEBUG_SHELLCONFIG}" ] && echo "Exiting $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")"

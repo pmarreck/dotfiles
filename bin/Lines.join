@@ -1,22 +1,22 @@
 #!/usr/bin/env bash
 
 Lines.join() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-  local default_ifs_first_char="${IFS:0:1}"
-  # peek at stdin to see if it's not empty
-  if ! [ -t 0 ]; then
-    # echo "There is stdin"
-    # read from stdin and join on first argument
-    # default to joining on first char of default IFS which is space
-    local sep="${1:-$default_ifs_first_char}"
-    tr '\n' "$sep" | $SED -e "s/${sep}\$//g"
-  else
-    # echo "There is no stdin"
-    # read input from 1st argument and split on 2nd argument
-    # default to splitting on default IFS which is space, tab, newline
-    local sep="${2:-$default_ifs_first_char}"
-    printf "%s" "$1" | tr '\n' "$sep" | $SED -e "s/${sep}\$//"
-  fi
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	local default_ifs_first_char="${IFS:0:1}"
+	# peek at stdin to see if it's not empty
+	if ! [ -t 0 ]; then
+		# echo "There is stdin"
+		# read from stdin and join on first argument
+		# default to joining on first char of default IFS which is space
+		local sep="${1:-$default_ifs_first_char}"
+		tr '\n' "$sep" | $SED -e "s/${sep}\$//g"
+	else
+		# echo "There is no stdin"
+		# read input from 1st argument and split on 2nd argument
+		# default to splitting on default IFS which is space, tab, newline
+		local sep="${2:-$default_ifs_first_char}"
+		printf "%s" "$1" | tr '\n' "$sep" | $SED -e "s/${sep}\$//"
+	fi
 }
 
 # Run the function, passing along any args, if this file was run directly (such as via sudo) instead of as an include
@@ -24,6 +24,17 @@ Lines.join() {
 # which is apparently an old convention (which also broke the basename call on OS X)
 _me=$(basename "${0##\-}")
 if [ "$_me" = "Lines.join" ]; then
-  Lines.join "$1" "$2"
+	Lines.join "$1" "$2"
 fi
 unset _me
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+
+find_binary() {
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	if [ -f "/run/current-system/sw/bin/$1" ]; then
+		echo -n "/run/current-system/sw/bin/$1"
+	elif [ -f "/usr/local/bin/$1" ]; then
+		echo -n "/usr/local/bin/$1"
+	elif [ -f "/usr/sbin/$1" ]; then
+		echo -n "/usr/sbin/$1"
+	elif [ -f "/usr/bin/$1" ]; then
+		echo -n "/usr/bin/$1"
+	elif [ -f "/bin/$1" ]; then
+		echo -n "/bin/$1"
+	elif [ -f "/sbin/$1" ]; then
+		echo -n "/sbin/$1"
+	else
+		echo "ERROR: Could not find $1 without PATH" >&2
+		return 1
+	fi
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

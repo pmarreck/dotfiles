@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+
+# Test the rehash function
+test_rehash() {
+  # Save the current environment state
+  local old_skip_dotfile_tests="$SKIP_DOTFILE_TESTS"
+  local old_test_verbose="$TEST_VERBOSE"
+  local old_expand_test_verbose="$EXPAND_TEST_VERBOSE"
+  local old_last_dotfile_run="$LAST_DOTFILE_RUN"
+  
+  # Set a test value for LAST_DOTFILE_RUN
+  export LAST_DOTFILE_RUN="test_value"
+  
+  # Run rehash
+  rehash
+  
+  # Verify that SKIP_DOTFILE_TESTS was unset after rehash
+  assert "$SKIP_DOTFILE_TESTS" == ""
+  
+  # Verify that LAST_DOTFILE_RUN was preserved
+  assert "$LAST_DOTFILE_RUN" == "test_value"
+  
+  # Restore the environment
+  export SKIP_DOTFILE_TESTS="$old_skip_dotfile_tests"
+  export TEST_VERBOSE="$old_test_verbose"
+  export EXPAND_TEST_VERBOSE="$old_expand_test_verbose"
+  export LAST_DOTFILE_RUN="$old_last_dotfile_run"
+}
+
+# Run the test if this script is executed directly
+if ! (return 0 2>$NULL); then
+  test_rehash
+fi

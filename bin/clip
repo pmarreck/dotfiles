@@ -1,73 +1,80 @@
 #!/usr/bin/env bash
 
-source_relative_once $HOME/dotfiles/bin/functions/utility_functions.bash
-source_relative_once $HOME/dotfiles/bin/functions/assert.bash
-
 clip() {
-  # Test suite for the clip function
-  test_clip() {
-    local fails=0
+	# Test suite for the clip function
+	test_clip() {
+		local fails=0
 
-    # Test 1: Piping to clip - should output to stdout and copy to clipboard
-    test_string="Test clip function"
-    output=$(echo -n "$test_string" | clip)  # Put test string in clipboard
-    assert "$output" == "$test_string" "clip should output to stdout when piped to"
-    (( fails += $? ))
+		# Test 1: Piping to clip - should output to stdout and copy to clipboard
+		test_string="Test clip function"
+		output=$(echo -n "$test_string" | clip)  # Put test string in clipboard
+		assert "$output" == "$test_string" "clip should output to stdout when piped to"
+		(( fails += $? ))
 
-    # Test 2: Reading from clipboard - should match what we just put in
-    assert "$(clip)" == "$test_string" "clip should retrieve from clipboard when not piped to"
-    (( fails += $? ))
+		# Test 2: Reading from clipboard - should match what we just put in
+		assert "$(clip)" == "$test_string" "clip should retrieve from clipboard when not piped to"
+		(( fails += $? ))
 
-    # Test 3: Empty clipboard
-    echo -n "" | clip > /dev/null
-    assert "$(clip)" == "" "clip should return empty string when clipboard is empty"
-    (( fails += $? ))
+		# Test 3: Empty clipboard
+		echo -n "" | clip > /dev/null
+		assert "$(clip)" == "" "clip should return empty string when clipboard is empty"
+		(( fails += $? ))
 
-    if [ $fails -ne 0 ]; then
-      red_text "Clip tests failed!" >&2
-    else
-      green_text "All clip tests passed!"
-    fi
-    return $fails
-  }
+		if [ $fails -ne 0 ]; then
+			red_text "Clip tests failed!" >&2
+		else
+			green_text "All clip tests passed!"
+		fi
+		return $fails
+	}
 
-  if [ "$1" = "--test" ]; then
-    test_clip
-    return
-  fi
+	if [ "$1" = "--test" ]; then
+		test_clip
+		return
+	fi
 
-  if successful type pbcopy; then
-    if [ -t 0 ]; then
-      pbpaste
-    else
-      # Use tee to both send to pbcopy and output to stdout
-      tee >(pbcopy) || cat
-    fi
-  else
-    if [ -t 0 ]; then
-      xclip -o -selection clipboard
-    else
-      # Use tee to both send to xclip and output to stdout
-      tee >(xclip -selection clipboard) || cat
-    fi
-  fi
+	if successful type pbcopy; then
+		if [ -t 0 ]; then
+			pbpaste
+		else
+			# Use tee to both send to pbcopy and output to stdout
+			tee >(pbcopy) || cat
+		fi
+	else
+		if [ -t 0 ]; then
+			xclip -o -selection clipboard
+		else
+			# Use tee to both send to xclip and output to stdout
+			tee >(xclip -selection clipboard) || cat
+		fi
+	fi
 }
-export -f clip
 
 # Run the function, passing along any args, if this file was run directly (such as via sudo) instead of as an include
 # Sometimes, $0 contains a leading dash to indicate an interactive (or is it login?) shell,
 # which is apparently an old convention (which also broke the basename call on OS X)
 _me=$(basename "${0##\-}")
 if [ "$_me" = "clip" ]; then
-  if [ $# = 0 ]; then
-    clip
-  else
-    clip "$@"
-  fi
+	if [ $# = 0 ]; then
+		clip
+	else
+		clip "$@"
+	fi
 fi
 unset _me
 
 # Run tests if RUN_DOTFILE_TESTS is true
 if truthy RUN_DOTFILE_TESTS; then
-  clip --test
+	clip --test
+fi
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
 fi

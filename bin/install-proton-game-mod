@@ -7,34 +7,34 @@ TXTRST=${TXTRST:-"m"}
 
 >/dev/null declare -F warn || \
 warn() {
-  echo -e "${ANSI}${TXTYLW}$1${ANSI}${TXTRST}" 1>&2
+	echo -e "${ANSI}${TXTYLW}$1${ANSI}${TXTRST}" 1>&2
 }
 
 >/dev/null declare -F err || \
 err() {
-  echo -e "${ANSI}${TXTRED}$1${ANSI}${TXTRST}" 1>&2
+	echo -e "${ANSI}${TXTRED}$1${ANSI}${TXTRST}" 1>&2
 }
 
 needs() {
-  local bin=$1;
-  shift;
-  command -v $bin > /dev/null 2>&1 || {
-    echo "I require $bin but it's not installed or in PATH; $*" 1>&2;
-    return 1
-  }
+	local bin=$1;
+	shift;
+	command -v $bin > /dev/null 2>&1 || {
+		echo "I require $bin but it's not installed or in PATH; $*" 1>&2;
+		return 1
+	}
 }
 
 fix_nvse_capitalization_via_symlinking() {
-  if [ -d "$1/NVSE" ] && [ -d "$1/nvse" ] && [ ! -h "$1/NVSE" ]; then
-    warn "Fixing NVSE capitalization via symlinking..."
-    pushd "$1" > /dev/null
-      pushd NVSE > /dev/null
-        cp -r * ../nvse
-      popd > /dev/null
-      rm -rf NVSE
-      ln -s nvse NVSE
-    popd > /dev/null
-  fi
+	if [ -d "$1/NVSE" ] && [ -d "$1/nvse" ] && [ ! -h "$1/NVSE" ]; then
+		warn "Fixing NVSE capitalization via symlinking..."
+		pushd "$1" > /dev/null
+			pushd NVSE > /dev/null
+				cp -r * ../nvse
+			popd > /dev/null
+			rm -rf NVSE
+			ln -s nvse NVSE
+		popd > /dev/null
+	fi
 }
 
 fdbin=fd
@@ -45,46 +45,46 @@ needs fzy https://github.com/jhawthorn/fzy
 needs 7z
 needs unrar
 case "$1" in
-  "fnv")
-    APP_NAME=FalloutNV.exe
-    echo "Which ${APP_NAME}?"
-    APP_DIR="$(dirname "$(realpath "$($fdbin -HI -t f -e exe $APP_NAME $HOME | fzy)")")"
-    warn "Found $APP_NAME in '$APP_DIR'"
-    echo "Which mod in the Downloads folder?"
-    MOD_FILE="$(realpath "$($fdbin -t f -e 7z -e zip -e rar -d 1 . ~/Downloads | fzy)")"
-    warn "Found '$MOD_FILE'"
-    # switch based on the file extension
-    case "${MOD_FILE##*.}" in
-      7z | zip)
-        install_command="7z x -y \"$MOD_FILE\" -o"
-        install_to_root_dir="$(7z l -slt "$MOD_FILE" | grep -m 1 "Path = Data\b")"
-        ;;
-      rar)
-        install_command="unrar x \"$MOD_FILE\" "
-        # warn "unrar lt \"$MOD_FILE\" | grep -z -o -E -m 1 \"Name: Data[[:space:]]+Type: Directory\""
-        # grep with -z outputs an ending null byte, which makes command substitution error, so we tr it out
-        install_to_root_dir="$(unrar lt "$MOD_FILE" | grep -z -E -m 1 "Name: Data[[:space:]]+Type: Directory" | tr -d '\0')"
-        ;;
-      *)
-        err "Unknown file extension: ${MOD_FILE##*.}"
-        exit 1
-        ;;
-    esac
-    # if archive root contains a "Data" folder, install to root game folder
-    if [ -n "$install_to_root_dir" ]; then
-      INSTALL_DIR="$APP_DIR"
-    else
-      INSTALL_DIR="$APP_DIR/Data"
-    fi
-    warn "Installing to '$INSTALL_DIR'..."
-    warn "${install_command}\"${INSTALL_DIR}\""
-    # set -x
-    eval "$install_command\"$INSTALL_DIR\""
-    # set +x
-    fix_nvse_capitalization_via_symlinking "$APP_DIR/Data"
-    ;;
-  *)
-    echo "Game shortcut not recognized. Options: fnv"
-    exit 1
-    ;;
+	"fnv")
+		APP_NAME=FalloutNV.exe
+		echo "Which ${APP_NAME}?"
+		APP_DIR="$(dirname "$(realpath "$($fdbin -HI -t f -e exe $APP_NAME $HOME | fzy)")")"
+		warn "Found $APP_NAME in '$APP_DIR'"
+		echo "Which mod in the Downloads folder?"
+		MOD_FILE="$(realpath "$($fdbin -t f -e 7z -e zip -e rar -d 1 . ~/Downloads | fzy)")"
+		warn "Found '$MOD_FILE'"
+		# switch based on the file extension
+		case "${MOD_FILE##*.}" in
+			7z | zip)
+				install_command="7z x -y \"$MOD_FILE\" -o"
+				install_to_root_dir="$(7z l -slt "$MOD_FILE" | grep -m 1 "Path = Data\b")"
+				;;
+			rar)
+				install_command="unrar x \"$MOD_FILE\" "
+				# warn "unrar lt \"$MOD_FILE\" | grep -z -o -E -m 1 \"Name: Data[[:space:]]+Type: Directory\""
+				# grep with -z outputs an ending null byte, which makes command substitution error, so we tr it out
+				install_to_root_dir="$(unrar lt "$MOD_FILE" | grep -z -E -m 1 "Name: Data[[:space:]]+Type: Directory" | tr -d '\0')"
+				;;
+			*)
+				err "Unknown file extension: ${MOD_FILE##*.}"
+				exit 1
+				;;
+		esac
+		# if archive root contains a "Data" folder, install to root game folder
+		if [ -n "$install_to_root_dir" ]; then
+			INSTALL_DIR="$APP_DIR"
+		else
+			INSTALL_DIR="$APP_DIR/Data"
+		fi
+		warn "Installing to '$INSTALL_DIR'..."
+		warn "${install_command}\"${INSTALL_DIR}\""
+		# set -x
+		eval "$install_command\"$INSTALL_DIR\""
+		# set +x
+		fix_nvse_capitalization_via_symlinking "$APP_DIR/Data"
+		;;
+	*)
+		echo "Game shortcut not recognized. Options: fnv"
+		exit 1
+		;;
 esac

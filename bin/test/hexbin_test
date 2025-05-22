@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+
+# Test the hexbin function
+test_hexbin() {
+  # Test decoding hex to binary
+  assert "$(hexbin "5065746572")" == "Peter" "hexbin function should decode binary from hex"
+  
+  # Test accepting a pipe
+  assert "$(binhex "Peter" | hexbin)" == "Peter" "hexbin function should accept a pipe"
+  
+  # Test handling of newlines
+  assert "$(hexbin "50657465720a0c")" == "Peter\n\f" "hexbin function shouldn't eat hex-encoded end-of-line newlines"
+}
+
+# Run the test if this script is executed directly
+if ! (return 0 2>/dev/null); then
+  test_hexbin
+fi

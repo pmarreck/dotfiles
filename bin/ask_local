@@ -1,26 +1,25 @@
 #!/usr/bin/env bash
 
-source_relative_once $HOME/dotfiles/bin/ask
+. $HOME/dotfiles/bin/ask
 
 # export DEFAULT_LOCAL_AI_MODEL="athene-v2:latest"
 export DEFAULT_LOCAL_AI_MODEL=${DEFAULT_LOCAL_AI_MODEL:-qwen2.5-coder:32b}
 export DEFAULT_LOCAL_AI_HOST="localhost:11434"
 
 function ask_local() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-  OPENAI_MODEL="$DEFAULT_LOCAL_AI_MODEL" \
-  OPENAI_HOST="$DEFAULT_LOCAL_AI_HOST" \
-  OPENAI_PATH="/api/chat" \
-  OPENAI_PROTOCOL="http" \
-  OPENAI_API_KEY="fake" \
-  OPENAI_TIMEOUT=600 \
-  LLM_SYSTEM_PROMPT="You are a helpful AI assistant named WOPR." \
-  TOOLING_CAPABLE="${TOOLING_CAPABLE:-false}" \
-  ask "$@"
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	OPENAI_MODEL="$DEFAULT_LOCAL_AI_MODEL" \
+	OPENAI_HOST="$DEFAULT_LOCAL_AI_HOST" \
+	OPENAI_PATH="/api/chat" \
+	OPENAI_PROTOCOL="http" \
+	OPENAI_API_KEY="fake" \
+	OPENAI_TIMEOUT=600 \
+	LLM_SYSTEM_PROMPT="You are a helpful AI assistant named WOPR." \
+	TOOLING_CAPABLE="${TOOLING_CAPABLE:-false}" \
+	ask "$@"
 }
 
 # Export the function so it can be used by find -exec
-export -f ask_local
 
 # Run the function, passing along any args, if this file was run directly (such as via sudo) instead of as an include
 # Sometimes, $0 contains a leading dash to indicate an interactive (or is it login?) shell,

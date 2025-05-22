@@ -1,502 +1,467 @@
 #!/usr/bin/env bash
 
-# graceful dependency enforcement
-# Usage: needs <executable> [provided by <packagename>]
-
-# only redefines these here if they're not already defined in my env
->/dev/null declare -F needs || \
-needs() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-  local bin=$1
-  shift
-  command -v "$bin" >/dev/null 2>&1 || { echo >&2 "I require $bin but it's not installed or in PATH; $*"; return 1; }
-} && export -f needs
-
->/dev/null declare -F note || \
-note() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return;
-  printf "$ANSI$TXTYLW%s$ANSI$TXTDFT\n" "$@" 1>&2
-} && export -f note
-
-# >/dev/null declare -F debug || \
-debug() {
-  [ -n "$DEBUG" ] && note "DEBUG: $*"
-} && export -f debug
-
->/dev/null declare -F warn || \
-warn() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return;
-  >&2 printf "$ANSI$TXTORG%s$ANSI$TXTDFT\n" "$@"
-} && export -f warn
+. "${HOME}/dotfiles/bin/src/truthy.sh"
 
 # Function to get local zip code
 get_zip() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return;
-  note "Calling get_zip..." # Italic and yellow text
-  # Call `get_location` and parse the output with jq to extract required fields
-  local postal
-  # IFS=$'\t' read -r ip city region country postal timezone <<< $(
-  #   curl -s ipinfo.io | jq -r '[.ip, .city, .region, .country, .postal, .timezone] | @tsv'
-  # )
-  postal=$(curl -s ipinfo.io | jq -r '.postal')
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return;
+	note "Calling get_zip..." # Italic and yellow text
+	# Call `get_location` and parse the output with jq to extract required fields
+	local postal
+	# IFS=$'\t' read -r ip city region country postal timezone <<< $(
+	#   curl -s ipinfo.io | jq -r '[.ip, .city, .region, .country, .postal, .timezone] | @tsv'
+	# )
+	postal=$(curl -s ipinfo.io | jq -r '.postal')
 
-  echo -n "$postal"
-} && export -f get_zip
+	echo -n "$postal"
+}
 
 # Function to get detailed location information
 get_location() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return;
-  note "Calling get_location..." # Italic and yellow text
-  # Call `get_location` and parse the output with jq to extract required fields
-  local ip city region country postal timezone
-  IFS=$'\t' read -r ip city region country postal timezone <<< $(
-    curl -s ipinfo.io | jq -r '[.ip, .city, .region, .country, .postal, .timezone] | @tsv'
-  )
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return;
+	note "Calling get_location..." # Italic and yellow text
+	# Call `get_location` and parse the output with jq to extract required fields
+	local ip city region country postal timezone
+	IFS=$'\t' read -r ip city region country postal timezone <<< $(
+		curl -s ipinfo.io | jq -r '[.ip, .city, .region, .country, .postal, .timezone] | @tsv'
+	)
 
-  # Output in a human-readable, comma-delimited format
-  echo -n "ip: $ip, city: $city, state: $region, country: $country, zip: $postal, tz: $timezone"
-} && export -f get_location
+	# Output in a human-readable, comma-delimited format
+	echo -n "ip: $ip, city: $city, state: $region, country: $country, zip: $postal, tz: $timezone"
+}
 
 # Function to convert temperature from Kelvin to Fahrenheit or Celsius
 convert_temp() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return;
-  local temp_in_k="$1"
-  local scale="$2"
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return;
+	local temp_in_k="$1"
+	local scale="$2"
 
-  if [ "$scale" = "C" ]; then
-    echo -n $(echo "scale=2; $temp_in_k - 273.15" | bc)
-  else
-    scale="F"
-    echo -n $(echo "scale=2; ($temp_in_k - 273.15) * 9/5 + 32" | bc)
-  fi
-  echo -n "$scale"
-} && export -f convert_temp
+	if [ "$scale" = "C" ]; then
+		echo -n $(echo "scale=2; $temp_in_k - 273.15" | bc)
+	else
+		scale="F"
+		echo -n $(echo "scale=2; ($temp_in_k - 273.15) * 9/5 + 32" | bc)
+	fi
+	echo -n "$scale"
+}
 
 # Function to convert wind speed from m/s to knots and round to 2 decimal places
 convert_wind_speed_from_mps_to_knots() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return;
-  local speed_in_mps="$1"
-  # skip conversion if the speed is not a number
-  if ! [[ "$speed_in_mps" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
-    echo -n "$speed_in_mps"
-    return
-  fi
-  echo -n $(echo "scale=2; $speed_in_mps * 1.94384" | bc | xargs printf "%.2fkts")
-} && export -f convert_wind_speed_from_mps_to_knots
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return;
+	local speed_in_mps="$1"
+	# skip conversion if the speed is not a number
+	if ! [[ "$speed_in_mps" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+		echo -n "$speed_in_mps"
+		return
+	fi
+	echo -n $(echo "scale=2; $speed_in_mps * 1.94384" | bc | xargs printf "%.2fkts")
+}
 
 # Function to convert wind direction from degrees to cardinal direction
 convert_wind_direction() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return;
-  local degrees="$1"
-  # Add 22.5 to ensure proper rounding before integer division
-  local index=$(( ( (degrees * 2 + 45) % 720) / 45 ))
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return;
+	local degrees="$1"
+	# Add 22.5 to ensure proper rounding before integer division
+	local index=$(( ( (degrees * 2 + 45) % 720) / 45 ))
 
-  # Array of cardinal directions
-  local directions=("N" "NNE" "NE" "ENE" "E" "ESE" "SE" "SSE" "S" "SSW" "SW" "WSW" "W" "WNW" "NW" "NNW")
+	# Array of cardinal directions
+	local directions=("N" "NNE" "NE" "ENE" "E" "ESE" "SE" "SSE" "S" "SSW" "SW" "WSW" "W" "WNW" "NW" "NNW")
 
-  # Output the direction
-  echo "${directions[$index]}"
-} && export -f convert_wind_direction
+	# Output the direction
+	echo "${directions[$index]}"
+}
 
 # Function to get weather information using OpenWeatherMap API
 get_weather() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return;
-  # note "Calling get_weather..." # Italic and yellow text
-  local postal_code=$1
-  # bail if there is no postal code
-  if [ -z "$postal_code" ]; then
-    warn "No postal code provided to ${FUNCNAME[0]}"
-    return 1
-  fi
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return;
+	# note "Calling get_weather..." # Italic and yellow text
+	local postal_code=$1
+	# bail if there is no postal code
+	if [ -z "$postal_code" ]; then
+		warn "No postal code provided to ${FUNCNAME[0]}"
+		return 1
+	fi
 #   local postal_code_hopefully_filtered==$(echo "$postal_code" | $SED 's/\\"/"/g')
 #   debug "postal_code_hopefully_filtered=$postal_code_hopefully_filtered"
 #   postal_code=$(echo "$postal_code" | $SED 's/\\"/"/g' | jq -r '.zip_code')
-  debug "postal_code=$postal_code"
-  local appid=${OPENWEATHERMAP_APPID}  # Use your API key from the environment
-  note "Calling get_weather for postal code ${postal_code}..." # Italic and yellow text
-  # Fetch weather data via curl and parse using jq
-  local openweathermap_api_output
-  openweathermap_api_output=$(curl -s "https://api.openweathermap.org/data/2.5/weather?zip=$postal_code&appid=$appid")
-  debug "openweathermap_api_output=$openweathermap_api_output"
-  local town weather_desc temp feels_like temp_min temp_max humidity visibility wind_speed wind_dir wind_gust
-  IFS=$'\t' read -r town weather_desc temp feels_like temp_min temp_max humidity visibility wind_speed wind_dir wind_gust <<< $(
-    echo "$openweathermap_api_output" | jq -r '[.name, .weather[0].description, .main.temp, .main.feels_like, .main.temp_min, .main.temp_max, .main.humidity, .visibility, .wind.speed, .wind.deg, (.wind.gust // "N/A")] | @tsv'
-  )
-  debug "town=$town, weather_desc=$weather_desc, temp=$temp, feels_like=$feels_like, temp_min=$temp_min, temp_max=$temp_max, humidity=$humidity, visibility=$visibility, wind_speed=$wind_speed, wind_dir=$wind_dir, wind_gust=$wind_gust"
+	debug "postal_code=$postal_code"
+	local appid=${OPENWEATHERMAP_APPID}  # Use your API key from the environment
+	note "Calling get_weather for postal code ${postal_code}..." # Italic and yellow text
+	# Fetch weather data via curl and parse using jq
+	local openweathermap_api_output
+	openweathermap_api_output=$(curl -s "https://api.openweathermap.org/data/2.5/weather?zip=$postal_code&appid=$appid")
+	debug "openweathermap_api_output=$openweathermap_api_output"
+	local town weather_desc temp feels_like temp_min temp_max humidity visibility wind_speed wind_dir wind_gust
+	IFS=$'\t' read -r town weather_desc temp feels_like temp_min temp_max humidity visibility wind_speed wind_dir wind_gust <<< $(
+		echo "$openweathermap_api_output" | jq -r '[.name, .weather[0].description, .main.temp, .main.feels_like, .main.temp_min, .main.temp_max, .main.humidity, .visibility, .wind.speed, .wind.deg, (.wind.gust // "N/A")] | @tsv'
+	)
+	debug "town=$town, weather_desc=$weather_desc, temp=$temp, feels_like=$feels_like, temp_min=$temp_min, temp_max=$temp_max, humidity=$humidity, visibility=$visibility, wind_speed=$wind_speed, wind_dir=$wind_dir, wind_gust=$wind_gust"
 
-  # Apply conversions and formatting for units
-  temp=$(convert_temp "$temp" F)
-  feels_like=$(convert_temp "$feels_like" F)
-  temp_min=$(convert_temp "$temp_min" F)
-  temp_max=$(convert_temp "$temp_max" F)
-  humidity="${humidity}%"
-  visibility="${visibility}m"
-  wind_speed=$(convert_wind_speed_from_mps_to_knots "$wind_speed")
-  wind_dir=$(convert_wind_direction "$wind_dir")
-  wind_gust=$(convert_wind_speed_from_mps_to_knots "$wind_gust")
+	# Apply conversions and formatting for units
+	temp=$(convert_temp "$temp" F)
+	feels_like=$(convert_temp "$feels_like" F)
+	temp_min=$(convert_temp "$temp_min" F)
+	temp_max=$(convert_temp "$temp_max" F)
+	humidity="${humidity}%"
+	visibility="${visibility}m"
+	wind_speed=$(convert_wind_speed_from_mps_to_knots "$wind_speed")
+	wind_dir=$(convert_wind_direction "$wind_dir")
+	wind_gust=$(convert_wind_speed_from_mps_to_knots "$wind_gust")
 
-  # Output as comma-delimited human-readable values
-  echo -n "town: ${town}, weather: ${weather_desc}, temp: ${temp}, feels like: ${feels_like}, low: ${temp_min}, high: ${temp_max}, humidity: ${humidity}, visibility: ${visibility}, wind speed: ${wind_speed}, wind direction: ${wind_dir}, wind gust: ${wind_gust}"
-} && export -f get_weather
+	# Output as comma-delimited human-readable values
+	echo -n "town: ${town}, weather: ${weather_desc}, temp: ${temp}, feels like: ${feels_like}, low: ${temp_min}, high: ${temp_max}, humidity: ${humidity}, visibility: ${visibility}, wind speed: ${wind_speed}, wind direction: ${wind_dir}, wind gust: ${wind_gust}"
+}
 
 # Command line access to the ChatGPT API with conversation history and tool calls
 ask() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-  needs curl
-  needs jq
-  needs glow see https://github.com/charmbracelet/glow
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	needs curl
+	needs jq
+	needs glow see https://github.com/charmbracelet/glow
 
-  local model request response timeout temp_json temp_json_out http_status \
-    openai_host openai_path openai_protocol openai_url local_llm \
-    top_k top_p temperature system_prompt user_prompt repeat_penalty num_ctx \
-    history_file history_temp timestamp continue_conversation discard_history
-  model=${OPENAI_MODEL:-gpt-4o} # see openai docs for other models
-  timeout=${OPENAI_TIMEOUT:-60}
-  openai_host=${OPENAI_HOST:-api.openai.com}
-  openai_path=${OPENAI_PATH:-/v1/chat/completions}
-  openai_protocol=${OPENAI_PROTOCOL:-https}
-  openai_url=${OPENAI_URL:-${openai_protocol}://${openai_host}${openai_path}}
-  top_k=${TOP_K:-40}
-  top_p=${TOP_P:-0.9}
-  repeat_penalty=${REPEAT_PENALTY:-1.1}
-  temperature=${TEMPERATURE:-0.2}
-  num_ctx=${NUM_CTX:-32000}
-  temp_json=$(mktemp -t ask.XXXXXX --tmpdir)
-  temp_json_out=$(mktemp -t ask.XXXXXX --tmpdir)
-  system_prompt="${LLM_SYSTEM_PROMPT:-You are a helpful AI assistant named ChatGPT.}"
-  user_prompt="$*"
-  curl=${CURL:-curl}
-  local_llm=false
-  history_file="${XDG_DATA_HOME:-$HOME/.local/share}/ask_history.json"
-  history_temp=$(mktemp -t ask_history.XXXXXX --tmpdir)
-  timestamp=$(date +"%Y%m%d%H%M%S")
+	local model request response timeout temp_json temp_json_out http_status \
+		openai_host openai_path openai_protocol openai_url local_llm \
+		top_k top_p temperature system_prompt user_prompt repeat_penalty num_ctx \
+		history_file history_temp timestamp continue_conversation discard_history
+	model=${OPENAI_MODEL:-gpt-4o} # see openai docs for other models
+	timeout=${OPENAI_TIMEOUT:-60}
+	openai_host=${OPENAI_HOST:-api.openai.com}
+	openai_path=${OPENAI_PATH:-/v1/chat/completions}
+	openai_protocol=${OPENAI_PROTOCOL:-https}
+	openai_url=${OPENAI_URL:-${openai_protocol}://${openai_host}${openai_path}}
+	top_k=${TOP_K:-40}
+	top_p=${TOP_P:-0.9}
+	repeat_penalty=${REPEAT_PENALTY:-1.1}
+	temperature=${TEMPERATURE:-0.2}
+	num_ctx=${NUM_CTX:-32000}
+	temp_json=$(mktemp -t ask.XXXXXX --tmpdir)
+	temp_json_out=$(mktemp -t ask.XXXXXX --tmpdir)
+	system_prompt="${LLM_SYSTEM_PROMPT:-You are a helpful AI assistant named ChatGPT.}"
+	user_prompt="$*"
+	curl=${CURL:-curl}
+	local_llm=false
+	history_file="${XDG_DATA_HOME:-$HOME/.local/share}/ask_history.json"
+	history_temp=$(mktemp -t ask_history.XXXXXX --tmpdir)
+	timestamp=$(date +"%Y%m%d%H%M%S")
 
-  # Check if the LLM is tooling-capable
-  tooling_capable=false
-  if [[ "${TOOLING_CAPABLE:-}" == "1" || "${TOOLING_CAPABLE:-}" == "true" ]]; then
-    tooling_capable=true
-  fi
+	# Check if the LLM is tooling-capable
+	tooling_capable=false
+	if [[ "${TOOLING_CAPABLE:-}" == "1" || "${TOOLING_CAPABLE:-}" == "true" ]]; then
+		tooling_capable=true
+	fi
 
-  continue_conversation=${CONTINUE_CONVERSATION:-true}  # Set this to false to start a new conversation
-  discard_history=${DISCARD_HISTORY:-false}  # Set this to true to discard the previous history
+	continue_conversation=${CONTINUE_CONVERSATION:-true}  # Set this to false to start a new conversation
+	discard_history=${DISCARD_HISTORY:-false}  # Set this to true to discard the previous history
 
-  if [[ "$discard_history" == "true" ]]; then
-    if [[ -f "$history_file" ]]; then
-      mv "$history_file" "${history_file%.json}_$timestamp.json"
-    fi
-  fi
+	if [[ "$discard_history" == "true" ]]; then
+		if [[ -f "$history_file" ]]; then
+			mv "$history_file" "${history_file%.json}_$timestamp.json"
+		fi
+	fi
 
-  if [[ "$continue_conversation" == "true" && -f "$history_file" ]]; then
-    jq --arg user_prompt "$user_prompt" \
-      '.messages += [{"role": "user", "content": $user_prompt}]' "$history_file" > "$history_temp"
-  else
-    jq -n --arg system_prompt "$system_prompt" --arg user_prompt "$user_prompt" \
-      '{messages: [{"role": "system", "content": $system_prompt}, {"role": "user", "content": $user_prompt}]}' > "$history_temp"
-  fi
+	if [[ "$continue_conversation" == "true" && -f "$history_file" ]]; then
+		jq --arg user_prompt "$user_prompt" \
+			'.messages += [{"role": "user", "content": $user_prompt}]' "$history_file" > "$history_temp"
+	else
+		jq -n --arg system_prompt "$system_prompt" --arg user_prompt "$user_prompt" \
+			'{messages: [{"role": "system", "content": $system_prompt}, {"role": "user", "content": $user_prompt}]}' > "$history_temp"
+	fi
 
-  mv "$history_temp" "$history_file"
+	mv "$history_temp" "$history_file"
 
-  # Only define tools if the LLM is tooling-capable
-  if [[ "$tooling_capable" == "true" ]]; then
-    # {
-    #   "type": "function",
-    #   "function": {
-    #     "name": "get_location",
-    #     "description": "Get the detailed user location. Call this whenever you need to know their location, for example when they ask for the local weather but you need their precise location first.",
-    #     "parameters": {
-    #       "type": "object",
-    #       "properties": {}
-    #     }
-    #   }
-    # },
-    tools='[
-      {
-        "type": "function",
-        "function": {
-          "name": "get_zip",
-          "description": "Get the user zip code. Call this whenever you just need to know their zip code, for example when they ask for the local weather but you need the zip first.",
-          "parameters": {
-            "type": "object",
-            "properties": {}
-          }
-        }
-      },
-      {
-        "type": "function",
-        "function": {
-          "name": "get_weather",
-          "description": "Get the weather at the user location.",
-          "parameters": {
-            "type": "object",
-            "properties": {
-              "zip_code": {
-                "type": "string",
-                "description": "The user zip code."
-              }
-            }
-          }
-        }
-      }
-    ]'
-  fi
+	# Only define tools if the LLM is tooling-capable
+	if [[ "$tooling_capable" == "true" ]]; then
+		# {
+		#   "type": "function",
+		#   "function": {
+		#     "name": "get_location",
+		#     "description": "Get the detailed user location. Call this whenever you need to know their location, for example when they ask for the local weather but you need their precise location first.",
+		#     "parameters": {
+		#       "type": "object",
+		#       "properties": {}
+		#     }
+		#   }
+		# },
+		tools='[
+			{
+				"type": "function",
+				"function": {
+					"name": "get_zip",
+					"description": "Get the user zip code. Call this whenever you just need to know their zip code, for example when they ask for the local weather but you need the zip first.",
+					"parameters": {
+						"type": "object",
+						"properties": {}
+					}
+				}
+			},
+			{
+				"type": "function",
+				"function": {
+					"name": "get_weather",
+					"description": "Get the weather at the user location.",
+					"parameters": {
+						"type": "object",
+						"properties": {
+							"zip_code": {
+								"type": "string",
+								"description": "The user zip code."
+							}
+						}
+					}
+				}
+			}
+		]'
+	fi
 
-  # Create the JSON payload conditionally including tools if tooling-capable
-  if [[ "$tooling_capable" == "true" ]]; then
-    jq -n --arg model "$model" \
-          --argjson temperature "$temperature" \
-          --argjson tools "$tools" \
-          --slurpfile messages "$history_file" \
-      '{
-      model: $model,
-      messages: $messages[0].messages,
-      temperature: $temperature,
-      max_tokens: 1000,
-      tools: $tools,
-      stream: false
-    }' > "$temp_json"
-  else
-    jq -n --arg model "$model" \
-          --argjson temperature "$temperature" \
-          --slurpfile messages "$history_file" \
-      '{
-      model: $model,
-      messages: $messages[0].messages,
-      temperature: $temperature,
-      max_tokens: 1000,
-      stream: false
-    }' > "$temp_json"
-  fi
+	# Create the JSON payload conditionally including tools if tooling-capable
+	if [[ "$tooling_capable" == "true" ]]; then
+		jq -n --arg model "$model" \
+					--argjson temperature "$temperature" \
+					--argjson tools "$tools" \
+					--slurpfile messages "$history_file" \
+			'{
+			model: $model,
+			messages: $messages[0].messages,
+			temperature: $temperature,
+			max_tokens: 1000,
+			tools: $tools,
+			stream: false
+		}' > "$temp_json"
+	else
+		jq -n --arg model "$model" \
+					--argjson temperature "$temperature" \
+					--slurpfile messages "$history_file" \
+			'{
+			model: $model,
+			messages: $messages[0].messages,
+			temperature: $temperature,
+			max_tokens: 1000,
+			stream: false
+		}' > "$temp_json"
+	fi
 
-  http_status=$($curl -w "%{http_code}" -s -o "$temp_json_out" -X POST $openai_url \
-    -H "Content-Type: application/json" \
-    -H "Authorization: Bearer $OPENAI_API_KEY" \
-    --silent \
-    --max-time $timeout \
-    -d "@$temp_json")
+	http_status=$($curl -w "%{http_code}" -s -o "$temp_json_out" -X POST $openai_url \
+		-H "Content-Type: application/json" \
+		-H "Authorization: Bearer $OPENAI_API_KEY" \
+		--silent \
+		--max-time $timeout \
+		-d "@$temp_json")
 
-  if [[ "$http_status" -ne 200 ]]; then
-    warn "Error: API request failed with status code $http_status."
-    warn "Response:"
-    cat "$temp_json_out" >&2
-    return 1
-  fi
+	if [[ "$http_status" -ne 200 ]]; then
+		warn "Error: API request failed with status code $http_status."
+		warn "Response:"
+		cat "$temp_json_out" >&2
+		return 1
+	fi
 
-  # Check if there is a tool call in the response (only if tooling-capable)
-  if [[ "$tooling_capable" == "true" ]]; then
-    debug "temp_json_out:"
-    debug "$(cat $temp_json_out)"
-    tool_calls=$(jq -r '.choices[0].message.tool_calls // empty' < "$temp_json_out")
-    debug "tool_calls (initial): $tool_calls"
-    if [[ -n "$tool_calls" ]]; then
-      tool_results=""
+	# Check if there is a tool call in the response (only if tooling-capable)
+	if [[ "$tooling_capable" == "true" ]]; then
+		debug "temp_json_out:"
+		debug "$(cat $temp_json_out)"
+		tool_calls=$(jq -r '.choices[0].message.tool_calls // empty' < "$temp_json_out")
+		debug "tool_calls (initial): $tool_calls"
+		if [[ -n "$tool_calls" ]]; then
+			tool_results=""
 
-      # Collect all tool results
-      debug "raw tool_calls: $tool_calls"
-      tool_calls=$(echo "$tool_calls" | jq -c '.[]')
-      debug "tool_calls (parsed): $tool_calls"
-      for tool_call in $tool_calls; do
-        debug "tool_call: $tool_call"
-        tool_name=$(echo "$tool_call" | jq -r '.function.name')
-        debug "tool_name: $tool_name"
-        tool_arguments=$(echo "$tool_call" | jq -c '.function.arguments')
-        debug "tool_arguments: $tool_arguments"
-        case "$tool_name" in
-          "get_zip")
-            # Perform the get_location tool call
-            tool_result=$(get_zip)
-            debug "tool_result for get_zip: $tool_result"
-            # replace real linefeeds with actual \n
-            # tool_result=$(echo "$tool_result" | $SED ':a;N;$!ba;s/\n/\\n/g')
-            if [[ -n "$tool_results" ]]; then
-              tool_results+=","
-            fi
-            tool_results+="{\"role\":\"function\",\"name\":\"$tool_name\",\"content\":\"$tool_result\"}"
-            ;;
-          # "get_location")
-          #   # Perform the get_location tool call
-          #   tool_result=$(get_location)
-          #   debug "tool_result for get_location: $tool_result"
-          #   # replace real linefeeds with actual \n
-          #   # tool_result=$(echo "$tool_result" | sed ':a;N;$!ba;s/\n/\\n/g')
-          #   if [[ -n "$tool_results" ]]; then
-          #     tool_results+=","
-          #   fi
-          #   tool_results+="{\"role\":\"function\",\"name\":\"$tool_name\",\"content\":\"$tool_result\"}"
-          #   ;;
-          "get_weather")
-            # Perform the get_weather tool call
-            local zip=$(echo "$tool_arguments" | jq -r 'fromjson | .zip_code')
-            debug "zip: $zip"
-            tool_result=$(get_weather "$zip")
-            debug "tool_result for get_weather: $tool_result"
-            # replace real linefeeds with actual \n
-            # tool_result=$(echo "$tool_result" | sed ':a;N;$!ba;s/\n/\\n/g')
-            if [[ -n "$tool_results" ]]; then
-              tool_results+=","
-            fi
-            tool_results+="{\"role\":\"function\",\"name\":\"$tool_name\",\"content\":\"$tool_result\"}"
-            debug "tool_results: $tool_results"
-            ;;
-          "multi_tool_use.parallel")
-            note "Parallel multi-tool use is not supported in this script (yet)."
-            note "The tool_call was: $tool_call"
-            return 1
-            ;;
-          *)
-            warn "Unknown tool: $tool_name"
-            return 1
-            ;;
-        esac
-      done
+			# Collect all tool results
+			debug "raw tool_calls: $tool_calls"
+			tool_calls=$(echo "$tool_calls" | jq -c '.[]')
+			debug "tool_calls (parsed): $tool_calls"
+			for tool_call in $tool_calls; do
+				debug "tool_call: $tool_call"
+				tool_name=$(echo "$tool_call" | jq -r '.function.name')
+				debug "tool_name: $tool_name"
+				tool_arguments=$(echo "$tool_call" | jq -c '.function.arguments')
+				debug "tool_arguments: $tool_arguments"
+				case "$tool_name" in
+					"get_zip")
+						# Perform the get_location tool call
+						tool_result=$(get_zip)
+						debug "tool_result for get_zip: $tool_result"
+						# replace real linefeeds with actual \n
+						# tool_result=$(echo "$tool_result" | $SED ':a;N;$!ba;s/\n/\\n/g')
+						if [[ -n "$tool_results" ]]; then
+							tool_results+=","
+						fi
+						tool_results+="{\"role\":\"function\",\"name\":\"$tool_name\",\"content\":\"$tool_result\"}"
+						;;
+					# "get_location")
+					#   # Perform the get_location tool call
+					#   tool_result=$(get_location)
+					#   debug "tool_result for get_location: $tool_result"
+					#   # replace real linefeeds with actual \n
+					#   # tool_result=$(echo "$tool_result" | sed ':a;N;$!ba;s/\n/\\n/g')
+					#   if [[ -n "$tool_results" ]]; then
+					#     tool_results+=","
+					#   fi
+					#   tool_results+="{\"role\":\"function\",\"name\":\"$tool_name\",\"content\":\"$tool_result\"}"
+					#   ;;
+					"get_weather")
+						# Perform the get_weather tool call
+						local zip=$(echo "$tool_arguments" | jq -r 'fromjson | .zip_code')
+						debug "zip: $zip"
+						tool_result=$(get_weather "$zip")
+						debug "tool_result for get_weather: $tool_result"
+						# replace real linefeeds with actual \n
+						# tool_result=$(echo "$tool_result" | sed ':a;N;$!ba;s/\n/\\n/g')
+						if [[ -n "$tool_results" ]]; then
+							tool_results+=","
+						fi
+						tool_results+="{\"role\":\"function\",\"name\":\"$tool_name\",\"content\":\"$tool_result\"}"
+						debug "tool_results: $tool_results"
+						;;
+					"multi_tool_use.parallel")
+						note "Parallel multi-tool use is not supported in this script (yet)."
+						note "The tool_call was: $tool_call"
+						return 1
+						;;
+					*)
+						warn "Unknown tool: $tool_name"
+						return 1
+						;;
+				esac
+			done
 
-      # Wrap the collected results in a JSON array
-      # but first escape all newlines
-      # tool_results=$(echo -n "$tool_results" | sed ':a;N;$!ba;s/\n/\\n/g')
-      tool_results="[$tool_results]"
-      debug "messages: $(cat $history_file | $SED ':a;N;$!ba;s/\n/\\n/g')"
-      debug "Tool results: $tool_results" # | $SED ':a;N;$!ba;s/\n/\\n/g'
-      # debug "jq '.' $history_file"
-      # debug "$DEBUG" && jq '.' "$history_file"
-      # Send the combined results back to ChatGPT
-      jq -n --arg model "$model" \
-            --argjson results "$tool_results" \
-            --slurpfile messages "$history_file" \
-        '{
-          model: $model,
-          messages: (($messages[0].messages // []) + $results),
-          max_tokens: 1000,
-          stream: false
-        }' > "$temp_json"
+			# Wrap the collected results in a JSON array
+			# but first escape all newlines
+			# tool_results=$(echo -n "$tool_results" | sed ':a;N;$!ba;s/\n/\\n/g')
+			tool_results="[$tool_results]"
+			debug "messages: $(cat $history_file | $SED ':a;N;$!ba;s/\n/\\n/g')"
+			debug "Tool results: $tool_results" # | $SED ':a;N;$!ba;s/\n/\\n/g'
+			# debug "jq '.' $history_file"
+			# debug "$DEBUG" && jq '.' "$history_file"
+			# Send the combined results back to ChatGPT
+			jq -n --arg model "$model" \
+						--argjson results "$tool_results" \
+						--slurpfile messages "$history_file" \
+				'{
+					model: $model,
+					messages: (($messages[0].messages // []) + $results),
+					max_tokens: 1000,
+					stream: false
+				}' > "$temp_json"
 
-      http_status=$($curl -w "%{http_code}" -s -o "$temp_json_out" -X POST $openai_url \
-        -H "Content-Type: application/json" \
-        -H "Authorization: Bearer $OPENAI_API_KEY" \
-        --silent \
-        --max-time $timeout \
-        -d "@$temp_json")
+			http_status=$($curl -w "%{http_code}" -s -o "$temp_json_out" -X POST $openai_url \
+				-H "Content-Type: application/json" \
+				-H "Authorization: Bearer $OPENAI_API_KEY" \
+				--silent \
+				--max-time $timeout \
+				-d "@$temp_json")
 
-      if [[ "$http_status" -ne 200 ]]; then
-        warn "Error: API request failed with status code $http_status."
-        warn "Response:"
-        cat "$temp_json_out" >&2
-        return 1
-      fi
+			if [[ "$http_status" -ne 200 ]]; then
+				warn "Error: API request failed with status code $http_status."
+				warn "Response:"
+				cat "$temp_json_out" >&2
+				return 1
+			fi
 
-      response=$(jq -r '.choices[0].message.content // .message.content' < "$temp_json_out" 2>/dev/null | $SED 's/^[ \t]*//;s/[ \t]*$//')
-    else
-      # No tool call, just process the response
-      debug "temp_json_out=$(cat $temp_json_out)"
-      response=$(jq -r '.choices[0].message.content // .message.content' < "$temp_json_out" 2>/dev/null | $SED 's/^[ \t]*//;s/[ \t]*$//')
-    fi
-  else
-    # Non-tooling-capable LLM, just process the response directly
-    debug "temp_json_out=$(cat $temp_json_out)"
-    response=$(jq -r '.choices[0].message.content // .message.content' < "$temp_json_out" 2>/dev/null | $SED 's/^[ \t]*//;s/[ \t]*$//')
-  fi
+			response=$(jq -r '.choices[0].message.content // .message.content' < "$temp_json_out" 2>/dev/null | $SED 's/^[ \t]*//;s/[ \t]*$//')
+		else
+			# No tool call, just process the response
+			debug "temp_json_out=$(cat $temp_json_out)"
+			response=$(jq -r '.choices[0].message.content // .message.content' < "$temp_json_out" 2>/dev/null | $SED 's/^[ \t]*//;s/[ \t]*$//')
+		fi
+	else
+		# Non-tooling-capable LLM, just process the response directly
+		debug "temp_json_out=$(cat $temp_json_out)"
+		response=$(jq -r '.choices[0].message.content // .message.content' < "$temp_json_out" 2>/dev/null | $SED 's/^[ \t]*//;s/[ \t]*$//')
+	fi
 
-  if [[ "$response" == "null" || "$?" != "0" ]]; then
-    warn "Error:"
-    printf "%b" "$response" >&2
-  else
-    printf "%s" "$response" | $SED -e 's/^[\\n]\+//' -e 's/^[\n]\+//' | glow -
+	if [[ "$response" == "null" || "$?" != "0" ]]; then
+		warn "Error:"
+		printf "%b" "$response" >&2
+	else
+		printf "%s" "$response" | $SED -e 's/^[\\n]\+//' -e 's/^[\n]\+//' | glow -
 
-    # Append the assistant's response to the conversation history
-    jq --arg response "$response" \
-      '.messages += [{"role": "assistant", "content": $response}]' "$history_file" > "$history_temp"
-    mv "$history_temp" "$history_file"
-  fi
-} && export -f ask
-
-source_relative_once $HOME/dotfiles/bin/functions/truthy.bash
+		# Append the assistant's response to the conversation history
+		jq --arg response "$response" \
+			'.messages += [{"role": "assistant", "content": $response}]' "$history_file" > "$history_temp"
+		mv "$history_temp" "$history_file"
+	fi
+}
 
 if truthy RUN_DOTFILE_TESTS; then
-  # IMPORTANT!
-  # how do we even test this function? Pass in a mocked curl somehow?
-  source_relative_once $HOME/dotfiles/bin/functions/assert.bash
-  source_relative_once $HOME/dotfiles/bin/functions/test_reporter.bash
-  source_relative_once $HOME/dotfiles/bin/functions/utility_functions.bash
+	# Set up test environment
+	temp_json_out=$(mktemp)
+	temp_json=$(mktemp)
+	history_file=$(mktemp)
+	if [[ -f "$history_file" ]]; then
+		cp "$history_file" "${history_file%.json}_backup$$.json"
+	fi
 
-  # Set up test environment
-  temp_json_out=$(mktemp)
-  temp_json=$(mktemp)
-  history_file=$(mktemp)
-  if [[ -f "$history_file" ]]; then
-    cp "$history_file" "${history_file%.json}_backup$$.json"
-  fi
-
-  # Define the mocked curl function for testing
-  mocked_curl() {
-    [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-    local output_file
-    while getopts ":o:w:X:H:d:s" opt; do
-      case ${opt} in
-      o )
-        output_file=$OPTARG
-        ;;
-      ? )
-        ;;
-      : )
-      echo "Option -$OPTARG requires an argument." >&2
-        ;;
-      esac
-    done
-    cat <<EOF | trim_leading_heredoc_whitespace | unwrap > "$output_file"
-      {"id":"chatcmpl-6q7qCBoIJGlRldK97GQrLAcfOqXwS","object":"chat.completion",
-      "created":1677881216,"model":"test-model","usage":{"prompt_tokens":29,
-      "completion_tokens":96,"total_tokens":125},"choices":[{"message":{"role":"assistant",
-      "content":"\n\nThere is no direct connection between \"The Last Question\" and\n\"The Last Answer\" by Isaac Asimov. \"The Last Answer\" is a short story about\na man who searches for the meaning of life and death, while \"The Last Question\"\nis a science fiction story that explores the concept of the end of the universe and\nthe possibility of creating a new one. However, both stories deal with philosophical\nthemes about the nature of existence and the ultimate fate of humanity."},
-      "finish_reason":null,"index":0}]}
+	# Define the mocked curl function for testing
+	mocked_curl() {
+		[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+		local output_file
+		while getopts ":o:w:X:H:d:s" opt; do
+			case ${opt} in
+			o )
+				output_file=$OPTARG
+				;;
+			? )
+				;;
+			: )
+			echo "Option -$OPTARG requires an argument." >&2
+				;;
+			esac
+		done
+		cat <<EOF | trim_leading_heredoc_whitespace | unwrap > "$output_file"
+			{"id":"chatcmpl-6q7qCBoIJGlRldK97GQrLAcfOqXwS","object":"chat.completion",
+			"created":1677881216,"model":"test-model","usage":{"prompt_tokens":29,
+			"completion_tokens":96,"total_tokens":125},"choices":[{"message":{"role":"assistant",
+			"content":"\n\nThere is no direct connection between \"The Last Question\" and\n\"The Last Answer\" by Isaac Asimov. \"The Last Answer\" is a short story about\na man who searches for the meaning of life and death, while \"The Last Question\"\nis a science fiction story that explores the concept of the end of the universe and\nthe possibility of creating a new one. However, both stories deal with philosophical\nthemes about the nature of existence and the ultimate fate of humanity."},
+			"finish_reason":null,"index":0}]}
 EOF
-    echo 200 # assumes http_code was the curl format parameter
-  }
+		echo 200 # assumes http_code was the curl format parameter
+	}
 
-  # Define setup function (empty in this case, but included for completeness)
-  ask_test_setup() {
-    :  # No additional setup needed beyond what's already done
-  }
+	# Define setup function (empty in this case, but included for completeness)
+	ask_test_setup() {
+		:  # No additional setup needed beyond what's already done
+	}
 
-  # Define the test function
-  ask_test_run() {
-    # TESTS
-    resp=$(CURL=mocked_curl ask "What is the connection between \"The Last Question\" and \"The Last Answer\" by Isaac Asimov?")
-    assert "$resp" =~ "connection"
+	# Define the test function
+	ask_test_run() {
+		# TESTS
+		resp=$(CURL=mocked_curl ask "What is the connection between \"The Last Question\" and \"The Last Answer\" by Isaac Asimov?")
+		assert "$resp" =~ "connection"
 
-    # If we get here, all tests passed
-    return 0
-  }
+		# If we get here, all tests passed
+		return 0
+	}
 
-  # Define teardown function
-  ask_test_teardown() {
-    # Clean up any mocked functions
-    if declare -F mocked_curl >/dev/null; then
-      unset -f mocked_curl
-    fi
+	# Define teardown function
+	ask_test_teardown() {
+		# Clean up any mocked functions
+		if declare -F mocked_curl >/dev/null; then
+			unset -f mocked_curl
+		fi
 
-    # Restore original history file after removing the test one
-    if [ -f "${history_file%.json}_backup$$.json" ]; then
-      rm -f "$history_file"
-      mv "${history_file%.json}_backup$$.json" "$history_file"
-    fi
+		# Restore original history file after removing the test one
+		if [ -f "${history_file%.json}_backup$$.json" ]; then
+			rm -f "$history_file"
+			mv "${history_file%.json}_backup$$.json" "$history_file"
+		fi
 
-    # Clean up temp files
-    rm -f "$temp_json_out" "$temp_json"
-  }
+		# Clean up temp files
+		rm -f "$temp_json_out" "$temp_json"
+	}
 
-  # Run the test suite with proper setup and teardown
-  run_test_suite "ask" ask_test_setup ask_test_run ask_test_teardown
+	# Run the test suite with proper setup and teardown
+	# run_test_suite "ask" ask_test_setup ask_test_run ask_test_teardown
 
-  # Clean up the test functions
-  unset -f ask_test_setup ask_test_run ask_test_teardown
+	# Clean up the test functions
+	unset -f ask_test_setup ask_test_run ask_test_teardown
 fi
 
-# Export the function so it can be used by find -exec
-export -f ask
-
-# Run the function, passing along any args, if this file was run directly (such as via sudo) instead of as an include
-# Sometimes, $0 contains a leading dash to indicate an interactive (or is it login?) shell,
-# which is apparently an old convention (which also broke the basename call on OS X)
-_me=$(basename "${0##\-}")
-if [ "$_me" = "ask" ]; then
-	$_me "$@"
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
 fi
-unset _me

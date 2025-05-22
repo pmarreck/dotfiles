@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+
+exclude_path() {
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	local AWK=$(which awk || echo -n "/run/current-system/sw/bin/awk") # in case you accidentally exclude the path that has awk...
+	function docs() {
+		echo "Usage: exclude_path [-o|-h|--help] <path_to_exclude> [name_of_path_var, defaults to PATH]" >&2
+		echo "Setting -o will print the new path to stdout instead of exporting it" >&2
+	}
+	local stdout=false
+	local IGNORE_EXCLUDE_PATH_WARNINGS=${IGNORE_EXCLUDE_PATH_WARNINGS:-false}
+	case "$1" in
+		-h|--help)
+			docs
+			return 0
+			;;
+		-o)
+			stdout=true
+			shift
+			;;
+		*)
+			;;
+	esac
+	local dir="${1%/}"  # discard trailing slash
+	local var="${2:-PATH}"
+	if [ -z "$dir" ]; then
+		docs
+		return 2  # incorrect usage return code
+	fi
+	case "$dir" in
+		/*) :;;  # absolute path, do nothing
+		*) $IGNORE_EXCLUDE_PATH_WARNINGS || echo "exclude_path warning: '$dir' is not an absolute path, which may be unexpected" >&2;;
+	esac
+	local paths=${!var}
+	[ -n "${DEBUG_PATHCONFIG}" ] && echo "Upon entry to exclude_path($dir), ${var} is ${!var}" >&2
+	if [ -z "$paths" ]; then
+		$stdout || $IGNORE_EXCLUDE_PATH_WARNINGS || echo "exclude_path warning: $var is empty, nothing to exclude" >&2
+		return
+	fi
+	# Filter out the specified directory
+	local newpath=$(echo -n "$paths" | $AWK -v RS=: -v ORS=: -v path="$dir" '$0 != path')
+	# Remove trailing colon (awk's ORS (output record separator) adds a trailing colon)
+	newpath=${newpath%:}
+	[ -n "${DEBUG_PATHCONFIG}" ] && echo "After exclude_path($dir), ${var} is now $newpath" >&2
+	$stdout && echo "$newpath" || export ${var}="$newpath"
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

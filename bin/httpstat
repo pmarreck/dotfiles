@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+
+httpstat() {
+	local default="www.google.com"
+	local site="${1:-$default}"
+	case $site in
+		-h | --help)
+			echo -e "\e[1mhttpstat\e[0m lets you check your ability to access http[s] sites."
+			echo "usage: httpstat [www.whatever.com]"
+			echo "(you should omit the https://)"
+			echo "if param is omitted, uses $default; this can be used"
+			echo "to see if you can access anything to begin with over https."
+			echo "(https is assumed)"
+			echo "It returns the HTTP status code of the request to stdout."
+			return 0
+		;;
+		*)
+			# Get HTTP status code
+			local status=$(curl -s -o /dev/null -w "%{http_code}" "https://$site")
+
+			# Map status codes to descriptions
+			local description
+			case $status in
+				200) description="OK";;
+				201) description="Created";;
+				202) description="Accepted";;
+				204) description="No Content";;
+				301) description="Moved Permanently";;
+				302) description="Found";;
+				304) description="Not Modified";;
+				400) description="Bad Request";;
+				401) description="Unauthorized";;
+				403) description="Forbidden";;
+				404) description="Not Found";;
+				405) description="Method Not Allowed";;
+				500) description="Internal Server Error";;
+				502) description="Bad Gateway";;
+				503) description="Service Unavailable";;
+				504) description="Gateway Timeout";;
+				*) description="Unknown Status";;
+			esac
+
+			# Output status and description
+			echo "$status"
+			echo "$description" >&2
+		;;
+	esac
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

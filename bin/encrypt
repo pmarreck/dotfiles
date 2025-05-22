@@ -1,0 +1,175 @@
+#!/usr/bin/env bash
+
+encrypt() {
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	needs gpg
+	
+	# Check for test mode
+	if [[ "$1" == "--test" ]]; then
+		_test_encrypt_decrypt
+		return $?
+	fi
+	
+	# Default values
+	local input_file=""
+	local output_file=""
+	local input_string=""
+	local password=""
+	local gpg_args=()
+	local use_stdin=false
+	local use_stdout=false
+	local use_string=false
+	local use_password=false
+	
+	# Show help if no arguments
+	if [[ $# -eq 0 ]]; then
+		encrypt --help
+		return
+	fi
+	
+	# Parse arguments using case and shift
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+			-h|--help)
+				echo 'Usage: encrypt [-i input|-] [-o output|-] [-- <additional gpg options>]'
+				echo '       encrypt -s "string" [-o output|-] [-- <additional gpg options>]'
+				echo '       encrypt --test'
+				echo "This function is defined in ${BASH_SOURCE[0]}"
+				echo 'Options:'
+				echo '  -i, --input <file>   Input file to encrypt (use - for stdin)'
+				echo '  -s, --string <text>  Text string to encrypt'
+				echo '  -o, --output <file>  Output file for encrypted data (use - for stdout)'
+				echo '  -p, --password <pw>  Use this password (INSECURE: visible in history!)'
+				echo '  --test               Run self-test and exit'
+				echo '  --                   All options after this are passed directly to gpg'
+				echo 'Examples:'
+				echo '  encrypt -i secret.txt                      # Encrypts to secret.txt.gpg'
+				echo '  encrypt -i secret.txt -o custom.gpg        # Encrypts to custom output path'
+				echo '  encrypt -s "secret text" -o secret.gpg     # Encrypt string to file'
+				echo '  echo "secret" | encrypt -i - -o secret.gpg # Encrypt stdin to file'
+				echo '  encrypt -i secret.txt -o -                 # Encrypt to stdout'
+				echo '  encrypt -i secret.txt -- --armor           # Outputs ASCII-armored encryption'
+				echo '  encrypt -i secret.txt -p "pass" -o out.gpg # Use password from command line'
+				echo '  encrypt --test                             # Run self-test'
+				return
+				;;
+			-i|--input)
+				if [[ $# -lt 2 ]]; then
+					echo "Error: -i/--input option requires a file or -" >&2
+					return 1
+				fi
+				input_file="$2"
+				if [[ "$input_file" == "-" ]]; then
+					use_stdin=true
+					input_file=""
+				fi
+				shift 2
+				;;
+			-s|--string)
+				if [[ $# -lt 2 ]]; then
+					echo "Error: -s/--string option requires a text string" >&2
+					return 1
+				fi
+				input_string="$2"
+				use_string=true
+				shift 2
+				;;
+			-o|--output)
+				if [[ $# -lt 2 ]]; then
+					echo "Error: -o/--output option requires a file or -" >&2
+					return 1
+				fi
+				output_file="$2"
+				if [[ "$output_file" == "-" ]]; then
+					use_stdout=true
+					output_file=""
+				fi
+				shift 2
+				;;
+			-p|--password)
+				if [[ $# -lt 2 ]]; then
+					echo "Error: -p/--password option requires a password" >&2
+					return 1
+				fi
+				password="$2"
+				use_password=true
+				shift 2
+				;;
+			--)
+				shift
+				# All remaining args are for gpg
+				gpg_args+=("$@")
+				break
+				;;
+			*)
+				# If no explicit -i was given, treat first non-option as input file
+				if [[ -z "$input_file" && ! "$1" =~ ^- ]]; then
+					input_file="$1"
+				else
+					# Otherwise, pass to gpg
+					gpg_args+=("$1")
+				fi
+				shift
+				;;
+		esac
+	done
+	
+	# Construct the base command
+	local cmd=(gpg --symmetric -z 9 --require-secmem --cipher-algo AES256 --s2k-cipher-algo AES256 --s2k-digest-algo SHA512 --s2k-mode 3 --s2k-count 65000000 --compress-algo BZIP2)
+	
+	# Add password if specified
+	if [[ "$use_password" == true ]]; then
+		cmd+=(--batch --passphrase "$password")
+	fi
+	
+	# Add output file if specified
+	if [[ -n "$output_file" ]]; then
+		cmd+=("-o" "$output_file")
+	fi
+	
+	# Add any passthrough arguments
+	if [[ ${#gpg_args[@]} -gt 0 ]]; then
+		cmd+=("${gpg_args[@]}")
+	fi
+	
+	# Add input file if specified and not using stdin or string
+	if [[ -n "$input_file" && "$use_stdin" == false && "$use_string" == false ]]; then
+		cmd+=("$input_file")
+	fi
+	
+	# Echo the command to stderr (hide password)
+	local cmd_display=("${cmd[@]}")
+	if [[ "$use_password" == true ]]; then
+		# Replace password with ****** in display
+		for i in "${!cmd_display[@]}"; do
+			if [[ "${cmd_display[$i]}" == "--passphrase" ]]; then
+				cmd_display[$((i+1))]="******"
+			fi
+		done
+	fi
+	>&2 echo -e "${ANSI}${TXTYLW}${cmd_display[*]}${ANSI}${TXTRST}"
+	
+	# Execute the command
+	if [[ "$use_string" == true ]]; then
+		# Use provided string
+		echo -n "$input_string" | "${cmd[@]}"
+	elif [[ "$use_stdin" == true ]]; then
+		# Read from stdin
+		"${cmd[@]}"
+	else
+		# Standard execution
+		"${cmd[@]}"
+	fi
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

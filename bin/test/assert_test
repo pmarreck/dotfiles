@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+
+test_fail_count=0
+test_output=""
+
+test_fail() {
+  ((test_fail_count++))
+  test_output+="$(red_text "[FAIL]") $1\n"
+}
+test_success() {
+  test_output+="$(green_text "[PASS]") $1\n"
+}
+
+silently() { "$@" &>/dev/null; }
+
+# TEST CASES
+# Passing equality
+t="1 should equal 1"
+silently assert '1' == '1' "$t" && test_success "$t" || test_fail "$t"
+
+# Passing inequality
+t="1 should not equal 2"
+silently assert '1' != '2' "$t" && test_success "$t" || test_fail "$t"
+
+# Failing equality
+t="1 should not equal 2 (fail)"
+silently assert '1' == '2' "$t" && test_fail "$t" || test_success "$t"
+
+# Failing inequality
+t="1 should equal 1 (fail)"
+silently assert '1' != '1' "$t" && test_fail "$t" || test_success "$t"
+
+# Regex match (should pass)
+t="abc matches ^a.*c$"
+silently assert 'abc' =~ '^a.*c$' "$t" && test_success "$t" || test_fail "$t"
+
+# Regex non-match (should fail)
+t="abc does not match ^b"
+silently assert 'abc' =~ '^b' "$t" && test_fail "$t" || test_success "$t"
+
+# Regex negative match (should pass)
+t="abc does not match ^z (negative match)"
+silently assert 'abc' !~ '^z' "$t" && test_success "$t" || test_fail "$t"
+
+# Regex negative match (should fail)
+t="abc should not match ^a (fail)"
+silently assert 'abc' !~ '^a' "$t" && test_fail "$t" || test_success "$t"
+
+# Unknown operator (should fail and print error)
+t="Unknown operator test"
+silently assert '1' ?? '1' "$t" && test_fail "$t" || test_success "$t"
+
+# Not enough arguments (should fail and print error)
+t="Not enough arguments"
+silently assert '1' == "$t" && test_fail "$t" || test_success "$t"
+
+# Arguments with newlines (should pass)
+t="Newline equality"
+silently assert $'foo\nbar' == $'foo\nbar' "$t" && test_success "$t" || test_fail "$t"
+
+# Arguments with newlines (should fail)
+t="Newline inequality (fail)"
+silently assert $'foo\nbar' == $'foo\nbaz' "$t" && test_fail "$t" || test_success "$t"
+
+# Empty string equality (should pass)
+t="Empty string equality"
+silently assert '' == '' "$t" && test_success "$t" || test_fail "$t"
+
+# Empty string inequality (should fail)
+t="Empty string inequality (fail)"
+silently assert '' != '' "$t" && test_fail "$t" || test_success "$t"
+# END TEST CASES
+
+unsets() {
+  local tfc=${test_fail_count:-0}
+  unset test_fail_count
+  unset test_output
+  unset test_fail
+  unset test_success
+  unset t
+  unset silently
+  unset unsets && return $tfc
+}
+
+if [ $test_fail_count -gt 0 ]; then
+  echo -e "$test_output"
+  puts --red "Test of assert failed: $test_fail_count failures"
+else
+  echo -e "$test_output"
+  puts --green "Test of assert passed!"
+fi
+
+unsets
+exit $?

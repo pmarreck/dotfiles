@@ -1,0 +1,77 @@
+#!/bin/sh
+
+# set -x 
+
+NULL=${NULL:-/dev/null}
+# define silently function here because it needs to know vars in the current namespace
+. "$HOME/dotfiles/bin/src/silently.sh"
+
+. "$HOME/dotfiles/bin/src/truthy.sh"
+
+truthy_test() {
+  test_fail_count=0
+  test_output=""
+  t="" input="" expected="" got=""
+
+  test_fail() {
+    test_output="${test_output}$(red_text "[FAIL]") $1; expected: '$2'; got: '$3'\n"
+    test_fail_count=$((test_fail_count+1))
+  }
+  test_success() {
+    test_output="${test_output}$(green_text "[PASS]") $1\n"
+  }
+
+  # Truthy values
+  _a=1; _b=true; _c=yes; _d=on; _e=y; _f=enable; _g=enabled; _h=TRUE; _i=YES
+  t="1 is truthy"; silently truthy _a; [ "$?" = 0 ] && test_success "$t" || test_fail "$t" 0 $?
+  t="true is truthy"; silently truthy _b; [ "$?" = 0 ] && test_success "$t" || test_fail "$t" 0 $?
+  t="yes is truthy"; silently truthy _c; [ "$?" = 0 ] && test_success "$t" || test_fail "$t" 0 $?
+  t="on is truthy"; silently truthy _d; [ "$?" = 0 ] && test_success "$t" || test_fail "$t" 0 $?
+  t="y is truthy"; silently truthy _e; [ "$?" = 0 ] && test_success "$t" || test_fail "$t" 0 $?
+  t="enable is truthy"; silently truthy _f; [ "$?" = 0 ] && test_success "$t" || test_fail "$t" 0 $?
+  t="enabled is truthy"; silently truthy _g; [ "$?" = 0 ] && test_success "$t" || test_fail "$t" 0 $?
+  t="TRUE is truthy"; silently truthy _h; [ "$?" = 0 ] && test_success "$t" || test_fail "$t" 0 $?
+  t="YES is truthy"; silently truthy _i; [ "$?" = 0 ] && test_success "$t" || test_fail "$t" 0 $?
+
+  # Falsey values
+  _A=0; _B=false; _D=no; _E=off; _F=disable; _G=disabled; _H=n; _I=FALSE; _J=NO
+  t="0 is falsey"; silently falsey _A; [ "$?" = 0 ] && test_success "$t" || test_fail "$t" 0 $?
+  t="false is falsey"; silently falsey _B; [ "$?" = 0 ] && test_success "$t" || test_fail "$t" 0 $?
+  t="no is falsey"; silently falsey _D; [ "$?" = 0 ] && test_success "$t" || test_fail "$t" 0 $?
+  t="off is falsey"; silently falsey _E; [ "$?" = 0 ] && test_success "$t" || test_fail "$t" 0 $?
+  t="disable is falsey"; silently falsey _F; [ "$?" = 0 ] && test_success "$t" || test_fail "$t" 0 $?
+  t="disabled is falsey"; silently falsey _G; [ "$?" = 0 ] && test_success "$t" || test_fail "$t" 0 $?
+  t="n is falsey"; silently falsey _H; [ "$?" = 0 ] && test_success "$t" || test_fail "$t" 0 $?
+  t="FALSE is falsey"; silently falsey _I; [ "$?" = 0 ] && test_success "$t" || test_fail "$t" 0 $?
+  t="NO is falsey"; silently falsey _J; [ "$?" = 0 ] && test_success "$t" || test_fail "$t" 0 $?
+
+  # Unset and empty
+  unset _C
+  t="unset is falsey"; silently falsey _C; [ "$?" = 0 ] && test_success "$t" || test_fail "$t" 0 $?
+  t="unset is not truthy"; silently truthy _C; [ "$?" = 1 ] && test_success "$t" || test_fail "$t" 1 $?
+  _empty=""; t="empty string is truthy"; silently truthy _empty; [ "$?" = 0 ] && test_success "$t" || test_fail "$t" 0 $? 
+  t="empty string is not falsey"; silently falsey _empty; [ "$?" = 1 ] && test_success "$t" || test_fail "$t" 1 $?
+
+  # Invalid variable name
+  t="invalid var name is error"; silently truthy '1bad'; [ "$?" = 2 ] && test_success "$t" || test_fail "$t" 2 $?
+
+  # END TEST CASES
+
+  if [ $test_fail_count -gt 0 ]; then
+    echo -e "$test_output"
+    puts --red "Test of truthy failed: $test_fail_count failures"
+  else
+    echo -e "$test_output"
+    puts --green "Test of truthy passed!"
+  fi
+  return $test_fail_count
+}
+
+
+# Run the tests if this file is executed directly or with --test
+case "$(basename "${0##-}")" in
+  truthy_test|falsey_test)
+    truthy_test
+    ;;
+esac
+[ "$1" = "--test" ] && truthy_test

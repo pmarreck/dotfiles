@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+
+# Get the Linux distribution version or return the macOS version on macOS
+distro_version() {
+	local os_release_file="${1:-/etc/os-release}"
+	
+	# Check if we're on macOS
+	if [ "$(uname)" = "Darwin" ]; then
+		if command -v sw_vers >/dev/null 2>&1; then
+			sw_vers -productVersion
+		else
+			echo "Unknown macOS version" >&2
+			return 1
+		fi
+		return 0
+	fi
+	
+	# Check if we're on Windows (MSYS/Cygwin/MinGW)
+	if [[ "$OSTYPE" == msys* || "$OSTYPE" == cygwin* || "$OSTYPE" == mingw* ]]; then
+		# Try to get Windows version using systeminfo if available
+		if command -v systeminfo >/dev/null 2>&1; then
+			systeminfo | grep -i "OS Version:" | cut -d: -f2 | tr -d ' '
+		else
+			echo "Unknown Windows version" >&2
+			return 1
+		fi
+		return 0
+	fi
+	
+	# For Linux, read from os-release file
+	if [ -f "$os_release_file" ]; then
+		# shellcheck disable=SC2016
+		$AWK -F= '$1=="VERSION_ID"{gsub(/(^["]|["]$)/,"",$2);print$2}' "$os_release_file"
+		return 0
+	else
+		echo "Unknown" >&2
+		return 1
+	fi
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

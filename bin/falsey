@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+
+falsey() {
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "$0" "$0" && return
+
+	truthy "$1" && return 1 || return 0
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

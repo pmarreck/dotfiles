@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+
+# Minimalist rehash function for shell refreshing
+rehash() {
+	# Skip all tests and hooks during rehash
+	export SKIP_DOTFILE_TESTS=true
+	export TEST_VERBOSE=false
+	export EXPAND_TEST_VERBOSE=false
+	
+	# Save current environment settings
+	local OLD_LAST_DOTFILE_RUN="${LAST_DOTFILE_RUN:-}"
+	
+	# Clear source tracking
+	unset _SOURCED_FILES
+	
+	# Source only the essential files
+	if [[ -f "$HOME/dotfiles/bin/aliases.sh" ]]; then
+		source "$HOME/dotfiles/bin/aliases.sh"
+	fi
+	
+	if [[ -f "$HOME/dotfiles/.pathconfig" ]]; then
+		source "$HOME/dotfiles/.pathconfig"
+	fi
+	
+	if [[ -f "$HOME/dotfiles/.envconfig" ]]; then
+		source "$HOME/dotfiles/.envconfig"
+	fi
+	
+	# Restore saved variables
+	export LAST_DOTFILE_RUN="${OLD_LAST_DOTFILE_RUN}"
+	
+	# Clean up
+	unset SKIP_DOTFILE_TESTS
+	
+	# Inform user
+	echo "Shell environment refreshed without running tests."
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

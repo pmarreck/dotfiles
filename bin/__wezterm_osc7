@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+
+__wezterm_osc7() {
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	local default_directory=${1:-$PWD}
+	if hash wezterm 2>/dev/null ; then
+		wezterm set-working-directory $default_directory 2>/dev/null && return 0
+		# If the command failed (perhaps the installed wezterm
+		# is too old?) then fall back to the simple version below.
+	fi
+	printf "\033]7;file://%s%s\033\\" "${HOSTNAME}" "${default_directory}"
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

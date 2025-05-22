@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+
+rpn() {
+	if [ -p /dev/stdin ]; then
+		# If data is piped, read it as a single line
+		input=$(cat)
+		reverse_args $input | $(choose_awk) -f "$(dirname "${BASH_SOURCE[0]}")/src/rpn.awk"
+	else
+		# Otherwise, process the arguments directly
+		reverse_args "$@" | $(choose_awk) -f "$(dirname "${BASH_SOURCE[0]}")/src/rpn.awk"
+	fi
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+  # Check if we are running tests
+  if [ "$1" = "--test" ]; then
+    # Run tests from the test file
+    . "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+  else
+    # If called directly, pass all arguments to the function
+    $(basename "${0##\-}") "$@"
+  fi
+fi

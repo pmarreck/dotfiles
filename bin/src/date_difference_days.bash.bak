@@ -1,0 +1,20 @@
+date_difference_days() {
+  local date1="$1"
+  local date2="$2"
+
+  # Convert dates to Unix timestamps (seconds since 1970-01-01)
+  local ts1=$(date -d "$date1" +%s)
+  local ts2=$(date -d "$date2" +%s)
+
+  # Compute the difference in seconds and convert to days
+  local diff_seconds=$((ts2 - ts1))
+  local diff_days=$((diff_seconds / 86400))
+
+  echo "$diff_days"
+}
+
+if [ "$RUN_DOTFILE_TESTS" == "true" ]; then
+  assert "$(date_difference_days 1972-04-05 2024-09-24)" == "19164" "Peter's days alive test"
+  # assert "$(calc "define fac(x) { if (x == 0) return (1); return (fac(x-1) * x); }; fac(5)")" == 120 "recursive functions with calc should work"
+  # assert "$(puts "define fac(x) { if (x == 0) return (1); return (fac(x-1) * x); }; fac(5)" | calc)" == 120 "piping into calc should work"
+fi

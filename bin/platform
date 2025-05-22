@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+
+platform() {
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	local unameOut
+	local machine
+	unameOut="$(uname -s)"
+	case "${unameOut}" in
+		Linux*)     machine=Linux;;
+		Darwin*)    machine=macOS;;
+		CYGWIN*)    machine=Cygwin;;
+		MINGW*)     machine=MinGW;;
+		*)          machine="${unameOut}"
+	esac
+	printf "%s" "$machine"
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

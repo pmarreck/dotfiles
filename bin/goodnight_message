@@ -9,8 +9,8 @@ MESSAGES_DIR="$HOME/goodnight_messages"
 LOG_FILE="$MESSAGES_DIR/goodnight_script.log"
 # Error if the env hasn't provided ANTHROPIC_API_KEY or ELEVENLABS_API_KEY
 if [ -z "$ANTHROPIC_API_KEY" ] || [ -z "$ELEVENLABS_API_KEY" ]; then
-    echo "Error: ANTHROPIC_API_KEY or ELEVENLABS_API_KEY is not set"
-    exit 1
+	echo "Error: ANTHROPIC_API_KEY or ELEVENLABS_API_KEY is not set"
+	exit 1
 fi
 # NOTE: Please check https://docs.anthropic.com for the latest API version
 # and update the 'anthropic-version' header below if necessary.
@@ -29,88 +29,88 @@ mkdir -p "$MESSAGES_DIR"
 
 # Logging function
 log() {
-    echo "$(date): $1" >> "$LOG_FILE"
+	echo "$(date): $1" >> "$LOG_FILE"
 }
 
 # Function to generate message using Anthropic API
 generate_message() {
-    local prompt="I need a nudge to go to sleep at 11pm. A lack of sleep impairs self-regulation and self-control, which can produce more negativity. Research has linked poor sleep to frustration, impatience, hostility, anxiety, low levels of joviality, lower levels of trust, workplace deviance, and unethical behavior. Sleep deprivation also hurts the relationship between leaders and their followers, and diminishes how much help people provide to others. So write me an encouraging but urgent reminder to head to bed, tailored to me, that perhaps mentions the advantages of sleep, and teasingly jokes me about saving the game or putting down the tech project in whatever functional language I am working on. I will be voicing what you say using the Raphael voice from Baldurs Gate 3 (Andrew Wincott) so make sure to say something in his fancy-yet-doom-and-gloom conversational style. Do not acknowledge this request, do not incluce stage direction or action lines, provide only the dialogue as Raphael would speak it, because this output will be sent directly to a voice generator."
-    log "Sending request to OpenAI API with prompt:\n$prompt"
+	local prompt="I need a nudge to go to sleep at 11pm. A lack of sleep impairs self-regulation and self-control, which can produce more negativity. Research has linked poor sleep to frustration, impatience, hostility, anxiety, low levels of joviality, lower levels of trust, workplace deviance, and unethical behavior. Sleep deprivation also hurts the relationship between leaders and their followers, and diminishes how much help people provide to others. So write me an encouraging but urgent reminder to head to bed, tailored to me, that perhaps mentions the advantages of sleep, and teasingly jokes me about saving the game or putting down the tech project in whatever functional language I am working on. I will be voicing what you say using the Raphael voice from Baldurs Gate 3 (Andrew Wincott) so make sure to say something in his fancy-yet-doom-and-gloom conversational style. Do not acknowledge this request, do not incluce stage direction or action lines, provide only the dialogue as Raphael would speak it, because this output will be sent directly to a voice generator."
+	log "Sending request to OpenAI API with prompt:\n$prompt"
 
-    local response=$(curl -s -X POST "https://api.openai.com/v1/chat/completions" \
-        -H "Content-Type: application/json" \
-        -H "Authorization: Bearer $OPENAI_API_KEY" \
-        -d '{
-            "model": "'"$OPENAI_MODEL"'",
-            "messages": [{"role": "user", "content": "'"$prompt"'"}],
-            "max_tokens": 300
-        }')
+	local response=$(curl -s -X POST "https://api.openai.com/v1/chat/completions" \
+		-H "Content-Type: application/json" \
+		-H "Authorization: Bearer $OPENAI_API_KEY" \
+		-d '{
+			"model": "'"$OPENAI_MODEL"'",
+			"messages": [{"role": "user", "content": "'"$prompt"'"}],
+			"max_tokens": 300
+		}')
 
-    log "Received response from OpenAI API: $response"
+	log "Received response from OpenAI API: $response"
 
-    if [ -z "$response" ]; then
-        log "Error: Empty response from OpenAI API"
-        return 1
-    fi
+	if [ -z "$response" ]; then
+		log "Error: Empty response from OpenAI API"
+		return 1
+	fi
 
-    local message=$(echo "$response" | jq -r '.choices[0].message.content')
-    if [ "$message" = "null" ] || [ -z "$message" ]; then
-        log "Error: Failed to extract message from OpenAI API response"
-        return 1
-    fi
+	local message=$(echo "$response" | jq -r '.choices[0].message.content')
+	if [ "$message" = "null" ] || [ -z "$message" ]; then
+		log "Error: Failed to extract message from OpenAI API response"
+		return 1
+	fi
 
-    # Remove newlines and escape special characters
-    message=$(echo "$message" | tr '\n' ' ' | $SED 's/"/\\"/g' | $SED "s/'/\\'/g")
+	# Remove newlines and escape special characters
+	message=$(echo "$message" | tr '\n' ' ' | $SED 's/"/\\"/g' | $SED "s/'/\\'/g")
 
-    echo "$message"
+	echo "$message"
 }
 
 # Function to generate audio using ElevenLabs API
 generate_audio() {
-    local text="$1"
-    log "Sending request to ElevenLabs API"
-    local response=$(curl -s -X POST "https://api.elevenlabs.io/v1/text-to-speech/$ELEVENLABS_VOICE_ID" \
-        -H "Content-Type: application/json" \
-        -H "xi-api-key: $ELEVENLABS_API_KEY" \
-        -d "{
-              \"text\": \"$text\",
-              \"model_id\": \"eleven_multilingual_v2\",
-              \"voice_settings\": {
-                  \"stability\": $STABILITY,
-                  \"similarity_boost\": $SIMILARITY_BOOST,
-                  \"style\": $STYLE,
-                  \"use_speaker_boost\": $SPEAKER_BOOST
-              }
-            }" \
-        --output "$MESSAGES_DIR/goodnight_message.mp3")
-    # if the file type of the response is not audio/mpeg, then log the response and exit with error
-    if [ "$(file -b --mime-type "$MESSAGES_DIR/goodnight_message.mp3")" != "audio/mpeg" ]; then
-        log "Error: Failed to generate audio file. Response:\n$(cat $MESSAGES_DIR/goodnight_message.mp3)"
-        return 1
-    else
-        log "Successfully generated audio file"
-    fi
+	local text="$1"
+	log "Sending request to ElevenLabs API"
+	local response=$(curl -s -X POST "https://api.elevenlabs.io/v1/text-to-speech/$ELEVENLABS_VOICE_ID" \
+		-H "Content-Type: application/json" \
+		-H "xi-api-key: $ELEVENLABS_API_KEY" \
+		-d "{
+			  \"text\": \"$text\",
+			  \"model_id\": \"eleven_multilingual_v2\",
+			  \"voice_settings\": {
+				  \"stability\": $STABILITY,
+				  \"similarity_boost\": $SIMILARITY_BOOST,
+				  \"style\": $STYLE,
+				  \"use_speaker_boost\": $SPEAKER_BOOST
+			  }
+			}" \
+		--output "$MESSAGES_DIR/goodnight_message.mp3")
+	# if the file type of the response is not audio/mpeg, then log the response and exit with error
+	if [ "$(file -b --mime-type "$MESSAGES_DIR/goodnight_message.mp3")" != "audio/mpeg" ]; then
+		log "Error: Failed to generate audio file. Response:\n$(cat $MESSAGES_DIR/goodnight_message.mp3)"
+		return 1
+	else
+		log "Successfully generated audio file"
+	fi
 }
 
 # Function to play audio and send notification
 play_audio_and_notify() {
-    local message="$1"
+	local message="$1"
 
-    # Play audio
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-        afplay "$MESSAGES_DIR/goodnight_message.mp3"
-    else
-        mpg123 "$MESSAGES_DIR/goodnight_message.mp3"
-    fi
+	# Play audio
+	if [[ "$OSTYPE" == "darwin"* ]]; then
+		afplay "$MESSAGES_DIR/goodnight_message.mp3"
+	else
+		mpg123 "$MESSAGES_DIR/goodnight_message.mp3"
+	fi
 
-    # Send notification
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-        osascript -e "display notification \"$message\" with title \"Goodnight Message\""
-    else
-        notify-send "Goodnight Message" "$message"
-    fi
+	# Send notification
+	if [[ "$OSTYPE" == "darwin"* ]]; then
+		osascript -e "display notification \"$message\" with title \"Goodnight Message\""
+	else
+		notify-send "Goodnight Message" "$message"
+	fi
 
-    log "Played audio and sent notification"
+	log "Played audio and sent notification"
 }
 
 # Main script
@@ -118,8 +118,8 @@ log "Script started"
 
 message=$(generate_message)
 if [ $? -ne 0 ]; then
-    log "Failed to generate message. Exiting."
-    exit 1
+	log "Failed to generate message. Exiting."
+	exit 1
 fi
 
 echo "Generated message: $message"
@@ -127,14 +127,14 @@ log "Generated message: $message"
 
 # Move existing file if it exists
 if [ -f "$MESSAGES_DIR/goodnight_message.mp3" ]; then
-    mv "$MESSAGES_DIR/goodnight_message.mp3" "$MESSAGES_DIR/goodnight_message_$(date -r "$MESSAGES_DIR/goodnight_message.mp3" +%Y%m%d).mp3"
-    log "Moved existing audio file"
+	mv "$MESSAGES_DIR/goodnight_message.mp3" "$MESSAGES_DIR/goodnight_message_$(date -r "$MESSAGES_DIR/goodnight_message.mp3" +%Y%m%d).mp3"
+	log "Moved existing audio file"
 fi
 
 generate_audio "$message"
 if [ $? -ne 0 ]; then
-    log "Failed to generate audio. Exiting."
-    exit 1
+	log "Failed to generate audio. Exiting."
+	exit 1
 fi
 
 play_audio_and_notify "$message"

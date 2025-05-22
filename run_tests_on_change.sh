@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
 
-source_relative_once "${HOME}/dotfiles/bin/functions/truthy.bash"
-
 # Get the directory of the script
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 truthy DEBUG_SHELLCONFIG && echo "Script directory for run_tests_on_change: $SCRIPT_DIR"

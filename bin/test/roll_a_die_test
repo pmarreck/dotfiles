@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+
+# Test the roll_a_die function
+test_roll_a_die() {
+  # Test with fixed RANDOM values
+  assert $(RANDOM=5 roll_a_die) == "6"
+  assert $(RANDOM=6 roll_a_die) == "1"
+  assert $(RANDOM=7 roll_a_die 20) == "8"
+}
+
+# Run the test if this script is executed directly
+if ! (return 0 2>/dev/null); then
+  test_roll_a_die
+fi

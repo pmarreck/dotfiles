@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+
+# Get the Linux distribution name or return "macOS" on macOS
+distro() {
+	local os_release_file="${1:-/etc/os-release}"
+	
+	# Check if we're on macOS
+	if [ "$(uname)" = "Darwin" ]; then
+		echo "macOS"
+		return 0
+	fi
+	
+	# Check if we're on Windows (MSYS/Cygwin/MinGW)
+	if [[ "$OSTYPE" == msys* || "$OSTYPE" == cygwin* || "$OSTYPE" == mingw* ]]; then
+		echo "Windows"
+		return 0
+	fi
+	
+	# For Linux, read from os-release file
+	if [ -f "$os_release_file" ]; then
+		$AWK -F'=' '/^NAME=/{gsub(/"/, "", $2); print $2}' "$os_release_file"
+		return 0
+	else
+		echo "Unknown" >&2
+		return 1
+	fi
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

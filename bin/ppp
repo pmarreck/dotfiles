@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+
+ppp() { set +H; local plv="${2:-PATH}"; echo -n "${1%/}:${!plv}" | awk -v RS=: -v ORS=: '!($0 in a) {a[$0]; print}' | $SED 's/:$//'; }
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

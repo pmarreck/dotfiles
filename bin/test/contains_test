@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+
+test_contains() {
+  contains "foo bar baz" "bar"
+  assert "$?" == "0"
+  contains "foo bar baz" "quux"
+  assert "$?" == "1"
+  # Empty string is contained in every string (including empty string)
+  # This follows from the mathematical principle that ε is a substring of all strings
+  contains "foo" ""
+  assert "$?" == "0"
+}
+
+# Run the tests if this file is executed directly
+if [ "$(basename "${0##\-}")" = "contains_test" ]; then
+  run_test_suite "contains" : test_contains test_cleanup
+fi

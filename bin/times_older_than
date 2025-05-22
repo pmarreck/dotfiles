@@ -2,33 +2,45 @@
 
 # Usage: times_older_than <birthdate_1> <birthdate_2>
 debug() {
-  [ -n "$DEBUG" ] && echo "DEBUG: $*" >&2
+	[ -n "$DEBUG" ] && echo "DEBUG: $*" >&2
 }
 
 times_older_than() {
-  local birthdate_1="$1"
-  local birthdate_2="$2"
-  
-  # Get the current date in seconds since epoch
-  local today=$(date +%s)
-  
-  # Convert both birthdates to seconds since epoch
-  local birthday_timestamp_1=$(date -d "$birthdate_1" +%s)
-  local birthday_timestamp_2=$(date -d "$birthdate_2" +%s)
-  
-  debug "today: $today"
-  debug "birthday_timestamp_1: $birthday_timestamp_1"
-  debug "birthday_timestamp_2: $birthday_timestamp_2"
-  
-  # Calculate the age in seconds for both
-  local age_1=$(( today - birthday_timestamp_1 ))
-  local age_2=$(( today - birthday_timestamp_2 ))
+	local birthdate_1="$1"
+	local birthdate_2="$2"
+	
+	# Get the current date in seconds since epoch
+	local today=$(date +%s)
+	
+	# Convert both birthdates to seconds since epoch
+	local birthday_timestamp_1=$(date -d "$birthdate_1" +%s)
+	local birthday_timestamp_2=$(date -d "$birthdate_2" +%s)
+	
+	debug "today: $today"
+	debug "birthday_timestamp_1: $birthday_timestamp_1"
+	debug "birthday_timestamp_2: $birthday_timestamp_2"
+	
+	# Calculate the age in seconds for both
+	local age_1=$(( today - birthday_timestamp_1 ))
+	local age_2=$(( today - birthday_timestamp_2 ))
 
-  debug "age_1: $age_1"
-  debug "age_2: $age_2"
+	debug "age_1: $age_1"
+	debug "age_2: $age_2"
 
-  # Calculate how many times older the first person is than the second
-  local times_older=$(echo "scale=6; $age_1 / $age_2" | bc)
-  
-  echo "$times_older"
+	# Calculate how many times older the first person is than the second
+	local times_older=$(echo "scale=6; $age_1 / $age_2" | bc)
+	
+	echo "$times_older"
 }
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

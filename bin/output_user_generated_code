@@ -5,100 +5,111 @@
 # as a single unified output.
 
 output_user_generated_code() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 
-  # Define exclusion patterns directly for ripgrep
-  # Note: Ripgrep's -g option is used for globbing, which can include or exclude files.
-  #       Prepend a '!' to exclude files matching the pattern.
-  #       We'll need to split the inclusion/exclusion logic more explicitly than in the combined regex.
-  
-  # Start by excluding everything that should not be checked
-  exclude_patterns=(
-    '!.git/*'
-    '!.envrc'
-    '!priv/static/*'
-    '!priv/gettext/*'
-    '!*.lock'
-    '!*.gpg'
-    '!*.secrets'
-    '!*.starship.toml'
-    '!*.dockerignore'
-    '!*.gitignore'
-    '!*.cursorignore'
-    '!*.githooks'
-    '!*.editorconfig'
-    '!*.formatter.exs'
-    '!*.iex.exs'
-    '!Dockerfile'
-    '!Library/*'
-    '!*.env'
-    '!*.dot'
-    '!*.txt'
-    '!rel/*'
-    '!*.plist'
-    '!*.wflow'
-    '!deps/*'
-    '!README*'
-    '!basic-ad.conf'
-    '!*.md'
-    '!assets/css/*'
-    '!assets/js/*'
-    '!assets/vendor/*'
-    '!test/support/fixtures/*'
-    '!bin/functions/randompass.*'
-    '!bin/git*'
-    '!bin/functions/git*'
-    '!bin/functions/warhammer_quote.*'
-    '!bin/functions/grandfather_clock_chime.*'
-    '!bin/functions/clock.*'
-    '!bin/functions/bashorg_quote.*'
-  )
+	# Define exclusion patterns directly for ripgrep
+	# Note: Ripgrep's -g option is used for globbing, which can include or exclude files.
+	#       Prepend a '!' to exclude files matching the pattern.
+	#       We'll need to split the inclusion/exclusion logic more explicitly than in the combined regex.
+	
+	# Start by excluding everything that should not be checked
+	exclude_patterns=(
+		'!.git/*'
+		'!.envrc'
+		'!priv/static/*'
+		'!priv/gettext/*'
+		'!*.lock'
+		'!*.gpg'
+		'!*.secrets'
+		'!*.starship.toml'
+		'!*.dockerignore'
+		'!*.gitignore'
+		'!*.cursorignore'
+		'!*.githooks'
+		'!*.editorconfig'
+		'!*.formatter.exs'
+		'!*.iex.exs'
+		'!Dockerfile'
+		'!Library/*'
+		'!*.env'
+		'!*.dot'
+		'!*.txt'
+		'!rel/*'
+		'!*.plist'
+		'!*.wflow'
+		'!deps/*'
+		'!README*'
+		'!basic-ad.conf'
+		'!*.md'
+		'!assets/css/*'
+		'!assets/js/*'
+		'!assets/vendor/*'
+		'!test/support/fixtures/*'
+		'!bin/functions/randompass.*'
+		'!bin/git*'
+		'!bin/functions/git*'
+		'!bin/functions/warhammer_quote.*'
+		'!bin/functions/grandfather_clock_chime.*'
+		'!bin/functions/clock.*'
+		'!bin/functions/bashorg_quote.*'
+	)
 
-  # Then, include exceptions. Note: ripgrep applies '--include' patterns after '--exclude' patterns,
-  # so exceptions (inclusions) are effectively handled.
-  include_patterns=(
-    'assets/css/app.css'
-    'assets/js/app.js'
-    '.github/*'
-    '.githooks/*'
-  )
+	# Then, include exceptions. Note: ripgrep applies '--include' patterns after '--exclude' patterns,
+	# so exceptions (inclusions) are effectively handled.
+	include_patterns=(
+		'assets/css/app.css'
+		'assets/js/app.js'
+		'.github/*'
+		'.githooks/*'
+	)
 
-  # Construct the ripgrep command
-  rg_cmd="rg --files --hidden"
-  
-  # Append exclusion patterns
-  for pattern in "${exclude_patterns[@]}"; do
-    rg_cmd+=" -g '$pattern'"
-  done
+	# Construct the ripgrep command
+	rg_cmd="rg --files --hidden"
+	
+	# Append exclusion patterns
+	for pattern in "${exclude_patterns[@]}"; do
+		rg_cmd+=" -g '$pattern'"
+	done
 
-  rg_cmd="$rg_cmd && rg --files"
+	rg_cmd="$rg_cmd && rg --files"
 
-  # Append inclusion patterns
-  for pattern in "${include_patterns[@]}"; do
-    rg_cmd+=" -g '$pattern'"
-  done
+	# Append inclusion patterns
+	for pattern in "${include_patterns[@]}"; do
+		rg_cmd+=" -g '$pattern'"
+	done
 
-  # Execute the constructed command and process each file
-  eval "$rg_cmd" | sort | while read -r file; do
-    if [[ -f "$file" && ! $(file --mime "$file") =~ binary ]]; then
-      if [[ "$1" == "--filenames" || "$1" == "-f" ]]; then
-        echo "$file"
-      else
-        echo -n "────────── "
-        echo "📄 $file:"
-        if [[ -n "${SKIP_COMMENTS}" ]]; then
-          rg --no-filename --no-messages --hidden --no-line-number -v '^\s*(//|#)|^\s*$' "$file"
-        else
-          cat "$file"
-        fi
-        echo
-      fi
-    fi
-  done
+	# Execute the constructed command and process each file
+	eval "$rg_cmd" | sort | while read -r file; do
+		if [[ -f "$file" && ! $(file --mime "$file") =~ binary ]]; then
+			if [[ "$1" == "--filenames" || "$1" == "-f" ]]; then
+				echo "$file"
+			else
+				echo -n "────────── "
+				echo "📄 $file:"
+				if [[ -n "${SKIP_COMMENTS}" ]]; then
+					rg --no-filename --no-messages --hidden --no-line-number -v '^\s*(//|#)|^\s*$' "$file"
+				else
+					cat "$file"
+				fi
+				echo
+			fi
+		fi
+	done
 }
 
 _me=$(basename "${0##\-}")
 if [ "$_me" = "output_user_generated_code" ]; then
-  output_user_generated_code "$@"
+	output_user_generated_code "$@"
 fi
 unset _me
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

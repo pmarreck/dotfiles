@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+
+alias_permanently() {
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	case "$1" in
+		*=*)
+			# split on the first '='
+			local name="${1%%=*}"
+			local value="${1#*=}"
+			# escape any single quotes in the value
+			value="${value//\'/\\\'}"
+			# if we have a value, then we're defining an alias
+			if [ -n "$value" ]; then
+				local comment=""
+				# if we have a comment, then add it
+				if [ -n "$2" ]; then
+					local comment="# $2"
+				fi
+				# check if the alias already exists
+				if [ -z "$(alias "$name" 2>/dev/null)" ]; then
+					# if it doesn't, then add it
+					local alias_definition="alias $name='$value'"
+					if [ -n "$comment" ]; then
+						echo "$comment" >> "$HOME/.aliases"
+					fi
+					echo "$alias_definition" >> "$HOME/.aliases"
+					echo "$alias_definition $comment"
+					# Define the alias in the current shell too
+					eval "$alias_definition"
+				else
+					echo "Alias $name already exists"
+					return 1
+				fi
+			fi
+			;;
+		*)
+			echo "Usage: alias_permanently alias_name='alias_definition' ['optional comment']"
+			;;
+	esac
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

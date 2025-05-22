@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+
+ram-size() {
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	local proc_meminfo="/proc/meminfo"
+	local total_mem_gb=0
+	# Check if /proc/meminfo exists (Linux)
+	if [ -f "$proc_meminfo" ]; then
+		local total_mem_kb=$(grep MemTotal $proc_meminfo | awk '{print $2}')
+		total_mem_gb=$((total_mem_kb / (1024 ** 2)))
+	# If not, assume macOS and use sysctl
+	elif command -v sysctl &> /dev/null; then
+		local memsize=$(sysctl -n hw.memsize)
+		total_mem_gb=$((memsize / (1024 ** 3)))
+	# If neither is available, return an error message.
+	else
+		echo "Unable to determine RAM size due to lack of $proc_meminfo or sysctl." >&2
+		return 1
+	fi
+	echo "${total_mem_gb}GB"
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

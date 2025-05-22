@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+
+# Test the flip_a_coin function
+test_flip_a_coin() {
+  # Test with fixed RANDOM values
+  assert $(RANDOM=0 flip_a_coin) == "tails"
+  assert $(RANDOM=1 flip_a_coin) == "heads"
+}
+
+# Run the test if this script is executed directly
+if ! (return 0 2>/dev/null); then
+  test_flip_a_coin
+fi

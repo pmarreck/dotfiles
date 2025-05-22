@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+
+fun_intro() {
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	local test_all
+	if [ "$1" == "--test" ]; then
+		test_all=true
+	fi
+	sixel_less="fortune warhammer_quote bashorg_quote chuck mandelbrot asciidragon just_one_taoup times_older_than_samson"
+	# This one requires a Sixel-capable terminal
+	sixel_ful="inthebeginning"
+	if ! $SIXEL_CAPABLE; then
+		_fun_things="$sixel_less"
+	else
+		_fun_things="$sixel_less $sixel_ful"
+	fi
+	if [ -n "$test_all" ]; then
+		local retcode
+		for _selected_fun_thing in $_fun_things; do
+			note "Running '$_selected_fun_thing' from fun_intro:"
+			if command -v "$_selected_fun_thing" >/dev/null 2>&1; then
+				eval "$_selected_fun_thing"
+				retcode=$?
+			else
+				warn "Tried to call '$_selected_fun_thing', but it was not defined"
+			fi
+			if ! [ "$retcode" -eq 0 ]; then
+				err "Failed to run '$_selected_fun_thing' from fun_intro, return code was $retcode"
+			fi
+			echo
+		done
+		return
+	fi
+	_selected_fun_thing=$(echo "$_fun_things" | tr ' ' '\n' | shuf -n 1)
+	if [ -n "$DEBUG_SHELLCONFIG" ]; then
+		echo "Running '$_selected_fun_thing' from fun_intro"
+	fi
+
+	if command -v "$_selected_fun_thing" >/dev/null 2>&1; then
+		eval "$_selected_fun_thing"
+	else
+		echo "Tried to call '$_selected_fun_thing', but it was not defined" >&2
+	fi
+	unset _fun_things sixel_less sixel_ful _selected_fun_thing
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	$(basename "${0##\-}") "$@"
+fi

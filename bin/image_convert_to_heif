@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+
+image_convert_to_heif() {
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	# base name of argument 1
+	# local bn="${1%.*}"
+	# ffmpeg -i "$1" -c:v libx265 -preset ultrafast -x265-params lossless=1 "${bn}.heif"
+
+	# lossless conversion, FYI
+	needs heif-enc "please install libheif" && \
+	echo_eval "heif-enc -L -p chroma=444 --matrix_coefficients=0 \"$1\""
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

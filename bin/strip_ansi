@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+
+strip_ansi() {
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	local ansiregex="s/\x1b\[[0-9;]*[a-zA-Z]//g"
+
+	if [ -t 0 ] && [ "$#" -eq 0 ]; then
+		printf "Usage: strip_ansi [text]\n"
+		printf "   or: printf '%%s' text | strip_ansi\n"
+		return 1
+	fi
+
+	if [ -t 0 ]; then
+		# Input from arguments
+		printf '%b' "$*" | $SED -E "$ansiregex"
+	else
+		# Input from pipe
+		$SED -E "$ansiregex"
+	fi
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

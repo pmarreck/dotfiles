@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+
+# Test the now_in_ns function
+test_now_in_ns() {
+  # Test that the function returns a numeric value
+  local result=$(now_in_ns)
+  
+  # Check that it's a valid number (all digits, no decimal point)
+  echo "$result" | grep -q "^[0-9]\+$"
+  assert "$?" == "0" "now_in_ns should return a valid integer"
+  
+  # Check that it's at least 19 digits long (typical nanosecond timestamp length)
+  local expected_length=19
+  [ ${#result} -ge $expected_length ]
+  assert "$?" == "0" "now_in_ns should return a value with at least $expected_length digits"
+}
+
+# Run the test if this script is executed directly
+if ! (return 0 2>/dev/null); then
+  test_now_in_ns
+fi

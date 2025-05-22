@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+
+supertop() {
+	if ! command -v tmux &> /dev/null; then
+		err "tmux is not installed. Please install it first, along with btop and htop.";
+		return 1;
+	fi;
+
+	local session_name;
+	session_name="split_session_$$";
+
+	# Create the tmux session
+	tmux new-session -d -s "${session_name}" 'htop';
+	tmux split-window -h 'btop';
+	tmux attach-session -t "${session_name}";
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

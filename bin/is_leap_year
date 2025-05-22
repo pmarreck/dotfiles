@@ -1,0 +1,21 @@
+#!/usr/bin/env luajit
+
+local bit = require("bit")  -- LuaJIT or with LuaBitOp
+
+function to_uint32(x)
+	return x % 0x100000000
+end
+
+function is_leap_year_fast(y)
+	local mul = to_uint32(y * 1073750999)
+	return bit.band(mul, 0xC001F00F) <= 126976
+end
+
+-- call it with argv1 and exit 0 if true, 1 if false
+if is_leap_year_fast(tonumber(arg[1])) then
+	print("true")
+	os.exit(0)
+else
+	print("false")
+	os.exit(1)
+end

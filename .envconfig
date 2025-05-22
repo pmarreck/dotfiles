@@ -112,46 +112,6 @@ export MICRO_TRUECOLOR=1
 # GPG configuration to set up in-terminal challenge-response
 export GPG_TTY=`tty`
 
-# see: https://wezfurlong.org/wezterm/hyperlinks.html
-# example: hyperlink http://google.com "this is a test"
-hyperlink() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-  printf '\e]8;;'
-  printf "$1"
-  printf '\e\\'
-  printf "$2"
-  printf '\e]8;;\e\\\n'
-}
-export -f hyperlink
-
-# alerting in yellow to stderr
-note() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-  >&2 printf "$ANSI$TXTYLW%s$ANSI$TXTDFT\n" "$@"
-}
-export -f note
-
-# warning in orange to stderr
-warn() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-  >&2 printf "$ANSI$TXTORG%s$ANSI$TXTDFT\n" "$@"
-}
-export -f warn
-
-# error in red to stderr
-err() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-  >&2 printf "$ANSI$TXTRED%s$ANSI$TXTDFT\n" "$@"
-}
-export -f err
-
-fail() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-  err "$@"
-  exit 1
-}
-export -f fail
-
 # Ruby environment tweaking
 # export RUBY_GC_HEAP_INIT_SLOTS=1000000
 # export RUBY_HEAP_SLOTS_INCREMENT=1000000
@@ -192,11 +152,7 @@ if [ "$PLATFORM" = "linux" ]; then
   export STEAM_EXTRA_COMPAT_TOOLS_PATHS="$HOME/.steam/root/compatibilitytools.d"
 fi
 
-. "${HOME}/dotfiles/bin/functions/prepend_path.bash"
-# [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced prepend_path.bash"
-
 # Nix config
-[ "`type -t exclude_path`" = "function" ] || . "${HOME}/dotfiles/bin/functions/prepend_path.bash"
 IGNORE_EXCLUDE_PATH_WARNINGS=true exclude_path '/nix/var/nix/profiles/per-user/root/channels' NIX_PATH
 
 # Fontconfig
@@ -212,8 +168,12 @@ export OLLAMA_DEFAULT_MODEL=${OLLAMA_DEFAULT_MODEL:-llama3.3:70b}
 export ERL_FLAGS="+P 2000000";
 
 # take any $HOME/.secrets and export them
-[ -f $HOME/.secrets ] && source $HOME/.secrets
-[ -f $HOME/.secrets ] && export $(cat $HOME/.secrets | grep -v -s -e '^\s*#' | cut -d "=" -f 1 | xargs -L 1)
+# Use set -a to automatically export all variables that are subsequently set
+if [ -f "$HOME/.secrets" ]; then
+  set -a
+  source "$HOME/.secrets"
+  set +a
+fi
 
 [ -n "${DEBUG_SHELLCONFIG}" ] && echo "Exiting $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")"
 [ -n "${DEBUG_PATHCONFIG}" ] && echo $PATH || :

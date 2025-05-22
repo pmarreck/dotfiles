@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+
+remove_z_library_attrib() {
+	local files
+	# Use sed to convert unescaped spaces to newlines and remove backslashes in one pass
+	IFS=$'\n' files=($(expand "*\ \(Z-Library\).*" | sed -e 's/\([^\\]\) /\1\n/g' -e 's/\\//g'))
+	if [[ ${#files[@]} -eq 1 && "${files[0]}" == "*\ (Z-Library).*" ]]; then
+		return  # No matches
+	fi
+	for file in "${files[@]}"; do
+		mv "$file" "${file/ (Z-Library)/}"
+	done
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

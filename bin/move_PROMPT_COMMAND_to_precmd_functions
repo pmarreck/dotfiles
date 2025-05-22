@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+
+move_PROMPT_COMMAND_to_precmd_functions() {
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	# Replace newlines with semicolons
+	PROMPT_COMMAND=${PROMPT_COMMAND//$'\n'/;}
+
+	# Replace runs of 2 or more semicolons with one
+	while [[ $PROMPT_COMMAND == *';;'* ]]; do
+		PROMPT_COMMAND=${PROMPT_COMMAND//;;/;}
+	done
+
+	# Remove trailing semicolons
+	PROMPT_COMMAND=${PROMPT_COMMAND%;}
+
+	# Then split on semicolons
+	IFS=';' read -ra commands <<< "$PROMPT_COMMAND"
+	for cmd in "${commands[@]}"; do
+		precmd_functions+=("$cmd")
+	done
+
+	# Then clear PROMPT_COMMAND
+	PROMPT_COMMAND=''
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

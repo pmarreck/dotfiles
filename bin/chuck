@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+
+chuck() {
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	# if you want to filter out the obscene ones, there's a category you can filter out,
+	# but it didn't get all of them... you can also pipe to glow for a nicer output
+	# figure out the path of the current script
+	local SCRIPT_PATH=$(dirname "$(readlink -f "$BASH_SOURCE")")
+	shuf -n 1 "$SCRIPT_PATH/data/chuck_norris.txt" | cut -d'|' -f2- | wrap
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

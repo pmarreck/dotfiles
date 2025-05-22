@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+
+cpv() {
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	local real_source_path="$(realpath "$1")"
+	# ensure real_source_path is a real directory or file
+	if [ ! -e "$real_source_path" ]; then
+		echo "Error: $1 does not exist" 1>&2
+		return 1
+	fi
+	local sourcedir="$(dirname "$real_source_path")"
+	local destdir="$(realpath "$2")"
+	# ensure destdir is a directory that exists
+	if [ ! -d "$destdir" ]; then
+		echo "Destination directory $destdir does not exist." 1>&2
+		return 1
+	fi
+	local size_bytes=$(du -sb "$real_source_path" | awk '{print $1}')
+	local size_metadata=$(du -s --inodes "$real_source_path" | awk '{print $1}')
+	local size_total=$(($size_bytes + $size_metadata))
+	local filename="$(basename "$real_source_path")"
+	pushd "$sourcedir" > /dev/null
+	tar cf - "$filename" | pv -c -s $size_total | tar xf - -C "$destdir"
+	popd > /dev/null
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi
