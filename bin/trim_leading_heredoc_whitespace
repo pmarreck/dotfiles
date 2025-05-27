@@ -6,37 +6,17 @@ trim_leading_heredoc_whitespace() {
 	# For some reason, frawk screws this up. No time to troubleshoot.
 	needs gawk "please install gawk (GNU awk) to run this function" && \
 	gawk '
-	BEGIN { shortest = -1 }
-	{
-		lines[NR] = $0
-		#  print "Debug: Processing line: [" $0 "]" > "/dev/stderr"
-		#  print "Debug: Line length: " length($0) > "/dev/stderr"
-		match($0, /[^[:space:]]/);
-		#  print "Debug: RSTART = " RSTART > "/dev/stderr"
-		if (RSTART > 0) {
-			if (shortest == -1 || RSTART - 1 < shortest) {
-				shortest = RSTART - 1
-			#  print "Debug: shortest updated to " shortest > "/dev/stderr"
-			}
-		} else {
-			#  print "Debug: No match found in this line" > "/dev/stderr"
+		BEGIN { shortest = -1 }
+		{
+			lines[NR] = $0
+			m = match($0, /[^[:space:]]/)
+			if (m) shortest = (shortest < 0 || m - 1 < shortest) ? m - 1 : shortest
 		}
-	}
-	END \
-	{
-		#  print "Debug: END block reached, shortest = " shortest > "/dev/stderr"
-		if (shortest >= 0) {
-			for (i=1; i<=NR; i++) {
-				if (length(lines[i]) > shortest) {
-					print substr(lines[i], shortest + 1)
-				} else {
-					print ""
-				}
+		END {
+			for (i = 1; i <= NR; i++) {
+				print (length(lines[i]) > shortest) ? substr(lines[i], shortest + 1) : ""
 			}
-		} else {
-			#  print "Debug: No processing done (shortest < 0)" > "/dev/stderr"
 		}
-	}
 	'
 	#  echo "Debug: Function ended" >&2
 }

@@ -5,6 +5,8 @@
 # All path configs here should replace any existing version of themselves in the PATH before appending
 # (idempotent)
 
+. "$HOME/dotfiles/bin/src/prepend_path.bash"
+
 # gigalixir and other pip3 --user installed tools, per XDG spec
 [ -d $HOME/.local/bin ] && prepend_path $HOME/.local/bin
 
@@ -19,7 +21,7 @@
 
 # where is this garbage in my PATH coming from?
 IGNORE_EXCLUDE_PATH_WARNINGS=true exclude_path '~/.dotnet/tools'
-exclude_path '/usr/local/share/dotnet'  
+exclude_path '/usr/local/share/dotnet'
 # exclude_path '/Library/Frameworks/Mono.framework/Versions/Current/Commands' # it keeps reinserting itself??
 # A note on the below: https://support.apple.com/guide/deployment/rapid-security-responses-dep93ff7ea78/web
 exclude_path '/System/Cryptexes/App/usr/bin' || echo "exclude_path not defined in .pathconfig"

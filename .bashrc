@@ -26,6 +26,10 @@ set +h
 
 export NULL=${NULL:-/dev/null}
 
+debug() {
+	[ -n "$DEBUG" ] && echo "DEBUG: $1" >&2
+}
+
 # determine shell characteristics
 # is this an interactive shell? login shell?
 # set LOGIN_SHELL and INTERACTIVE_SHELL here
@@ -54,8 +58,6 @@ var_defined() {
 
 # Pull in path configuration
 . $HOME/.pathconfig
-
-# export PROMPT_COMMAND='printf "\e]7;file://%s%s\a" "$HOSTNAME" "$PWD"; '$PROMPT_COMMAND
 
 # Warp terminal seems to have nonstandard behavior and non-gnu sed breaks things
 # so we are using this workaround:
