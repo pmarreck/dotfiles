@@ -1,80 +1,122 @@
 #!/usr/bin/env bash
 
+source $HOME/dotfiles/bin/src/truthy.sh
+
+clip_usage() {
+	cat << EOF
+Usage: clip [OPTIONS] [TEXT...]
+
+A clipboard utility that works across macOS, X11, and Wayland environments.
+
+Options:
+  -h, --help     Display this help message and exit
+  -q, --quiet    Suppress output when copying to clipboard
+  --test         Run tests
+
+Examples:
+  clip "Hello World"     # Copy "Hello World" to clipboard and print it
+  clip -q "Hello World" # Copy "Hello World" to clipboard silently
+  echo "foo" | clip     # Copy stdin to clipboard and print it
+  clip                  # Print clipboard contents
+EOF
+}
+
 clip() {
-	# Test suite for the clip function
-	test_clip() {
-		local fails=0
+	local quiet=false
 
-		# Test 1: Piping to clip - should output to stdout and copy to clipboard
-		test_string="Test clip function"
-		output=$(echo -n "$test_string" | clip)  # Put test string in clipboard
-		assert "$output" == "$test_string" "clip should output to stdout when piped to"
-		(( fails += $? ))
+	# Parse options
+	while [ $# -gt 0 ]; do
+		case "$1" in
+			-h|--help)
+				clip_usage
+				return 0
+				;;
+			-q|--quiet)
+				quiet=true
+				shift
+				;;
+			--)
+				shift
+				break
+				;;
+			--test)
+				exec "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+				;;
+			-*)
+				echo "Error: Unknown option: $1" >&2
+				clip_usage >&2
+				return 2
+				;;
+			*)
+				break
+				;;
+		esac
+	done
 
-		# Test 2: Reading from clipboard - should match what we just put in
-		assert "$(clip)" == "$test_string" "clip should retrieve from clipboard when not piped to"
-		(( fails += $? ))
+	# Determine which clipboard commands to use based on environment
+	local copy_cmd=""
+	local paste_cmd=""
 
-		# Test 3: Empty clipboard
-		echo -n "" | clip > /dev/null
-		assert "$(clip)" == "" "clip should return empty string when clipboard is empty"
-		(( fails += $? ))
-
-		if [ $fails -ne 0 ]; then
-			red_text "Clip tests failed!" >&2
-		else
-			green_text "All clip tests passed!"
-		fi
-		return $fails
-	}
-
-	if [ "$1" = "--test" ]; then
-		test_clip
-		return
+	if succeeds type pbcopy; then
+		# macOS
+		copy_cmd="pbcopy"
+		paste_cmd="pbpaste"
+	elif succeeds type wl-copy; then
+		# Wayland Linux
+		copy_cmd="wl-copy"
+		paste_cmd="wl-paste"
+	elif succeeds type xclip; then
+		# X11 Linux
+		copy_cmd="xclip -selection clipboard"
+		paste_cmd="xclip -o -selection clipboard"
+	else
+		echo "Error: No clipboard command found (pbcopy, wl-copy, or xclip)" >&2
+		return 1
 	fi
 
-	if successful type pbcopy; then
-		if [ -t 0 ]; then
-			pbpaste
-		else
-			# Use tee to both send to pbcopy and output to stdout
-			tee >(pbcopy) || cat
+	# If arguments are provided, copy them to clipboard
+	if [ $# -gt 0 ]; then
+		# Join all arguments with spaces and copy to clipboard
+		local joined_args="$*"
+		printf "%s" "$joined_args" | eval "$copy_cmd"
+
+		# Output the text unless quiet mode is enabled
+		if ! $quiet; then
+			printf "%s" "$joined_args"
 		fi
+	# If stdin is a terminal (no piped input), read from clipboard
+	elif [ -t 0 ]; then
+		eval "$paste_cmd"
 	else
-		if [ -t 0 ]; then
-			xclip -o -selection clipboard
+		# Handle piped input based on quiet mode
+		if $quiet; then
+			# Copy stdin to clipboard without echoing to stdout
+			eval "$copy_cmd" > /dev/null
 		else
-			# Use tee to both send to xclip and output to stdout
-			tee >(xclip -selection clipboard) || cat
+			# Use tee to both send to clipboard and output to stdout
+			tee >(eval "$copy_cmd")
 		fi
 	fi
 }
 
-# Run the function, passing along any args, if this file was run directly (such as via sudo) instead of as an include
-# Sometimes, $0 contains a leading dash to indicate an interactive (or is it login?) shell,
-# which is apparently an old convention (which also broke the basename call on OS X)
-_me=$(basename "${0##\-}")
-if [ "$_me" = "clip" ]; then
-	if [ $# = 0 ]; then
-		clip
-	else
-		clip "$@"
-	fi
-fi
-unset _me
-
 # Run tests if RUN_DOTFILE_TESTS is true
 if truthy RUN_DOTFILE_TESTS; then
-	clip --test
+	orange_text "$(basename "${0##\-}") --test\n" >&2
+	RUN_DOTFILE_TESTS=false $(basename "${0##\-}") --test
 fi
+
 # Run the function if this script is executed directly
 if ! (return 0 2>/dev/null); then
 	# Check if we are running tests
 	if [ "$1" = "--test" ]; then
 		# Run tests from the test file
-		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+		exec "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
 	else
 		# If called directly, pass all arguments to the function
-		$(basename "${0##\-}") "$@"
+		if [ $# = 0 ]; then
+			$(basename "${0##\-}")
+		else
+			$(basename "${0##\-}") "$@"
+		fi
 	fi
 fi

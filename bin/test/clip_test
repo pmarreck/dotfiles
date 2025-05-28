@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+
+source $HOME/dotfiles/bin/clip
+
+test_clip() {
+	local fails=0
+	local tests=0
+	local test_string="Test clip function"
+	local output
+
+	# Initialization- Store and clear the clipboard
+	local clipboard_content="$(clip)"
+	echo -n "" | clip >/dev/null
+
+	# Test 1: Copying from args
+	(( tests++ ))
+	clip "test" >/dev/null
+	output=$(clip)
+	assert "$output" == "test" "clip should copy to clipboard from args and return the same string"
+	(( fails += $? ))
+
+	# Test 2: Piping to clip - should output to stdout and copy to clipboard
+	(( tests++ ))
+	output=$(echo -n "$test_string" | clip)  # Put test string in clipboard
+	assert "$output" == "$test_string" "clip should output to stdout when piped to"
+	(( fails += $? ))
+
+	# Test 3: Reading from clipboard - should match what we just put in
+	(( tests++ ))
+	assert "$(clip)" == "$test_string" "clip should retrieve from clipboard when not piped to"
+	(( fails += $? ))
+
+	# Test 4: Empty clipboard
+	(( tests++ ))
+	echo -n "" | clip >/dev/null
+	assert "$(clip)" == "" "clip should return empty string when clipboard is empty"
+	(( fails += $? ))
+
+	# Test 5: Multiple args should be echoed as-is after copying
+	(( tests++ ))
+	clip "foo" "bar" >/dev/null
+	assert "$(clip)" == "foo bar" "clip should copy multiple args to clipboard and echo them as-is"
+	(( fails += $? ))
+
+	# Test 6: --quiet option should suppress output
+	(( tests++ ))
+	output=$(clip -q "silent test")
+	assert "$output" == "" "clip -q should not output anything"
+	(( fails += $? ))
+
+	# Test 7: --quiet option should still copy to clipboard
+	(( tests++ ))
+	clip -q "quiet test" >/dev/null
+	assert "$(clip)" == "quiet test" "clip -q should still copy to clipboard"
+	(( fails += $? ))
+
+	# Test 8: -q short option should work the same as --quiet
+	(( tests++ ))
+	output=$(clip -q "short quiet")
+	assert "$output" == "" "clip -q should not output anything (short option)"
+	(( fails += $? ))
+
+	# Test 9: --quiet with piped input should suppress output
+	(( tests++ ))
+	output=$(echo -n "piped quiet" | clip -q)
+	assert "$output" == "" "clip -q should not output anything with piped input"
+	(( fails += $? ))
+
+	# Test 10: --quiet with piped input should still copy to clipboard
+	(( tests++ ))
+	echo -n "piped quiet test" | clip -q >/dev/null
+	assert "$(clip)" == "piped quiet test" "clip -q should still copy piped input to clipboard"
+	(( fails += $? ))
+
+	# Test 11: --help should show usage
+	(( tests++ ))
+	output=$(clip --help | head -n 1)
+	assert "$output" == "Usage: clip [OPTIONS] [TEXT...]" "clip --help should show usage information"
+	(( fails += $? ))
+
+	# Test 12: -h short option should show usage
+	(( tests++ ))
+	output=$(clip -h | head -n 1)
+	assert "$output" == "Usage: clip [OPTIONS] [TEXT...]" "clip -h should show usage information"
+	(( fails += $? ))
+
+	# Restore clipboard
+	printf "%s" "$clipboard_content" | clip >/dev/null
+
+	if [ $fails -gt 0 ]; then
+		red_text "$fails of $tests clip tests failed!" >&2
+	else
+		green_text "All $tests clip tests passed!"
+	fi
+	return $fails
+}
+
+# Run the test if this script is executed directly
+if ! (return 0 2>/dev/null); then
+  test_clip
+fi
