@@ -1,7 +1,14 @@
 #!/usr/bin/env bash
 
-expand() {
+debug() {
+	[ -n "$DEBUG" ] && echo "DEBUG: $*" >&2
+}
 
+silence() {
+	"$@" >/dev/null 2>&1
+}
+
+expand() {
 	# Help function
 	_show_help() {
 		cat << EOF
@@ -30,167 +37,152 @@ EOF
 	}
 
 	# Check for special arguments
-	if [[ $# -eq 0 || "$1" == "--help" ]]; then
+	if [[ "$1" == "--help" || "$1" == "-h" ]]; then
 		_show_help
 		return 0
 	fi
-
-	if [[ "$1" == "--test" ]]; then
-		# Always run tests when --test is specified
-		local verbose=${EXPAND_TEST_VERBOSE:-false}
-		if $verbose; then
-			echo "Testing expand function..."
-		fi
-		
-		# Run the tests and capture the result
-		local test_result
-		# run the test/expand_test file relative to this file
-		EXPAND_TEST_VERBOSE=$verbose "$(dirname "${BASH_SOURCE[0]}")/test/expand_test"
-		test_result=$?
-		
-		# Always show a summary if there were failures
-		if [[ $test_result -ne 0 && "$verbose" != "true" ]]; then
-			red_text "Some tests failed. Run with EXPAND_TEST_VERBOSE=true for details."
-			echo
-		fi
-		
-		return $test_result
+	if [[ $# -eq 0 ]]; then
+		_show_help
+		return 2
 	fi
 
-	# Store original globbing state and nullglob setting
-	local glob_disabled nullglob_set
+	# Store original globbing states to restore later
+	local glob_disabled nullglob_set dotglob_set
 	[[ -o noglob ]] && glob_disabled=true || glob_disabled=false
 	[[ -o nullglob ]] && nullglob_set=true || nullglob_set=false
-
-	# Enable globbing temporarily
-	set +f
-
-	local first_arg="$1"
-
-	# Detect if first argument is an expansion (contains *, ?, [)
-	if [[ "$first_arg" == *[\*\?\[]* ]]; then
-		debug "First argument is an expansion: $first_arg"
-
-		# Enable nullglob for direct pattern expansion
-		shopt -s nullglob
-
-		# For patterns with spaces, use find instead of bash's built-in globbing
-		if [[ "$first_arg" == *" "* ]]; then
-			debug "Pattern contains spaces, using find"
-			local expanded=()
-			while IFS= read -r -d $'\0' file; do
-				# Remove ./ prefix if present
-				file="${file#./}"
-				expanded+=("$file")
-			done < <(find . -maxdepth 1 -name "$first_arg" -print0 2>/dev/null)
-		else
-			# Use bash's built-in globbing for patterns without spaces
-			local expanded=($first_arg)
-		fi
-
-		# If no matches found, keep the original pattern
-		if [[ ${#expanded[@]} -eq 0 ]]; then
-			debug "No matches found for pattern: $first_arg"
-			expanded=("$first_arg")
-		else
-			debug "Found ${#expanded[@]} matches for pattern: $first_arg"
-		fi
-
-		# Print expanded filenames safely, properly quoted for shell consumption
-		for item in "${expanded[@]}"; do
-			builtin printf "%q " "$item"
-		done
-		echo
-
-		# Restore original settings
-		$glob_disabled && set -f
-		$nullglob_set || shopt -u nullglob
-		return
+	[[ -o dotglob ]] && dotglob_set=true || dotglob_set=false
+	
+	# Warn if globbing is already enabled
+	if ! $glob_disabled; then
+		echo "Warning: 'expand' is being called when globbing is already enabled." >&2
+		echo "This function is primarily intended for use when globbing is disabled (set -f)." >&2
 	fi
 
-	# Detect if first argument is an executable command
-	if silence command -v "$first_arg"; then
-		local retcode
-		debug "First argument is an executable command: $first_arg"
+	# Enable all globbing features
+	set +f           # Enable globbing
+	shopt -s nullglob # Empty glob patterns expand to nothing
+	shopt -s dotglob  # Include dotfiles in glob expansion
 
-		# For commands, we want to expand any glob patterns in the arguments
+	# Step 1: Check if first arg is a command
+	local exec_command=""
+	local args=( "$@" )
+	if silence command -v "$1"; then
+		exec_command="$1"
 		shift
-		local expanded_args=()
+		args=( "$@" )
+		debug "First argument is a command: $exec_command"
+	fi
 
-		# Process each argument
-		for arg in "$@"; do
-			if [[ "$arg" == *[\*\?\[]* ]]; then
-				debug "Expanding glob pattern: $arg"
+	# Step 2: Process all arguments
+	local processed_args=()
+	for arg in "${args[@]}"; do
+		# If we have a command and arg starts with - or --, pass it through
+		if [[ -n "$exec_command" && ("$arg" == -* || "$arg" == --*) ]]; then
+			debug "Passing through option: $arg"
+			processed_args+=("$arg")
+		# If arg contains glob pattern
+		elif [[ "$arg" == *[\*\?\[]* ]]; then
+			debug "Processing glob pattern: $arg"
 
-				# For command arguments, we want to keep the pattern if no matches
-				# so DON'T enable nullglob here
-				shopt -u nullglob
-
-				# Save the original pattern before expansion
-				local original_pattern="$arg"
-
-				# Use find to expand the pattern reliably
-				local arg_expanded=()
+			# For patterns with spaces, use find instead of bash's built-in globbing
+			# I'd prefer to keep this 100% Bash, but this is what worked for now and passes tests...
+			if [[ "$arg" == *" "* ]]; then
+				debug "Pattern contains spaces, using find"
+				local found_files=()
 				while IFS= read -r -d $'\0' file; do
 					# Remove ./ prefix if present
 					file="${file#./}"
-					arg_expanded+=("$file")
-				done < <(find . -maxdepth 1 -name "$original_pattern" -print0 2>/dev/null)
-
-				debug "Found ${#arg_expanded[@]} matches for pattern: $original_pattern"
+					found_files+=("$file")
+				done < <(find . -maxdepth 1 -name "$arg" -print0 2>/dev/null)
 
 				# If no matches found, keep the original pattern
-				if [[ ${#arg_expanded[@]} -eq 0 ]]; then
-					debug "No matches found, keeping original pattern: $original_pattern"
-					expanded_args+=("$original_pattern")
+				if [[ ${#found_files[@]} -eq 0 ]]; then
+					debug "No matches found for pattern with spaces: $arg"
+					processed_args+=("$arg")
 				else
-					debug "Adding expanded arguments: ${arg_expanded[*]}"
-					expanded_args+=("${arg_expanded[@]}")
+					debug "Found ${#found_files[@]} matches for pattern with spaces: $arg"
+					processed_args+=("${found_files[@]}")
 				fi
 			else
-				# Not a glob pattern, add as is
-				debug "Adding non-glob argument: $arg"
-				expanded_args+=("$arg")
+				# Use bash's built-in globbing for patterns without spaces
+				local files=($arg)
+
+				# If no matches found, keep the original pattern
+				if [[ ${#files[@]} -eq 0 ]]; then
+					debug "No matches found for pattern: $arg"
+					processed_args+=("$arg")
+				else
+					debug "Found ${#files[@]} matches for pattern: $arg"
+					processed_args+=("${files[@]}")
+				fi
 			fi
-		done
+		else
+			# Not a glob pattern, add as is
+			debug "Adding non-glob argument: $arg"
+			processed_args+=("$arg")
+		fi
+	done
 
-		debug "Final command: $first_arg ${expanded_args[*]}"
+	# Step 3: Sort and emit results
+	local sorted_output
+	if [[ ${#processed_args[@]} -gt 0 ]]; then
+		# Sort the output
+		sorted_output=$(printf "%s\n" "${processed_args[@]}" | sort)
 
-		# Execute command with expanded args in a subshell
-		# The subshell gets replaced by exec, but the parent shell continues
-		(exec "$first_arg" "${expanded_args[@]}")
-		retcode=$?
+		# Step 4: Execute command or print results
+		if [[ -n "$exec_command" ]]; then
+			# Convert sorted output back to array
+			local sorted_args=()
+			while IFS= read -r line; do
+				[[ -z "$line" ]] && continue
+				sorted_args+=("$line")
+			done <<< "$sorted_output"
 
-		# Restore original settings
-		$glob_disabled && set -f
-		$nullglob_set || shopt -u nullglob
-		return $retcode
+			debug "Executing: $exec_command ${sorted_args[*]}"
+			"$exec_command" "${sorted_args[@]}"
+			local retcode=$?
+
+			# Restore original globbing states
+			$glob_disabled && set -f
+			$nullglob_set || shopt -u nullglob
+			$dotglob_set || shopt -u dotglob
+
+			return $retcode
+		else
+			# Print each item properly quoted
+			while IFS= read -r item; do
+				[[ -z "$item" ]] && continue
+				builtin printf "%q " "$item"
+			done <<< "$sorted_output"
+			echo
+		fi
+	else
+		# No arguments to process
+		echo
 	fi
 
-	# Otherwise, assume it's a filename and print safely, properly quoted
-	debug "First argument is a filename: $first_arg"
-
-	# Enable nullglob for consistent behavior
-	shopt -s nullglob
-
-	for item in "$@"; do
-		builtin printf "%q " "$item"
-	done
-	echo
-
-	# Restore original settings
+	# Restore original globbing states
 	$glob_disabled && set -f
 	$nullglob_set || shopt -u nullglob
+	$dotglob_set || shopt -u dotglob
+
+	return 0
 }
 
 # Run the function if this script is executed directly
 if ! (return 0 2>/dev/null); then
 	# Check if we are running tests
-	# if [ "$1" = "--test" ]; then
+	if [ "$1" = "--test" ]; then
 		# Run tests from the test file
-	#   EXPAND_TEST_VERBOSE=true . "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
-	# else
+		test_file="$(dirname "${BASH_SOURCE[0]}")/test/$(basename "${0##\-}")_test"
+		if [ -f "$test_file" ]; then
+			EXPAND_TEST_VERBOSE=true "$test_file"
+		else
+			echo "Error: Test file not found: $test_file" >&2
+			exit 1
+		fi
+	else
 		# If called directly, pass all arguments to the function
 		$(basename "${0##\-}") "$@"
-	# fi
+	fi
 fi

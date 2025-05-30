@@ -1,97 +1,95 @@
 #!/usr/bin/env bash
 
-# Test file for the expand function
+source $HOME/dotfiles/bin/expand
 
 test_expand() {
-  local verbose=${EXPAND_TEST_VERBOSE:-false}
-  local fail_count=0
-  local test_name=""
-  local expected=""
-  local actual=""
+  local fails=0
+  local tests=0
+  local output
 
-  # Helper function to run a test and check the result
-  _run_test() {
-    test_name="$1"
-    expected="$2"
-    shift 2
-
-    if $verbose; then
-      echo -n "Running test: $test_name... "
-    fi
-
-    # Capture the actual output
-    actual=$("$@")
-
-    # Compare with expected output
-    if [[ "$actual" == "$expected" ]]; then
-      if $verbose; then
-        green_text "PASS"
-        echo
-      fi
-    else
-      # Always show failures, even in non-verbose mode
-      red_text "FAIL: $test_name"
-      echo
-      red_text "  Expected: '$expected'"
-      echo
-      red_text "  Actual:   '$actual'"
-      echo
-      ((fail_count++))
-    fi
-  }
-
-  # Create test files
-  touch test1.jpg test2.jpg "test with spaces.jpg"
+  # Create test files in temp dir
+  pushd $(mktemp -d) >/dev/null
+  touch test1.jpg test2.jpg "test with spaces.jpg" zzlast.jpg aafirst.jpg
 
   # Test 1: Direct pattern expansion
-  _run_test "Direct pattern expansion" \
-    "test1.jpg test2.jpg test\\ with\\ spaces.jpg " \
-    expand "test*.jpg"
+  (( tests++ ))
+  output=$(expand "test*.jpg" 2>/dev/null)
+  # Expected output is the sorted list of files
+  local expected_files="test\\ with\\ spaces.jpg test1.jpg test2.jpg "
+  assert "$output" == "$expected_files" "expand should expand glob patterns correctly"
+  (( fails += $? ))
 
   # Test 2: Command with pattern
-  _run_test "Command with pattern" \
-    "test2.jpg test with spaces.jpg test1.jpg" \
-    expand echo "test*.jpg"
+  (( tests++ ))
+  output=$(expand echo "test*.jpg" 2>/dev/null)
+  # Expected output is the sorted list of files
+  expected_files="test with spaces.jpg test1.jpg test2.jpg"
+  assert "$output" == "$expected_files" "expand should execute commands with expanded arguments"
+  (( fails += $? ))
 
   # Test 3: Command with multiple patterns
-  _run_test "Command with multiple patterns" \
-    "test1.jpg test2.jpg test with spaces.jpg test1.jpg" \
-    expand echo "test1.jpg" "test*.jpg"
+  (( tests++ ))
+  # For this test, we expect test1.jpg to appear twice, once from direct arg and once from expansion
+  output=$(expand echo "test1.jpg" "test*.jpg" 2>/dev/null)
+  # Expected output is the sorted list of files with test1.jpg appearing twice
+  expected_files="test with spaces.jpg test1.jpg test1.jpg test2.jpg"
+  assert "$output" == "$expected_files" "expand should handle multiple arguments correctly"
+  (( fails += $? ))
 
   # Test 4: Pattern with spaces
-  _run_test "Pattern with spaces" \
-    "test\\ with\\ spaces.jpg " \
-    expand "test with*.jpg"
+  (( tests++ ))
+  output=$(expand "test with*.jpg" 2>/dev/null)
+  assert "$output" == "test\\ with\\ spaces.jpg " "expand should handle patterns with spaces"
+  (( fails += $? ))
 
   # Test 5: Non-matching pattern
-  _run_test "Non-matching pattern" \
-    "nonexistent\\*.jpg " \
-    expand "nonexistent*.jpg"
+  (( tests++ ))
+  output=$(expand "nonexistent*.jpg" 2>/dev/null)
+  assert "$output" == "nonexistent\*.jpg " "expand should return the original pattern when no matches are found"
+  (( fails += $? ))
 
   # Test 6: Command with non-matching pattern
-  _run_test "Command with non-matching pattern" \
-    "nonexistent*.jpg" \
-    expand echo "nonexistent*.jpg"
+  (( tests++ ))
+  output=$(expand echo "nonexistent*.jpg" 2>/dev/null)
+  assert "$output" == "nonexistent*.jpg" "expand should pass non-matching patterns as-is to commands"
+  (( fails += $? ))
 
-  # Clean up test files
-  rm test1.jpg test2.jpg "test with spaces.jpg"
+  # Test 7: Command with options
+  (( tests++ ))
+  output=$(expand echo -n "test*.jpg" 2>/dev/null)
+  # The -n option should be passed through
+  expected_files="test with spaces.jpg test1.jpg test2.jpg"
+  assert "$output" == "$expected_files" "expand should pass options to commands"
+  (( fails += $? ))
+
+  # Test 8: Verify sorting order with diverse filenames
+  (( tests++ ))
+  output=$(expand "*.jpg" 2>/dev/null)
+  expected_files="aafirst.jpg test\\ with\\ spaces.jpg test1.jpg test2.jpg zzlast.jpg "
+  assert "$output" == "$expected_files" "expand should sort filenames correctly"
+  (( fails += $? ))
+
+  # Test 9: Sorting with multiple patterns
+  (( tests++ ))
+  output=$(expand echo "a*.jpg" "t*.jpg" "z*.jpg" 2>/dev/null)
+  expected_files="aafirst.jpg test with spaces.jpg test1.jpg test2.jpg zzlast.jpg"
+  assert "$output" == "$expected_files" "expand should handle multiple patterns and sort correctly"
+  (( fails += $? ))
+
+  # Clean up test files and leave temp dir
+  rm -f test1.jpg test2.jpg "test with spaces.jpg" zzlast.jpg aafirst.jpg
+  popd >/dev/null
 
   # Final summary
-  if $verbose || [[ $fail_count -gt 0 ]]; then
-    echo ""
-    if [[ $fail_count -eq 0 ]]; then
-      green_text "All tests passed successfully!"
-      echo
-    else
-      red_text "$fail_count test(s) failed."
-      echo
-    fi
+  if [ $fails -gt 0 ]; then
+    red_text "$fails of $tests expand tests failed!\n" >&2
+  else
+    green_text "All $tests expand tests passed!\n" >&2
   fi
-
-  return $fail_count
+  return $fails
 }
 
-# Run the test in verbose mode if this script is executed directly
-if ! (return 0 2>$NULL); then
-  EXPAND_TEST_VERBOSE=true test_expand
+# Run the test if this script is executed directly
+if ! (return 0 2>/dev/null); then
+  test_expand
 fi

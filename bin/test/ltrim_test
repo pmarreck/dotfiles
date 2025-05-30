@@ -3,16 +3,33 @@
 # Test file for ltrim and related functions
 
 # Add your tests here
-echo "Testing rtrim..."
+echo "Testing ltrim and rtrim functions..."
 
-# Example test
-result=$(rtrim "   test input  ")
-expected="   test input"
-if [ "$result" = "$expected" ]; then
-  echo "✓ rtrim works as expected"
-else
-  echo "✗ rtrim failed"
-  echo "Expected: '$expected'"
-  echo "Got: '$result'"
-  exit 1
+test_trims() {
+	local result1=$(rtrim "   test input  ")
+	local expected1="   test input"
+	local result2=$(ltrim "   test input  ")
+	local expected2="test input  "
+	local fails=0
+	local tests=0
+
+	(( tests++ ))
+	assert "$result1" == "$expected1" "rtrim should remove trailing whitespace"
+	(( fails += $? ))
+
+	(( tests++ ))
+	assert "$result2" == "$expected2" "ltrim should remove leading whitespace"
+	(( fails += $? ))
+
+	if [ $fails -gt 0 ]; then
+		red_text "$fails of $tests trim tests failed!\n" >&2
+	else
+		green_text "All $tests trim tests passed!\n" >&2
+	fi
+	return $fails
+}
+
+# Run the test if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	test_trims
 fi

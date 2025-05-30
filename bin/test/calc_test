@@ -2,20 +2,51 @@
 
 # Test the calc function
 test_calc() {
-  # Test simple calculation
-  assert "$(calc 2*4)" == 8 "simple calculations with calc should work"
-  
-  # Test calculation with spaces (requires globbing to be off)
-  assert "$(calc 4 * 23)" == 92 "simple calculations with calc should not glob (requires globbing to be off)"
-  
-  # Test recursive function definition
-  assert "$(calc "define fac(x) { if (x == 0) return (1); return (fac(x-1) * x); }; fac(5)")" == 120 "recursive functions with calc should work"
-  
-  # Test piping into calc
-  assert "$(echo "define fac(x) { if (x == 0) return (1); return (fac(x-1) * x); }; fac(5)" | calc)" == 120 "piping into calc should work"
+	local fails=0
+	local tests=0
+
+	# Save current globbing state and disable globbing for this test
+	local old_nullglob=$(shopt -p nullglob 2>/dev/null || echo '')
+	local glob_disabled=false
+	[[ -o noglob ]] && glob_disabled=true
+	# Disable globbing
+	set -f
+
+	(( tests++ ))
+	# Test simple calculation
+	assert "$(calc 2*4)" == 8 "simple calculations with calc should work"
+	(( fails += $? ))
+
+	(( tests++ ))
+	# Test calculation with spaces (requires globbing to be off)
+	local result=$(calc 4 * 23)
+	assert "$result" == 92 "simple calculations with calc should not glob (requires globbing to be off)"
+	(( fails += $? ))
+
+	(( tests++ ))
+	# Test recursive function definition
+	assert "$(calc "define fac(x) { if (x == 0) return (1); return (fac(x-1) * x); }; fac(5)")" == 120 "recursive functions with calc should work"
+	(( fails += $? ))
+
+	(( tests++ ))
+	# Test piping into calc
+	assert "$(echo "define fac(x) { if (x == 0) return (1); return (fac(x-1) * x); }; fac(5)" | calc)" == 120 "piping into calc should work"
+	(( fails += $? ))
+
+	if [ $fails -gt 0 ]; then
+		red_text "$fails of $tests calc tests failed!\n" >&2
+	else
+		green_text "All $tests calc tests passed!\n" >&2
+	fi
+
+	# Restore original globbing state
+	$glob_disabled || set +f # Only re-enable globbing if it was enabled before
+	[ -n "$old_nullglob" ] && eval "$old_nullglob"
+
+	return $fails
 }
 
 # Run the test if this script is executed directly
 if ! (return 0 2>/dev/null); then
-  test_calc
+	test_calc
 fi

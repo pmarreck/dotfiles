@@ -20,86 +20,12 @@ declare -a precmd_functions
 declare -a preexec_functions
 declare -a PROMPT_ARRAY
 
-inspect() {
-	local var
-	local output=""
-
-	for var in "$@"; do
-		if declare -p "$var" &>/dev/null; then
-			local decl=$(declare -p "$var" 2>&1)
-
-			case "$decl" in
-				"declare -a"*)
-					# Regular array
-					if [[ "$decl" == *"$var=()"* ]]; then
-						# Empty array
-						output+="declare -a $var; "
-					else
-						# Check if array is declared but unset
-						if [[ "$decl" == "declare -a $var" ]]; then
-							output+="declare -a $var; "
-						else
-							# Array with values
-							local array_part=${decl#*$var=}
-							output+="$var=$array_part; "
-						fi
-					fi
-					;;
-				"declare -A"*)
-					# Associative array
-					if [[ "$decl" == *"$var=()"* ]]; then
-						# Empty associative array
-						output+="declare -A $var; "
-					else
-						# Check if associative array is declared but unset
-						if [[ "$decl" == "declare -A $var" ]]; then
-							output+="declare -A $var; "
-						else
-							# Associative array with values
-							local array_part=${decl#*$var=}
-							output+="$var=$array_part; "
-						fi
-					fi
-					;;
-				"declare -x"*)
-					if [[ "$decl" != *"=\""* ]]; then
-						# Exported without value
-						output+="export $var; "
-					else
-						# Exported with value
-						local value="${!var}"
-						output+="export $var=\"$value\"; "
-					fi
-					;;
-				"declare -i"*)
-					# Integer
-					local value="${!var}"
-					output+="$var=$value; "
-					;;
-				"declare -r"*)
-					# Readonly
-					local value="${!var}"
-					output+="readonly $var=\"$value\"; "
-					;;
-				*)
-					# Regular variable
-					local value="${!var}"
-					output+="$var=\"$value\"; "
-					;;
-			esac
-		else
-			output+="unset $var; "
-		fi
-	done
-
-	echo "$output"
-}
-
 # DEBUG_PROMPT_COMMANDS=1
 report_prompt_commands() {
 	truthy DEBUG_PROMPT_COMMANDS && echo "$1 $2: $(inspect PROMPT_COMMAND precmd_functions preexec_functions PROMPT_ARRAY)"
 }
 
+source $HOME/dotfiles/bin/src/inspect.bash
 
 # We start with a clean PROMPT_COMMAND and precmd_functions slate in the event we rehash (which used to screw this up)
 # unset PROMPT_COMMAND

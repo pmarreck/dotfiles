@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+
+source $HOME/dotfiles/bin/src/inspect.bash
+
+test_inspect() {
+	local fails=0
+	local tests=0
+	local str=""
+	declare -i num=5
+	local bool=true
+	local arr=(1 2 c)
+	local -A assoc
+	assoc=( [a]=1 [b]=2 )
+	export exported_var="exported"
+	local output
+
+	# Test 1: Inspect a simple variable
+	(( tests++ ))
+	str="5"
+	output=$(inspect str)
+	assert "$output" == "str=\"5\";" "inspect should return the proper variable name and value declaration for plain strings"
+	(( fails += $? ))
+
+	# Test 2: Inspect a string with spaces
+	(( tests++ ))
+	str="a b c"
+	output=$(inspect str)
+	assert "$output" == "str=\"a b c\";" "inspect should return the proper variable name and value declaration for strings with spaces"
+	(( fails += $? ))
+
+	# Test 3: Inspect a number
+	(( tests++ ))
+	output=$(inspect num)
+	assert "$output" == "num=5;" "inspect should return the proper variable name and value declaration for numbers declared with -i"
+	(( fails += $? ))
+
+	# Test 4: Inspect a boolean
+	(( tests++ ))
+	output=$(inspect bool)
+	assert "$output" == "bool=\"true\";" "inspect should return the proper variable name and value declaration for 'booleans'"
+	(( fails += $? ))
+
+	# Test 5: Inspect an array
+	(( tests++ ))
+	output=$(inspect arr)
+	assert "$output" == "arr=( 1 2 \"c\" );" "inspect should return the proper variable name and value declaration for indexed arrays"
+	(( fails += $? ))
+
+	# Test 6: Inspect an associative array
+	(( tests++ ))
+	output=$(inspect assoc)
+	# Note that associative array order IS NOT GUARANTEED so we have to check both possibilities!
+	local a_first=false
+	[[ "$output" =~ *"( [a]"* ]] && a_first=true
+	if $a_first; then
+		assert "$output" == "assoc=([a]=\"1\" [b]=\"2\");" "inspect should return the proper variable name and value declaration for associative arrays"
+	else
+		assert "$output" == "assoc=([b]=\"2\" [a]=\"1\");" "inspect should return the proper variable name and value declaration for associative arrays"
+	fi
+	(( fails += $? ))
+
+	# Test 7: Inspect an exported variable
+	(( tests++ ))
+	output=$(inspect exported_var)
+	assert "$output" == "export exported_var=\"exported\";" "inspect should return the proper variable name and value declaration for exported variables"
+	(( fails += $? ))
+
+	# Test 8: Inspecting var should not always just return "var"
+	(( tests++ ))
+	output=$(inspect var)
+	assert "$output" != "var=\"var\";" "inspect should return the proper variable name and value declaration for var (not just the name)"
+	(( fails += $? ))
+
+	# clean up
+	unset exported_var num
+
+	if [ $fails -gt 0 ]; then
+		red_text "$fails of $tests inspect tests failed!\n" >&2
+	else
+		green_text "All $tests inspect tests passed!\n" >&2
+	fi
+	return $fails
+}
+
+# Run the test if this script is executed directly
+if ! (return 0 2>/dev/null); then
+  test_inspect
+fi

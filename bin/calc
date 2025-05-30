@@ -16,49 +16,54 @@ calc() {
 	local old_bcll
 	[[ -n "${BC_LINE_LENGTH}" ]] && old_bcll=$BC_LINE_LENGTH
 	export BC_LINE_LENGTH=${BC_LINE_LENGTH:-0}
-	
+
 	# Initialize bcscript
 	local bcscript=""
-	
+
 	# Try to read from stdin if available
 	if read -t 0; then
 		read -d '' -r bcscript
 	else
 		if [[ $# > 0 ]]; then
+			# Join all arguments with spaces to handle operators properly
 			bcscript="$*"
 		else
 			read -d '' -r bcscript # last resort, just try stdin again
 		fi
 	fi
-	
+
 	# Trim leading and trailing whitespace
 	bcscript="${bcscript##+([[:space:]])}"
-	
+
 	# Check if input is empty
 	if [[ -z "$bcscript" ]]; then
 		echo "Error: calc's input looks blank." >&2
 		return 1
 	fi
-	
+
 	# Format function definitions per bc requirements
 	# bc *requires* a newline after an open brace, but it *doesn't* require a newline before a close brace
 	# Replace all newlines with spaces, then replace all spaces after an open brace with a newline
 	bcscript=$(echo -e "$bcscript" | sed -e 's/\n+/ /g' -e 's/{\s*/{\n/g' -e 's/} *;?/}\n/g' -e 's/;/\n/g')
-	
+
 	# Debug output if DEBUG is set
 	[ -n "$DEBUG" ] && echo -e "string received by calc:\n'$bcscript'" >&2
-	
+
+	# Debug output
+	# echo "DEBUG: Final bcscript: '$bcscript'" >&2
+	# echo "DEBUG: Command: echo -e \"scale=${scale}\n$bcscript\" | bc -l" >&2
+
 	# Run the calculation
 	echo -e "scale=${scale}\n$bcscript" | bc -l
 	local retcode=$?
-	
+
 	# Restore BC_LINE_LENGTH
 	if [[ "$old_bcll" != '' ]]; then # it was set before and its old value is that
 		BC_LINE_LENGTH=$old_bcll
 	else
 		unset BC_LINE_LENGTH # it wasn't originally set, so unset it now
 	fi
-	
+
 	return $retcode
 }
 

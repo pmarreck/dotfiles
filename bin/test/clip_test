@@ -88,9 +88,9 @@ test_clip() {
 	printf "%s" "$clipboard_content" | clip >/dev/null
 
 	if [ $fails -gt 0 ]; then
-		red_text "$fails of $tests clip tests failed!" >&2
+		red_text "$fails of $tests clip tests failed!\n" >&2
 	else
-		green_text "All $tests clip tests passed!"
+		green_text "All $tests clip tests passed!\n" >&2
 	fi
 	return $fails
 }

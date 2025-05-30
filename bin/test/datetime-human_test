@@ -1,20 +1,30 @@
 #!/usr/bin/env bash
 
-# Source the assert function for testing
-. "$HOME/dotfiles/bin/assert"
-
 # Test the datetime-human function
 test_datetime_human() {
+  local fails=0
+  local tests=0
+
+  (( tests++ ))
   # Get the output of the datetime-human function
   local output=$(datetime-human)
-  
   # Verify that the output is not empty
-  assert "$output" != ""
-  
+  assert "$output" != "" "datetime-human should not return empty string; got '$output'"
+  (( fails += $? ))
+
+  (( tests++ ))
   # Verify that the output contains expected parts of the date format
   # This is a simple check that the function is producing output in the expected format
   echo "$output" | grep -q -E "[A-Za-z]+, [A-Za-z]+ [0-9]+, [0-9]{4} [0-9]{1,2}:[0-9]{2} [AP]M"
-  assert "$?" == "0"
+  assert "$?" == "0" "datetime-human should produce output in the expected format; got '$output'"
+  (( fails += $? ))
+
+  if [ $fails -gt 0 ]; then
+    red_text "$fails of $tests datetime-human tests failed!\n" >&2
+  else
+    green_text "All $tests datetime-human tests passed!\n" >&2
+  fi
+  return $fails
 }
 
 # Run the test if this script is executed directly

@@ -2,8 +2,20 @@
 
 # Test the date_difference_days function
 test_date_difference_days() {
+  local fails=0
+  local tests=0
+
+  (( tests++ ))
   # Test with a known date difference
   assert "$(date_difference_days 1972-04-05 2024-09-24)" == "19164" "Peter's days alive test"
+  (( fails += $? ))
+
+  if [ $fails -gt 0 ]; then
+    red_text "$fails of $tests date_difference_days tests failed!\n" >&2
+  else
+    green_text "All $tests date_difference_days tests passed!\n" >&2
+  fi
+  return $fails
 }
 
 # Run the test if this script is executed directly
