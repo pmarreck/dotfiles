@@ -1,54 +1,106 @@
 #!/usr/bin/env bash
 
 record_console_settings() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-  __oldhistcontrol="$HISTCONTROL"
-  __oldstate=$(set +o | sed 's/^/ /g')
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	__oldhistcontrol="$HISTCONTROL"
+	__oldstate=$(set +o | sed 's/^/ /g')
 }
 
 restore_console_settings() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-  # For some reason, this eval dumped all these set commands into HISTFILE/command history
-  # so I used HISTCONTROL plus sed prefixing them with spaces (above) to prevent that
-  eval "$__oldstate"
-  export HISTCONTROL="$__oldhistcontrol"
-  unset __oldhistcontrol
-  unset __oldstate
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	# For some reason, this eval dumped all these set commands into HISTFILE/command history
+	# so I used HISTCONTROL plus sed prefixing them with spaces (above) to prevent that
+	eval "$__oldstate"
+	export HISTCONTROL="$__oldhistcontrol"
+	unset __oldhistcontrol
+	unset __oldstate
 }
 
 record_console_settings
 # The following 3 lines don't work when moved into the function above.
 # Imperative languages suck.
-  export HISTCONTROL=erasedups:ignoreboth
-  set -o errexit -o pipefail -o noglob
-  [[ "${DEBUG-0}" != "0" ]] && set -o xtrace
+	export HISTCONTROL=erasedups:ignoreboth
+	set -o errexit -o pipefail -o noglob
+	[[ "${DEBUG-0}" != "0" ]] && set -o xtrace
 
 function var_defined {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-  declare -p "$1" >/dev/null 2>&1
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	declare -p "$1" >/dev/null 2>&1
 }
 
 function func_defined {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-  declare -F "$1" >/dev/null
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	declare -F "$1" >/dev/null
 }
 
 function alias_defined {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-  alias "$1" >/dev/null 2>&1
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	alias "$1" >/dev/null 2>&1
 }
 
 function defined {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-  local word="$1"
-  shift
-  if [ -z "$word" ] && [ -z "$1" ]; then
-    echo "Usage: defined <function or alias or variable or builtin or executable-in-PATH name> [...function|alias] ..."
-    echo "Returns 0 if all the arguments are defined as a function or alias or variable or builtin or executable-in-PATH name."
-    echo "This function is defined in ${BASH_SOURCE[0]}"
-    return 0
-  fi
-  ( "var_defined" "$word" || >/dev/null type -t "$word" ) && ( [ -z "$1" ] || "defined" "$@" )
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	local word="$1"
+	shift
+	if [ -z "$word" ] && [ -z "$1" ]; then
+		echo "Usage: defined <function or alias or variable or builtin or executable-in-PATH name> [...function|alias] ..."
+		echo "Returns 0 if all the arguments are defined as a function or alias or variable or builtin or executable-in-PATH name."
+		echo "This function is defined in ${BASH_SOURCE[0]}"
+		return 0
+	fi
+	( "var_defined" "$word" || >/dev/null type -t "$word" ) && ( [ -z "$1" ] || "defined" "$@" )
+}
+
+function determine_language_from_source() {
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	local file="$1"
+	if [ -f "$file" ]; then
+		local lang_orig=$(file "$file" | cut -d: -f2 | cut -d' ' -f2)
+		local lang=${lang_orig,,}
+		# add exceptions/overrides here
+		case $lang in
+			bourne-again*)
+				lang_orig="Bash shell script"
+				lang="bash"
+				;;
+			posix*)
+				lang_orig="POSIX shell script"
+				lang="sh"
+				;;
+			empty*)
+				lang_orig="empty"
+				lang="txt"
+				;;
+			ascii*)
+				lang_orig="ASCII text"
+				lang="txt"
+				;;
+			*)
+				;;
+		esac
+		note "file '$file' is $(a_or_an "$lang_orig") $lang_orig file"
+		echo "$lang"
+		return 0
+	else
+		err "file '$file' does not exist"
+		return 1
+	fi
+}
+
+function a_or_an() {
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	local word="$1"
+	shift
+	if [ -z "$word" ]; then
+		err "Usage: a_or_an <word>"
+		return 1
+	fi
+	word=${word,,}
+	if [[ ${word:0:1} =~ [aeiou] ]]; then
+		echo "an"
+	else
+		echo "a"
+	fi
 }
 
 # "show": spit out the definition of any name
@@ -59,111 +111,142 @@ function defined {
 # needs pygmentize "see pygments.org" # for syntax highlighting
 # export PYGMENTIZE_STYLE=monokai
 show() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-  # on macOS, you need gnu-sed from homebrew or equivalent, which is installed as "gsed"
-  # I set PLATFORM elsewhere in my env config
-  # [ "$PLATFORM" = "osx" ] && local -r sed="gsed" || local -r sed="sed"
-  # screw homebrew, all in on nix now; this is always gnused; YMMV
-  local word="$1"
-  shift
-  if [ -z "$word" ] && [ -z "$1" ]; then
-    echo "Usage: show <function or alias or variable or builtin or executable-in-PATH name> [...function|alias] ..."
-    echo "Returns the value or definition or location of those name(s)."
-    echo "This function is defined in ${BASH_SOURCE[0]}"
-    return 0
-  fi
-  # if it's a file, syntax-colorize it with bat or less, or display it via sixels if it's an image
-  if [ -f "$word" ]; then
-    # if it's an image file, display it
-    if file "$word" | grep -q image; then
-      note "$word is an image file"
-      needs magick "please install imagemagick" && \
-      magick "$word" -resize 100% -geometry +0+0 -compress none -type truecolor sixel:-
-      return 0
-    else
-      note "$word is a file on disk"
-      needs bat "please install bat" && \
-      bat "$word" 2>/dev/null
-      if [ $? -eq 0 ]; then
-        return 0
-      else
-        less "$word"
-      fi
-    fi
-  elif env | grep -q "^$word="; then
-    local xported=""
-    if [[ $(declare -p "$word" 2>/dev/null) == declare\ -x* ]]; then
-      xported="exported "
-    fi
-    note "$word is an ${xported}environment variable"
-    env | grep --color=never "^$word="
-  elif var_defined "$word"; then
-    # get the output of declare -p
-    declare_str=$(declare -p "$word" 2>/dev/null)
-    if [[ $declare_str == declare\ -a* ]]; then
-      note "$word is an indexed array variable"
-    elif [[ $declare_str == declare\ -A* ]]; then
-      note "$word is an associative array variable"
-    elif [[ $declare_str == declare\ --* ]]; then
-      note "$word is a scalar variable"
-    elif [[ $declare_str == declare\ -x* ]]; then
-      note "$word is an exported variable"
-    elif [[ $declare_str == declare\ -r* ]]; then
-      note "$word is a readonly variable"
-    elif [[ $declare_str == declare\ -i* ]]; then
-      note "$word is an integer variable"
-    else
-      note "I have no idea what kind of variable $word is, but it is defined:"
-    fi
-    echo "$declare_str"
-  elif [ -z "$(type -a -t "$word")" ]; then
-    warn "$word is undefined"
-    return 1
-  else
-    # if there are multiple types to search for, loop through them
-    for type in $(type -a -t "$word" | uniq); do
-      case $type in
-        builtin)
-          note "$word is a builtin"
-          ;;
-        function)
-          note "$word is a function"
-          # replace runs of 2 spaces with 1 space
-          # and format the function definition the way I like it
-          # It also needs bat, optionally
-          local catter=less
-          needs bat "please install bat to view function definitions with syntax highlighting" && catter="bat -l bash -P"
-          declare -f "$word" |\
-            sed -z 's/\n{/ {/' |\
-            sed 's/  / /g' |\
-            sed -E 's/^([_[:alpha:]][_[:alnum:]]*)\s\(\)/\1()/' |\
-            $catter
-          ;;
-        alias)
-          note "$word is an alias"
-          alias "$word"
-          ;;
-        file)
-          # if it's a file, just print the path
-          note "$word is at least one executable file in PATH"
-          type -a -p "$word" | uniq | while read -r file; do
-            if is_script "$file"; then
-              less "$file"
-            else
-              note "($file is not a script so we cannot view it)"
-            fi
-          done
-          ;;
-        *)
-          # things should not get here; if they do, add a case for them above
-          note "$word is not a variable, builtin, function, alias, or file; it is a $type"
-          ;;
-      esac
-    done
-  fi
-  # if there are any words left to look up, recurse with them.
-  # Note that any undefined term will return 1 and stop evaluating the rest.
-  [ -z "$1" ] || show "$@"
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	# on macOS, you need gnu-sed from homebrew or equivalent, which is installed as "gsed"
+	# I set PLATFORM elsewhere in my env config
+	# [ "$PLATFORM" = "osx" ] && local -r sed="gsed" || local -r sed="sed"
+	# screw homebrew, all in on nix now; this is always gnused; YMMV
+	local batless=false
+	needs bat "please install bat to view some file listings or function definitions with syntax highlighting; using less instead" || batless=true
+	local bat_opts="${BAT_OPTS:-"--tabs 0"}" # I removed -P to enable pagination
+	$batless || export BAT_STYLE=${BAT_STYLE:-"grid,snip"}
+	local word="$1"
+	local found_undefined=0
+	shift
+	if [ -z "$word" ] && [ -z "$1" ]; then
+		echo "Usage: show <function or alias or variable or builtin or executable-in-PATH name> [...function|alias] ..."
+		echo "Returns the value or definition or location of those name(s)."
+		echo "This function is defined in ${BASH_SOURCE[0]}"
+		return 0
+	fi
+	# if it's a file, syntax-colorize it with bat or less, or display it via sixels if it's an image
+	if [ -f "$word" ]; then
+		# if it's an image file, display it
+		if file "$word" | grep -q image; then
+			echo "$word"
+			note "'${word}' is an image file:"
+			needs magick "please install imagemagick" && \
+			magick "$word" -resize 100% -geometry +0+0 -compress none -type truecolor sixel:-
+			return 0
+		else
+			echo "$word"
+			local lang=$(determine_language_from_source "$word")
+			if [ -n "$lang" ]; then
+				note "'${word}' is $(a_or_an "$lang") $lang file on disk:"
+				$batless && less "$word" || bat "$word" -l "$lang" $bat_opts 2>/dev/null
+			else
+				note "'${word}' is a file on disk, but it is not a text file"
+			fi
+		fi
+	fi
+	if var_defined "$word"; then
+		local traits=()
+		local decl=$(declare -p "$word" 2>/dev/null)
+		local flags=${decl#declare\ -}
+		local a_or_an="a"
+		flags=${flags%% *}
+		# Check if it's local (by seeing if declare -p outside function fails)
+		( unset __local_check; local __local_check=42; declare -p __local_check 2>/dev/null ) >/dev/null && \
+		declare -F &>/dev/null && caller >/dev/null && \
+		[[ $(declare -p "$word" 2>/dev/null) =~ local\  ]] && traits+=("local")
+		[[ $flags == *x* ]] && traits+=("exported")
+		[[ $flags == *r* ]] && traits+=("readonly")
+		[[ $flags == *i* ]] && traits+=("integer")
+		[[ $flags == *a* ]] && traits+=("indexed array")
+		[[ $flags == *A* ]] && traits+=("associative array")
+		[[ $flags == *n* ]] && traits+=("nameref")
+		[[ $flags == *-* ]] && traits+=("scalar")
+
+		# Check if it's in env
+		if env | grep --color=never -q "^$word=" &>/dev/null; then
+			traits+=("environment")
+		fi
+
+		# get the output of declare -p
+		declare_str=$(declare -p "$word" 2>/dev/null)
+		if [[ $declare_str == declare\ --* ]]; then
+			# replace leading "declare -- " with nothing
+			declare_str=${declare_str#declare\ --\ }
+		elif [[ $declare_str == declare\ -x* ]]; then
+			# replace leading "declare -x" with "export"
+			declare_str="export ${declare_str#declare\ -x\ }"
+		fi
+		# change a_or_an to "an" if the first letter of the first value in traits is a vowel. DETAILS, BABY!
+		note "'${word}' is $(a_or_an "${traits[0]}") ${traits[*]} variable"
+		echo "$declare_str"
+	fi
+	if ! [ -f "$word" ] && [ -z "$(type -a -t "$word")" ]; then
+		warn "'${word}' is undefined"
+		found_undefined=1
+	else
+		# if there are multiple types to search for, loop through them
+		for type in $(type -a -t "$word" | uniq); do
+			case $type in
+				alias)
+					note "'${word}' is an alias"
+					alias "$word"
+					;;
+				function)
+					note "'${word}' is a Bash function"
+					# replace runs of 2 spaces with 1 space
+					# and format the function definition the way I like it
+					# It also needs bat, optionally
+					local catter=less
+					$batless || catter="bat -l bash $bat_opts"
+					declare -f "$word" |\
+						sed -z 's/\n{/ {/' |\
+						sed 's/  / /g' |\
+						sed -E 's/^([_[:alpha:]][_[:alnum:]]*)\s\(\)/\1()/' |\
+						$catter
+					;;
+				builtin)
+					note "'${word}' is a builtin"
+					;;
+				file)
+					# if it's a file, just print the path
+					note "'${word}' is at least one executable file in PATH"
+					type -a -p "$word" | uniq | while read -r file; do
+						echo "$file"
+						if is_script "$file"; then
+							local lang=$(determine_language_from_source "$file")
+							$batless && less "$file" || bat -l "$lang" $bat_opts "$file"
+						else
+							note "($file is a binary, so we cannot view it)"
+						fi
+					done
+					;;
+				*)
+					# things should not get here; if they do, add a case for them above
+					note "'${word}' is not a variable, builtin, function, alias, or file; it is a $type"
+					;;
+			esac
+		done
+	fi
+	# if there are any words left to look up, recurse with them.
+	# Note that any undefined term will return 1 and stop evaluating the rest.
+	[ -z "$1" ] || show "$@"
+	# (return the sum of any non-zero exit codes)
+	return $(( $found_undefined + $? ))
+}
+
+# this overrides /usr/bin/what, which I will likely never use anyway
+what() {
+	if [ "$1" == "is" ]; then # just to make it nicer to use
+		shift
+		show "$@"
+	else
+		show "$@"
+	fi
 }
 
 restore_console_settings

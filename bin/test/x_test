@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+
+# Import the assert function if not already available
+if ! type assert &>/dev/null; then
+	# Source the test utilities
+	. "$HOME/dotfiles/bin/test/test_utils"
+fi
+
+# Test the x function
+test_x() {
+	local fails=0
+	local tests=0
+
+	# Test basic repetition
+	(( tests++ ))
+	assert "$(x 3 hello)" == "hellohellohello" "Basic string repetition should work"
+	(( fails += $? ))
+
+	# Test parameter order flexibility
+	(( tests++ ))
+	assert "$(x hello 3)" == "hellohellohello" "Parameter order should be flexible"
+	(( fails += $? ))
+
+	# Test with ANSI-C quoting for proper newline handling
+	# Test newline flag
+	(( tests++ ))
+	result="$(x +n 2 abc)"
+	echo "DEBUG +n test: '$(hexdump -C <<< "$result")'" >&2
+	expected="$(printf "abcabc\n")"
+	echo "DEBUG +n expected: '$(hexdump -C <<< "$expected")'" >&2
+	assert "$result" == "$expected" "The +n flag should add a newline"
+	(( fails += $? ))
+
+	# Test escaped newlines in string using ANSI-C quoting
+	(( tests++ ))
+	result="$(x 2 $'abc\n')"
+	echo "DEBUG escaped newline test: '$(hexdump -C <<< "$result")'" >&2
+	expected="$(printf "abc\nabc\n")"
+	echo "DEBUG escaped expected: '$(hexdump -C <<< "$expected")'" >&2
+	assert "$result" == "$expected" "Escaped newlines should be interpreted correctly"
+	(( fails += $? ))
+
+	# Test string with existing newline and +n flag
+	(( tests++ ))
+	result="$(x +n 2 $'abc\n')"
+	echo "DEBUG +n with newline test: '$(hexdump -C <<< "$result")'" >&2
+	expected="$(printf "abc\nabc\n")"
+	echo "DEBUG +n with newline expected: '$(hexdump -C <<< "$expected")'" >&2
+	assert "$result" == "$expected" "No extra newline should be added if string already ends with one"
+	(( fails += $? ))
+
+	# Test xn function (which should call x with +n)
+	(( tests++ ))
+	result="$(xn 2 abc)"
+	echo "DEBUG xn test: '$(hexdump -C <<< "$result")'" >&2
+	expected="$(printf "abcabc\n")"
+	echo "DEBUG xn expected: '$(hexdump -C <<< "$expected")'" >&2
+	assert "$result" == "$expected" "xn should add a newline"
+	(( fails += $? ))
+
+	if [ $fails -gt 0 ]; then
+		red_text "$fails of $tests x tests failed!\n" >&2
+	else
+		green_text "All $tests x tests passed!\n" >&2
+	fi
+
+	return $fails
+}
+
+# Run the test if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	test_x
+fi

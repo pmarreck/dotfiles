@@ -66,15 +66,18 @@ calc() {
 
 	return $retcode
 }
-
+debug "wtf"
 # Run the function if this script is executed directly
 if ! (return 0 2>/dev/null); then
+	debug "Running calc with args: $@"
 	# Check if we are running tests
 	if [ "$1" = "--test" ]; then
+		debug "Running tests for calc with args: $@"
 		# Run tests from the test file
-		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+		exec "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
 	else
 		# If called directly, pass all arguments to the function
+		debug "Running calc function with args: $@"
 		$(basename "${0##\-}") "$@"
 	fi
 fi

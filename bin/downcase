@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+
+downcase() {
+  local input_string
+
+  if [ -t 0 ]; then # True if stdin is a terminal (i.e., not from a pipe/redirect)
+    # Mode: Input from arguments
+    if [[ $# -eq 0 ]]; then
+      # No arguments provided and not reading from a pipe
+      echo "Usage: downcase \"<string>\"  OR  echo \"<string>\" | downcase" >&2
+      return 2
+    fi
+    # Use the first argument. If multiple are given, only the first is processed.
+    # To process all arguments as a single string if desired: downcase "$*"
+    input_string="$1"
+  else
+    # Mode: Input from stdin (pipe or redirection)
+    # If arguments are also provided when piping, they are typically ignored by this kind of tool.
+    input_string=$(cat --) # Read all of stdin. Use '--' to signify end of options for cat.
+  fi
+
+  # The magic of Bash 4.0+ parameter expansion for lowercase.
+  # This correctly handles an empty input_string by producing an empty output.
+  echo "${input_string,,}"
+}
+
+downcase "$@"

@@ -3,29 +3,62 @@
 x() {
 	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	usage() {
-		echo "Usage: x <count:integer >= 1> <string-to-repeat-printing>" >&2
+		echo "Usage: x [+n] <count:integer >= 1> <string-to-repeat>" >&2
+		echo "Parameters can be provided in any order" >&2
+		echo "  +n    Add a newline at the end if not already present" >&2
 	}
-	case "$1" in
-		-h|--help)
+
+	# Initialize variables
+	local count=""
+	local string=""
+	local add_newline=false
+	
+	# Parse arguments in any order
+	for arg in "$@"; do
+		if [ "$arg" = "+n" ]; then
+			add_newline=true
+		elif [[ "$arg" =~ ^[0-9]+$ ]] && [ "$arg" -ge 1 ]; then
+			count="$arg"
+		elif [ "$arg" = "-h" ] || [ "$arg" = "--help" ]; then
 			usage
 			return 0
-			;;
-		*)
-			;;
-	esac
-	# make sure the first arg is a positive integer >= 1
-	if ! [[ "$1" =~ ^[0-9]+$ ]] || [ "$1" -lt 1 ]; then
-		echo "Error: First argument must be a positive integer" >&2
+		else
+			# Use the argument as the string to repeat
+			string="$arg"
+			
+			# Process escape sequences if they exist
+			if [[ "$string" == *"\\n"* ]]; then
+				# Use printf to interpret escape sequences
+				string=$(printf "%b" "$string")
+			fi
+		fi
+	done
+	
+	# Validate we have both required parameters
+	if [ -z "$count" ]; then
+		echo "Error: Missing count parameter (must be a positive integer >= 1)" >&2
 		usage
-		return 1
+		return 2
 	fi
-	# make sure there's a string to repeat
-	if [ -z "$2" ]; then
-		echo "Error: Second argument must be a string to repeat" >&2
+	
+	if [ -z "$string" ]; then
+		echo "Error: Missing string parameter" >&2
 		usage
-		return 1
+		return 2
 	fi
-	for i in $(seq 1 $1); do printf "%s" "$2"; done
+	
+	# Perform the repetition
+	local output=""
+	for i in $(seq 1 $count); do 
+		output="${output}${string}"
+	done
+	
+	# Add newline if requested and string doesn't already end with one
+	if $add_newline && [[ "$output" != *$'\n' ]]; then
+		printf "%s\n" "$output"
+	else
+		printf "%s" "$output"
+	fi
 }
 
 # Run the function if this script is executed directly
@@ -33,7 +66,7 @@ if ! (return 0 2>/dev/null); then
 	# Check if we are running tests
 	if [ "$1" = "--test" ]; then
 		# Run tests from the test file
-		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+		exec "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
 	else
 		# If called directly, pass all arguments to the function
 		$(basename "${0##\-}") "$@"

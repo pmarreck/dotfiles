@@ -2,9 +2,8 @@
 
 xn() {
 	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-	x $1 $2
-	# print a newline only if the string does not end in a newline
-	[[ "$1" == "${1%$'\n'}" ]] && echo
+	# Just call x with all arguments and add the +n parameter
+	x +n "$@"
 }
 
 # Run the function if this script is executed directly
@@ -12,7 +11,7 @@ if ! (return 0 2>/dev/null); then
 	# Check if we are running tests
 	if [ "$1" = "--test" ]; then
 		# Run tests from the test file
-		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+		. "$HOME/dotfiles/bin/test/x_test"
 	else
 		# If called directly, pass all arguments to the function
 		$(basename "${0##\-}") "$@"

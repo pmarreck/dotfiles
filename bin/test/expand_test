@@ -75,9 +75,114 @@ test_expand() {
   expected_files="aafirst.jpg test with spaces.jpg test1.jpg test2.jpg zzlast.jpg"
   assert "$output" == "$expected_files" "expand should handle multiple patterns and sort correctly"
   (( fails += $? ))
-
+  
+  # Test 10: Respect nullglob setting (when nullglob is set, non-matching patterns disappear)
+  (( tests++ ))
+  # Save current nullglob setting
+  local old_nullglob_setting
+  [[ -o nullglob ]] && old_nullglob_setting=true || old_nullglob_setting=false
+  
+  # Enable nullglob
+  shopt -s nullglob
+  
+  # Test with ls command and nullglob enabled
+  # When nullglob is set, non-matching patterns should be removed completely
+  output=$(expand ls "nonexistent*.jpg" "a*.jpg" 2>/dev/null)
+  # Should only include aafirst.jpg, not the nonexistent pattern
+  expected_files="aafirst.jpg"
+  assert "$output" == "$expected_files" "expand should respect nullglob setting (enabled)"
+  (( fails += $? ))
+  
+  # Restore original nullglob setting
+  $old_nullglob_setting || shopt -u nullglob
+  
+  # Test 11: Respect dotglob setting (when dotglob is set, hidden files are included)
+  (( tests++ ))
+  # Create a hidden test file
+  touch ".hidden.jpg"
+  
+  # Save current dotglob setting
+  local old_dotglob_setting
+  [[ -o dotglob ]] && old_dotglob_setting=true || old_dotglob_setting=false
+  
+  # Enable dotglob
+  shopt -s dotglob
+  output=$(expand "*.jpg" 2>/dev/null)
+  # Should include the hidden file
+  expected_files=".hidden.jpg aafirst.jpg test\\ with\\ spaces.jpg test1.jpg test2.jpg zzlast.jpg "
+  assert "$output" == "$expected_files" "expand should respect dotglob setting (enabled)"
+  (( fails += $? ))
+  
+  # Disable dotglob
+  shopt -u dotglob
+  output=$(expand "*.jpg" 2>/dev/null)
+  # Should NOT include the hidden file
+  expected_files="aafirst.jpg test\\ with\\ spaces.jpg test1.jpg test2.jpg zzlast.jpg "
+  assert "$output" == "$expected_files" "expand should respect dotglob setting (disabled)"
+  (( fails += $? ))
+  
+  # Restore original dotglob setting
+  $old_dotglob_setting && shopt -s dotglob || shopt -u dotglob
+  
+  # Clean up the hidden file
+  rm -f ".hidden.jpg"
+  
+  # Test 12: Recursive globbing with ** pattern
+  (( tests++ ))
+  # Create a subdirectory structure
+  mkdir -p subdir1/subdir2
+  touch subdir1/nested1.jpg subdir1/subdir2/nested2.jpg
+  
+  # Test recursive globbing
+  output=$(expand "**/*.jpg" 2>/dev/null)
+  expected_files="aafirst.jpg subdir1/nested1.jpg subdir1/subdir2/nested2.jpg test\ with\ spaces.jpg test1.jpg test2.jpg zzlast.jpg "
+  assert "$output" == "$expected_files" "expand should handle recursive ** patterns"
+  (( fails += $? ))
+  
+  # Test 13: Recursive globbing with set -f (globbing disabled)
+  (( tests++ ))
+  # Save current noglob setting
+  local old_noglob_setting
+  [[ -o noglob ]] && old_noglob_setting=true || old_noglob_setting=false
+  
+  # Disable globbing
+  set -f
+  output=$(expand "**/*.jpg" 2>/dev/null)
+  expected_files="aafirst.jpg subdir1/nested1.jpg subdir1/subdir2/nested2.jpg test\ with\ spaces.jpg test1.jpg test2.jpg zzlast.jpg "
+  assert "$output" == "$expected_files" "expand should handle recursive ** patterns with globbing disabled"
+  (( fails += $? ))
+  
+  # Restore original noglob setting
+  $old_noglob_setting || set +f
+  
+  # Test 14: Command with recursive pattern
+  (( tests++ ))
+  output=$(expand echo "**/*.jpg" 2>/dev/null)
+  expected_files="aafirst.jpg subdir1/nested1.jpg subdir1/subdir2/nested2.jpg test with spaces.jpg test1.jpg test2.jpg zzlast.jpg"
+  assert "$output" == "$expected_files" "expand should execute commands with recursive ** patterns"
+  (( fails += $? ))
+  
+  # Test 15: Recursive pattern with nullglob
+  (( tests++ ))
+  # Save current nullglob setting
+  local old_nullglob_setting
+  [[ -o nullglob ]] && old_nullglob_setting=true || old_nullglob_setting=false
+  
+  # Enable nullglob
+  shopt -s nullglob
+  # Test with a non-matching recursive pattern and command mode
+  # When nullglob is set, non-matching patterns should be removed completely
+  output=$(expand ls "**/nonexistent*.jpg" 2>/dev/null)
+  # Should be empty with nullglob
+  expected_files=""
+  assert "$output" == "$expected_files" "expand should respect nullglob with recursive patterns"
+  (( fails += $? ))
+  
+  # Restore original nullglob setting
+  $old_nullglob_setting || shopt -u nullglob
+  
   # Clean up test files and leave temp dir
-  rm -f test1.jpg test2.jpg "test with spaces.jpg" zzlast.jpg aafirst.jpg
+  rm -rf test1.jpg test2.jpg "test with spaces.jpg" zzlast.jpg aafirst.jpg subdir1
   popd >/dev/null
 
   # Final summary

@@ -48,32 +48,44 @@ EOF
 
 	# Store original globbing states to restore later
 	local glob_disabled nullglob_set dotglob_set
-	[[ -o noglob ]] && glob_disabled=true || glob_disabled=false
-	[[ -o nullglob ]] && nullglob_set=true || nullglob_set=false
-	[[ -o dotglob ]] && dotglob_set=true || dotglob_set=false
 	
-	# Warn if globbing is already enabled
-	if ! $glob_disabled; then
+	# Check if globbing is disabled (set -f sets the noglob option)
+	# This is the proper way to check if set -f is active
+	if [[ -o noglob ]]; then
+		glob_disabled=true
+		debug "Globbing is disabled (noglob is set)"
+	else
+		glob_disabled=false
 		echo "Warning: 'expand' is being called when globbing is already enabled." >&2
 		echo "This function is primarily intended for use when globbing is disabled (set -f)." >&2
+		debug "Globbing is enabled (noglob is not set)"
 	fi
+	
+	# Store other globbing options
+	[[ -o nullglob ]] && nullglob_set=true || nullglob_set=false
+	[[ -o dotglob ]] && dotglob_set=true || dotglob_set=false
 
-	# Enable all globbing features
+	# Enable globbing but respect existing nullglob and dotglob settings
 	set +f           # Enable globbing
-	shopt -s nullglob # Empty glob patterns expand to nothing
-	shopt -s dotglob  # Include dotfiles in glob expansion
+	# We don't change nullglob and dotglob settings - respect user's preferences
 
 	# Step 1: Check if first arg is a command
 	local exec_command=""
-	local args=( "$@" )
-	if silence command -v "$1"; then
-		exec_command="$1"
-		shift
-		args=( "$@" )
-		debug "First argument is a command: $exec_command"
+	local args=("$@")
+	
+	# If first arg exists and is an executable, use it as command
+	if [[ ${#args[@]} -gt 0 ]] && command -v "${args[0]}" &>/dev/null; then
+		exec_command="${args[0]}"
+		debug "Found command: $exec_command"
+		# Remove the command from args
+		args=("${args[@]:1}")
+		
+		# Special handling for nullglob in command mode
+		if $nullglob_set; then
+			debug "Command mode with nullglob set - will filter out non-matching patterns"
+		fi
 	fi
 
-	# Step 2: Process all arguments
 	local processed_args=()
 	for arg in "${args[@]}"; do
 		# If we have a command and arg starts with - or --, pass it through
@@ -83,34 +95,187 @@ EOF
 		# If arg contains glob pattern
 		elif [[ "$arg" == *[\*\?\[]* ]]; then
 			debug "Processing glob pattern: $arg"
+			
+			# Special handling for command mode with nullglob
+			if [[ -n "$exec_command" ]] && $nullglob_set; then
+				debug "Command mode with nullglob set - checking if pattern matches any files"
+				
+				# Check if the pattern matches any files
+				local matches=()
+				
+				# Temporarily enable nullglob for pattern matching
+				shopt -s nullglob
+				if [[ "$arg" == *" "* ]]; then
+					# For patterns with spaces, use find
+					while IFS= read -r -d $'\0' file; do
+						# Remove ./ prefix if present
+						file="${file#./}"
+						matches+=("$file")
+					done < <(find . -maxdepth 1 -name "$arg" -print0 2>/dev/null)
+				else
+					# For patterns without spaces, use bash globbing
+					matches=($arg)
+				fi
+				shopt -u nullglob
+				
+				# If no matches and nullglob is set, skip this pattern entirely
+				if [[ ${#matches[@]} -eq 0 ]]; then
+					debug "No matches found for pattern '$arg' with nullglob set - skipping"
+					continue
+				fi
+				
+				# Otherwise, add the matches
+				debug "Found ${#matches[@]} matches for pattern '$arg'"
+				processed_args+=("${matches[@]}")
+				continue
+			fi
 
-			# For patterns with spaces, use find instead of bash's built-in globbing
-			# I'd prefer to keep this 100% Bash, but this is what worked for now and passes tests...
+			# Handle patterns with spaces using find
 			if [[ "$arg" == *" "* ]]; then
 				debug "Pattern contains spaces, using find"
 				local found_files=()
+				
+				# Check if pattern contains ** for recursive globbing
+				local is_recursive=false
+				if [[ "$arg" == *"**"* ]]; then
+					is_recursive=true
+					debug "Detected recursive globbing pattern with **"
+				fi
+				
+				# Adjust find command based on recursive flag
+				local find_cmd="find ."
+				if ! $is_recursive; then
+					find_cmd="$find_cmd -maxdepth 1"
+				fi
+				
+				# If dotglob is set, include hidden files
+				if $dotglob_set; then
+					debug "dotglob is set, including hidden files in find"
+					find_cmd="$find_cmd -name \"$arg\" -print0"
+				else
+					debug "dotglob is not set, excluding hidden files in find"
+					# Exclude files that start with a dot
+					find_cmd="$find_cmd -name \"$arg\" -not -path \"*/\.*\" -print0"
+				fi
+				
+				debug "Find command: $find_cmd"
+				
 				while IFS= read -r -d $'\0' file; do
 					# Remove ./ prefix if present
 					file="${file#./}"
 					found_files+=("$file")
-				done < <(find . -maxdepth 1 -name "$arg" -print0 2>/dev/null)
-
-				# If no matches found, keep the original pattern
+				done < <(eval "$find_cmd" 2>/dev/null)
+				
+				# If no matches found and nullglob is not set, keep the original pattern
 				if [[ ${#found_files[@]} -eq 0 ]]; then
 					debug "No matches found for pattern with spaces: $arg"
-					processed_args+=("$arg")
+					
+					# If we're in command mode and nullglob is set, skip non-matching patterns
+					if [[ -n "$exec_command" ]] && $nullglob_set; then
+						debug "Command mode with nullglob set, skipping non-matching pattern"
+						# Skip this pattern entirely
+					else
+						debug "Keeping original pattern"
+						processed_args+=("$arg")
+					fi
 				else
 					debug "Found ${#found_files[@]} matches for pattern with spaces: $arg"
 					processed_args+=("${found_files[@]}")
 				fi
 			else
-				# Use bash's built-in globbing for patterns without spaces
-				local files=($arg)
-
-				# If no matches found, keep the original pattern
+				# Check if pattern contains ** for recursive globbing
+				if [[ "$arg" == *"**"* ]]; then
+					debug "Detected recursive globbing pattern with **: $arg"
+					
+					# For recursive patterns, we use find to handle the traversal
+					local found_files=()
+					
+					# Special handling for command mode with nullglob
+					if [[ -n "$exec_command" ]] && $nullglob_set; then
+						# First check if there are any matches using a quick find command
+						local test_pattern="${arg//\*\*/\*}"
+						local test_cmd="find . -path \"$test_pattern\" -type f -print -quit 2>/dev/null"
+						debug "Testing recursive pattern with nullglob: $test_cmd"
+						
+						local test_result=$(eval "$test_cmd")
+						if [[ -z "$test_result" ]]; then
+							debug "No matches found for recursive pattern with nullglob - skipping: $arg"
+							continue
+						fi
+						debug "Found matches for recursive pattern, proceeding: $arg"
+					fi
+					
+					# Convert the pattern to something find can use with -path
+					# We need to handle the ** pattern specially
+					local find_pattern="$arg"
+					
+					# Replace ** with a wildcard that find's -path can use
+					# This handles the common case of **/*.ext
+					find_pattern="${find_pattern//\*\*/\*}"
+					
+					# Build the find command
+					local find_cmd="find ."
+					
+					# Add dotglob handling
+					if ! $dotglob_set; then
+						find_cmd="$find_cmd -not -path \"*/\.*\"" 
+					fi
+					
+					# Add the pattern matching
+					find_cmd="$find_cmd -path \"$find_pattern\" -type f -print0"
+					
+					debug "Recursive find command: $find_cmd"
+					
+					# Execute the find command and collect results
+					while IFS= read -r -d $'\0' file; do
+						# Remove ./ prefix if present
+						file="${file#./}"
+						found_files+=("$file")
+					done < <(eval "$find_cmd" 2>/dev/null)
+					
+					# Handle the results based on whether we found matches
+					if [[ ${#found_files[@]} -eq 0 ]]; then
+						debug "No matches found for recursive pattern: $arg"
+						
+						# If nullglob is set and we're in command mode, skip this pattern
+						if [[ -n "$exec_command" ]] && $nullglob_set; then
+							debug "Command mode with nullglob set, skipping non-matching recursive pattern"
+							# Skip this pattern entirely
+						else
+							# Otherwise keep the original pattern
+							debug "Keeping original recursive pattern"
+							processed_args+=("$arg")
+						fi
+					else
+						# We found matches, add them to the processed args
+						debug "Found ${#found_files[@]} matches for recursive pattern: $arg"
+						processed_args+=("${found_files[@]}")
+					fi
+					
+					# Skip the regular globbing for this pattern
+					continue
+				else
+					# Use bash's built-in globbing for non-recursive patterns without spaces
+					local files=()
+					
+					# Enable nullglob temporarily to detect if there are no matches
+					shopt -s nullglob
+					files=($arg)
+					shopt -u nullglob
+				fi
+				
+				# If no matches found, handle based on mode and nullglob setting
 				if [[ ${#files[@]} -eq 0 ]]; then
 					debug "No matches found for pattern: $arg"
-					processed_args+=("$arg")
+					
+					# If we're in command mode and nullglob is set, skip non-matching patterns
+					if [[ -n "$exec_command" ]] && $nullglob_set; then
+						debug "Command mode with nullglob set, skipping non-matching pattern"
+						# Skip this pattern entirely
+					else
+						debug "Keeping original pattern"
+						processed_args+=("$arg")
+					fi
 				else
 					debug "Found ${#files[@]} matches for pattern: $arg"
 					processed_args+=("${files[@]}")
@@ -135,17 +300,24 @@ EOF
 			local sorted_args=()
 			while IFS= read -r line; do
 				[[ -z "$line" ]] && continue
+				
+				# Special handling for nullglob in command mode
+				# If we're in command mode with nullglob set, skip any non-matching patterns
+				# This is a safety check to catch any patterns that might have slipped through
+				if $nullglob_set && [[ "$line" == *[*?[]* ]] && [[ ! -e "$line" ]]; then
+					debug "Skipping non-matching pattern in command mode with nullglob: $line"
+					continue
+				fi
+				
 				sorted_args+=("$line")
 			done <<< "$sorted_output"
-
+			
 			debug "Executing: $exec_command ${sorted_args[*]}"
 			"$exec_command" "${sorted_args[@]}"
 			local retcode=$?
 
-			# Restore original globbing states
+			# Only restore the globbing state (noglob) since we didn't change nullglob or dotglob
 			$glob_disabled && set -f
-			$nullglob_set || shopt -u nullglob
-			$dotglob_set || shopt -u dotglob
 
 			return $retcode
 		else
@@ -161,10 +333,8 @@ EOF
 		echo
 	fi
 
-	# Restore original globbing states
+	# Only restore the globbing state (noglob) since we didn't change nullglob or dotglob
 	$glob_disabled && set -f
-	$nullglob_set || shopt -u nullglob
-	$dotglob_set || shopt -u dotglob
 
 	return 0
 }
