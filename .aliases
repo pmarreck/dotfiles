@@ -76,7 +76,8 @@ else
   alias mpnetwork='cd ~/Documents/mpnetwork'
 fi
 # alias simpaticio='cd ~/Documents/simpaticio'
-alias work=dotfiles
+# alias work=dotfiles
+alias work='cd "$HOME/Documents/regis-project/sys (twserver)/system/SAGA"'
 
 alias dotfiles='cd ~/dotfiles'
 
