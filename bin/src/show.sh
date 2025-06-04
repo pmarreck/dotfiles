@@ -55,6 +55,7 @@ function determine_language_from_source() {
 	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	local file="$1"
 	if [ -f "$file" ]; then
+		local file_ext=$(basename "$file" | cut -d. -f2-)
 		local lang_orig=$(file "$file" | cut -d: -f2 | cut -d' ' -f2)
 		local lang=${lang_orig,,}
 		# add exceptions/overrides here
@@ -72,8 +73,16 @@ function determine_language_from_source() {
 				lang="txt"
 				;;
 			ascii*)
-				lang_orig="ASCII text"
-				lang="txt"
+				if [ "$file_ext" = "" ]; then
+					lang_orig="ASCII text"
+					lang="txt"
+				elif [ "$file_ext" = "md" ]; then
+					lang_orig="Markdown document"
+					lang="md"
+				else
+					lang_orig="ASCII text, with extension '$file_ext'"
+					lang="$file_ext"
+				fi
 				;;
 			*)
 				;;
@@ -96,11 +105,20 @@ function a_or_an() {
 		return 1
 	fi
 	word=${word,,}
-	if [[ ${word:0:1} =~ [aeiou] ]]; then
-		echo "an"
-	else
-		echo "a"
-	fi
+	case $word in
+		# this was a surprising special case... "a md" sounds weird because we pronounce "md" as "em-dee" implying "an em-dee", not "a em-dee"
+		# A general case would figure out if the word is pronounced as a literal spelling (like "md" = "em dee") and if so,
+		# if the first letter's pronunciation begins with a vowel sound, but ain't nobody got time fo' dat for now
+		md)
+			echo "an"
+			;;
+		a*|e*|i*|o*|u*)
+			echo "an"
+			;;
+		*)
+			echo "a"
+			;;
+	esac
 }
 
 # "show": spit out the definition of any name
@@ -131,19 +149,23 @@ show() {
 	fi
 	# if it's a file, syntax-colorize it with bat or less, or display it via sixels if it's an image
 	if [ -f "$word" ]; then
+		local file_ext=$(basename "$word" | cut -d. -f2-)
 		# if it's an image file, display it
 		if file "$word" | grep -q image; then
 			echo "$word"
 			note "'${word}' is an image file:"
 			needs magick "please install imagemagick" && \
 			magick "$word" -resize 100% -geometry +0+0 -compress none -type truecolor sixel:-
-			return 0
 		else
 			echo "$word"
 			local lang=$(determine_language_from_source "$word")
 			if [ -n "$lang" ]; then
 				note "'${word}' is $(a_or_an "$lang") $lang file on disk:"
-				$batless && less "$word" || bat "$word" -l "$lang" $bat_opts 2>/dev/null
+				if [ "$file_ext" = "md" ] && needs glow "please install glow"; then
+					glow "$word"
+				else
+					$batless && less "$word" || bat "$word" -l "$lang" $bat_opts 2>/dev/null
+				fi
 			else
 				note "'${word}' is a file on disk, but it is not a text file"
 			fi
