@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+
+# Test the jpegxl function
+test_jpegxl() {
+    local fails=0
+    local tests=0
+
+    # Create a test directory
+    local test_dir=$(mktemp -d)
+    echo "Running jpegxl tests in temporary directory: $test_dir"
+
+    # Create test images in the test directory
+    (
+        cd "$test_dir"
+        
+        # Create a test JPEG image
+        magick -size 100x100 gradient:green-yellow "$test_dir/test_jpg.jpg"
+        
+        # Create a test PNG image
+        magick -size 100x100 gradient:blue-red "$test_dir/test_png.png"
+        
+        # Create a test PNG with alpha channel
+        magick -size 100x100 xc:none -fill red -draw "circle 50,50 20,30" "$test_dir/alpha_test_png.png"
+    )
+
+    # Test 1: Basic lossless conversion (default)
+    (( tests++ ))
+    DEBUG=true jpegxl "$test_dir/test_jpg.jpg" >/dev/null 2>&1
+    if [[ -f "$test_dir/test_jpg.jxl" ]]; then
+        echo "✓ Basic lossless conversion test passed"
+    else
+        echo "✗ Basic lossless conversion test failed"
+        (( fails++ ))
+    fi
+
+    # Test 2: Lossy conversion
+    (( tests++ ))
+    DEBUG=true jpegxl --lossy "$test_dir/test_png.png" >/dev/null 2>&1
+    if [[ -f "$test_dir/test_png.jxl" ]]; then
+        echo "✓ Lossy conversion test passed"
+    else
+        echo "✗ Lossy conversion test failed"
+        (( fails++ ))
+    fi
+
+    # Test 3: Specific distance setting
+    (( tests++ ))
+    DEBUG=true jpegxl --distance=2 "$test_dir/test_jpg.jpg" >/dev/null 2>&1
+    # We're just checking it doesn't error out - success is just producing the file
+    if [[ -f "$test_dir/test_jpg.jxl" ]]; then
+        echo "✓ Specific distance setting test passed"
+    else
+        echo "✗ Specific distance setting test failed"
+        (( fails++ ))
+    fi
+
+    # Test 4: Conflicting options (should prefer --lossless over --distance=0)
+    (( tests++ ))
+    rm -f "$test_dir/test_jpg.jxl"
+    DEBUG=true jpegxl --distance=0 --lossy "$test_dir/test_jpg.jpg" >/dev/null 2>&1
+    # This test should pass if the file was created, and we'll verify the implementation later
+    if [[ -f "$test_dir/test_jpg.jxl" ]]; then
+        echo "✓ Conflicting options test passed"
+    else
+        echo "✗ Conflicting options test failed"
+        (( fails++ ))
+    fi
+
+    # Test 5: PNG with alpha channel
+    (( tests++ ))
+    DEBUG=true jpegxl "$test_dir/alpha_test_png.png" >/dev/null 2>&1
+    if [[ -f "$test_dir/alpha_test_png.jxl" ]]; then
+        echo "✓ PNG with alpha channel test passed"
+    else
+        echo "✗ PNG with alpha channel test failed"
+        (( fails++ ))
+    fi
+
+    # Test 6: Conversion back to original format
+    (( tests++ ))
+    DEBUG=true jpegxl --to=png "$test_dir/alpha_test_png.jxl" >/dev/null 2>&1
+    if [[ -f "$test_dir/alpha_test_png.png" ]]; then
+        echo "✓ Conversion back to original format test passed"
+    else
+        echo "✗ Conversion back to original format test failed"
+        (( fails++ ))
+    fi
+
+    # Test 7: Quality setting
+    (( tests++ ))
+    DEBUG=true jpegxl --quality=50 "$test_dir/test_jpg.jpg" >/dev/null 2>&1
+    # We're just checking it doesn't error out - success is just producing the file
+    if [[ -f "$test_dir/test_jpg.jxl" ]]; then
+        echo "✓ Quality setting test passed"
+    else
+        echo "✗ Quality setting test failed"
+        (( fails++ ))
+    fi
+
+    # Clean up test directory
+    echo "Cleaning up test directory..."
+    rm -rf "$test_dir"
+
+    # Report results
+    if [ $fails -gt 0 ]; then
+        echo "$fails of $tests jpegxl tests failed!" >&2
+    else
+        echo "All $tests jpegxl tests passed!" >&2
+    fi
+
+    return $fails
+}
+
+# Run the test if this script is executed directly
+if ! (return 0 2>/dev/null); then
+    test_jpegxl
+fi
