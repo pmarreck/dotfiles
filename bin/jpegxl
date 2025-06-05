@@ -2,6 +2,35 @@
 
 ### jpegxl: a bash function to make conversions to/from jpegxl easier!
 
+# Future Improvements:
+# -----------------------------------------------------------------------------------
+# 1. Batch Processing:
+#    - Add ability to process multiple files or entire directories
+#    - Implement a progress indicator for batch operations
+#    - Add statistics summary for batch results
+#
+# 2. Additional Options:
+#    - Add a --force flag to overwrite existing files without prompting
+#    - Add a --dry-run option to show what would be done without making changes
+#
+# 3. Error Handling:
+#    - Add timeout handling for conversion operations
+#    - Implement disk space verification before large conversions
+#    - Add file permission checks before writing output files
+#
+# 4. Performance:
+#    - Implement parallel processing for batch operations
+#    - Add memory usage limits for ImageMagick operations
+#    - Use ramdisk for temporary files on supported systems
+#
+# 5. Documentation:
+#    - Include benchmarks comparing different compression settings
+#    - Add visual examples of quality vs. file size tradeoffs
+#    - Create a man page for better system integration
+#
+# 6. Support for animated images (APNG, GIF) and maintaining animation in JXL format
+# -----------------------------------------------------------------------------------
+
 # Silence function - runs a command silently but preserves exit code
 silence() {
 	"$@" >/dev/null 2>&1

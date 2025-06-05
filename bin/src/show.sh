@@ -112,6 +112,10 @@ function a_or_an() {
 		md)
 			echo "an"
 			;;
+		# "an unicode", "an unique", "an unicorn" sound weird, but "an unambiguous" doesn't. WTF?!?! How deep is this rabbit hole, English??
+		uni*)
+			echo "a"
+			;;
 		a*|e*|i*|o*|u*)
 			echo "an"
 			;;
