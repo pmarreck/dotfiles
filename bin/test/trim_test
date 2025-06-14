@@ -4,6 +4,7 @@ test_trim() {
   assert "$(ltrim "  foo  ")" == "foo  "
   assert "$(rtrim "  foo  ")" == "  foo"
   assert "$(trim "  foo  ")" == "foo"
+  assert "$(echo "  foo  " | trim)" == "foo"
 }
 
 # Run the tests if this file is executed directly

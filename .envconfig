@@ -103,6 +103,9 @@ export TXTRST="$SGR"          # Text Reset
 #-x2=two spaces per tab
 export LESS="-EQRX -x2"
 
+# pretty man pages via bat
+needs bat "please install bat for fancier man pages" && export MANPAGER="sh -c 'sed -u -e \"s/\\x1B\[[0-9;]*m//g; s/.\\x08//g\" | bat -p -lman'"
+
 # Color terminals, default to truecolor unless otherwise set
 export COLORTERM=${COLORTERM:-truecolor}
 

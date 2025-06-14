@@ -113,6 +113,10 @@ git_commit_ai() {
 	fi
 
 	echo "$commit_message"
+
+	# Copy to clipboard
+	printf "%s" "$commit_message" | clip -q
+	echo "Commit command copied to clipboard." >&2
 }
 
 # Default AI model and host settings

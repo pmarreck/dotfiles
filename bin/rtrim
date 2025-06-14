@@ -2,7 +2,15 @@
 
 rtrim() {
 	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-	local var="$*"
+	local var
+	# Check if arguments are provided or stdin has data
+	if [ $# -gt 0 ]; then
+		var="$*"
+	elif [ -p /dev/stdin ]; then
+		var=$(cat)
+	else
+		return 0
+	fi
 	# remove trailing whitespace characters
 	var="${var%"${var##*[![:space:]]}"}"
 	printf '%s' "$var"

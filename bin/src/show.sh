@@ -55,8 +55,31 @@ function determine_language_from_source() {
 	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	local file="$1"
 	if [ -f "$file" ]; then
-		local file_ext=$(basename "$file" | cut -d. -f2-)
-		local lang_orig=$(file "$file" | cut -d: -f2 | cut -d' ' -f2)
+		local filename=$(basename "$file")
+		local file_ext=""
+		if [[ "$filename" == *.* ]]; then
+			file_ext=${filename#*.}
+		fi
+		debug "file_ext: '$file_ext'"
+		# handle answers from file like "/nix/store/9gj9d5acy05q70z6gqfz834qz1vqvjbi-p7zip-17.06/bin/7z: a /nix/store/xhcgnphdwfg81j79nhspm0876cxglyj3-bash-5.2p37/bin/sh script text executable" properly
+		local file_cmd_output=$(file -b "$file")
+		debug "file_cmd_output: '$file_cmd_output'"
+		# trim any leading "a " or "an "
+		file_cmd_output=$(echo "$file_cmd_output" | sed 's/^a //g' | sed 's/^an //g')
+		debug "file_cmd_output after sed: '$file_cmd_output'"
+		# if the file_cmd_output starts with "/" (i.e., is a path), convert it to a basename
+		if [[ "$file_cmd_output" == "/"* ]]; then
+			debug "file_cmd_output starts with a path that is probably a hashbang executable"
+			local file_path=$(echo "$file_cmd_output" | cut -d' ' -f1)
+			debug "file_path: '$file_path'"
+			file_path=$(basename "$file_path")
+			debug "file_path after basename: '$file_path'"
+			local file_details=$(echo "$file_cmd_output" | cut -d' ' -f2-)
+			debug "file_details: '$file_details'"
+			file_cmd_output="$file_path $file_details"
+		fi
+		debug "file_cmd_output after path: '$file_cmd_output'"
+		local lang_orig=$(echo "$file_cmd_output" | cut -d' ' -f1)
 		local lang=${lang_orig,,}
 		# add exceptions/overrides here
 		case $lang in
@@ -83,6 +106,10 @@ function determine_language_from_source() {
 					lang_orig="ASCII text, with extension '$file_ext'"
 					lang="$file_ext"
 				fi
+				;;
+			symbolic*)
+				lang_orig="symbolic link"
+				lang="link"
 				;;
 			*)
 				;;
@@ -245,7 +272,22 @@ show() {
 						echo "$file"
 						if is_script "$file"; then
 							local lang=$(determine_language_from_source "$file")
-							$batless && less "$file" || bat -l "$lang" $bat_opts "$file"
+							case $lang in
+								link)
+									local link_target=$(readlink -f "$file")
+									note "'${file}' is a symbolic link to '$link_target'"
+									# cut the last 3 space delimited fields:
+									# follow the link:
+									debug "source link: $file"
+									file=$link_target
+									debug "resolved link: $file"
+									lang=$(determine_language_from_source "$file")
+									debug "language: $lang"
+									;;&    # yes, this is a Bash 4 thing that falls through to the next case
+								*)
+									$batless && less "$file" || bat -l "$lang" $bat_opts "$file"
+									;;
+							esac
 						else
 							note "($file is a binary, so we cannot view it)"
 						fi

@@ -10,6 +10,8 @@ test_trims() {
 	local expected1="   test input"
 	local result2=$(ltrim "   test input  ")
 	local expected2="test input  "
+	local result3=$(echo "   test input  " | ltrim)
+	local expected3="test input  "
 	local fails=0
 	local tests=0
 
@@ -19,6 +21,10 @@ test_trims() {
 
 	(( tests++ ))
 	assert "$result2" == "$expected2" "ltrim should remove leading whitespace"
+	(( fails += $? ))
+
+	(( tests++ ))
+	assert "$result3" == "$expected3" "ltrim should handle piped input"
 	(( fails += $? ))
 
 	if [ $fails -gt 0 ]; then

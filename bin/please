@@ -23,6 +23,7 @@ please() {
 		local choice=$(gum choose --limit 1 "Run it" "Copy to clipboard" "GTFO");
 		case "$choice" in
 			"Run it")
+				history -s "$response_parsed_cleaned";
 				printf "%s" "$response_parsed_cleaned" | bash;
 				;;
 			"Copy to clipboard")
