@@ -254,7 +254,7 @@ ixnay() {
 			#help -- and then displays it.
 			#help -- NixOS required currently. May work with nix-darwin in the future.
 			#help -- (The "here" arg is a synonym for the other "no-upgrade" options.)
-			if [ "$DISTRO" = "nixos" ]; then
+			if succeeds nix help; then
 				# make sure we're not just doing a dry run
 				if ! [ -n "${DRY_RUN}" ]; then
 					# rename the last logfile to its timestamp
@@ -292,7 +292,7 @@ ixnay() {
 					caution "There was an error when attempting to apply the new configuration; see traceback above."
 					return $success
 				fi
-			elif [ "$DISTRO" = "macos" ]; then
+			elif [ "${DISTRO,,}" = "macos" ]; then
 				caution "This command, when run on macOS, currently only supports nix-darwin with a flakes configuration that lives in ~/.config/nix"
 				needs darwin-rebuild
 				local has_darwin_installed="$?"
