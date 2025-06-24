@@ -164,8 +164,8 @@ export FONTCONFIG_FILE="${FONTCONFIG_PATH}/fonts.conf"
 
 # Ollama
 export OLLAMA_CONTEXT_LENGTH=16384
-export OLLAMA_DEFAULT_MODEL=${OLLAMA_DEFAULT_MODEL:-llama3.3:70b}
-
+# export OLLAMA_DEFAULT_MODEL=${OLLAMA_DEFAULT_MODEL:-llama3.3:70b}
+export OLLAMA_DEFAULT_MODEL=${OLLAMA_DEFAULT_MODEL:-granite3.3:latest}
 # erlang/elixir config- 2 million process limit
 # (# of schedulers is automatic to # of CPU logical cores, but can be forced with +S arg)
 export ERL_FLAGS="+P 2000000";

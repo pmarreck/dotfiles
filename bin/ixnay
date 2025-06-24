@@ -297,9 +297,20 @@ ixnay() {
 				needs darwin-rebuild
 				local has_darwin_installed="$?"
 				if [ "$has_darwin_installed" = "0" ]; then
-					[ "$IXNAY_MUTE_CMD_ECHO" ] || caution "darwin-rebuild switch --flake ~/.config/nix 2>&1 | tee \"$LOGFILE\""
+					shift;
+					local cmd="darwin-rebuild switch --flake ~/.config/nix 2>&1 | tee \"$LOGFILE\"";
+					case $1 in
+						no-upgrade | no-update | no-up | --no-up | --no-upgrade | --no-update | here) #nodoc
+							echo "We are not updating the lockfile first."
+							;;
+						*) #nodoc
+							echo "We are updating the lockfile first."
+							cmd="nix flake update --flake ~/.config/nix && $cmd";
+							;;
+					esac
+					[ "$IXNAY_MUTE_CMD_ECHO" ] || caution "$cmd"
 					[ -n "${DRY_RUN}" ] && return 0
-					darwin-rebuild switch --flake ~/.config/nix | tee "$LOGFILE"
+					eval "$cmd"
 				else
 					[ "$IXNAY_MUTE_CMD_ECHO" ] || caution "nix run nix-darwin -- switch --flake ~/.config/nix 2>&1 | tee \"$LOGFILE\""
 					[ -n "${DRY_RUN}" ] && return 0
