@@ -11,6 +11,8 @@ if [ ! -f "$input_file" ]; then
 	exit 1
 fi
 
+# This script forces macOS to keep directories local by touching all files in the directories listed in dirs.txt
+
 # Iterate through each line in the file
 while IFS= read -r line
 do

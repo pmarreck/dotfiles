@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# gh-direct-check.sh
+
+REPO="$1"
+
+if ! command -v gh &> /dev/null; then
+	echo "gh (github cli) is not installed. Please install it first." >&2
+	exit 1 # gh not installed
+fi
+
+if [[ -z "$REPO" ]]; then
+	echo "Usage: $0 owner/repo"
+	exit 2 # usage error
+fi
+
+echo "Checking forks of $REPO for flake.nix..."
+
+# Get all forks and check each one directly
+gh api "repos/$REPO/forks" --paginate --jq '.[].full_name' | \
+while read -r fork; do
+	echo "Checking $fork..."
+
+	# Try to get flake.nix directly from the repo
+	if gh api "repos/$fork/contents/flake.nix" --silent 2>/dev/null; then
+		echo "✓ Found flake.nix in: $fork"
+		echo "  URL: https://github.com/$fork/blob/main/flake.nix"
+
+		# Also check default branch in case it's not main
+		default_branch=$(gh api "repos/$fork" --jq '.default_branch')
+		if [[ "$default_branch" != "main" ]]; then
+			echo "  URL: https://github.com/$fork/blob/$default_branch/flake.nix"
+		fi
+		echo ""
+	fi
+
+	sleep 0.08
+done
+
+echo "Search complete!"
