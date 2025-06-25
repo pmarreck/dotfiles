@@ -156,7 +156,7 @@ ixnay() {
 	DISTRO=$(distro)
 	# datetimestamp of a file
 	function datetimestampfile() {
-		stat -c '%y' "$1" | $AWK '{print $1$2}' | tr -d ':-' # | cut -d"." -f1 # to remove milliseconds
+		gstat -c '%y' "$1" | $AWK '{print $1$2}' | tr -d ':-' # | cut -d"." -f1 # to remove milliseconds
 	}
 	# log location
 	local XDG_CACHE_HOME="${XDG_CACHE_HOME:-$HOME/.cache}"
@@ -186,7 +186,6 @@ ixnay() {
 				sub(/^\*\)/,"<arg>", $0)
 				sub(/^""/,"", $0)
 				sub(/\)\x20+#args\x20+/," ", $0)
-				sub(/\)\x20+#.*$/,"", $0)
 				sub(/\)\x20*$/,"", $0)
 				sub(/^\x20*/,"", $0)
 				print ""
@@ -254,7 +253,7 @@ ixnay() {
 			#help -- and then displays it.
 			#help -- NixOS required currently. May work with nix-darwin in the future.
 			#help -- (The "here" arg is a synonym for the other "no-upgrade" options.)
-			if succeeds nix help; then
+			if succeeds nixos-rebuild; then
 				# make sure we're not just doing a dry run
 				if ! [ -n "${DRY_RUN}" ]; then
 					# rename the last logfile to its timestamp
@@ -298,7 +297,7 @@ ixnay() {
 				local has_darwin_installed="$?"
 				if [ "$has_darwin_installed" = "0" ]; then
 					shift;
-					local cmd="darwin-rebuild switch --flake ~/.config/nix 2>&1 | tee \"$LOGFILE\"";
+					local cmd="sudo darwin-rebuild switch --flake ~/.config/nix 2>&1 | tee \"$LOGFILE\"";
 					case $1 in
 						no-upgrade | no-update | no-up | --no-up | --no-upgrade | --no-update | here) #nodoc
 							echo "We are not updating the lockfile first."
@@ -317,7 +316,7 @@ ixnay() {
 					nix run nix-darwin -- switch --flake ~/.config/nix | tee "$LOGFILE"
 				fi
 			else
-				caution "This command applies an entire system configuration and thus requires NixOS. https://nixos.org/"
+				caution "This command applies an entire system configuration and thus requires NixOS (or nix-darwin). https://nixos.org/"
 				return 2
 			fi
 			;;
