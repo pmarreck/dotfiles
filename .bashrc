@@ -59,6 +59,9 @@ var_defined() {
 # have to source "functions" function for it to be able to see in-context functions
 . "$HOME/dotfiles/bin/src/functions.bash"
 
+# have to source "edit" function for it to be able to see the functions via "functions" lol sigh
+. "$HOME/dotfiles/bin/src/edit.bash"
+
 # Pull in path configuration
 . $HOME/.pathconfig
 

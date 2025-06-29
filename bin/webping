@@ -1,0 +1,175 @@
+#!/usr/bin/env bash
+
+show_help() {
+	cat << 'EOF'
+webping - Multi-site HTTP response time monitor using tmux and gping
+
+DESCRIPTION:
+	This script creates a tmux session with multiple panes, each running gping
+	to monitor HTTP response times for different websites using actual HTTP requests.
+	Uses curl to fetch pages and measure real web response times, not just ping.
+
+	Sites are resolved to their final redirect destinations once at startup to avoid
+	redirect overhead during monitoring, providing more accurate response time measurements.
+
+USAGE:
+	webping [--about|--help]
+
+OPTIONS:
+	--about, --help    Show this help message
+
+KEYBINDS:
+	q                  Quit and kill the entire session
+
+DEFAULT SITES:
+	google.com, reddit.com, chatgpt.com, facebook.com, x.com, github.com, amazon.com
+
+CONFIGURATION:
+	Sites can be configured via the WEBPING_SITES environment variable:
+	export WEBPING_SITES="site1.com;site2.com;site3.com"
+
+	Set DEBUG to any value for verbose output showing redirect resolution:
+	DEBUG=1 webping
+
+DEPENDENCIES:
+	tmux               Terminal multiplexer (required)
+	gping              Graphical ping tool (required)
+	curl               HTTP client (required)
+
+EXAMPLES:
+	webping                           # Run with default sites
+	WEBPING_SITES="github.com;stackoverflow.com" webping
+	DEBUG=1 webping                   # Show redirect resolution info
+
+EOF
+}
+
+debug() {
+	if [ -n "$DEBUG" ]; then
+		echo "$@" >&2
+	fi
+}
+
+parse_sites() {
+	local sites_string="${WEBPING_SITES:-google.com;reddit.com;chatgpt.com;facebook.com;x.com;github.com;amazon.com}"
+	IFS=';' read -ra sites <<< "$sites_string"
+	printf '%s\n' "${sites[@]}"
+}
+
+resolve_redirects() {
+	local sites=("$@")
+	local resolved_sites=()
+	for site in "${sites[@]}"; do
+		if [[ ! "$site" =~ ^https?:// ]]; then
+			site="https://$site"
+		fi
+		debug "Resolving redirects for $site..."
+		resolved_site=$(curl -L -f -s -o /dev/null -w "%{url_effective}" -A "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:142.0) Gecko/20100101 Firefox/142.0" "$site")
+		debug "Resolved $site to $resolved_site"
+		resolved_sites+=("$resolved_site")
+	done
+	printf '%s\n' "${resolved_sites[@]}"
+}
+
+build_curl_command() {
+	local site="$1"
+	# Add https:// if no protocol specified
+	if [[ ! "$site" =~ ^https?:// ]]; then
+		site="https://$site"
+	fi
+	# Simple command that just does the HTTP request - gping times the execution
+	# Include User-Agent to avoid being blocked by sites like Amazon
+	debug "Building curl command for $site..."
+	local command="curl -L -f -s -o /dev/null -A 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:142.0) Gecko/20100101 Firefox/142.0' $site"
+	debug "$command"
+	echo "$command"
+}
+
+check_dependencies() {
+	local missing_deps=()
+
+	if ! command -v tmux &> /dev/null; then
+		missing_deps+=("tmux")
+	fi
+
+	if ! command -v gping &> /dev/null; then
+		missing_deps+=("gping")
+	fi
+
+	if ! command -v curl &> /dev/null; then
+		missing_deps+=("curl")
+	fi
+
+	if [ ${#missing_deps[@]} -gt 0 ]; then
+		echo "Missing dependencies: ${missing_deps[*]}" >&2
+		echo "Please install them first." >&2
+		return 1
+	fi
+}
+
+webping() {
+	# Parse arguments before checking dependencies
+	case "${1:-}" in
+		--about|--help)
+			show_help
+			return 0
+			;;
+		"")
+			# No arguments, proceed normally
+			;;
+		*)
+			echo "Unknown option: $1" >&2
+			echo "Use --help for usage information." >&2
+			return 1
+			;;
+	esac
+
+	# Check dependencies after argument parsing
+	if ! check_dependencies; then
+		return 1
+	fi
+
+	local session_name
+	session_name="webping_session_$$"
+
+	# Get sites from environment or use defaults
+	local sites
+	readarray -t sites < <(parse_sites)
+
+	if [ ${#sites[@]} -eq 0 ]; then
+		echo "No sites configured. Set WEBPING_SITES or use defaults." >&2
+		return 1
+	fi
+
+	# Resolve redirects
+	readarray -t resolved_sites < <(resolve_redirects "${sites[@]}")
+
+	# Create the tmux session with the first site using gping --cmd
+	tmux new-session -d -s "${session_name}" "gping -n 1 --cmd \"$(build_curl_command "${resolved_sites[0]}")\""
+
+	# Set up key binding to kill the entire session with 'q'
+	tmux bind-key -n q kill-session -t "${session_name}"
+
+	# Split horizontally for remaining sites (creates horizontal stripes)
+	for ((i=1; i<${#resolved_sites[@]}; i++)); do
+		local site="${resolved_sites[$i]}"
+		tmux split-window -v "gping -n 1 --cmd \"$(build_curl_command "$site")\""
+		# Select even layout to keep panes equal sized
+		tmux select-layout even-vertical
+	done
+
+	# Attach to the session
+	tmux attach-session -t "${session_name}"
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		webping "$@"
+	fi
+fi

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# gh-direct-check.sh
+# find_github_forks_with_flakes
 
 REPO="$1"
+MAX_JOBS=4
 
 if ! command -v gh &> /dev/null; then
 	echo "gh (github cli) is not installed. Please install it first." >&2
@@ -13,27 +14,71 @@ if [[ -z "$REPO" ]]; then
 	exit 2 # usage error
 fi
 
-echo "Checking forks of $REPO for flake.nix..."
+echo "Fetching forks of $REPO..."
 
-# Get all forks and check each one directly
-gh api "repos/$REPO/forks" --paginate --jq '.[].full_name' | \
-while read -r fork; do
-	echo "Checking $fork..."
+# Get all forks into array (in-memory)
+fork_data=$(gh api "repos/$REPO/forks" --paginate --jq '.[].full_name')
+if [[ $? -ne 0 ]]; then
+	echo -e "\033[31mError fetching forks\033[0m" >&2
+	exit 3 # error fetching forks
+fi
+readarray -t forks <<< "$fork_data"
+total_forks=${#forks[@]}
+
+echo "Found $total_forks forks. Checking for flake.nix in parallel (max $MAX_JOBS jobs)..."
+
+# Warn about API limits for large fork counts
+if [[ $total_forks -gt 1000 ]]; then
+	echo -e "\033[33mWarning: Checking $total_forks forks will make ~$((total_forks * 2)) API requests, worst-case.\033[0m"
+	echo -e "\033[33mGitHub's rate limit is 5000 requests/hour for authenticated users.\033[0m"
+	echo
+fi
+
+echo
+
+# Function to check a single fork and output result
+check_fork() {
+	local fork="$1"
+
+	echo "[of $total_forks] Checking $fork..." >&2
 
 	# Try to get flake.nix directly from the repo
 	if gh api "repos/$fork/contents/flake.nix" --silent 2>/dev/null; then
-		echo "✓ Found flake.nix in: $fork"
-		echo "  URL: https://github.com/$fork/blob/main/flake.nix"
-
-		# Also check default branch in case it's not main
+		# Get default branch
 		default_branch=$(gh api "repos/$fork" --jq '.default_branch')
-		if [[ "$default_branch" != "main" ]]; then
-			echo "  URL: https://github.com/$fork/blob/$default_branch/flake.nix"
-		fi
-		echo ""
+		url="https://github.com/$fork/blob/$default_branch/flake.nix"
+
+		echo "✓ Found flake.nix in: $fork" >&2
+		# Output result to stdout for collection
+		echo "$fork|$url"
 	fi
 
-	sleep 0.08
-done
+	# Basic rate limiting - small delay between requests
+	sleep 0.1
+}
 
+# Export function and variables for parallel execution
+export -f check_fork
+export total_forks
+
+# Run checks in parallel with explicit max command line size
+readarray -t results < <(printf '%s\n' "${forks[@]}" | xargs -s $(getconf ARG_MAX) -n 1 -P "$MAX_JOBS" -I {} bash -c 'check_fork "$@"' _ {})
+
+echo
 echo "Search complete!"
+echo
+
+# Output summary
+if [[ ${#results[@]} -gt 0 ]]; then
+	echo "Found flake.nix in ${#results[@]} out of $total_forks forks:"
+	echo
+
+	for result in "${results[@]}"; do
+		IFS='|' read -r fork_name url <<< "$result"
+		echo "✓ $fork_name"
+		echo "  $url"
+		echo
+	done
+else
+	echo -e "\033[31mNo forks with flake.nix found.\033[0m"
+fi
