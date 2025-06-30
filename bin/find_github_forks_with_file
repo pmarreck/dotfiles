@@ -1,0 +1,223 @@
+#!/usr/bin/env bash
+# find_github_forks_with_file
+
+# Default values
+REPO=""
+FILE_TO_SEARCH="flake.nix"
+MAX_JOBS=10
+SCRIPT_NAME=$(basename "$0")
+
+# Help function
+show_help() {
+	cat << EOF
+Usage: $SCRIPT_NAME [OPTIONS] owner/repo
+
+Search for a specific file across all forks of a GitHub repository.
+
+OPTIONS:
+  --file FILE     File to search for (default: flake.nix)
+  -h, --help      Show this help message
+  --about         Show detailed information about this tool
+
+EXAMPLES:
+  $SCRIPT_NAME microsoft/vscode
+  $SCRIPT_NAME --file package.json facebook/react
+  $SCRIPT_NAME --file Dockerfile kubernetes/kubernetes
+
+REQUIREMENTS:
+  - gh (GitHub CLI) must be installed and authenticated
+  - counter utility must be available (for progress tracking)
+  - Authenticated users have 5000 API requests/hour limit
+EOF
+}
+
+# Dependency check function
+check_dependencies() {
+	# Check for gh CLI
+	if ! command -v gh >/dev/null 2>&1; then
+		echo "Error: 'gh' (GitHub CLI) is required but not installed." >&2
+		echo "Please install it from: https://cli.github.com/" >&2
+		return 1
+	fi
+
+	# Check for counter utility
+	if ! command -v counter >/dev/null 2>&1; then
+		echo "Error: 'counter' utility is required but not found in PATH." >&2
+		echo "This script uses 'counter' for atomic progress tracking across parallel processes." >&2
+		return 1
+	fi
+
+	# Test counter functionality with a basic operation
+	local test_counter="dependency_check_$$"
+	if ! counter create "$test_counter" 0 >/dev/null 2>&1; then
+		echo "Error: 'counter' utility found but not working correctly." >&2
+		echo "Please ensure you have a compatible counter implementation." >&2
+		return 1
+	fi
+	# Clean up test counter
+	counter destroy "$test_counter" >/dev/null 2>&1
+
+	return 0
+}
+
+# About function
+show_about() {
+	cat << EOF
+find_github_forks_with_file - GitHub Fork File Finder
+
+This tool searches for a specific file across all forks of a GitHub repository.
+It was originally designed to find flake.nix files in Nix projects, but can
+search for any file.
+
+FEATURES:
+- Parallel processing (10 concurrent jobs by default)
+- In-memory result aggregation (no disk I/O)
+- API rate limit warnings for large repositories
+- Atomic progress tracking across parallel processes
+- Proper error handling and progress feedback
+- Constructs direct URLs to found files using correct default branch
+
+DEPENDENCIES:
+- gh (GitHub CLI): For accessing GitHub API
+- counter utility: For atomic progress tracking across parallel processes.
+  The counter utility provides thread-safe counters that allow multiple
+  parallel processes to coordinate progress reporting without race conditions.
+
+TECHNICAL DETAILS:
+- Uses GitHub API via 'gh' CLI tool
+- Handles command line length limits with xargs -s
+- Uses atomic counters for accurate progress tracking in parallel execution
+- Only fetches default branch info when files are found (efficient)
+
+AUTHOR: Built for efficient Nix ecosystem exploration
+EOF
+}
+
+# Parse command line arguments
+while [[ $# -gt 0 ]]; do
+	case $1 in
+		--file)
+			FILE_TO_SEARCH="$2"
+			shift 2
+			;;
+		-h|--help)
+			show_help
+			exit 0
+			;;
+		--about)
+			show_about
+			exit 0
+			;;
+		-*)
+			echo "Unknown option: $1" >&2
+			show_help >&2
+			exit 2
+			;;
+		*)
+			if [[ -z "$REPO" ]]; then
+				REPO="$1"
+			else
+				echo "Too many arguments: $1" >&2
+				show_help >&2
+				exit 2
+			fi
+			shift
+			;;
+	esac
+done
+
+# Check all dependencies
+if ! check_dependencies; then
+	exit 1 # dependency check failed
+fi
+
+if [[ -z "$REPO" ]]; then
+	echo "Error: Repository argument required" >&2
+	show_help >&2
+	exit 2 # usage error
+fi
+
+echo "Fetching forks of $REPO..."
+
+# Get all forks into array (in-memory)
+fork_data=$(gh api "repos/$REPO/forks" --paginate --jq '.[].full_name')
+if [[ $? -ne 0 ]]; then
+	echo -e "\033[31mError fetching forks\033[0m" >&2
+	exit 3 # error fetching forks
+fi
+readarray -t forks <<< "$fork_data"
+total_forks=${#forks[@]}
+
+echo "Found $total_forks forks. Checking for $FILE_TO_SEARCH in parallel (max $MAX_JOBS jobs)..."
+
+# Warn about API limits for large fork counts
+if [[ $total_forks -gt 1000 ]]; then
+	echo -e "\033[33mWarning: Checking $total_forks forks will make ~$((total_forks * 2)) API requests, worst-case.\033[0m"
+	echo -e "\033[33mGitHub's rate limit is 5000 requests/hour for authenticated users.\033[0m"
+	echo
+fi
+
+echo
+
+# Create shared counter for progress tracking
+counter_key="forks_$(basename "$REPO" | tr '/' '_')_$$"
+counter create "$counter_key" 0 >/dev/null
+
+# Cleanup counter on exit
+trap 'counter destroy "$counter_key" >/dev/null 2>&1' EXIT
+
+# Function to check a single fork and output result
+check_fork() {
+	local fork="$1"
+	local counter_key="$2"
+	
+	# Increment counter and get current progress
+	local current=$(counter inc "$counter_key")
+	local total="$3"
+
+	echo "($current/$total) Checking $fork..." >&2
+
+	# Try to get the specified file directly from the repo
+	local api_response
+	if api_response=$(gh api "repos/$fork/contents/$FILE_TO_SEARCH" 2>/dev/null); then
+		# Verify the response contains actual file data and has the right type
+		if [[ -n "$api_response" ]] && echo "$api_response" | jq -e '.type == "file"' >/dev/null 2>&1; then
+			# Get default branch
+			default_branch=$(gh api "repos/$fork" --jq '.default_branch')
+			url="https://github.com/$fork/blob/$default_branch/$FILE_TO_SEARCH"
+
+			echo "($current/$total) ✓ Found $FILE_TO_SEARCH in: $fork" >&2
+			# Output result to stdout for collection
+			echo "$fork|$url"
+		fi
+	fi
+
+	# No sleep needed - xargs -P handles parallelism properly
+}
+
+# Export function and variables for parallel execution
+export -f check_fork
+export counter_key
+export FILE_TO_SEARCH
+
+# Run checks in parallel with explicit max command line size
+readarray -t results < <(printf '%s\n' "${forks[@]}" | xargs -s $(getconf ARG_MAX) -n 1 -P "$MAX_JOBS" -I {} bash -c 'check_fork "$@"' _ {} "$counter_key" "$total_forks")
+
+echo
+echo "Search complete!"
+echo
+
+# Output summary
+if [[ ${#results[@]} -gt 0 ]]; then
+	echo "Found $FILE_TO_SEARCH in ${#results[@]} out of $total_forks forks:"
+	echo
+
+	for result in "${results[@]}"; do
+		IFS='|' read -r fork_name url <<< "$result"
+		echo "✓ $fork_name"
+		echo "  $url"
+		echo
+	done
+else
+	echo -e "\033[31mNo forks with $FILE_TO_SEARCH found.\033[0m"
+fi

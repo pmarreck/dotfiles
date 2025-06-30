@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Wrapper script to test fs-counter implementation
+# Sets COUNTER_TYPE=fs and executes the unified counter_test
+
+COUNTER_TYPE=fs exec "$(dirname "$0")/counter_test" "$@"

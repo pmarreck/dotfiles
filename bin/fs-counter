@@ -1,0 +1,366 @@
+#!/usr/bin/env luajit
+
+local ffi = require("ffi")
+local bit = require("bit")
+
+-- FFI declarations for file operations and locking
+ffi.cdef[[
+    typedef int mode_t;
+    typedef long off_t;
+    typedef unsigned long size_t;
+    typedef long ssize_t;
+    
+    // File operations
+    int open(const char *pathname, int flags, mode_t mode);
+    int close(int fd);
+    ssize_t read(int fd, void *buf, size_t count);
+    ssize_t write(int fd, const void *buf, size_t count);
+    int unlink(const char *pathname);
+    off_t lseek(int fd, off_t offset, int whence);
+    int ftruncate(int fd, off_t length);
+    int fchmod(int fd, mode_t mode);
+    int mkdir(const char *pathname, mode_t mode);
+    
+    // File locking - using more portable approach
+    struct flock {
+        off_t l_start;   // offset from l_whence
+        off_t l_len;     // length, 0 = to EOF
+        int l_pid;       // returned with F_GETLK
+        short l_type;    // F_RDLCK, F_WRLCK, F_UNLCK
+        short l_whence;  // SEEK_SET, SEEK_CUR, SEEK_END
+    };
+    int fcntl(int fd, int cmd, ...);
+    
+    // Alternative: use flock() instead of fcntl for simpler locking
+    int flock(int fd, int operation);
+    
+    // Error handling
+    char *strerror(int errnum);
+    int *__error(void);        // macOS errno location
+    int *__errno_location(void); // Linux errno location
+    
+    // Constants
+    static const int O_CREAT = 0x0200;
+    static const int O_RDWR = 0x0002;
+    static const int O_EXCL = 0x0800;
+    
+    static const int F_SETLKW = 9;  // Set lock, wait if blocked
+    static const int F_UNLCK = 2;   // Unlock
+    static const int F_WRLCK = 3;   // Write lock
+    
+    // flock() constants (simpler alternative)
+    static const int LOCK_EX = 2;   // Exclusive lock
+    static const int LOCK_UN = 8;   // Unlock
+    
+    static const int SEEK_SET = 0;
+]]
+
+local C = ffi.C
+
+-- Cross-platform errno access
+local function get_errno()
+    local os_name = jit.os
+    if os_name == "OSX" then
+        return C.__error()[0]
+    else
+        return C.__errno_location()[0]
+    end
+end
+
+-- Filesystem-based atomic counter
+local FsCounter = {}
+FsCounter.__index = FsCounter
+
+function FsCounter:new(name)
+    local obj = {
+        name = name,
+        filepath = "/tmp/fs-counter/" .. name,
+        fd = nil
+    }
+    setmetatable(obj, self)
+    return obj
+end
+
+function FsCounter:lock_file()
+    if C.flock(self.fd, C.LOCK_EX) == -1 then
+        local errno = get_errno()
+        error("Failed to lock file: " .. ffi.string(C.strerror(errno)))
+    end
+end
+
+function FsCounter:unlock_file()
+    C.flock(self.fd, C.LOCK_UN)
+end
+
+function FsCounter:read_value()
+    -- Seek to beginning
+    C.lseek(self.fd, 0, C.SEEK_SET)
+    
+    local buf = ffi.new("char[32]")
+    local bytes_read = C.read(self.fd, buf, 31)
+    
+    if bytes_read <= 0 then
+        return 0  -- File is empty or error, default to 0
+    end
+    
+    buf[bytes_read] = 0  -- Null terminate
+    local value_str = ffi.string(buf)
+    return tonumber(value_str) or 0
+end
+
+function FsCounter:write_value(value)
+    -- Seek to beginning and truncate
+    C.lseek(self.fd, 0, C.SEEK_SET)
+    C.ftruncate(self.fd, 0)
+    
+    local value_str = tostring(value)
+    local bytes_written = C.write(self.fd, value_str, #value_str)
+    
+    if bytes_written ~= #value_str then
+        local errno = get_errno()
+        error("Failed to write value: " .. ffi.string(C.strerror(errno)))
+    end
+end
+
+function FsCounter:create(initial_value)
+    initial_value = initial_value or 0
+    
+    -- Ensure the fs-counter directory exists (0o755 = 493 decimal = rwxr-xr-x)
+    C.mkdir("/tmp/fs-counter", 493)
+    
+    -- Create file exclusively (fail if exists)
+    self.fd = C.open(self.filepath, bit.bor(C.O_CREAT, C.O_RDWR, C.O_EXCL), 438)
+    if self.fd == -1 then
+        local errno = get_errno()
+        error("Failed to create counter (already exists?): " .. ffi.string(C.strerror(errno)))
+    end
+    
+    -- Set permissions explicitly to bypass umask (0o666 = 438 decimal = rw-rw-rw-)
+    if C.fchmod(self.fd, 438) == -1 then
+        local errno = get_errno()
+        C.close(self.fd)
+        C.unlink(self.filepath)
+        error("Failed to set file permissions: " .. ffi.string(C.strerror(errno)))
+    end
+    
+    self:lock_file()
+    self:write_value(initial_value)
+    self:unlock_file()
+    
+    C.close(self.fd)
+    self.fd = nil
+    
+    print("Counter '" .. self.name .. "' created with value " .. initial_value)
+end
+
+function FsCounter:open_existing()
+    self.fd = C.open(self.filepath, C.O_RDWR, 0)
+    if self.fd == -1 then
+        local errno = get_errno()
+        error("Counter doesn't exist: " .. ffi.string(C.strerror(errno)))
+    end
+end
+
+function FsCounter:close()
+    if self.fd then
+        C.close(self.fd)
+        self.fd = nil
+    end
+end
+
+function FsCounter:get()
+    self:open_existing()
+    self:lock_file()
+    local value = self:read_value()
+    self:unlock_file()
+    self:close()
+    return value
+end
+
+function FsCounter:inc()
+    self:open_existing()
+    self:lock_file()
+    local current = self:read_value()
+    local new_value = current + 1
+    self:write_value(new_value)
+    self:unlock_file()
+    self:close()
+    return new_value
+end
+
+function FsCounter:dec()
+    self:open_existing()
+    self:lock_file()
+    local current = self:read_value()
+    local new_value = current - 1
+    self:write_value(new_value)
+    self:unlock_file()
+    self:close()
+    return new_value
+end
+
+function FsCounter:set(value)
+    self:open_existing()
+    self:lock_file()
+    self:write_value(value)
+    self:unlock_file()
+    self:close()
+    return value
+end
+
+function FsCounter:destroy(force)
+    local destroyed_count = 0
+    
+    if C.unlink(self.filepath) == 0 then
+        destroyed_count = 1
+    elseif not force then
+        -- If not forced and file doesn't exist, this should be an error condition
+        -- But we still print the message and return 0
+    end
+    
+    -- Print message to stderr like sysv-counter does
+    io.stderr:write("'" .. self.name .. "' counters destroyed:\n")
+    
+    return destroyed_count
+end
+
+-- CLI Interface
+local function show_help()
+    print([[
+fs-counter - Filesystem-based atomic counter using file locking
+
+Usage: fs-counter <action> <key> [value]
+
+Actions:
+  create <key> [initial_value]  Create counter with optional initial value (default: 0)
+  inc <key>                     Increment counter atomically, return new value
+  dec <key>                     Decrement counter atomically, return new value
+  set <key> <value>             Set counter to specific value
+  get <key>                     Get current counter value
+  destroy <key>                 Destroy counter
+  list                          List all existing counters
+
+Examples:
+  fs-counter create mycounter 10
+  fs-counter inc mycounter
+  fs-counter get mycounter
+  fs-counter destroy mycounter
+]])
+end
+
+local function print_about()
+    print("fs-counter version 1.0")
+    print("Copyright (c) 2025, Peter Marreck")
+    print("Licensed under the MIT License")
+end
+
+-- Main execution
+local function main(args)
+    if #args == 0 or args[1] == "-h" or args[1] == "--help" then
+        show_help()
+        return
+    end
+    
+    if args[1] == "--about" then
+        print_about()
+        return
+    end
+    
+    local action = args[1]
+    local key = args[2]
+    local value = args[3]
+    
+    if action == "create" then
+        if not key then
+            error("Usage: fs-counter create <key> [initial_value]")
+        end
+        local initial_value = tonumber(value) or 0
+        local counter = FsCounter:new(key)
+        counter:create(initial_value)
+        
+    elseif action == "inc" then
+        if not key then
+            error("Usage: fs-counter inc <key>")
+        end
+        local counter = FsCounter:new(key)
+        local new_value = counter:inc()
+        print(new_value)
+        
+    elseif action == "dec" then
+        if not key then
+            error("Usage: fs-counter dec <key>")
+        end
+        local counter = FsCounter:new(key)
+        local new_value = counter:dec()
+        print(new_value)
+        
+    elseif action == "set" then
+        if not key or not value then
+            error("Usage: fs-counter set <key> <value>")
+        end
+        local num_value = tonumber(value)
+        if not num_value then
+            error("Value must be a number")
+        end
+        local counter = FsCounter:new(key)
+        counter:set(num_value)
+        print(num_value)
+        
+    elseif action == "get" then
+        if not key then
+            error("Usage: fs-counter get <key>")
+        end
+        local counter = FsCounter:new(key)
+        local current_value = counter:get()
+        print(current_value)
+        
+    elseif action == "destroy" then
+        if not key then
+            error("Usage: fs-counter destroy <key> [--force|-f]")
+        end
+        
+        -- Check for --force flag
+        local force = false
+        if value == "--force" or value == "-f" then
+            force = true
+        end
+        
+        local counter = FsCounter:new(key)
+        local destroyed_count = counter:destroy(force)
+        print(destroyed_count)
+        
+        -- Exit with code 1 if no counters were destroyed and not forced
+        if destroyed_count == 0 and not force then
+            os.exit(1)
+        end
+        
+    elseif action == "list" then
+        -- List all counters with their values in tab-separated format, sorted by name
+        local handle = io.popen("ls /tmp/fs-counter 2>/dev/null | sort")
+        if handle then
+            local result = handle:read("*a")
+            handle:close()
+            if result and result ~= "" then
+                -- Split counter names and read their values
+                for counter_name in result:gmatch("[^\n]+") do
+                    if counter_name ~= "" then
+                        local counter = FsCounter:new(counter_name)
+                        local success, value = pcall(function() return counter:get() end)
+                        if success then
+                            print(counter_name .. "\t" .. tostring(value))
+                        else
+                            -- Counter file exists but can't read value, show with 0
+                            print(counter_name .. "\t0")
+                        end
+                    end
+                end
+            end
+        end
+        
+    else
+        error("Unknown action: " .. action .. ". Use -h for help.")
+    end
+end
+
+-- Execute with command line arguments
+main(arg)

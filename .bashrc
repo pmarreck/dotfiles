@@ -140,6 +140,10 @@ case $OSTYPE in
     export DISTRO="macOS"
     export DISTRO_PRETTY="$DISTRO $(mac_os_version_number_to_name)"
     export DISTRO_VERSION="$(distro_version)"
+    # Initialize RAM disk for /private/tmp if interactive login shell
+    if $INTERACTIVE_SHELL && $LOGIN_SHELL; then
+      "$HOME/dotfiles/bin/src/macos_ramdisk_tmp.sh"
+    fi
     ;;
   linux*)
     export PLATFORM="linux"

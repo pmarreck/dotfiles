@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Wrapper script to test sysv-counter implementation
+# Sets COUNTER_TYPE=sysv and executes the unified counter_test
+
+COUNTER_TYPE=sysv exec "$(dirname "$0")/counter_test" "$@"

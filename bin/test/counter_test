@@ -1,0 +1,298 @@
+#!/usr/bin/env bash
+
+# Unified test file for counter utilities
+# Tests sysv-counter, posix-counter, or fs-counter based on COUNTER_TYPE env var
+# Default: fs-counter (filesystem-based with file locking)
+
+# Determine which counter implementation to test
+COUNTER_TYPE="${COUNTER_TYPE:-fs}"
+case "$COUNTER_TYPE" in
+    "sysv")
+        COUNTER_CMD="sysv-counter"
+        NEEDS_SUDO=true
+        ;;
+    "posix")
+        COUNTER_CMD="posix-counter"
+        NEEDS_SUDO=false
+        ;;
+    "fs")
+        COUNTER_CMD="fs-counter"
+        NEEDS_SUDO=false
+        ;;
+    *)
+        echo "Error: Unknown COUNTER_TYPE '$COUNTER_TYPE'. Use 'sysv', 'posix', or 'fs'." >&2
+        exit 1
+        ;;
+esac
+
+# Helper function to run counter command with or without sudo
+run_counter() {
+    if [[ "$NEEDS_SUDO" == "true" ]]; then
+        sudo "$COUNTER_CMD" "$@"
+    else
+        "$COUNTER_CMD" "$@"
+    fi
+}
+
+echo "Testing $COUNTER_TYPE counter implementation ($COUNTER_CMD)..."
+
+test_counter() {
+	local counter_name="test_counter_$$"  # Use PID to avoid conflicts
+	local fails=0
+	local tests=0
+
+	# Test 1: Create counter
+	(( tests++ ))
+	if run_counter create "$counter_name" 5 >/dev/null 2>&1; then
+		green_text "✓ Counter creation succeeded\n" >&2
+	else
+		red_text "✗ Counter creation failed\n" >&2
+		(( fails++ ))
+	fi
+
+	# Test 2: Get initial value
+	(( tests++ ))
+	local initial_value=$(run_counter get "$counter_name" 2>/dev/null)
+	if [[ "$initial_value" == "5" ]]; then
+		green_text "✓ Initial value correct: $initial_value\n" >&2
+	else
+		red_text "✗ Initial value incorrect: expected 5, got $initial_value\n" >&2
+		(( fails++ ))
+	fi
+
+	# Test 3: Increment counter
+	(( tests++ ))
+	local incremented_value=$(run_counter inc "$counter_name" 2>/dev/null)
+	if [[ "$incremented_value" == "6" ]]; then
+		green_text "✓ Increment returned correct value: $incremented_value\n" >&2
+	else
+		red_text "✗ Increment returned incorrect value: expected 6, got $incremented_value\n" >&2
+		(( fails++ ))
+	fi
+
+	# Test 4: Get value after increment
+	(( tests++ ))
+	local current_value=$(run_counter get "$counter_name" 2>/dev/null)
+	if [[ "$current_value" == "6" ]]; then
+		green_text "✓ Value after increment correct: $current_value\n" >&2
+	else
+		red_text "✗ Value after increment incorrect: expected 6, got $current_value\n" >&2
+		(( fails++ ))
+	fi
+
+	# Test 5: Multiple increments
+	(( tests++ ))
+	run_counter inc "$counter_name" >/dev/null 2>&1
+	run_counter inc "$counter_name" >/dev/null 2>&1
+	local final_value=$(run_counter get "$counter_name" 2>/dev/null)
+	if [[ "$final_value" == "8" ]]; then
+		green_text "✓ Multiple increments work: $final_value\n" >&2
+	else
+		red_text "✗ Multiple increments failed: expected 8, got $final_value\n" >&2
+		(( fails++ ))
+	fi
+
+	# Test 5.5: Decrement counter
+	(( tests++ ))
+	local dec_value=$(run_counter dec "$counter_name" 2>/dev/null)
+	if [[ "$dec_value" == "7" ]]; then
+		green_text "✓ Decrement returned correct value: $dec_value\n" >&2
+	else
+		red_text "✗ Decrement failed: expected 7, got $dec_value\n" >&2
+		(( fails++ ))
+	fi
+
+	# Test 5.6: Verify decrement worked
+	(( tests++ ))
+	local dec_check=$(run_counter get "$counter_name" 2>/dev/null)
+	if [[ "$dec_check" == "7" ]]; then
+		green_text "✓ Value after decrement correct: $dec_check\n" >&2
+	else
+		red_text "✗ Value after decrement wrong: expected 7, got $dec_check\n" >&2
+		(( fails++ ))
+	fi
+
+	# Test 5.7: Set counter to specific value
+	(( tests++ ))
+	local set_value=$(run_counter set "$counter_name" 42 2>/dev/null)
+	if [[ "$set_value" == "42" ]]; then
+		green_text "✓ Set returned correct value: $set_value\n" >&2
+	else
+		red_text "✗ Set failed: expected 42, got $set_value\n" >&2
+		(( fails++ ))
+	fi
+
+	# Test 5.8: Verify set worked
+	(( tests++ ))
+	local set_check=$(run_counter get "$counter_name" 2>/dev/null)
+	if [[ "$set_check" == "42" ]]; then
+		green_text "✓ Value after set correct: $set_check\n" >&2
+	else
+		red_text "✗ Value after set wrong: expected 42, got $set_check\n" >&2
+		(( fails++ ))
+	fi
+
+	# Test 5.9: Set requires numeric value (error case)
+	(( tests++ ))
+	if run_counter set "$counter_name" "not_a_number" >/dev/null 2>&1; then
+		red_text "✗ Set should fail with non-numeric value\n" >&2
+		(( fails++ ))
+	else
+		green_text "✓ Set correctly rejects non-numeric value\n" >&2
+	fi
+
+	# Test 6: Destroy existing counter (should output 1 and exit 0)
+	(( tests++ ))
+	local destroy_stderr_file=$(mktemp)
+	local destroy_stdout_file=$(mktemp)
+	run_counter destroy "$counter_name" >"$destroy_stdout_file" 2>"$destroy_stderr_file"
+	local destroy_exit=$?
+	local destroy_stdout=$(cat "$destroy_stdout_file")
+	local destroy_stderr=$(cat "$destroy_stderr_file")
+	rm -f "$destroy_stdout_file" "$destroy_stderr_file"
+	if [[ "$destroy_stdout" == "1" ]] && [[ "$destroy_stderr" == "'$counter_name' counters destroyed:" ]] && [[ $destroy_exit -eq 0 ]]; then
+		green_text "✓ Destroy existing counter: correct output and exit code\n" >&2
+	else
+		red_text "✗ Destroy existing counter failed. Expected stdout=1, stderr='$counter_name' counters destroyed:, exit=0. Got stdout='$destroy_stdout', stderr='$destroy_stderr', exit=$destroy_exit\n" >&2
+		(( fails++ ))
+	fi
+
+	# Test 7: Destroy non-existent counter (should output 0 and exit 1)
+	(( tests++ ))
+	local destroy2_stderr_file=$(mktemp)
+	local destroy2_stdout_file=$(mktemp)
+	run_counter destroy "${counter_name}_nonexistent" >"$destroy2_stdout_file" 2>"$destroy2_stderr_file"
+	local destroy2_exit=$?
+	local destroy2_stdout=$(cat "$destroy2_stdout_file")
+	local destroy2_stderr=$(cat "$destroy2_stderr_file")
+	rm -f "$destroy2_stdout_file" "$destroy2_stderr_file"
+	if [[ "$destroy2_stdout" == "0" ]] && [[ "$destroy2_stderr" == "'${counter_name}_nonexistent' counters destroyed:" ]] && [[ $destroy2_exit -eq 1 ]]; then
+		green_text "✓ Destroy non-existent counter: correct output and exit code\n" >&2
+	else
+		red_text "✗ Destroy non-existent counter failed. Expected stdout=0, stderr='${counter_name}_nonexistent' counters destroyed:, exit=1. Got stdout='$destroy2_stdout', stderr='$destroy2_stderr', exit=$destroy2_exit\n" >&2
+		(( fails++ ))
+	fi
+
+	# Test 7.5: Destroy non-existent counter with --force (should output 0 and exit 0)
+	(( tests++ ))
+	local destroy3_stderr_file=$(mktemp)
+	local destroy3_stdout_file=$(mktemp)
+	run_counter destroy "${counter_name}_nonexistent" --force >"$destroy3_stdout_file" 2>"$destroy3_stderr_file"
+	local destroy3_exit=$?
+	local destroy3_stdout=$(cat "$destroy3_stdout_file")
+	local destroy3_stderr=$(cat "$destroy3_stderr_file")
+	rm -f "$destroy3_stdout_file" "$destroy3_stderr_file"
+	if [[ "$destroy3_stdout" == "0" ]] && [[ "$destroy3_stderr" == "'${counter_name}_nonexistent' counters destroyed:" ]] && [[ $destroy3_exit -eq 0 ]]; then
+		green_text "✓ Destroy non-existent counter with --force: correct output and exit code\n" >&2
+	else
+		red_text "✗ Destroy non-existent counter with --force failed. Expected stdout=0, stderr='${counter_name}_nonexistent' counters destroyed:, exit=0. Got stdout='$destroy3_stdout', stderr='$destroy3_stderr', exit=$destroy3_exit\n" >&2
+		(( fails++ ))
+	fi
+
+	# Test 8: Get non-existent counter should fail
+	(( tests++ ))
+	local nonexistent_name="definitely_nonexistent_counter_$$_$(date +%s)"
+	if ! run_counter get "$nonexistent_name" >/dev/null 2>&1; then
+		green_text "✓ Getting non-existent counter fails as expected\n" >&2
+	else
+		red_text "✗ Getting non-existent counter should fail\n" >&2
+		(( fails++ ))
+	fi
+
+	# Test 9: List command (fs-counter only)
+	if [ "$COUNTER_TYPE" = "fs" ]; then
+		# Create test counters with specific values
+		run_counter create "${counter_name}_list1" 42 >/dev/null 2>&1
+		run_counter create "${counter_name}_list2" 99 >/dev/null 2>&1
+		# Set one counter to a different value to test value accuracy
+		run_counter set "${counter_name}_list1" 73 >/dev/null 2>&1
+
+		(( tests++ ))
+		local list_output
+		list_output=$(run_counter list 2>/dev/null)
+		
+		# Filter list output to only our test counters and check values
+		local found_list1=false
+		local found_list2=false
+		local test_entries_count=0
+		
+		# Filter to only our test counters
+		local filtered_output
+		filtered_output=$(echo "$list_output" | grep "^${counter_name}_list[12]	")
+		
+		while IFS=$'\t' read -r name value; do
+			if [[ -n "$name" ]]; then
+				(( test_entries_count++ ))
+				if [[ "$name" == "${counter_name}_list1" ]]; then
+					if [[ "$value" == "73" ]]; then
+						found_list1=true
+					else
+						red_text "✗ Counter ${counter_name}_list1 has wrong value: expected 73, got '$value'\n" >&2
+						(( fails++ ))
+					fi
+				elif [[ "$name" == "${counter_name}_list2" ]]; then
+					if [[ "$value" == "99" ]]; then
+						found_list2=true
+					else
+						red_text "✗ Counter ${counter_name}_list2 has wrong value: expected 99, got '$value'\n" >&2
+						(( fails++ ))
+					fi
+				fi
+			fi
+		done <<< "$filtered_output"
+		
+		if [[ "$found_list1" == true && "$found_list2" == true && "$test_entries_count" == 2 ]]; then
+			green_text "✓ List command shows counters with correct tab-separated values\n" >&2
+		else
+			red_text "✗ List command failed. Expected both counters with correct values. Filtered output: '$filtered_output'\n" >&2
+			(( fails++ ))
+		fi
+		
+		# Additional test for output format (should be sorted and tab-separated)
+		(( tests++ ))
+		if [[ "$test_entries_count" == 2 && "$filtered_output" == *$'\t'* ]]; then
+			green_text "✓ List command output is properly formatted and sorted\n" >&2
+		else
+			red_text "✗ List command output format issue. Expected 2 tab-separated entries, got $test_entries_count entries: '$filtered_output'\n" >&2
+			(( fails++ ))
+		fi
+
+		# Clean up test counters
+		run_counter destroy "${counter_name}_list1" >/dev/null 2>&1
+		run_counter destroy "${counter_name}_list2" >/dev/null 2>&1
+	else
+		echo "  (Skipping list command test - not supported by $COUNTER_TYPE implementation)" >&2
+	fi
+
+	# Test 10: Help and about options
+	(( tests++ ))
+	if sysv-counter --help >/dev/null 2>&1; then
+		green_text "✓ Help option works\n" >&2
+	else
+		red_text "✗ Help option failed\n" >&2
+		(( fails++ ))
+	fi
+
+	(( tests++ ))
+	if sysv-counter --about >/dev/null 2>&1; then
+		green_text "✓ About option works\n" >&2
+	else
+		red_text "✗ About option failed\n" >&2
+		(( fails++ ))
+	fi
+
+	# Cleanup: ensure counter is destroyed
+	run_counter destroy "$counter_name" >/dev/null 2>&1
+
+	if [ $fails -gt 0 ]; then
+		red_text "$fails of $tests ${COUNTER_TYPE}-counter tests failed!\n" >&2
+	else
+		green_text "All $tests ${COUNTER_TYPE}-counter tests passed!\n" >&2
+	fi
+	return $fails
+}
+
+# Run the test if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	test_counter
+fi
