@@ -3,21 +3,21 @@
 assert() {
 	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	local arg1 comp arg2 message comp_result
-	
+
 	# Check if arguments are provided (not if they're empty)
 	if [ $# -lt 3 ]; then
 		echo "Insufficient arguments to assert in ${BASH_SOURCE[1]}: $*" >&2
 		return 0 # because returning 1 would cause the shell to exit during sourcing
 	fi
-	
+
 	arg1="$1"
 	comp="$2"
 	arg2="$3"
 	message="$4"
 	# We add a form feed character at the end of both due to how Bash command substitution
 	# gobbles up trailing newlines (and that's POSIX!).
-	arg1_enc=$(binhex "$arg1\f")
-	arg2_enc=$(binhex "$arg2\f")
+	arg1_enc=$(bin2hex "$arg1\f")
+	arg2_enc=$(bin2hex "$arg2\f")
 	comp_result=false # default to false
 	case $comp in
 		= | == )
@@ -40,7 +40,7 @@ assert() {
 			[[ ! "$arg1" =~ $arg2 ]] && comp_result=true
 			comparison="[[ ! \"$arg1\" =~ $arg2 ]]"
 		;;
-		* ) 
+		* )
 			echo "Unknown comparison operator: $comp" >&2
 			return 1
 		;;

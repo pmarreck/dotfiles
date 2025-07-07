@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 
-hexbin() {
+bin2hex() {
 	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	if [ -z "$1" ]; then # if no arguments
 		if [ ! -t 0 ]; then
-			xxd -r -p   # receive piped input from stdin
+			xxd -pu  # receive piped input from stdin
 		else # if stdin is empty AND no arguments
-			echo "Usage: hexbin <hex string>"
-			echo "       (or pipe something to hexbin)"
+			echo "Usage: bin2hex <string>"
+			echo "       (or pipe something to bin2hex)"
 			echo "This function is defined in ${BASH_SOURCE[0]}"
 		fi
 	else # if arguments
-		printf "%b" "$1" | xxd -r -p  # pipe all arguments to xxd
+		printf "%b" "$1" | xxd -pu # pipe all arguments to xxd
 	fi
 }
 

@@ -14,7 +14,7 @@ $INTERACTIVE_SHELL && $LOGIN_SHELL && echo "$DISTRO_PRETTY"
 # The only functions defined here should be the ones that are needed everywhere
 # and are not specific to a particular shell (e.g. bash, zsh, etc.)
 
-# binhex is now an executable in $HOME/dotfiles/bin
+# bin2hex is now an executable in $HOME/dotfiles/bin
 
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced nix-hash-retrievals.bash"
 

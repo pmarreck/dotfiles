@@ -26,38 +26,8 @@ EXAMPLES:
 
 REQUIREMENTS:
   - gh (GitHub CLI) must be installed and authenticated
-  - counter utility must be available (for progress tracking)
   - Authenticated users have 5000 API requests/hour limit
 EOF
-}
-
-# Dependency check function
-check_dependencies() {
-	# Check for gh CLI
-	if ! command -v gh >/dev/null 2>&1; then
-		echo "Error: 'gh' (GitHub CLI) is required but not installed." >&2
-		echo "Please install it from: https://cli.github.com/" >&2
-		return 1
-	fi
-
-	# Check for counter utility
-	if ! command -v counter >/dev/null 2>&1; then
-		echo "Error: 'counter' utility is required but not found in PATH." >&2
-		echo "This script uses 'counter' for atomic progress tracking across parallel processes." >&2
-		return 1
-	fi
-
-	# Test counter functionality with a basic operation
-	local test_counter="dependency_check_$$"
-	if ! counter create "$test_counter" 0 >/dev/null 2>&1; then
-		echo "Error: 'counter' utility found but not working correctly." >&2
-		echo "Please ensure you have a compatible counter implementation." >&2
-		return 1
-	fi
-	# Clean up test counter
-	counter destroy "$test_counter" >/dev/null 2>&1
-
-	return 0
 }
 
 # About function
@@ -71,27 +41,55 @@ search for any file.
 
 FEATURES:
 - Parallel processing (10 concurrent jobs by default)
-- In-memory result aggregation (no disk I/O)
+- Live progress bar using efficient filesystem metadata
 - API rate limit warnings for large repositories
-- Atomic progress tracking across parallel processes
 - Proper error handling and progress feedback
 - Constructs direct URLs to found files using correct default branch
 
 DEPENDENCIES:
 - gh (GitHub CLI): For accessing GitHub API
-- counter utility: For atomic progress tracking across parallel processes.
-  The counter utility provides thread-safe counters that allow multiple
-  parallel processes to coordinate progress reporting without race conditions.
+- A compatible 'stat' command (standard on macOS and Linux)
 
 TECHNICAL DETAILS:
 - Uses GitHub API via 'gh' CLI tool
 - Handles command line length limits with xargs -s
-- Uses atomic counters for accurate progress tracking in parallel execution
+- Uses an atomic, dependency-free method for progress tracking:
+  Each parallel worker appends a single byte to a temporary file upon completion.
+  The main script polls the size of this file using 'stat' (a fast metadata
+  operation) to update the progress bar without race conditions.
 - Only fetches default branch info when files are found (efficient)
 
 AUTHOR: Built for efficient Nix ecosystem exploration
 EOF
 }
+
+# Dependency check function
+check_dependencies() {
+	# Check for gh CLI
+	if ! command -v gh >/dev/null 2>&1; then
+		echo "Error: 'gh' (GitHub CLI) is required but not installed." >&2
+		echo "Please install it from: https://cli.github.com/" >&2
+		return 1
+	fi
+	return 0
+}
+
+# Determine the correct stat command for file size
+STAT_CMD=""
+# Check for gstat (GNU stat on macOS via coreutils) first for consistency
+if command -v gstat >/dev/null 2>&1; then
+	STAT_CMD="gstat -c %s"
+# Check if the system 'stat' supports GNU format
+elif stat -c %s /dev/null >/dev/null 2>&1; then
+	STAT_CMD="stat -c %s"
+# Check if the system 'stat' supports BSD format
+elif stat -f %z /dev/null >/dev/null 2>&1; then
+	STAT_CMD="stat -f %z"
+else
+	echo "Error: Cannot find a compatible 'stat' command to determine file size." >&2
+	echo "Please install GNU coreutils ('brew install coreutils' on macOS)." >&2
+	exit 4 # dependency error
+fi
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -148,63 +146,134 @@ fi
 readarray -t forks <<< "$fork_data"
 total_forks=${#forks[@]}
 
+if [[ $total_forks -eq 0 ]]; then
+	echo "No forks found for $REPO."
+	exit 0
+fi
+
 echo "Found $total_forks forks. Checking for $FILE_TO_SEARCH in parallel (max $MAX_JOBS jobs)..."
 
 # Warn about API limits for large fork counts
 if [[ $total_forks -gt 1000 ]]; then
 	echo -e "\033[33mWarning: Checking $total_forks forks will make ~$((total_forks * 2)) API requests, worst-case.\033[0m"
 	echo -e "\033[33mGitHub's rate limit is 5000 requests/hour for authenticated users.\033[0m"
-	echo
 fi
 
-echo
+# Create temporary files for progress, results, and errors in /tmp (for ramdisk performance)
+progress_file="/tmp/find_forks_progress_$$"
+results_file="/tmp/find_forks_results_$$"
+errors_file="/tmp/find_forks_errors_$$"
+# Ensure the temporary files exist before use
+touch "$progress_file" "$results_file" "$errors_file"
 
-# Create shared counter for progress tracking
-counter_key="forks_$(basename "$REPO" | tr '/' '_')_$$"
-counter create "$counter_key" 0 >/dev/null
-
-# Cleanup counter on exit
-trap 'counter destroy "$counter_key" >/dev/null 2>&1' EXIT
+# Cleanup temp files on exit
+cleanup() {
+	rm -f "$progress_file" "$results_file"
+	# Only remove the error log if it's empty.
+	# If it has content, it's preserved for inspection.
+	if [[ -f "$errors_file" ]] && [[ ! -s "$errors_file" ]]; then
+		rm -f "$errors_file"
+	fi
+}
+trap cleanup EXIT
 
 # Function to check a single fork and output result
 check_fork() {
 	local fork="$1"
-	local counter_key="$2"
-	
-	# Increment counter and get current progress
-	local current=$(counter inc "$counter_key")
-	local total="$3"
+	local file_to_search="$2"
+	local results_file_path="$3"
+	local progress_file_path="$4"
 
-	echo "($current/$total) Checking $fork..." >&2
+	# Execute the command, capturing combined stdout/stderr and the exit code.
+	# This avoids creating any temporary files for error handling.
+	local combined_output
+	combined_output=$(gh api "repos/$fork/contents/$file_to_search" 2>&1)
+	local exit_code=$?
 
-	# Try to get the specified file directly from the repo
-	local api_response
-	if api_response=$(gh api "repos/$fork/contents/$FILE_TO_SEARCH" 2>/dev/null); then
-		# Verify the response contains actual file data and has the right type
+	if [[ $exit_code -eq 0 ]]; then
+		# SUCCESS (HTTP 200)
+		local api_response="$combined_output"
 		if [[ -n "$api_response" ]] && echo "$api_response" | jq -e '.type == "file"' >/dev/null 2>&1; then
-			# Get default branch
-			default_branch=$(gh api "repos/$fork" --jq '.default_branch')
-			url="https://github.com/$fork/blob/$default_branch/$FILE_TO_SEARCH"
-
-			echo "($current/$total) ✓ Found $FILE_TO_SEARCH in: $fork" >&2
-			# Output result to stdout for collection
-			echo "$fork|$url"
+			# On success, we may need to make a second API call for the default branch.
+			# This call should also be error-handled.
+			local branch_output
+			branch_output=$(gh api "repos/$fork" --jq '.default_branch' 2>&1)
+			if [[ $? -eq 0 ]]; then
+				local default_branch="$branch_output"
+				local url="https://github.com/$fork/blob/$default_branch/$file_to_search"
+				echo "$fork|$url" >> "$results_file_path"
+			else
+				echo "Error getting default branch for '$fork': $branch_output" >> "$errors_file"
+			fi
+		fi
+	else
+		# FAILURE (non-zero exit from gh)
+		# If the error is NOT the expected 404, append it to the main error log.
+		if ! echo "$combined_output" | grep -q "Not Found (HTTP 404)"; then
+			# Prepend the fork name to the error for context.
+			echo -e "--- Error checking fork '$fork': ---\n$combined_output" >> "$errors_file"
 		fi
 	fi
 
-	# No sleep needed - xargs -P handles parallelism properly
+	# Signal completion regardless of success or failure.
+	echo -n "." >> "$progress_file_path"
 }
 
 # Export function and variables for parallel execution
 export -f check_fork
-export counter_key
 export FILE_TO_SEARCH
+export STAT_CMD
+export errors_file # Make the main error log path available to children
 
-# Run checks in parallel with explicit max command line size
-readarray -t results < <(printf '%s\n' "${forks[@]}" | xargs -s $(getconf ARG_MAX) -n 1 -P "$MAX_JOBS" -I {} bash -c 'check_fork "$@"' _ {} "$counter_key" "$total_forks")
+# Run checks in parallel in the background. Error logging is handled inside check_fork.
+printf '%s\n' "${forks[@]}" | xargs -s "$(getconf ARG_MAX)" -n 1 -P "$MAX_JOBS" -I {} bash -c 'check_fork "$@"' _ {} "$FILE_TO_SEARCH" "$results_file" "$progress_file" &
+xargs_pid=$!
+
+# Progress bar
+echo # newline before progress bar
+while kill -0 "$xargs_pid" 2>/dev/null; do
+	completed_count=$($STAT_CMD "$progress_file" 2>/dev/null || echo 0)
+	# Ensure completed_count is a number, default to 0 if not
+	[[ "$completed_count" =~ ^[0-9]+$ ]] || completed_count=0
+
+	# Avoid division by zero
+	if [[ $total_forks -gt 0 ]]; then
+		percent=$((completed_count * 100 / total_forks))
+	else
+		percent=100
+	fi
+
+	bar_len=40
+	filled_len=$((bar_len * percent / 100))
+	bar=$(printf "%${filled_len}s" | tr ' ' '#')
+	empty=$(printf "%$(($bar_len - filled_len))s")
+
+	# \r moves cursor to beginning of line, -n prevents newline
+	printf "\rProgress: [%s%s] %d%% (%d/%d) " "$bar" "$empty" "$percent" "$completed_count" "$total_forks"
+	sleep 0.2
+done
+
+# Ensure the progress bar shows 100% at the end and move to the next line
+printf "\rProgress: [%s] 100%% (%d/%d)\n" "$(printf "%${bar_len}s" | tr ' ' '#')" "$total_forks" "$total_forks"
+
+# Wait for xargs and all its children to finish completely
+wait "$xargs_pid"
 
 echo
+
+# Read results from the file
+readarray -t results < "$results_file"
+
 echo "Search complete!"
+echo
+
+# Report any errors
+if [[ -s "$errors_file" ]]; then
+    echo -e "\033[33mWarning: Errors were encountered during the search. First 10 lines:\033[0m" >&2
+    head -n 10 "$errors_file" >&2
+    echo "Full error log at: $errors_file" >&2
+    echo >&2
+fi
 echo
 
 # Output summary
