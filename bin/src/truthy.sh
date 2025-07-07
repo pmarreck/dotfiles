@@ -50,14 +50,8 @@ EOF
 	value=$(eval "printf '%s\n' \"\$$var_name\"")
 	debug "Value of \"$var_name\": \"$value\""
 
-	# 4. Convert value to lowercase (manual loop, no `${var,,}`, due to desiring POSIX...)
-	lower_value=""
-	for i in $(printf '%s' "$value" | fold -w 1); do
-		case "$i" in
-			[A-Z]) lower_value="${lower_value}$(printf "\\$(printf '%03o' "$(( $(printf '%d' "'$i") + 32 ))")")" ;;
-			*) lower_value="${lower_value}${i}" ;;
-		esac
-	done
+	# 4. Convert value to lowercase (POSIX-compatible using tr)
+	lower_value=$(printf '%s' "$value" | tr 'A-Z' 'a-z')
 	debug "Lowercase value of \"$var_name\": \"$lower_value\""
 
 	# 5. Check if the value is "falsey"

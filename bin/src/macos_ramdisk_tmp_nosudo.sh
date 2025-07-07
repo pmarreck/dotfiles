@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# macOS RAM disk for /private/tmp
-# Creates a 1GB RAM disk mounted at /private/tmp if not already mounted
+# macOS RAM disk for tmp without requiring sudo
+# Creates a 1GB RAM disk and makes it accessible as ~/tmp-ramdisk
 
 set -euo pipefail
 
 # Configuration
 RAMFS_SIZE_MB=1024
-MOUNT_POINT="/private/tmp"
-VOLUME_NAME="RAM-Disk"
+VOLUME_NAME="RAM-Disk-Tmp"
+RAMDISK_PATH="$HOME/tmp-ramdisk"
 
 # Check if we're on macOS
 if [[ "$(uname)" != "Darwin" ]]; then
@@ -15,15 +15,15 @@ if [[ "$(uname)" != "Darwin" ]]; then
     exit 1
 fi
 
-# Check if already mounted using robust checking
-if mount | grep -q "${MOUNT_POINT}"; then
+# Check if already set up
+if [[ -d "$RAMDISK_PATH" ]] && mount | grep -q "$RAMDISK_PATH"; then
     # Double-check by looking at the filesystem type
-    fs_type=$(mount | grep "${MOUNT_POINT}" | awk '{print $5}' | head -1)
+    fs_type=$(mount | grep "$RAMDISK_PATH" | awk '{print $5}' | head -1)
     if [[ "$fs_type" == "apfs" ]]; then
-        echo "RAM disk already mounted on ${MOUNT_POINT} (filesystem: $fs_type)"
+        echo "RAM disk already mounted at $RAMDISK_PATH (filesystem: $fs_type)"
         exit 0
     else
-        echo "WARNING: ${MOUNT_POINT} is mounted but filesystem type is $fs_type (not apfs)"
+        echo "WARNING: $RAMDISK_PATH is mounted but filesystem type is $fs_type (not apfs)"
         echo "Continuing to try mounting the RAM disk..."
     fi
 fi
@@ -78,25 +78,32 @@ fi
 
 echo "Found APFS volume: $APFS_VOLUME"
 
-# The volume gets auto-mounted at /Volumes/$VOLUME_NAME, we need to unmount and remount at desired location
-AUTO_MOUNT_POINT="/Volumes/$VOLUME_NAME"
-echo "Volume auto-mounted at $AUTO_MOUNT_POINT, unmounting..."
-if ! diskutil unmount "$AUTO_MOUNT_POINT"; then
-    echo "Failed to unmount auto-mounted volume at $AUTO_MOUNT_POINT" >&2
-    hdiutil detach "$RAMDISK_DEV" 2>/dev/null || true
-    exit 4
+# The disk will be auto-mounted at /Volumes/$VOLUME_NAME
+MOUNT_POINT="/Volumes/$VOLUME_NAME"
+
+# Wait for auto-mount
+echo "Waiting for auto-mount..."
+sleep 2
+
+# Verify mount
+if ! mount | grep -q "$MOUNT_POINT"; then
+    echo "Auto-mount failed, trying manual mount..."
+    if ! diskutil mount "/dev/$APFS_VOLUME"; then
+        echo "Failed to mount /dev/$APFS_VOLUME" >&2
+        hdiutil detach "$RAMDISK_DEV" 2>/dev/null || true
+        exit 5
+    fi
 fi
 
-# Now mount at the desired location
-echo "Mounting RAM disk at ${MOUNT_POINT}..."
-if ! sudo diskutil mount -mountPoint "$MOUNT_POINT" "/dev/$APFS_VOLUME"; then
-    echo "Failed to mount /dev/$APFS_VOLUME at ${MOUNT_POINT}" >&2
-    hdiutil detach "$RAMDISK_DEV" 2>/dev/null || true
-    exit 4
-fi
+# Create symlink to user-accessible location
+echo "Creating symlink at $RAMDISK_PATH..."
+[[ -L "$RAMDISK_PATH" ]] && rm "$RAMDISK_PATH"
+[[ -d "$RAMDISK_PATH" ]] && rmdir "$RAMDISK_PATH" 2>/dev/null || true
+ln -s "$MOUNT_POINT" "$RAMDISK_PATH"
 
-# Set proper permissions
-sudo chown root:wheel "$MOUNT_POINT"
-sudo chmod 1777 "$MOUNT_POINT"
+# Set proper permissions on the mount point
+chmod 1777 "$MOUNT_POINT"
 
-echo "RAM disk successfully mounted at ${MOUNT_POINT} (${RAMFS_SIZE_MB}MB)"
+echo "RAM disk successfully created at $MOUNT_POINT"
+echo "Accessible via symlink at $RAMDISK_PATH"
+echo "Size: ${RAMFS_SIZE_MB}MB"

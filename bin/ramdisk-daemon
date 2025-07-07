@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# macOS RAM disk daemon for /private/tmp
+# This script is executed by the LaunchAgent com.pmarreck.ramdisk.plist
+
+set -euo pipefail
+
+# Log with timestamp
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
+}
+
+# Exit codes
+EXIT_SUCCESS=0
+EXIT_WRONG_OS=1
+EXIT_ALREADY_MOUNTED=2
+EXIT_GENERAL_ERROR=3
+
+log "Starting ramdisk daemon"
+
+# Check if we're on macOS
+if [[ "$(uname)" != "Darwin" ]]; then
+    log "ERROR: This daemon is for macOS only"
+    exit $EXIT_WRONG_OS
+fi
+
+# Check if already mounted using multiple methods for robustness
+MOUNT_POINT="/private/tmp"
+if mount | grep -q "${MOUNT_POINT}"; then
+    # Double-check by looking at the filesystem type
+    fs_type=$(mount | grep "${MOUNT_POINT}" | sed 's/.*(\([^,]*\).*/\1/' | head -1)
+    if [[ "$fs_type" == "apfs" ]]; then
+        log "INFO: RAM disk already mounted at ${MOUNT_POINT} (filesystem: $fs_type)"
+        exit $EXIT_ALREADY_MOUNTED
+    else
+        log "WARNING: ${MOUNT_POINT} is mounted but filesystem type is $fs_type (not apfs)"
+        # Continue to try mounting the RAM disk
+    fi
+fi
+
+log "Executing ramdisk setup script"
+
+# Execute the original ramdisk script (now that we run as root)
+if "$HOME/dotfiles/bin/src/macos_ramdisk_tmp.sh"; then
+    # Verify the mount actually worked
+    if mount | grep -q "/private/tmp"; then
+        fs_type=$(mount | grep "/private/tmp" | sed 's/.*(\([^,]*\).*/\1/' | head -1)
+        if [[ "$fs_type" == "apfs" ]]; then
+            log "SUCCESS: RAM disk setup completed successfully and mounted at /private/tmp"
+            exit $EXIT_SUCCESS
+        else
+            log "ERROR: RAM disk setup appeared to succeed but /private/tmp filesystem is $fs_type (not apfs)"
+            exit $EXIT_GENERAL_ERROR
+        fi
+    else
+        log "ERROR: RAM disk setup appeared to succeed but /private/tmp is not mounted"
+        exit $EXIT_GENERAL_ERROR
+    fi
+else
+    exit_code=$?
+    log "ERROR: RAM disk setup failed with exit code $exit_code"
+    exit $EXIT_GENERAL_ERROR
+fi

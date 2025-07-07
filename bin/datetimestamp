@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+. "$HOME/dotfiles/bin/src/truthy.sh"
+
 datetimestamp() {
 	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	# set the date bin to gdate (or one that recognizes --resolution) if available

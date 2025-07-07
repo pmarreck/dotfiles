@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# Check the status of the tmp ramdisk
+
+set -euo pipefail
+
+# Check if we're on Linux (where tmpfs is native)
+if [[ "$(uname)" == "Linux" ]]; then
+    echo "ERROR: This command is for macOS only - Linux already has tmpfs for /tmp" >&2
+    exit 1
+fi
+
+# Check if we're on macOS
+if [[ "$(uname)" != "Darwin" ]]; then
+    echo "ERROR: This command is for macOS only" >&2
+    exit 1
+fi
+
+echo "=== RAM Disk Status for /private/tmp ==="
+
+# Check if mounted using multiple methods for robustness
+MOUNT_POINT="/private/tmp"
+is_mounted=false
+
+# Method 1: Check mount output
+if mount | grep -q "${MOUNT_POINT}"; then
+    is_mounted=true
+    echo "✓ RAM disk is mounted at ${MOUNT_POINT}"
+    
+    # Get mount details
+    mount_info=$(mount | grep "${MOUNT_POINT}")
+    echo "  Mount info: $mount_info"
+    
+    # Get disk usage
+    if command -v df >/dev/null 2>&1; then
+        echo "  Disk usage:"
+        df -h "${MOUNT_POINT}" | tail -n +2 | sed 's/^/    /'
+    fi
+else
+    echo "✗ RAM disk is NOT mounted at ${MOUNT_POINT}"
+fi
+
+# Method 2: Check if the filesystem type is what we expect
+if [[ "$is_mounted" == true ]]; then
+    fs_type=$(mount | grep "${MOUNT_POINT}" | sed 's/.*(\([^,]*\).*/\1/' | head -1)
+    if [[ "$fs_type" == "apfs" ]]; then
+        echo "  Filesystem type: $fs_type (correct for RAM disk)"
+    else
+        echo "  WARNING: Filesystem type is $fs_type (expected apfs)"
+    fi
+fi
+
+# Check LaunchDaemon status
+echo ""
+echo "=== LaunchDaemon Status ==="
+if sudo launchctl list | grep -q "com.pmarreck.ramdisk"; then
+    echo "✓ LaunchDaemon is loaded"
+    
+    # Get more details
+    if command -v launchctl >/dev/null 2>&1; then
+        echo "  LaunchDaemon details:"
+        sudo launchctl list com.pmarreck.ramdisk 2>/dev/null | sed 's/^/    /' || echo "    (details not available)"
+    fi
+else
+    echo "✗ LaunchDaemon is NOT loaded"
+    echo "  To load: sudo launchctl load /Library/LaunchDaemons/com.pmarreck.ramdisk.plist"
+fi
+
+# Check log file
+echo ""
+echo "=== Log File ==="
+LOG_FILE="$HOME/.local/share/ramdisk/ramdisk.log"
+if [[ -f "$LOG_FILE" ]]; then
+    echo "✓ Log file exists: $LOG_FILE"
+    if [[ -s "$LOG_FILE" ]]; then
+        echo "  Last 5 lines:"
+        tail -n 5 "$LOG_FILE" | sed 's/^/    /'
+    else
+        echo "  Log file is empty"
+    fi
+else
+    echo "✗ Log file does not exist: $LOG_FILE"
+fi
