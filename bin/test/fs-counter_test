@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+
+# Test for fs-counter
+echo "Test for fs-counter is not yet implemented"
+exit 0

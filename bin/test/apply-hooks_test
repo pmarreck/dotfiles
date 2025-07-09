@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+
+# Test for apply-hooks
+echo "Test for apply-hooks is not yet implemented"
+exit 0

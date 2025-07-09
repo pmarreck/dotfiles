@@ -26,6 +26,24 @@ function ask_local() {
 # which is apparently an old convention (which also broke the basename call on OS X)
 _me=$(basename "${0##\-}")
 if [ "$_me" = "ask_local" ]; then
-	$_me "$@"
+	case "$1" in
+		-h|--help)
+			echo "ask_local - Ask questions to local AI model"
+			echo "Usage: ask_local [question]"
+			echo "Uses local AI model ($DEFAULT_LOCAL_AI_MODEL) on $DEFAULT_LOCAL_AI_HOST"
+			echo ""
+			echo "Options:"
+			echo "  -h, --help    Show this help message"
+			echo "  --test        Run tests"
+			exit 0
+			;;
+		--test)
+			# Run tests from the test file
+			exec "$HOME/dotfiles/bin/test/${_me}_test"
+			;;
+		*)
+			$_me "$@"
+			;;
+	esac
 fi
 unset _me

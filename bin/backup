@@ -2,11 +2,17 @@
 
 date=`date "+%Y-%m-%dT%H_%M_%S"`
 
-if [ "$1" = "--help" ]; then
-   echo USAGE:
-   echo "backup /path/to/source /path/to/backups"
-   exit
-fi
+case "$1" in
+	-h|--help)
+		echo USAGE:
+		echo "backup /path/to/source /path/to/backups"
+		exit 0
+		;;
+	--test)
+		echo "Test for backup is not yet implemented"
+		exit 0
+		;;
+esac
 
 if [ "$1" = "" ]
 then
@@ -14,8 +20,8 @@ then
   then
     . ./backup.default_params
   else
-    echo "No backup.default_params file exists. See '$0 --help'."
-    exit
+    echo "No backup.default_params file exists. See '$0 --help'." >&2
+    exit 2
   fi
 else
   # Trim any trailing slashes
@@ -23,8 +29,8 @@ else
   DESTINATION=${2%/}
   # Verify they are both real directories
   if [ ! -d "$HOME" ] || [ ! -d "$DESTINATION" ]; then
-    echo "One or both of the paths provided is not a directory."
-    exit 1
+    echo "One or both of the paths provided is not a directory." >&2
+    exit 2
   fi
 fi
 

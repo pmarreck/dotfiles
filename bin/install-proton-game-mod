@@ -45,6 +45,25 @@ needs fzy https://github.com/jhawthorn/fzy
 needs 7z
 needs unrar
 case "$1" in
+	-h|--help)
+		echo "install-proton-game-mod - Install mods for Proton games"
+		echo "Usage: install-proton-game-mod <game>"
+		echo ""
+		echo "Games:"
+		echo "  fnv    Fallout New Vegas"
+		echo ""
+		echo "This script helps install mods from your Downloads folder"
+		echo "into the appropriate Proton game directory."
+		echo ""
+		echo "Options:"
+		echo "  -h, --help    Show this help message"
+		echo "  --test        Run tests"
+		exit 0
+		;;
+	--test)
+		# Run tests from the test file
+		exec "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+		;;
 	"fnv")
 		APP_NAME=FalloutNV.exe
 		echo "Which ${APP_NAME}?"
@@ -84,7 +103,8 @@ case "$1" in
 		fix_nvse_capitalization_via_symlinking "$APP_DIR/Data"
 		;;
 	*)
-		echo "Game shortcut not recognized. Options: fnv"
-		exit 1
+		echo "Game shortcut not recognized. Options: fnv" >&2
+		echo "Use -h or --help for more information." >&2
+		exit 2
 		;;
 esac

@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+
+# Test for install-proton-game-mod
+echo "Test for install-proton-game-mod is not yet implemented"
+exit 0

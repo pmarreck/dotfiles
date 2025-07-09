@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+
+# Test for ixnay
+echo "Test for ixnay is not yet implemented"
+exit 0

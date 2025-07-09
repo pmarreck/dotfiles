@@ -270,6 +270,11 @@ Actions:
   destroy --force <key>         Destroy counter (ignore if doesn't exist)
   destroy -f <key>              Same as --force
 
+Options:
+  -h, --help                    Show this help message
+  --test                        Run tests
+  --about                       Show detailed information
+
 Examples:
   sudo posix-counter create mycounter 10
   sudo posix-counter inc mycounter
@@ -294,6 +299,12 @@ local function main(args)
         return
     end
     
+    if args[1] == "--test" then
+        -- Run tests from the test file
+        os.execute("exec " .. os.getenv("HOME") .. "/dotfiles/bin/test/posix-counter_test")
+        return
+    end
+    
     if args[1] == "--about" then
         print_about()
         return
@@ -305,7 +316,8 @@ local function main(args)
 
     if action == "create" then
         if not key then
-            error("Usage: posix-counter create <key> [initial_value]")
+            io.stderr:write("Usage: posix-counter create <key> [initial_value]\n")
+            os.exit(2)
         end
         local initial_value = tonumber(value) or 0
         local counter = PosixCounter:new(key)
@@ -313,7 +325,8 @@ local function main(args)
 
     elseif action == "inc" then
         if not key then
-            error("Usage: posix-counter inc <key>")
+            io.stderr:write("Usage: posix-counter inc <key>\n")
+            os.exit(2)
         end
         local counter = PosixCounter:new(key)
         local new_value = counter:inc()
@@ -321,7 +334,8 @@ local function main(args)
 
     elseif action == "dec" then
         if not key then
-            error("Usage: posix-counter dec <key>")
+            io.stderr:write("Usage: posix-counter dec <key>\n")
+            os.exit(2)
         end
         local counter = PosixCounter:new(key)
         local new_value = counter:dec()
@@ -329,7 +343,8 @@ local function main(args)
 
     elseif action == "set" then
         if not key or not value then
-            error("Usage: posix-counter set <key> <value>")
+            io.stderr:write("Usage: posix-counter set <key> <value>\n")
+            os.exit(2)
         end
         local num_value = tonumber(value)
         if not num_value then
@@ -341,7 +356,8 @@ local function main(args)
 
     elseif action == "get" then
         if not key then
-            error("Usage: posix-counter get <key>")
+            io.stderr:write("Usage: posix-counter get <key>\n")
+            os.exit(2)
         end
         local counter = PosixCounter:new(key)
         local current_value = counter:get()
@@ -361,14 +377,16 @@ local function main(args)
         end
 
         if not actual_key then
-            error("Usage: posix-counter destroy [--force|-f] <key>")
+            io.stderr:write("Usage: posix-counter destroy [--force|-f] <key>\n")
+            os.exit(2)
         end
 
         local counter = PosixCounter:new(actual_key)
         counter:destroy(force)
 
     else
-        error("Unknown action: " .. action .. ". Use -h for help.")
+        io.stderr:write("Unknown action: " .. action .. ". Use -h for help.\n")
+        os.exit(2)
     end
 end
 

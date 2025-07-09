@@ -1,19 +1,35 @@
-#!/usr/bin/env -S awk -f
-
-# note: -S option is required for a shebang with args to work
-# https://stackoverflow.com/questions/4303128/how-to-have-a-shebang-with-argument-when-using-env
-# Requires GNU coreutils v8.30+ for the -S option
+#!/usr/bin/env bash
 
 # this script aligns output on the = signs
 # which is presumably ini-like configuration or env data
 
-# example usage:
-# $ env | align-on-equals
-# ...
-# bash> echo -e "name=value\nbiggername=biggervalue\n" | align-on-equals
-# name       = value
-# biggername = biggervalue
+# Check for help or test flags
+case "$1" in
+	-h|--help)
+		echo "align-on-equals - Align text on equal signs"
+		echo "Usage: align-on-equals [file]"
+		echo "       command | align-on-equals"
+		echo ""
+		echo "Examples:"
+		echo "  env | align-on-equals"
+		echo "  echo -e 'name=value\\nbiggername=biggervalue' | align-on-equals"
+		echo "  # Output:"
+		echo "  # name       = value"
+		echo "  # biggername = biggervalue"
+		echo ""
+		echo "Options:"
+		echo "  -h, --help    Show this help message"
+		echo "  --test        Run tests"
+		exit 0
+		;;
+	--test)
+		# Run tests from the test file
+		exec "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+		;;
+esac
 
+# Execute the AWK script
+awk '
 BEGIN {
 	FS = "=" # set the field separator to "="
 	max_length = 0 # initialize the maximum key length to zero
@@ -39,4 +55,4 @@ END {
 	for (i = 1; i <= num_valid; i++) {
 		printf("%-" max_length "s = %s\n", keys[i], values[i]) # use printf to format the output
 	}
-}
+}' "$@"

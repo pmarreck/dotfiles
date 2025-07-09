@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+
+# Test for bash2048
+echo "Test for bash2048 is not yet implemented"
+exit 0

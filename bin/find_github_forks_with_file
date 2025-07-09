@@ -17,6 +17,7 @@ Search for a specific file across all forks of a GitHub repository.
 OPTIONS:
   --file FILE     File to search for (default: flake.nix)
   -h, --help      Show this help message
+  --test          Run tests
   --about         Show detailed information about this tool
 
 EXAMPLES:
@@ -101,6 +102,10 @@ while [[ $# -gt 0 ]]; do
 		-h|--help)
 			show_help
 			exit 0
+			;;
+		--test)
+			# Run tests from the test file
+			exec "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
 			;;
 		--about)
 			show_about

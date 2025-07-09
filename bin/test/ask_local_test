@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+
+# Test for ask_local
+echo "Test for ask_local is not yet implemented"
+exit 0

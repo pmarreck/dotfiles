@@ -1,5 +1,29 @@
 #!/usr/bin/env bash
 
+# Handle help and test flags if run directly
+if ! (return 0 2>/dev/null); then
+	case "$1" in
+		-h|--help)
+			echo "apply-hooks - Set up shell prompt hooks and integrations"
+			echo "Usage: apply-hooks"
+			echo "       source apply-hooks"
+			echo ""
+			echo "This script sets up prompt hooks for direnv, mcfly, starship, zoxide,"
+			echo "and other shell integrations. It should normally be sourced from your"
+			echo "shell configuration, not executed directly."
+			echo ""
+			echo "Options:"
+			echo "  -h, --help    Show this help message"
+			echo "  --test        Run tests"
+			exit 0
+			;;
+		--test)
+			# Run tests from the test file
+			exec "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+			;;
+	esac
+fi
+
 [ -n "${DEBUG_SHELLCONFIG}" ] && echo "Entering $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")"
 [ -n "${DEBUG_PATHCONFIG}" ] && echo "$PATH"
 

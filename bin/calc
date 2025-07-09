@@ -70,14 +70,30 @@ debug "wtf"
 # Run the function if this script is executed directly
 if ! (return 0 2>/dev/null); then
 	debug "Running calc with args: $@"
-	# Check if we are running tests
-	if [ "$1" = "--test" ]; then
-		debug "Running tests for calc with args: $@"
-		# Run tests from the test file
-		exec "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
-	else
-		# If called directly, pass all arguments to the function
-		debug "Running calc function with args: $@"
-		$(basename "${0##\-}") "$@"
-	fi
+	case "$1" in
+		-h|--help)
+			echo "calc - Do simple math in the shell"
+			echo "Usage: calc <expression>"
+			echo "Examples:"
+			echo "  calc 2+2"
+			echo "  calc 4 * 23"
+			echo "  calc 'define fac(x) { if (x == 0) return (1); return (fac(x-1) * x); }; fac(5)'"
+			echo "  echo 'sqrt(16)' | calc"
+			echo ""
+			echo "Options:"
+			echo "  -h, --help    Show this help message"
+			echo "  --test        Run tests"
+			exit 0
+			;;
+		--test)
+			debug "Running tests for calc with args: $@"
+			# Run tests from the test file
+			exec "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+			;;
+		*)
+			# If called directly, pass all arguments to the function
+			debug "Running calc function with args: $@"
+			$(basename "${0##\-}") "$@"
+			;;
+	esac
 fi

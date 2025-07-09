@@ -3,6 +3,26 @@
 
 set -euo pipefail
 
+# Check for help or test flags
+case "${1:-}" in
+    -h|--help)
+        echo "ramdisk-status - Check the status of the macOS /tmp RAM disk"
+        echo "Usage: ramdisk-status"
+        echo ""
+        echo "This script checks if the /private/tmp RAM disk is properly mounted"
+        echo "and reports on the LaunchDaemon status and log files."
+        echo ""
+        echo "Options:"
+        echo "  -h, --help    Show this help message"
+        echo "  --test        Run tests"
+        exit 0
+        ;;
+    --test)
+        # Run tests from the test file
+        exec "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+        ;;
+esac
+
 # Check if we're on Linux (where tmpfs is native)
 if [[ "$(uname)" == "Linux" ]]; then
     echo "ERROR: This command is for macOS only - Linux already has tmpfs for /tmp" >&2

@@ -182,36 +182,43 @@ function end_game {
 
 function help {
 	cat <<END_HELP
-Usage: $1 [-b INTEGER] [-t INTEGER] [-h]
+Usage: $1 [-b INTEGER] [-t INTEGER] [-h] [--test]
 
 	-b            specify game board size (sizes 3-9 allowed)
 	-t            specify target score to win (needs to be power of 2)
 	-h            this help
+	--test        run tests
 
 END_HELP
 }
 
+
+# Check for --test first (getopts doesn't handle long options)
+if [ "$1" = "--test" ]; then
+	# Run tests from the test file
+	exec "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+fi
 
 #parse commandline options
 while getopts "b:t:h" opt; do
 	case $opt in
 		b ) board_size="$OPTARG"
 			let '(board_size>=3)&(board_size<=9)' || {
-				echo "Invalid board size, please choose size between 3 and 9"
-				exit -1
+				echo "Invalid board size, please choose size between 3 and 9" >&2
+				exit 2
 			};;
 		t ) target="$OPTARG"
 			echo "obase=2;$target" | bc | grep -e '^1[^1]*$'
 			let $? && {
-				echo "Invalid target, has to be power of two"
-				exit -1
+				echo "Invalid target, has to be power of two" >&2
+				exit 2
 			};;
 		h ) help $0
 				exit 0;;
 		\?) echo "Invalid option: -"$OPTARG", try $0 -h" >&2
-						exit 1;;
+						exit 2;;
 		: ) echo "Option -"$OPTARG" requires an argument, try $0 -h" >&2
-						exit 1;;
+						exit 2;;
 	esac
 done
 

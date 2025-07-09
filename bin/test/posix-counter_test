@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+
+# Test for posix-counter
+echo "Test for posix-counter is not yet implemented"
+exit 0
