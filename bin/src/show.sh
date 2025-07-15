@@ -308,6 +308,7 @@ show() {
 }
 
 # this overrides /usr/bin/what, which I will likely never use anyway
+# Usage: what [is] <name of anything> (redirects to show function)
 what() {
 	if [ "$1" == "is" ]; then # just to make it nicer to use
 		shift

@@ -120,11 +120,7 @@ function git_commit_ai() {
   fi
   commit_message="$response"
 
-  if [[ "$(uname)" == "Darwin" ]]; then
-    echo -ne "$commit_message" | pbcopy
-  else # assume linux if not macos
-    echo -ne "$commit_message" | xclip -selection clipboard
-  fi
+  echo -ne "$commit_message" | clip -q
 
   echo "Commit command copied to clipboard:" >&2
   echo -ne "$commit_message"

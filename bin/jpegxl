@@ -34,7 +34,6 @@
 # Silence function - runs a command silently but preserves exit code
 silence() {
 	"$@" >/dev/null 2>&1
-	return $?
 }
 
 # Check for required dependencies

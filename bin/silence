@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 silence() {
-	"$@" >$NULL 2>&1
+	"$@" >/dev/null 2>&1
 }
 
 # Run the function if this script is executed directly
