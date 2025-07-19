@@ -2,6 +2,49 @@
 
 source $HOME/dotfiles/bin/src/truthy.sh
 
+# Debug function
+debug() {
+	if truthy DEBUG; then
+		echo -e "\033[33mDEBUG: $*\033[0m" &>2
+	else
+		:
+	fi
+}
+
+# Determine clipboard functions once on load/source
+if [ -z "$CLIP_INITIALIZED" ]; then
+	if succeeds type pbcopy; then
+		# macOS
+		clip_copy() { printf "%s" "$1" | pbcopy; }
+		clip_copy_stdin() { pbcopy; }
+		clip_paste() { pbpaste 2>/dev/null || true; }
+		clip_clear() { echo -n "" | pbcopy; }
+		clip_save() { pbpaste > "$1" 2>/dev/null; }
+		clip_restore() { pbcopy < "$1"; }
+	elif succeeds type wl-copy; then
+		# Wayland Linux
+		clip_copy() { printf "%s" "$1" | wl-copy; }
+		clip_copy_stdin() { wl-copy; }
+		clip_paste() { wl-paste 2>/dev/null || true; }
+		clip_clear() { wl-copy --clear; }
+		clip_save() { wl-paste > "$1" 2>/dev/null; }
+		clip_restore() { wl-copy < "$1"; }
+	elif succeeds type xclip; then
+		# X11 Linux
+		clip_copy() { printf "%s" "$1" | timeout 2s xclip -selection clipboard 2>/dev/null || true; }
+		clip_copy_stdin() { timeout 2s xclip -selection clipboard 2>/dev/null || true; }
+		clip_paste() { timeout 2s xclip -o -selection clipboard 2>/dev/null || true; }
+		clip_clear() { timeout 2s xclip -selection clipboard -i /dev/null 2>/dev/null || true; }
+		clip_save() { timeout 2s xclip -o -selection clipboard > "$1" 2>/dev/null || true; }
+		clip_restore() { timeout 2s xclip -selection clipboard < "$1" 2>/dev/null || true; }
+	else
+		echo "Error: No clipboard command found (pbcopy, wl-copy, or xclip)" >&2
+		exit 1
+	fi
+	
+	CLIP_INITIALIZED=true
+fi
+
 clip_usage() {
 	cat << EOF
 Usage: clip [OPTIONS] [TEXT...]
@@ -77,51 +120,20 @@ clip() {
 		esac
 	done
 
-	# Determine which clipboard commands to use based on environment
-	local copy_cmd=""
-	local paste_cmd=""
-	local clear_cmd=""
-
-	if succeeds type pbcopy; then
-		# macOS
-		copy_cmd="pbcopy"
-		paste_cmd="pbpaste"
-		clear_cmd="pbcopy"  # Clear by copying empty string
-	elif succeeds type wl-copy; then
-		# Wayland Linux
-		copy_cmd="wl-copy"
-		paste_cmd="wl-paste"
-		clear_cmd="wl-copy --clear"
-	elif succeeds type xclip; then
-		# X11 Linux
-		copy_cmd="xclip -selection clipboard"
-		paste_cmd="xclip -o -selection clipboard"
-		clear_cmd="xclip -selection clipboard -i /dev/null"  # Clear by copying from /dev/null
-	else
-		echo "Error: No clipboard command found (pbcopy, wl-copy, or xclip)" >&2
-		return 1
-	fi
-
 	# Handle special operations first
 	if $clear_clipboard; then
-		if [[ "$clear_cmd" == *"--clear"* ]]; then
-			eval "$clear_cmd"
-		elif [[ "$clear_cmd" == *"/dev/null"* ]]; then
-			eval "$clear_cmd"
-		else
-			echo -n "" | eval "$clear_cmd"
-		fi
+		clip_clear
 		return 0
 	fi
 
 	if $save_clipboard; then
-		eval "$paste_cmd" > "$clipboard_file" 2>/dev/null
+		clip_save "$clipboard_file"
 		return $?
 	fi
 
 	if $restore_clipboard; then
 		if [ -f "$clipboard_file" ]; then
-			eval "$copy_cmd" < "$clipboard_file"
+			clip_restore "$clipboard_file"
 			return $?
 		else
 			echo "Error: No saved clipboard file found at $clipboard_file" >&2
@@ -133,7 +145,7 @@ clip() {
 	if [ $# -gt 0 ]; then
 		# Join all arguments with spaces and copy to clipboard
 		local joined_args="$*"
-		printf "%s" "$joined_args" | eval "$copy_cmd"
+		clip_copy "$joined_args"
 
 		# Output the text unless quiet mode is enabled
 		if ! $quiet; then
@@ -143,22 +155,16 @@ clip() {
 		# stdin is not a terminal, so we have piped input
 		if $quiet; then
 			# Copy stdin to clipboard without echoing to stdout
-			eval "$copy_cmd" >/dev/null
+			clip_copy_stdin >/dev/null
 		else
 			# Use tee to both send to clipboard and output to stdout
-			tee >(eval "$copy_cmd")
+			tee >(clip_copy_stdin >/dev/null)
 		fi
 	else
 		# No arguments and stdin is a terminal - read from clipboard
-		eval "$paste_cmd" 2>/dev/null || true
+		clip_paste
 	fi
 }
-
-# Run tests if RUN_DOTFILE_TESTS is true
-if truthy RUN_DOTFILE_TESTS; then
-	orange_text "$(basename "${0##\-}") --test\n" >&2
-	RUN_DOTFILE_TESTS=false $(basename "${0##\-}") --test
-fi
 
 # Run the function if this script is executed directly
 if ! (return 0 2>/dev/null); then

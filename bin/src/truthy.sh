@@ -4,6 +4,14 @@
 falsey() {
 	[ -n "${EDIT}" ] && unset EDIT && edit_function "$0" "$0" && return
 
+	debug() {
+		if [ -n "${DEBUG}" ]; then
+			echo -e "\033[33mDEBUG: $*\033[0m" &>2
+		else
+			:
+		fi
+	}
+	
 	# Print help for truthy/falsey
 	truthy_help() {
 		cat <<EOF

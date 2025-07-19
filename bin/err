@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+NULL=${NULL:-/dev/null}
+
 err() {
 	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	# Color codes

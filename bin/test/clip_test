@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
 
+# Enable extensive debugging
+# set -x
+# set -v
+# export DEBUG=1
+
 source $HOME/dotfiles/bin/clip
 source $HOME/bin/assert
+source $HOME/dotfiles/bin/src/truthy.sh
 
 test_clip() {
 	local fails=0
@@ -13,8 +19,8 @@ test_clip() {
 	
 	# Debug function
 	debug() {
-		if [[ "$DEBUG" == "1" || "$DEBUG" == "true" ]]; then
-			echo -e "\033[33mDEBUG: $*\033[0m"
+		if truthy DEBUG; then
+			echo -e "\033[33mDEBUG: $*\033[0m" &>2
 		fi
 	}
 	
@@ -26,7 +32,7 @@ test_clip() {
 		elif succeeds type wl-copy; then
 			wl-copy --clear 2>/dev/null || true
 		elif succeeds type xclip; then
-			echo -n "" | xclip -selection clipboard 2>/dev/null || true
+			echo -n "" | timeout 2s xclip -selection clipboard 2>/dev/null || true
 		fi
 	}
 	
@@ -35,20 +41,25 @@ test_clip() {
 	debug "Starting test initialization"
 
 	# Initialization- Store and clear the clipboard
-	local original_clipboard_file="/tmp/clip_original_$$"
+	local original_clipboard_content
 	debug "About to save existing clipboard content"
 	
 	# Use the paste command directly to avoid stdin issues
+	debug "About to check clipboard commands"
 	if succeeds type pbpaste; then
-		debug "Using pbpaste"
-		pbpaste > "$original_clipboard_file" 2>/dev/null || true
+		debug "Found pbpaste, using it"
+		original_clipboard_content=$(pbpaste 2>/dev/null || true)
+		debug "Got clipboard content: '$original_clipboard_content'"
 	elif succeeds type wl-paste; then
-		debug "Using wl-paste"
-		wl-paste > "$original_clipboard_file" 2>/dev/null || true
+		debug "Found wl-paste, using it"
+		original_clipboard_content=$(wl-paste 2>/dev/null || true)
+		debug "Got clipboard content: '$original_clipboard_content'"
 	elif succeeds type xclip; then
-		debug "Using xclip"
-		xclip -o -selection clipboard > "$original_clipboard_file" 2>/dev/null || true
+		debug "Found xclip, using it"
+		original_clipboard_content=$(xclip -o -selection clipboard 2>/dev/null || true)
+		debug "Got clipboard content: '$original_clipboard_content'"
 	fi
+	debug "Finished getting clipboard content"
 	
 	debug "About to clear clipboard for tests"
 	clean_test_state
@@ -196,12 +207,11 @@ test_clip() {
 
 	# Restore original clipboard
 	$verbose && echo "Restoring original clipboard content"
-	if [ -s "$original_clipboard_file" ]; then
-		clip < "$original_clipboard_file"
+	if [ -n "$original_clipboard_content" ]; then
+		clip "$original_clipboard_content" >/dev/null
 	else
 		clip --clear
 	fi
-	rm -f "$original_clipboard_file"
 
 	if [ $fails -gt 0 ]; then
 		red_text "$fails of $tests clip tests failed!\n"

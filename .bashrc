@@ -26,8 +26,16 @@ set +h
 
 export NULL=${NULL:-/dev/null}
 
+source $HOME/dotfiles/bin/src/truthy.sh
+# Truthy contains its own debug function that does not depend on truthy,
+# to prevent the circular dependency.
+# So we redefine it here to now depend on truthy for the rest of our environment.
 debug() {
-	[ -n "$DEBUG" ] && echo "DEBUG: $1" >&2
+	if truthy DEBUG; then
+		echo -e "\033[33mDEBUG: $*\033[0m" &>2
+	else
+		:
+	fi
 }
 
 # determine shell characteristics

@@ -1,0 +1,139 @@
+#!/usr/bin/env bash
+
+# dirtree: Outputs a simplified directory tree readable by humans and LLMs.
+
+print_tree() {
+  local dir="$1"
+  local continue_prefix="$2"
+  local level="$3"
+  local max_depth="$4"
+  local indent_char="$5"
+  local use_lines="$6"
+
+  dir="${dir%/}"
+  local basename="${dir##*/}"
+  if [[ -z "$basename" ]]; then basename="/"; fi
+
+  local suffix="/"
+  local expand=1
+  if [[ $level -ge $max_depth ]]; then
+    expand=0
+  fi
+
+  local list_cmd="ls -1 --group-directories-first --"
+  local has_contents=0
+  if [[ $($list_cmd "$dir" 2>/dev/null | wc -l) -gt 0 ]]; then has_contents=1; fi
+
+  if [[ $expand == 0 && $has_contents == 1 ]]; then suffix="/*"; fi
+
+  local prefix=""
+  if [[ $use_lines == 1 ]]; then
+    prefix="$continue_prefix"
+  else
+    if [[ $level -gt 0 ]]; then
+      printf -v prefix "%*s" "$level" ""
+      prefix="${prefix// /$indent_char}"
+    fi
+  fi
+
+  echo "$prefix$basename$suffix"
+
+  if [[ $expand == 1 ]]; then
+    readarray -t entries < <($list_cmd "$dir" 2>/dev/null)
+    local num=${#entries[@]}
+    for ((i=0; i<num; i++)); do
+      local entry="${entries[i]}"
+      local full="$dir/$entry"
+      local is_dir=0
+      if [[ -d "$full" ]]; then is_dir=1; fi
+
+      local child_prefix=""
+      local next_continue=""
+      if [[ $use_lines == 1 ]]; then
+        local is_last=$(( i + 1 == num ))
+        local branch="├──$indent_char"
+        next_continue="$continue_prefix│${indent_char}${indent_char}${indent_char}"
+        if [[ $is_last == 1 ]]; then
+          branch="└──$indent_char"
+          next_continue="$continue_prefix${indent_char}${indent_char}${indent_char}${indent_char}"
+        fi
+        child_prefix="$continue_prefix$branch"
+      else
+        child_prefix="$prefix$indent_char"
+      fi
+
+      if [[ $is_dir == 1 ]]; then
+        print_tree "$full" "$next_continue" $((level+1)) "$max_depth" "$indent_char" "$use_lines"
+      else
+        echo "$child_prefix$entry"
+      fi
+    done
+  fi
+}
+
+dir="."
+max_depth=3
+indent_char=$'\t'
+use_lines=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -a|--about)
+      echo "dirtree outputs a nice simplified directory tree that is easily readable by humans and LLMs."
+      exit 0
+      ;;
+    -h|--help)
+      echo "dirtree outputs a nice simplified directory tree that is easily readable by humans and LLMs."
+      echo ""
+      echo "Usage: dirtree [OPTIONS] [PATH]"
+      echo ""
+      echo "PATH: The directory to display (default: current directory)."
+      echo ""
+      echo "Options:"
+      echo "  -d, --depth N     Set maximum display depth (default: 3)."
+      echo "  -l, --level N     Alias for -d/--depth."
+      echo "  -i, --indent CHAR Set the indentation character (default: tab)."
+      echo "  --lines       Use Unicode line drawing characters for branches."
+      echo "  -a, --about       Display a brief description."
+      echo "  -h, --help        Display this help message."
+      echo ""
+      echo "Functionality:"
+      echo "Displays a tree structure of directories and files. Directories end with '/'. If a directory is not fully expanded due to depth limit and has contents, it ends with '/*'."
+      echo "Indentation uses tabs by default, or spaces with --lines unless overridden with --indent."
+      exit 0
+      ;;
+    -d|--depth|-l|--level)
+      shift
+      max_depth="$1"
+      if ! [[ "$max_depth" =~ ^[0-9]+$ ]]; then
+        echo "Error: Depth must be a non-negative integer."
+        exit 1
+      fi
+      ;;
+    -i|--indent)
+      shift
+      indent_char="$1"
+      ;;
+    --lines)
+      use_lines=1
+      if [[ "$indent_char" == $'\t' ]]; then
+        indent_char=" "
+      fi
+      ;;
+    -*)
+      echo "Unknown option: $1"
+      exit 1
+      ;;
+    *)
+      dir="$1"
+      ;;
+  esac
+  shift
+done
+
+if [[ ! -d "$dir" ]]; then
+  echo "Error: '$dir' is not a directory."
+  exit 1
+fi
+
+print_tree "$dir" "" 0 "$max_depth" "$indent_char" "$use_lines"
