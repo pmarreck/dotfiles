@@ -1,0 +1,270 @@
+#!/usr/bin/env yuerun
+
+-- visual_timer
+-- A visual terminal timer that fills with blocks as time progresses
+-- Built with TDD approach in LuaJIT + YueScript
+
+local ffi = require "ffi"
+local bit = require "bit"
+
+-- FFI declarations for terminal and signal handling
+ffi.cdef[[
+  struct winsize {
+    unsigned short ws_row;
+    unsigned short ws_col;
+    unsigned short ws_xpixel;
+    unsigned short ws_ypixel;
+  };
+
+  int ioctl(int fd, unsigned long request, ...);
+  typedef void (*sighandler_t)(int);
+  int signal(int signum, sighandler_t handler);
+  int usleep(unsigned int usec);
+  unsigned int sleep(unsigned int seconds);
+]]
+
+-- Constants
+local TIOCGWINSZ = 0x5413  -- Terminal get window size ioctl
+local SIGWINCH = 28        -- Window change signal
+local STDOUT_FILENO = 1
+
+-- Global state for signal handling
+local terminal_resized = false
+
+-- Timer class - core timing logic
+class Timer
+  new: (seconds) =>
+    @total_seconds = seconds
+    @remaining_seconds = seconds
+    @elapsed_seconds = 0
+    @start_time = os.time()
+    @is_running = false
+
+  start: =>
+    @is_running = true
+    @start_time = os.time()
+
+  stop: =>
+    @is_running = false
+
+  update: =>
+    if @is_running
+      current_time = os.time()
+      @elapsed_seconds = current_time - @start_time
+      @remaining_seconds = math.max(0, @total_seconds - @elapsed_seconds)
+
+      if @remaining_seconds == 0
+        @is_running = false
+        return true  -- Timer completed
+    return false
+
+  get_progress: =>
+    if @total_seconds == 0 then return 1.0
+    return @elapsed_seconds / @total_seconds
+
+  is_finished: =>
+    @remaining_seconds <= 0
+
+-- Terminal class - handles terminal dimensions and control
+class Terminal
+  new: =>
+    @last_rows = 0
+    @last_cols = 0
+    @update_dimensions()
+
+  get_dimensions: =>
+    winsize = ffi.new("struct winsize")
+    result = ffi.C.ioctl(STDOUT_FILENO, TIOCGWINSZ, winsize)
+
+    if result == 0
+      @last_rows = winsize.ws_row
+      @last_cols = winsize.ws_col
+      return @last_rows, @last_cols
+    else
+      -- Fallback to environment variables or defaults
+      rows = tonumber(os.getenv("LINES")) or @last_rows or 24
+      cols = tonumber(os.getenv("COLUMNS")) or @last_cols or 80
+      return rows, cols
+
+  update_dimensions: =>
+    @rows, @cols = @get_dimensions()
+
+  clear_screen: =>
+    io.write("\027[2J\027[H")  -- ANSI clear screen and move cursor to home
+
+  move_cursor: (row, col) =>
+    io.write(string.format("\027[%d;%dH", row, col))
+
+  hide_cursor: =>
+    io.write("\027[?25l")
+
+  show_cursor: =>
+    io.write("\027[?25h")
+
+-- VisualDisplay class - handles the block-filling visualization
+class VisualDisplay
+  new: (terminal) =>
+    @terminal = terminal
+    @fill_char = "█"    -- Full block character
+    @empty_char = "░"   -- Light shade character
+    @update_dimensions()
+
+  update_dimensions: =>
+    @terminal\update_dimensions()
+    @rows = @terminal.rows - 2  -- Leave space for timer info and controls
+    @cols = @terminal.cols
+    @total_blocks = @rows * @cols
+
+  blocks_for_progress: (progress) =>
+    math.floor(@total_blocks * math.min(1.0, progress))
+
+  render: (progress, remaining_time, total_time) =>
+    blocks_filled = @blocks_for_progress(progress)
+
+    @terminal\clear_screen()
+    @terminal\hide_cursor()
+
+    -- Render the visual progress
+    block_count = 0
+    for row = 1, @rows
+      @terminal\move_cursor(row, 1)
+      for col = 1, @cols
+        block_count += 1
+        if block_count <= blocks_filled
+          io.write(@fill_char)
+        else
+          io.write(@empty_char)
+
+    -- Show timer information at bottom
+    @terminal\move_cursor(@rows + 1, 1)
+    progress_percent = math.floor(progress * 100)
+    time_str = @format_time(remaining_time)
+    total_str = @format_time(total_time)
+
+    info_line = string.format("Progress: %d%% | Time: %s / %s | Press Ctrl+C to exit",
+                             progress_percent, time_str, total_str)
+    io.write(info_line)
+
+    io.flush()
+
+  format_time: (seconds) =>
+    hours = math.floor(seconds / 3600)
+    minutes = math.floor((seconds % 3600) / 60)
+    secs = seconds % 60
+
+    if hours > 0
+      return string.format("%d:%02d:%02d", hours, minutes, secs)
+    else
+      return string.format("%d:%02d", minutes, secs)
+
+-- SignalHandler class - manages SIGWINCH for terminal resizing
+class SignalHandler
+  new: =>
+    @winch_callback = nil
+
+  register_winch_handler: (callback) =>
+    @winch_callback = callback
+
+    -- Create a C callback that sets our flag
+    winch_handler = ffi.cast("sighandler_t", (signum) ->
+      terminal_resized = true
+      if @winch_callback
+        @winch_callback()
+    )
+
+    result = ffi.C.signal(SIGWINCH, winch_handler)
+    return result != ffi.cast("sighandler_t", -1)  -- SIG_ERR = -1
+
+-- Time preset parser
+parse_time_preset = (preset) ->
+  preset = preset\lower()\gsub("%s+", "")  -- Remove spaces and lowercase
+
+  -- Handle different formats: "5m", "55m", "30m", "1h", "2h"
+  if preset\match("^%d+m$")
+    minutes = tonumber(preset\match("^(%d+)m$"))
+    return minutes * 60
+  elseif preset\match("^%d+h$")
+    hours = tonumber(preset\match("^(%d+)h$"))
+    return hours * 3600
+  elseif preset\match("^%d+$")
+    -- Just a number, assume minutes
+    return tonumber(preset) * 60
+  else
+    error("Invalid time format: #{preset}. Use formats like '5m', '1h', etc.")
+
+-- Main application class
+class VisualTimer
+  new: =>
+    @terminal = Terminal()
+    @display = VisualDisplay(@terminal)
+    @signal_handler = SignalHandler()
+    @timer = nil
+    @setup_signal_handling()
+
+  setup_signal_handling: =>
+    @signal_handler\register_winch_handler(->
+      @display\update_dimensions()
+    )
+
+  run: (time_preset) =>
+    seconds = parse_time_preset(time_preset)
+    @timer = Timer(seconds)
+
+    print("Visual Timer starting for #{@display\format_time(seconds)}")
+    print("Press Enter to begin, Ctrl+C to exit")
+    io.read()  -- Wait for user input
+
+    @timer\start()
+
+    while not @timer\is_finished()
+      completed = @timer\update()
+
+      -- Check if terminal was resized
+      if terminal_resized
+        terminal_resized = false
+        @display\update_dimensions()
+
+      -- Render current state
+      progress = @timer\get_progress()
+      @display\render(progress, @timer.remaining_seconds, @timer.total_seconds)
+
+      if completed
+        break
+
+      -- Sleep for a short interval (100ms)
+      ffi.C.usleep(100000)
+
+    -- Timer finished
+    @display\render(1.0, 0, @timer.total_seconds)
+    @terminal\move_cursor(@terminal.rows, 1)
+    print("\n\n🎉 Timer completed! Press any key to exit.")
+    @terminal\show_cursor()
+    io.read()
+
+-- Command line interface
+main = ->
+  if #arg == 0
+    print("Visual Terminal Timer")
+    print("Usage: luajit visual_timer.yue <time>")
+    print("Examples:")
+    print("  luajit visual_timer.yue 5m     # 5 minutes")
+    print("  luajit visual_timer.yue 55m    # 55 minutes")
+    print("  luajit visual_timer.yue 30m    # 30 minutes")
+    print("  luajit visual_timer.yue 1h     # 1 hour")
+    print("  luajit visual_timer.yue 2h     # 2 hours")
+    os.exit(1)
+
+  time_preset = arg[1]
+
+  success, err = pcall(->
+    app = VisualTimer()
+    app\run(time_preset)
+  )
+
+  if not success
+    print("Error: #{err}")
+    os.exit(1)
+
+-- Run main if this file is executed directly
+if arg and arg[0] and arg[0]\match("visual_timer")
+  main()

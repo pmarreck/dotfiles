@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+# --- Help / Usage ---
+if [[ $# -lt 1 ]]; then
+  echo "Usage: $0 input_image.[jpg|png|jxl|webp] [output_image.jxl] [--dither=none|floyd|riemersma|ordered] [--posterize-alpha=N]"
+  exit 1
+fi
+
+INPUT="$1"
+OUTPUT="${2:-${INPUT%.*}_ghost_alpha.jxl}"
+DITHER="floyd"         # Default dithering
+POSTERIZE_ALPHA=16     # Default = 4-bit
+
+# --- Parse Optional Flags ---
+for arg in "$@"; do
+  case $arg in
+    --dither=*)
+      DITHER="${arg#*=}"
+      ;;
+    --posterize-alpha=*)
+      POSTERIZE_ALPHA="${arg#*=}"
+      ;;
+  esac
+done
+
+# --- Temp path ---
+TMPROOT="${TMPDIR:-/tmp}/alpha_$$"
+mkdir -p "$TMPROOT"
+trap 'rm -rf "$TMPROOT"' EXIT
+
+ALPHA_PNG="$TMPROOT/alpha.png"
+BLACK_WITH_ALPHA="$TMPROOT/black_alpha.png"
+
+# --- Warn if input is already compressed ---
+EXT="${INPUT##*.}"
+case "$EXT" in
+  jpg|jpeg|webp|jxl)
+    echo "⚠️  Warning: input format is already compressed ($EXT). Quality may already be degraded."
+    ;;
+esac
+
+# --- Step 1: Extract brightness, invert it, gamma adjust, posterize + dither ---
+magick "$INPUT" \
+  -depth 8 \
+  -evaluate-sequence mean \
+  -colorspace Gray \
+  -negate \
+  -gamma 1.0 \
+  -dither "$DITHER" \
+  -posterize "$POSTERIZE_ALPHA" \
+  "$ALPHA_PNG"
+
+# --- Step 2: Create pure black RGB base with that alpha mask ---
+magick "$ALPHA_PNG" \
+  -background black \
+  -alpha shape \
+  -define png:color-type=6 \
+  "$BLACK_WITH_ALPHA"
+
+# --- Step 3: Encode to JPEG XL ---
+cjxl "$BLACK_WITH_ALPHA" "$OUTPUT" \
+  --effort 9 \
+  --quality 100 \
+  --modular=0 > /dev/null
+
+echo "✅ Created: $OUTPUT"

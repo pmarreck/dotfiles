@@ -1,0 +1,150 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+script_path="$script_dir/$(basename "${BASH_SOURCE[0]}")"
+
+usage() {
+	cat <<EOF >&2
+Usage: yuebuild [--test] <file>
+Compile a Yue file to Lua if needed.
+Options:
+	--test   Run built-in unit tests.
+EOF
+}
+
+main() {
+	if [[ $# -ne 1 ]]; then usage; exit 1; fi
+	input="$1"
+
+	# Determine source and base for .yue files (support extensionless input)
+	if [[ "$input" == *.yue ]]; then
+		base="${input%.yue}"
+		src="$input"
+	elif [[ -e "$input" ]]; then
+		base="$input"
+		src="$input"
+	else
+		base="$input"
+		src="$input.yue"
+	fi
+	out="$base.lua"
+
+	if [[ ! -e "$src" ]]; then
+		echo "Error: '$src' not found." >&2
+		exit 1
+	fi
+
+	# Build Yue dependencies first (require'd modules that actually exist)
+	dir="$(dirname "$src")"
+	while IFS= read -r module; do
+		modpath="$dir/$module.yue"
+		if [[ -e "$modpath" ]]; then
+			"$script_path" "$modpath"
+		fi
+	done < <(
+		grep -Eo "require *['\"][^'\"]+['\"]" "$src" 2>/dev/null \
+		| sed -E "s/require *['\"]([^'\"]+)['\"]/\\1/" || true
+	)
+
+	# Skip build if timestamps match
+	if [[ -e "$out" ]]; then
+		if [[ ! "$src" -nt "$out" && ! "$out" -nt "$src" ]]; then
+			exit 0
+		fi
+	fi
+
+	yue "$src" >/dev/null
+	if [[ ! -e "$out" ]]; then
+		echo "Error: expected '$out' after compilation." >&2
+		exit 1
+	fi
+	# Sync timestamps so "rebuild if newer" logic stays clean
+	gtouch -r "$src" "$out"
+}
+
+# Test suite
+
+test_suite() {
+	local failures=0
+	echo "Running yuebuild tests..."
+
+	# Test 1: nonexistent file
+	printf "Test 1 (nonexistent file)... "
+	# Temporarily disable errexit for the command
+	(set +e
+	 "$script_path" nonexistent.yue >/dev/null 2>&1
+	 rc=$?
+	 if [[ $rc -ne 0 ]]; then echo "PASSED"; else echo "FAILED"; failures=$((failures+1)); fi
+	)
+
+	# Test 2: missing lua file
+	printf "Test 2 (missing lua file)... "
+	tmp2=$(mktemp -d) && cd "$tmp2"
+	echo 'print "hello"' > foo.yue
+	# Temporarily disable errexit for the command
+	(set +e
+	 "$script_path" foo.yue >/dev/null 2>&1
+	 rc=$?
+	 if [[ $rc -eq 0 && -e foo.lua ]]; then
+		 # timestamps should match via shell built-in
+		 if [[ ! foo.yue -nt foo.lua && ! foo.lua -nt foo.yue ]]; then echo "PASSED"; else echo "FAILED"; failures=$((failures+1)); fi
+	 else
+		 echo "FAILED"; failures=$((failures+1))
+	 fi
+	)
+	cd - >/dev/null && rm -rf "$tmp2"
+
+	# Test 3: outdated lua file
+	printf "Test 3 (outdated lua file)... "
+	tmp3=$(mktemp -d) && cd "$tmp3"
+	echo 'print "hello"' > foo.yue
+	# First compilation - temporarily disable errexit
+	(set +e
+	 "$script_path" foo.yue >/dev/null 2>&1
+	)
+	# make lua older
+	gtouch -d "2000-01-01 00:00:00" foo.lua
+	# Second compilation - temporarily disable errexit
+	(set +e
+	 "$script_path" foo.yue >/dev/null 2>&1
+	 rc=$?
+	 if [[ $rc -eq 0 ]]; then
+		 # timestamps should match via shell built-in
+		 if [[ ! foo.yue -nt foo.lua && ! foo.lua -nt foo.yue ]]; then echo "PASSED"; else echo "FAILED"; failures=$((failures+1)); fi
+	 else
+		 echo "FAILED"; failures=$((failures+1))
+	 fi
+	)
+	cd - >/dev/null && rm -rf "$tmp3"
+
+	# Test 4: input without .yue suffix
+	printf "Test 4 (input without .yue)... "
+	tmp4=$(mktemp -d) && cd "$tmp4"
+	echo 'print "hi"' > bar.yue
+	# Temporarily disable errexit for the command
+	(set +e
+	 "$script_path" bar >/dev/null 2>&1
+	 rc=$?
+	 if [[ $rc -eq 0 && -e bar.lua ]]; then
+		 # timestamps should match via shell built-in
+		 if [[ ! bar.yue -nt bar.lua && ! bar.lua -nt bar.yue ]]; then echo "PASSED"; else echo "FAILED"; failures=$((failures+1)); fi
+	 else
+		 echo "FAILED"; failures=$((failures+1))
+	 fi
+	)
+	cd - >/dev/null && rm -rf "$tmp4"
+
+	# Summary
+	if [[ $failures -eq 0 ]]; then
+		echo "All tests passed"
+		exit 0
+	else
+		echo "$failures test(s) failed"
+		exit 1
+	fi
+}
+
+# Entry point
+if [[ "${1:-}" == "--test" ]]; then test_suite; exit $?; fi
+main "$@"
