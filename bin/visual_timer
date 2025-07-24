@@ -2,7 +2,7 @@
 
 -- visual_timer
 -- A visual terminal timer that fills with blocks as time progresses
--- Built with TDD approach in LuaJIT + YueScript
+-- Built with YueScript
 
 local ffi = require "ffi"
 local bit = require "bit"
@@ -24,9 +24,11 @@ ffi.cdef[[
 ]]
 
 -- Constants
-local TIOCGWINSZ = 0x5413  -- Terminal get window size ioctl
+local TIOCGWINSZ = 0x5413  -- Terminal get window size ioctl (Linux)
+local TIOCGWINSZ_BSD = 0x40087468  -- Terminal get window size ioctl (BSD/macOS)
 local SIGWINCH = 28        -- Window change signal
 local STDOUT_FILENO = 1
+local STDERR_FILENO = 2
 
 -- Global state for signal handling
 local terminal_resized = false
@@ -46,6 +48,12 @@ class Timer
 
   stop: =>
     @is_running = false
+
+  -- Advance timer to specific elapsed time (for testing)
+  advance_to: (elapsed_seconds) =>
+    @elapsed_seconds = math.min(elapsed_seconds, @total_seconds)
+    @remaining_seconds = math.max(0, @total_seconds - @elapsed_seconds)
+    @start_time = os.time() - @elapsed_seconds
 
   update: =>
     if @is_running
@@ -67,24 +75,92 @@ class Timer
 
 -- Terminal class - handles terminal dimensions and control
 class Terminal
-  new: =>
+  new: (override_rows = nil, override_cols = nil) =>
     @last_rows = 0
     @last_cols = 0
+    @override_rows = override_rows
+    @override_cols = override_cols
     @update_dimensions()
 
-  get_dimensions: =>
+  try_ioctl_detection: =>
     winsize = ffi.new("struct winsize")
-    result = ffi.C.ioctl(STDOUT_FILENO, TIOCGWINSZ, winsize)
 
-    if result == 0
-      @last_rows = winsize.ws_row
-      @last_cols = winsize.ws_col
-      return @last_rows, @last_cols
-    else
-      -- Fallback to environment variables or defaults
-      rows = tonumber(os.getenv("LINES")) or @last_rows or 24
-      cols = tonumber(os.getenv("COLUMNS")) or @last_cols or 80
+    -- Try different ioctl constants and file descriptors
+    ioctls = {TIOCGWINSZ, TIOCGWINSZ_BSD}
+    fds = {STDOUT_FILENO, STDERR_FILENO, 0}  -- 0 is STDIN_FILENO
+
+    for ioctl_val in *ioctls
+      for fd in *fds
+        result = ffi.C.ioctl(fd, ioctl_val, winsize)
+        if result == 0 and winsize.ws_row > 0 and winsize.ws_col > 0
+          return winsize.ws_row, winsize.ws_col, "ioctl(#{fd}, #{string.format('0x%x', ioctl_val)})"
+
+    return nil, nil, "ioctl failed"
+
+  try_tput_detection: =>
+    -- Try using the tput command to get terminal dimensions
+    success, result = pcall(->
+      rows_cmd = io.popen("tput lines 2>/dev/null")
+      if rows_cmd
+        rows_str = rows_cmd\read("*l")
+        rows_cmd\close()
+
+        cols_cmd = io.popen("tput cols 2>/dev/null")
+        if cols_cmd
+          cols_str = cols_cmd\read("*l")
+          cols_cmd\close()
+
+          rows = tonumber(rows_str)
+          cols = tonumber(cols_str)
+          if rows and cols and rows > 0 and cols > 0
+            return rows, cols, "tput command"
+    )
+
+    if success and result
+      return result
+
+    return nil, nil, "tput command failed"
+
+  get_dimensions: =>
+    -- Use overrides if provided (for testing)
+    if @override_rows and @override_cols
+      return @override_rows, @override_cols
+
+    -- Try ioctl detection first
+    rows, cols, method = @try_ioctl_detection()
+    if rows and cols
+      @last_rows = rows
+      @last_cols = cols
+      @detection_method = method
       return rows, cols
+
+    -- Try tput command detection
+    rows, cols, method = @try_tput_detection()
+    if rows and cols
+      @last_rows = rows
+      @last_cols = cols
+      @detection_method = method
+      return rows, cols
+
+    -- Fallback to environment variables
+    rows = tonumber(os.getenv("LINES"))
+    cols = tonumber(os.getenv("COLUMNS"))
+    if rows and cols and rows > 0 and cols > 0
+      @last_rows = rows
+      @last_cols = cols
+      @detection_method = "environment variables"
+      return rows, cols
+
+    -- Final fallback to sensible defaults
+    rows = @last_rows or 24
+    cols = @last_cols or 80
+    if rows <= 0 then rows = 24
+    if cols <= 0 then cols = 80
+
+    @last_rows = rows
+    @last_cols = cols
+    @detection_method = "defaults"
+    return rows, cols
 
   update_dimensions: =>
     @rows, @cols = @get_dimensions()
@@ -111,9 +187,10 @@ class VisualDisplay
 
   update_dimensions: =>
     @terminal\update_dimensions()
-    @rows = @terminal.rows - 2  -- Leave space for timer info and controls
+    @display_rows = @terminal.rows - 2  -- Leave space for timer info and controls
+    @rows = @display_rows  -- Keep for compatibility
     @cols = @terminal.cols
-    @total_blocks = @rows * @cols
+    @total_blocks = @display_rows * @cols
 
   blocks_for_progress: (progress) =>
     math.floor(@total_blocks * math.min(1.0, progress))
@@ -126,7 +203,7 @@ class VisualDisplay
 
     -- Render the visual progress
     block_count = 0
-    for row = 1, @rows
+    for row = 1, @display_rows
       @terminal\move_cursor(row, 1)
       for col = 1, @cols
         block_count += 1
@@ -136,7 +213,7 @@ class VisualDisplay
           io.write(@empty_char)
 
     -- Show timer information at bottom
-    @terminal\move_cursor(@rows + 1, 1)
+    @terminal\move_cursor(@display_rows + 1, 1)
     progress_percent = math.floor(progress * 100)
     time_str = @format_time(remaining_time)
     total_str = @format_time(total_time)
@@ -160,16 +237,12 @@ class VisualDisplay
 -- SignalHandler class - manages SIGWINCH for terminal resizing
 class SignalHandler
   new: =>
-    @winch_callback = nil
+    @setup_signal_handler()
 
-  register_winch_handler: (callback) =>
-    @winch_callback = callback
-
-    -- Create a C callback that sets our flag
+  setup_signal_handler: =>
+    -- Create a C callback that only sets a flag (safe for signal context)
     winch_handler = ffi.cast("sighandler_t", (signum) ->
       terminal_resized = true
-      if @winch_callback
-        @winch_callback()
     )
 
     result = ffi.C.signal(SIGWINCH, winch_handler)
@@ -179,8 +252,11 @@ class SignalHandler
 parse_time_preset = (preset) ->
   preset = preset\lower()\gsub("%s+", "")  -- Remove spaces and lowercase
 
-  -- Handle different formats: "5m", "55m", "30m", "1h", "2h"
-  if preset\match("^%d+m$")
+  -- Handle different formats: "30s", "5m", "55m", "30m", "1h", "2h"
+  if preset\match("^%d+s$")
+    seconds = tonumber(preset\match("^(%d+)s$"))
+    return seconds
+  elseif preset\match("^%d+m$")
     minutes = tonumber(preset\match("^(%d+)m$"))
     return minutes * 60
   elseif preset\match("^%d+h$")
@@ -190,32 +266,60 @@ parse_time_preset = (preset) ->
     -- Just a number, assume minutes
     return tonumber(preset) * 60
   else
-    error("Invalid time format: #{preset}. Use formats like '5m', '1h', etc.")
+    error("Invalid time format: #{preset}. Use formats like '30s', '5m', '1h', etc.")
 
 -- Main application class
 class VisualTimer
-  new: =>
-    @terminal = Terminal()
+  new: (options = {}) =>
+    @options = options or {}
+    @terminal = Terminal(@options.rows, @options.cols)
     @display = VisualDisplay(@terminal)
     @signal_handler = SignalHandler()
     @timer = nil
     @setup_signal_handling()
 
+  play_completion_beeps: =>
+    unless @options.silence
+      for i = 1, 3
+        os.execute("tput bel 2>/dev/null")
+        if i < 3
+          ffi.C.usleep(1000000)  -- 1 second pause between beeps
+
   setup_signal_handling: =>
-    @signal_handler\register_winch_handler(->
-      @display\update_dimensions()
-    )
+    -- Signal handler now only sets the flag, we handle resize in main loop
 
   run: (time_preset) =>
     seconds = parse_time_preset(time_preset)
     @timer = Timer(seconds)
 
-    print("Visual Timer starting for #{@display\format_time(seconds)}")
-    print("Press Enter to begin, Ctrl+C to exit")
-    io.read()  -- Wait for user input
+    -- Show info for normal mode (but not test modes)
+    unless @options.single_frame or @options.advance_time
+      print("Visual Timer starting for #{@display\format_time(seconds)}")
+      print("Terminal: #{@terminal.rows}x#{@terminal.cols} (#{@display.display_rows}x#{@display.cols} display area)")
+      print("Detection method: #{@terminal.detection_method or 'unknown'}")
+      print("Total blocks: #{@display.total_blocks}")
+      print("Starting timer... (Press Ctrl+C to exit)")
 
     @timer\start()
 
+    -- Advance timer if requested (for testing)
+    if @options.advance_time
+      @timer\advance_to(@options.advance_time)
+
+    -- Preserve terminal history by outputting newlines equal to terminal height
+    -- This pushes existing content up and out of the way
+    unless @options.single_frame
+      for i = 1, @terminal.rows
+        print("")
+
+    -- Single frame mode (for testing)
+    if @options.single_frame
+      progress = @timer\get_progress()
+      @display\render(progress, @timer.remaining_seconds, @timer.total_seconds)
+      @terminal\show_cursor()
+      return
+
+    -- Normal timer loop
     while not @timer\is_finished()
       completed = @timer\update()
 
@@ -236,34 +340,119 @@ class VisualTimer
 
     -- Timer finished
     @display\render(1.0, 0, @timer.total_seconds)
+    @play_completion_beeps()
     @terminal\move_cursor(@terminal.rows, 1)
-    print("\n\n🎉 Timer completed! Press any key to exit.")
+    print("\n\n🎉 Timer completed! Press Enter to exit.")
     @terminal\show_cursor()
     io.read()
+
+-- Command line argument parsing
+parse_args = (args) ->
+  options = {}
+  time_preset = nil
+  i = 1
+
+  while i <= #args
+    arg_val = args[i]
+
+    if arg_val == "--dimensions" or arg_val == "-d"
+      if i + 1 <= #args
+        dims = args[i + 1]\match("^(%d+)x(%d+)$")
+        if dims
+          rows, cols = args[i + 1]\match("^(%d+)x(%d+)$")
+          options.rows = tonumber(rows)
+          options.cols = tonumber(cols)
+          i += 2
+        else
+          error("Invalid dimensions format. Use: 24x80")
+      else
+        error("--dimensions requires a value (e.g., 24x80)")
+    elseif arg_val == "--advance-time" or arg_val == "-a"
+      if i + 1 <= #args
+        options.advance_time = tonumber(args[i + 1])
+        i += 2
+      else
+        error("--advance-time requires a value (seconds)")
+    elseif arg_val == "--single-frame"
+      options.single_frame = true
+      i += 1
+    elseif arg_val == "--silence" or arg_val == "-s"
+      options.silence = true
+      i += 1
+    elseif arg_val == "--help" or arg_val == "-h"
+      print("Visual Terminal Timer")
+      print("")
+      print("A visual countdown timer that fills your terminal with blocks as time progresses.")
+      print("Perfect for pomodoro sessions, cooking timers, or any timed activity.")
+      print("The display automatically adapts to your terminal size and redraws properly")
+      print("when the window is resized. Plays 3 beeps when the timer completes.")
+      print("")
+      print("Usage: visual_timer <time> [options]")
+      print("")
+      print("Time formats:")
+      print("  30s     # 30 seconds")
+      print("  5m      # 5 minutes")
+      print("  55m     # 55 minutes")
+      print("  1h      # 1 hour")
+      print("  2h      # 2 hours")
+      print("")
+      print("Options:")
+      print("  --silence, -s               Disable completion beeps")
+      print("")
+      print("Testing options:")
+      print("  --dimensions, -d ROWSxCOLS  Override terminal dimensions (e.g., 24x80)")
+      print("  --advance-time, -a SECONDS  Advance timer to specific time position")
+      print("  --single-frame              Output single frame and exit (no loop)")
+      print("  --help, -h                  Show this help message")
+      print("")
+      print("Examples:")
+      print("  visual_timer 5m             # 5-minute timer with beeps")
+      print("  visual_timer 30m --silence  # 30-minute silent timer")
+      print("  visual_timer 25m            # Pomodoro timer")
+      print("")
+      print("The timer shows:")
+      print("  • Filled blocks (█) for elapsed time")
+      print("  • Empty blocks (░) for remaining time")
+      print("  • Progress percentage and remaining time")
+      print("  • Terminal dimensions detected automatically")
+      os.exit(0)
+    elseif not time_preset
+      -- Check if this looks like an option (starts with -)
+      if arg_val\match("^%-")
+        error("Unknown option: #{arg_val}. Use --help for available options.")
+      else
+        time_preset = arg_val
+        i += 1
+    else
+      error("Unknown argument: #{arg_val}")
+
+  return time_preset, options
 
 -- Command line interface
 main = ->
   if #arg == 0
     print("Visual Terminal Timer")
-    print("Usage: luajit visual_timer.yue <time>")
-    print("Examples:")
-    print("  luajit visual_timer.yue 5m     # 5 minutes")
-    print("  luajit visual_timer.yue 55m    # 55 minutes")
-    print("  luajit visual_timer.yue 30m    # 30 minutes")
-    print("  luajit visual_timer.yue 1h     # 1 hour")
-    print("  luajit visual_timer.yue 2h     # 2 hours")
-    os.exit(1)
-
-  time_preset = arg[1]
+    print("Usage: visual_timer <time> [options]")
+    print("Use --help for more information")
+    os.exit(2)
 
   success, err = pcall(->
-    app = VisualTimer()
+    time_preset, options = parse_args(arg)
+
+    if not time_preset
+      error("Time preset is required")
+
+    app = VisualTimer(options)
     app\run(time_preset)
   )
 
   if not success
     print("Error: #{err}")
-    os.exit(1)
+    -- Check if it's a usage error (unknown option, invalid format, etc.)
+    if err\match("Unknown option:") or err\match("Invalid time format:") or err\match("Time preset is required") or err\match("requires a value")
+      os.exit(2)  -- Usage error
+    else
+      os.exit(1)  -- General error
 
 -- Run main if this file is executed directly
 if arg and arg[0] and arg[0]\match("visual_timer")
