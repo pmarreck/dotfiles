@@ -59,7 +59,7 @@ main() {
 		echo "Error: expected '$out' after compilation." >&2
 		exit 1
 	fi
-	
+
 	# Add header comment to indicate auto-generation
 	tmpfile=$(mktemp /tmp/yuebuild.XXXXXX)
 	{
@@ -69,7 +69,7 @@ main() {
 		cat "$out"
 	} > "$tmpfile"
 	mv "$tmpfile" "$out"
-	
+
 	# Sync timestamps so "rebuild if newer" logic stays clean
 	gtouch -r "$src" "$out"
 }
@@ -91,7 +91,7 @@ test_suite() {
 
 	# Test 2: missing lua file
 	printf "Test 2 (missing lua file)... "
-	tmp2=$(mktemp -d) && cd "$tmp2"
+	tmp2=$(mktemp -d /tmp/yuebuild_test.XXXXXX) && cd "$tmp2"
 	echo 'print "hello"' > foo.yue
 	# Temporarily disable errexit for the command
 	(set +e
@@ -108,7 +108,7 @@ test_suite() {
 
 	# Test 3: outdated lua file
 	printf "Test 3 (outdated lua file)... "
-	tmp3=$(mktemp -d) && cd "$tmp3"
+	tmp3=$(mktemp -d /tmp/yuebuild_test.XXXXXX) && cd "$tmp3"
 	echo 'print "hello"' > foo.yue
 	# First compilation - temporarily disable errexit
 	(set +e
@@ -131,7 +131,7 @@ test_suite() {
 
 	# Test 4: input without .yue suffix
 	printf "Test 4 (input without .yue)... "
-	tmp4=$(mktemp -d) && cd "$tmp4"
+	tmp4=$(mktemp -d /tmp/yuebuild_test.XXXXXX) && cd "$tmp4"
 	echo 'print "hi"' > bar.yue
 	# Temporarily disable errexit for the command
 	(set +e

@@ -19,9 +19,11 @@ ffi.cdef([[  struct winsize {
 local TIOCGWINSZ = 0x5413
 local TIOCGWINSZ_BSD = 0x40087468
 local SIGWINCH = 28
+local SIGINT = 2
 local STDOUT_FILENO = 1
 local STDERR_FILENO = 2
 local terminal_resized = false
+local interrupted = false
 local Timer
 do
 	local _class_0
@@ -295,12 +297,16 @@ local SignalHandler
 do
 	local _class_0
 	local _base_0 = {
-		setup_signal_handler = function(self)
+		setup_signal_handlers = function(self)
 			local winch_handler = ffi.cast("sighandler_t", function(signum)
 				terminal_resized = true
 			end)
-			local result = ffi.C.signal(SIGWINCH, winch_handler)
-			return result ~= ffi.cast("sighandler_t", -1)
+			local int_handler = ffi.cast("sighandler_t", function(signum)
+				interrupted = true
+			end)
+			local winch_result = ffi.C.signal(SIGWINCH, winch_handler)
+			local int_result = ffi.C.signal(SIGINT, int_handler)
+			return (winch_result ~= ffi.cast("sighandler_t", -1)) and (int_result ~= ffi.cast("sighandler_t", -1))
 		end
 	}
 	if _base_0.__index == nil then
@@ -308,7 +314,7 @@ do
 	end
 	_class_0 = setmetatable({
 		__init = function(self)
-			return self:setup_signal_handler()
+			return self:setup_signal_handlers()
 		end,
 		__base = _base_0,
 		__name = "SignalHandler"
@@ -382,6 +388,12 @@ do
 				return
 			end
 			while not self.timer:is_finished() do
+				if interrupted then
+					self.terminal:show_cursor()
+					self.terminal:move_cursor(self.terminal.rows, 1)
+					print("\n\nTimer interrupted. Goodbye!")
+					return
+				end
 				local completed = self.timer:update()
 				if terminal_resized then
 					terminal_resized = false

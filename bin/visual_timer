@@ -27,11 +27,13 @@ ffi.cdef[[
 local TIOCGWINSZ = 0x5413  -- Terminal get window size ioctl (Linux)
 local TIOCGWINSZ_BSD = 0x40087468  -- Terminal get window size ioctl (BSD/macOS)
 local SIGWINCH = 28        -- Window change signal
+local SIGINT = 2           -- Interrupt signal (Ctrl+C)
 local STDOUT_FILENO = 1
 local STDERR_FILENO = 2
 
 -- Global state for signal handling
 local terminal_resized = false
+local interrupted = false
 
 -- Timer class - core timing logic
 class Timer
@@ -234,19 +236,26 @@ class VisualDisplay
     else
       return string.format("%d:%02d", minutes, secs)
 
--- SignalHandler class - manages SIGWINCH for terminal resizing
+-- SignalHandler class - manages SIGWINCH for terminal resizing and SIGINT for graceful exit
 class SignalHandler
   new: =>
-    @setup_signal_handler()
+    @setup_signal_handlers()
 
-  setup_signal_handler: =>
-    -- Create a C callback that only sets a flag (safe for signal context)
+  setup_signal_handlers: =>
+    -- Create a C callback for window resize (safe for signal context)
     winch_handler = ffi.cast("sighandler_t", (signum) ->
       terminal_resized = true
     )
 
-    result = ffi.C.signal(SIGWINCH, winch_handler)
-    return result != ffi.cast("sighandler_t", -1)  -- SIG_ERR = -1
+    -- Create a C callback for interrupt (safe for signal context)
+    int_handler = ffi.cast("sighandler_t", (signum) ->
+      interrupted = true
+    )
+
+    winch_result = ffi.C.signal(SIGWINCH, winch_handler)
+    int_result = ffi.C.signal(SIGINT, int_handler)
+
+    return (winch_result != ffi.cast("sighandler_t", -1)) and (int_result != ffi.cast("sighandler_t", -1))  -- SIG_ERR = -1
 
 -- Time preset parser
 parse_time_preset = (preset) ->
@@ -286,7 +295,7 @@ class VisualTimer
           ffi.C.usleep(1000000)  -- 1 second pause between beeps
 
   setup_signal_handling: =>
-    -- Signal handler now only sets the flag, we handle resize in main loop
+    -- Signal handlers now only set flags, we handle signals in main loop
 
   run: (time_preset) =>
     seconds = parse_time_preset(time_preset)
@@ -321,6 +330,13 @@ class VisualTimer
 
     -- Normal timer loop
     while not @timer\is_finished()
+      -- Check for interrupt signal (Ctrl+C)
+      if interrupted
+        @terminal\show_cursor()
+        @terminal\move_cursor(@terminal.rows, 1)
+        print("\n\nTimer interrupted. Goodbye!")
+        return
+
       completed = @timer\update()
 
       -- Check if terminal was resized

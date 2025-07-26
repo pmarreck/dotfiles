@@ -81,6 +81,8 @@ function determine_language_from_source() {
 		debug "file_cmd_output after path: '$file_cmd_output'"
 		local lang_orig=$(echo "$file_cmd_output" | cut -d' ' -f1)
 		local lang=${lang_orig,,}
+		lang=$(truncate_run "$lang")
+		debug "lang after truncate_run: '$lang'"
 		# add exceptions/overrides here
 		case $lang in
 			bourne-again*)
@@ -90,6 +92,14 @@ function determine_language_from_source() {
 			posix*)
 				lang_orig="POSIX shell script"
 				lang="sh"
+				;;
+			yue)
+				lang_orig="YueScript"
+				lang="lua" # bat doesn't have a yuescript syntax parser yet
+				;;
+			moon)
+				lang_orig="MoonScript"
+				lang="lua" # bat doesn't have a moonscript syntax parser yet
 				;;
 			empty*)
 				lang_orig="empty"
@@ -150,6 +160,17 @@ function a_or_an() {
 			echo "a"
 			;;
 	esac
+}
+
+# I have hashbang "runners" called yuerun and moonrun;
+# when the file type detection encounters yuerun or moonrun (a *run suffix),
+# it should truncate the "run" and return the result
+function truncate_run() {
+	local filename=$(basename "$1")
+	if [[ "$filename" == *run ]]; then
+		filename=${filename%run}
+	fi
+	echo "$filename"
 }
 
 # "show": spit out the definition of any name
