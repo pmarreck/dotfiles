@@ -1,4 +1,34 @@
 #!/usr/bin/env bash
+# yuerun - YueScript transpile-and-run wrapper
+#
+# This script enables YueScript files to be executed directly using a hashbang line,
+# automatically handling transpilation to Lua when needed. It's designed to be used
+# as the interpreter in the shebang of .yue files.
+#
+# TYPICAL USAGE IN SCRIPT HASHBANG:
+#   #!/usr/bin/env yuerun
+#   -- Your YueScript code here
+#   print "Hello from YueScript!"
+#
+# HOW IT WORKS:
+# 1. When you run a .yue file directly (via hashbang), yuerun is invoked
+# 2. It checks if a corresponding .lua file exists and is up-to-date
+# 3. If the .yue file is newer than .lua (or .lua doesn't exist), it calls yuebuild
+# 4. Finally, it executes the .lua file with luajit, passing through all arguments
+#
+# This allows YueScript files to behave like native executables while maintaining
+# the performance benefits of running compiled Lua code. The transpilation step
+# only occurs when the source file has been modified.
+#
+# DIRECT USAGE:
+#   yuerun script.yue [args...]    # Run a YueScript file
+#   yuerun script [args...]        # Run script.yue (extension optional)
+#
+# DEPENDENCIES:
+# - yuebuild (for transpilation)
+# - luajit (for execution)
+# - yue compiler (used by yuebuild)
+
 set -uo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -6,10 +36,42 @@ script_path="$script_dir/$(basename "${BASH_SOURCE[0]}")"
 
 usage() {
 	cat <<EOF >&2
-Usage: yuerun [--test] <file>
-Transpile (if needed) and run a Yue file via luajit.
-Options:
-	--test   Run built-in unit tests.
+yuerun - YueScript transpile-and-run wrapper
+
+DESCRIPTION:
+    Enables YueScript files to be executed directly via hashbang lines.
+    Automatically transpiles .yue files to .lua when needed, then runs
+    the compiled Lua with luajit.
+
+USAGE:
+    yuerun [--test] <file> [args...]
+
+    In YueScript file hashbang:
+        #!/usr/bin/env yuerun
+
+ARGUMENTS:
+    file        YueScript file to run (.yue extension optional)
+    args...     Arguments passed to the YueScript program
+
+OPTIONS:
+    --test      Run built-in unit tests
+
+EXAMPLES:
+    yuerun script.yue arg1 arg2     # Run YueScript file with arguments
+    yuerun script arg1 arg2         # Same (extension optional)
+
+    In a YueScript file:
+        #!/usr/bin/env yuerun
+        print "Hello from YueScript!"
+
+HOW IT WORKS:
+    1. Checks if corresponding .lua file exists and is current
+    2. Calls yuebuild to transpile if .yue is newer than .lua
+    3. Executes the .lua file with luajit
+    4. Only transpiles when source file has been modified
+
+DEPENDENCIES:
+    yuebuild, luajit, yue compiler
 EOF
 }
 
@@ -70,7 +132,7 @@ test_suite() {
 
 	# Test 2: missing lua run
 	printf "Test 2 (missing lua run)... "
-	tmp=$(mktemp -d)
+	tmp=$(mktemp -d /tmp/yuerun_test.XXXXXX)
 	trap 'rm -rf "$tmp"' EXIT
 	cd "$tmp"
 	echo 'io.write "hello2"' > foo.yue
@@ -81,7 +143,7 @@ test_suite() {
 
 	# Test 3: up-to-date lua run
 	printf "Test 3 (uptodate lua run)... "
-	tmp2=$(mktemp -d)
+	tmp2=$(mktemp -d /tmp/yuerun_test.XXXXXX)
 	cd "$tmp2"
 	echo 'io.write "hello3"' > foo.yue
 	"$script_dir/yuebuild" foo.yue >/dev/null 2>&1
@@ -92,7 +154,7 @@ test_suite() {
 
 	# Test 4: input without .yue suffix
 	printf "Test 4 (input without .yue)... "
-	tmp3=$(mktemp -d)
+	tmp3=$(mktemp -d /tmp/yuerun_test.XXXXXX)
 	cd "$tmp3"
 	echo 'io.write "xyz"' > baz.yue
 	out=$("$script_path" baz 2>&1)
@@ -102,7 +164,7 @@ test_suite() {
 
 	# Test 5: require dependency
 	printf "Test 5 (require dependency)... "
-	tmp5=$(mktemp -d) && cd "$tmp5"
+	tmp5=$(mktemp -d /tmp/yuerun_test.XXXXXX) && cd "$tmp5"
 	echo 'print "lib loaded"' > lib.yue
 	printf '%s\n%s\n' 'require "lib"' 'io.write "OK"' > main.yue
 	out=$("$script_path" main.yue 2>&1 | grep -v '^Warning:')
