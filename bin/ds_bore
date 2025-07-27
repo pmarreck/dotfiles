@@ -18,7 +18,10 @@ ds_bore() {
 			rg --files --hidden --glob '*.DS_Store'
 			;;
 		*)
-			rg --files --hidden --glob '*.DS_Store' | tee >(xargs -I{} rm "{}" >&2)
+			rg --files --hidden --glob '*.DS_Store' | while IFS= read -r file; do
+				echo "$file"
+				rm "$file"
+			done
 			;;
 	esac  
 }
