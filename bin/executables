@@ -1,37 +1,111 @@
 #!/usr/bin/env bash
 
+
+# Print out the names of all executables available in your PATH
 executables() {
 	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-	# Use newline as delimiter for PATH directories
-	pathdirs="${PATH//:/$'\n'}"
+	
+	local show_scripts=false
+	
+	# Parse command line arguments
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+			--scripts) show_scripts=true ; shift ;;
+			--help) 
+				echo "executables - Print out the names of all executables available in your PATH"
+				echo ""
+				echo "Usage: executables [OPTIONS]"
+				echo ""
+				echo "OPTIONS:"
+				echo "  --scripts    Only show script files"
+				echo "  --help       Show this help message"
+				return 0 ;;
+			*) warn "Unknown option: $1" >&2 ; return 1 ;;
+		esac
+	done
 
-	# Feature test to determine if '-executable' is supported
-	if find /tmp -executable 2>/dev/null | grep -q .; then
-		find_option='-executable'
+	# Create a temporary directory for our search paths
+	local search_paths=()
+	local nonexistent_paths=()
+	
+	# Process PATH into valid directories
+	IFS=: read -ra path_dirs <<<"$PATH"
+	for dir in "${path_dirs[@]}"; do
+		if [[ -d "$dir" ]]; then
+			search_paths+=("$dir")
+		else
+			nonexistent_paths+=("$dir")
+		fi
+	done
+
+	# Use fd for faster searching if available
+	if command -v fd >/dev/null 2>&1; then
+		# Build base fd command
+		local fd_cmd=(
+			--max-depth 1
+			--min-depth 1
+			--type x
+			--absolute-path
+			--print0
+		)
+
+		# Add search paths - use fd's --search-path for parallel processing
+		if [[ ${#search_paths[@]} -gt 0 ]]; then
+			# Build fd command with multiple --search-path arguments
+			local search_path_args=()
+			for path in "${search_paths[@]}"; do
+				search_path_args+=(--search-path "$path")
+			done
+			
+			if $show_scripts; then
+				# If --scripts flag is used, filter for script files
+				while IFS= read -r -d $'\0' exe; do
+					if file -L "$exe" 2>/dev/null | grep -q "script"; then
+						echo "$(basename "$exe")"
+					fi
+				done < <(fd "${fd_cmd[@]}" "${search_path_args[@]}" . 2>/dev/null)
+			else
+				# Regular executable search
+				fd "${fd_cmd[@]}" "${search_path_args[@]}" . 2>/dev/null | xargs -0 -n1 basename 2>/dev/null
+			fi | sort -u  # Sort and remove duplicates
+		fi
 	else
-		find_option='-perm +111'
+		# Fallback to find if fd is not available
+		local all_executables=()
+		for dir in "${search_paths[@]}"; do
+			local find_cmd
+			if find /tmp -executable 2>/dev/null | grep -q .; then
+				find_cmd='find -L "$dir" -mindepth 1 -maxdepth 1 -not -type d -executable -print 2>/dev/null'
+			else
+				find_cmd='find -L "$dir" -mindepth 1 -maxdepth 1 -not -type d -perm +111 -print 2>/dev/null'
+			fi
+
+			if $show_scripts; then
+				while IFS= read -r exe; do
+					if [[ -n "$exe" ]] && file -L "$exe" 2>/dev/null | grep -q "script"; then
+						all_executables+=("$(basename "$exe")")
+					fi
+				done < <(eval "$find_cmd" 2>/dev/null)
+			else
+				while IFS= read -r exe; do
+					[[ -n "$exe" ]] && all_executables+=("$(basename "$exe")")
+				done < <(eval "$find_cmd" 2>/dev/null)
+			fi
+		done
+
+		# Output results if any
+		if [[ ${#all_executables[@]} -gt 0 ]]; then
+			printf '%s\n' "${all_executables[@]}" | sort -u
+		fi
 	fi
 
-	# Initialize an empty array to hold all executables
-	all_executables=()
-	nonexistent_paths=()
 
-	# Loop over newline-separated strings
-	while IFS= read -r dir; do
-		# Uncomment for debugging: echo "Checking $dir" >&2
-		if [ -d "$dir" ]; then
-			# Append found executables to the array
-			while IFS= read -r exe; do
-				all_executables+=("$exe")
-			done < <(find "$dir" -mindepth 1 -maxdepth 1 $find_option -type f -print 2>/dev/null | awk -F/ '{print $NF}')
-		else
-			nonexistent_paths+=("FYI: Directory $dir in your PATH does not exist")
-		fi
-	done <<<"$pathdirs"
-
-	# Sort and remove duplicates from the complete list of executables
-	printf "%s\n" "${all_executables[@]}" | sort -uf
-	note "${nonexistent_paths[@]}"
+	# Show warnings if any
+	if [[ ${#nonexistent_paths[@]} -gt 0 ]]; then
+		for path in "${nonexistent_paths[@]}"; do
+			note "Directory in PATH does not exist: $path"
+		done
+	fi
 }
 
 # Run the function if this script is executed directly
@@ -39,7 +113,7 @@ if ! (return 0 2>/dev/null); then
 	# Check if we are running tests
 	if [ "$1" = "--test" ]; then
 		# Run tests from the test file
-		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+		exec "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
 	else
 		# If called directly, pass all arguments to the function
 		$(basename "${0##\-}") "$@"

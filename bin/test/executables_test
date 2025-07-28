@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+
+# Test the executables script
+
+test_executables() {
+  echo "Testing executables..."
+  
+  # Create a test directory with some test files
+  local test_dir="/tmp/executables_test_$$_$(date +%s)"
+  mkdir -p "$test_dir/bin1" "$test_dir/bin2"
+  
+  # Create test files
+  echo '#!/bin/bash
+echo "test1"' > "$test_dir/bin1/test1"
+  chmod +x "$test_dir/bin1/test1"
+  
+  echo '#!/bin/bash
+echo "test2"' > "$test_dir/bin1/test2.sh"
+  chmod +x "$test_dir/bin1/test2.sh"
+  
+  # Create a symlink
+  ln -s "$test_dir/bin1/test1" "$test_dir/bin2/test1_symlink"
+  
+  # Test with our test PATH
+  local old_path="$PATH"
+  export PATH="$test_dir/bin1:$test_dir/bin2:$PATH"
+  
+  # Test basic functionality (just verify the script works)
+  echo "Testing basic functionality..."
+  if ! output=$("$HOME/dotfiles/bin/executables" --help 2>/dev/null); then
+    echo "FAIL: Command failed"
+    return 1
+  fi
+  
+  # Check if help output contains expected text
+  if ! echo "$output" | grep -q "executables - Print out the names"; then
+    echo "FAIL: Help output not as expected"
+    return 1
+  fi
+  
+  # Test actual functionality with a quick search in test directories only
+  echo "Testing actual search functionality..."
+  # Build limited PATH with test dirs plus directories containing essential utilities
+  local limited_path="$test_dir/bin1:$test_dir/bin2"
+  local bash_dir=$(dirname "$(which bash)")
+  local fd_dir=$(dirname "$(which fd)")
+  [[ -n "$bash_dir" ]] && limited_path="$limited_path:$bash_dir"
+  [[ -n "$fd_dir" && "$fd_dir" != "$bash_dir" ]] && limited_path="$limited_path:$fd_dir"
+  if ! search_output=$(PATH="$limited_path" "$HOME/dotfiles/bin/executables" 2>&1); then
+    echo "FAIL: Search command failed"
+    echo "Debug: Error was: $search_output"
+    return 1
+  fi
+  
+  # Check if we found our test files
+  if ! echo "$search_output" | grep -q '^test1$'; then
+    echo "FAIL: Did not find test1 executable"
+    return 1
+  fi
+  
+  if ! echo "$search_output" | grep -q '^test2.sh$'; then
+    echo "FAIL: Did not find test2.sh executable"
+    return 1
+  fi
+  
+  # Test --scripts flag
+  echo "Testing --scripts flag..."
+  if ! scripts_output=$(PATH="$limited_path" "$HOME/dotfiles/bin/executables" --scripts 2>/dev/null); then
+    echo "FAIL: --scripts flag failed"
+    return 1
+  fi
+  
+  # Clean up
+  export PATH="$old_path"
+  rm -rf "$test_dir"
+  
+  echo "All tests passed!"
+  return 0
+}
+
+# Run the test if this script is executed directly
+if ! (return 0 2>/dev/null); then
+  test_executables
+  exit $?
+fi
