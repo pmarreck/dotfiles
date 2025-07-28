@@ -5,7 +5,7 @@ mac_os_version_number_to_name() {
 	# Get macOS version
 	local version
 	local distribution
-	
+
 	# If a version is provided as an argument, use it, otherwise try to get it from the system
 	if [ -n "$1" ]; then
 		version="$1"
@@ -15,10 +15,13 @@ mac_os_version_number_to_name() {
 		echo "Error: This is not macOS and no version was provided as an argument" >&2
 		return 1
 	fi
-	
+
 	# Map macOS version to distribution name
 	case $version in
-		16.*) distribution="<Please Update Me>" ;;
+		28.*) distribution="<Please Update Me>" ;;
+		27.*) distribution="<Please Update Me>" ;;
+		26.*) distribution="Tahoe" ;;
+		# Note that versions 16 through 25 were skipped since Apple decided to use YY year as "version"
 		15.*) distribution="Sequoia" ;;
 		14.*) distribution="Sonoma" ;;
 		13.*) distribution="Ventura" ;;
@@ -42,7 +45,7 @@ mac_os_version_number_to_name() {
 		10.0*) distribution="Cheetah" ;;
 		*) distribution="Unknown" ;;
 	esac
-	
+
 	echo "$version ($distribution)"
 }
 
