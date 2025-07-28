@@ -6,7 +6,7 @@ falsey() {
 
 	debug() {
 		if [ -n "${DEBUG}" ]; then
-			echo -e "\033[33mDEBUG: $*\033[0m" &>2
+			echo -e "\033[33mDEBUG: $*\033[0m" >&2
 		else
 			:
 		fi

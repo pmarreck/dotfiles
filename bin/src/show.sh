@@ -16,13 +16,6 @@ restore_console_settings() {
 	unset __oldstate
 }
 
-record_console_settings
-# The following 3 lines don't work when moved into the function above.
-# Imperative languages suck.
-	export HISTCONTROL=erasedups:ignoreboth
-	set -o errexit -o pipefail -o noglob
-	[[ "${DEBUG-0}" != "0" ]] && set -o xtrace
-
 function var_defined {
 	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	declare -p "$1" >/dev/null 2>&1
@@ -338,5 +331,3 @@ what() {
 		show "$@"
 	fi
 }
-
-restore_console_settings

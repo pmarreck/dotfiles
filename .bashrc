@@ -32,7 +32,7 @@ source $HOME/dotfiles/bin/src/truthy.sh
 # So we redefine it here to now depend on truthy for the rest of our environment.
 debug() {
 	if truthy DEBUG; then
-		echo -e "\033[33mDEBUG: $*\033[0m" &>2
+		echo -e "\033[33mDEBUG: $*\033[0m" >&2
 	else
 		:
 	fi
@@ -43,6 +43,13 @@ debug() {
 # set LOGIN_SHELL and INTERACTIVE_SHELL here
 shopt -q login_shell && LOGIN_SHELL=true || LOGIN_SHELL=false
 [[ $- == *i* ]] && INTERACTIVE_SHELL=true || INTERACTIVE_SHELL=false
+
+# Detect if being run by Claude CLI or other LLM assistants and skip complex setup
+if [[ "${PPID:-}" ]] && ps -p "${PPID}" -o comm= 2>/dev/null | grep -q "claude\|llm\|assistant"; then
+    export SKIP_COMPLEX_SHELL_SETUP=true
+elif [[ "$0" == *"claude"* ]] || [[ "${_:-}" == *"claude"* ]]; then
+    export SKIP_COMPLEX_SHELL_SETUP=true
+fi
 
 # most things should be sourced via source_relative... except source_relative itself
 # if the function is not already defined, define it. use posix syntax for portability
@@ -227,11 +234,23 @@ needs delta "cargo install git-delta"
 [[ -s "$HOME/.profile" ]] && . $HOME/.profile # Load the default .profile
 
 # Load hooks (skip during rehash to avoid issues)
-if [[ "${REHASHING:-false}" != "true" ]]; then
+# Skip all hook loading for LLM assistants to prevent hangs
+if [[ "${SKIP_COMPLEX_SHELL_SETUP:-false}" == "true" ]]; then
+  # Minimal setup for LLM assistants - just basic prompt
+  PS1='\u@\h:\w\$ '
+elif [[ "${REHASHING:-false}" != "true" ]] && [[ "${ENABLE_COMPLEX_HOOKS:-false}" == "true" ]]; then
   if [[ -f "$HOME/bin/apply-hooks" ]]; then
     source "$HOME/bin/apply-hooks" || echo "Problem when sourcing $HOME/bin/apply-hooks"
   else
     echo "apply-hooks not found at $HOME/bin/apply-hooks" >&2
+  fi
+elif [[ "${REHASHING:-false}" != "true" ]]; then
+  # Use simplified hooks that won't hang
+  if [[ -f "$HOME/dotfiles/bin/apply-hooks-simple" ]]; then
+    source "$HOME/dotfiles/bin/apply-hooks-simple" || echo "Problem when sourcing simplified hooks"
+  else
+    # Fallback: basic prompt if nothing else works
+    PS1='\u@\h:\w\$ '
   fi
 fi
 

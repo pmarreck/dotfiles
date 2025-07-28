@@ -28,8 +28,19 @@ else
   statter="/usr/bin/stat -f %m"
 fi
 truthy DEBUG_SHELLCONFIG && echo "Using statter: $statter"
-# Get the hash of all text files in the dotfiles directory
-CURRENT_HASH=$($statter $(file --separator " :" $(fd --type f --no-hidden --exclude .git --exclude "Library/" . $SCRIPT_DIR) | grep text | cut -d':' -f1 | sort) | $hasher | cut -d' ' -f1)
+# Get the hash of all text files in the dotfiles directory with timeout
+calculate_hash() {
+  $statter $(file --separator " :" $(fd --type f --no-hidden --exclude .git --exclude "Library/" . $SCRIPT_DIR) | grep text | cut -d':' -f1 | sort) | $hasher | cut -d' ' -f1
+}
+
+# Run with 10 second timeout in background
+if CURRENT_HASH=$(timeout 10s bash -c 'declare -f calculate_hash; calculate_hash' 2>/dev/null); then
+  truthy DEBUG_SHELLCONFIG && echo "Hash calculation completed successfully"
+else
+  truthy DEBUG_SHELLCONFIG && echo "Hash calculation timed out or failed, using fallback"
+  # Fallback to a simpler hash of just script modification times
+  CURRENT_HASH=$(find $SCRIPT_DIR -name "*.sh" -o -name "*.bash" | xargs $statter 2>/dev/null | $hasher | cut -d' ' -f1)
+fi
 truthy DEBUG_SHELLCONFIG && echo "Current hash: $CURRENT_HASH"
 # Check if the hash file exists
 if [ -f "$HASH_FILE" ]; then

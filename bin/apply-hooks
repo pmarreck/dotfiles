@@ -8,7 +8,7 @@ if ! (return 0 2>/dev/null); then
 			echo "Usage: apply-hooks"
 			echo "       source apply-hooks"
 			echo ""
-			echo "This script sets up prompt hooks for direnv, mcfly, starship, zoxide,"
+			echo "This script sets up prompt hooks for direnv, mcfly, starship,"
 			echo "and other shell integrations. It should normally be sourced from your"
 			echo "shell configuration, not executed directly."
 			echo ""
@@ -79,7 +79,7 @@ declare -A initializer_types
 # Set known initializer types
 initializer_types["direnv hook bash"]="produces_code_to_run"
 initializer_types["mcfly init bash"]="produces_code_to_run"
-initializer_types["zoxide init --cmd cd --hook pwd bash"]="produces_code_to_run"
+# Removed zoxide - not used
 initializer_types["wezterm_status_support"]="runs_code"
 initializer_types["starship init bash"]="produces_code_to_run"
 initializer_types["set_up_osc7_home"]="runs_code"
@@ -317,7 +317,7 @@ wrap_prompt_command_initializer "set_up_osc7_home"
 
 wrap_prompt_command_initializer "cat '$BASH_PREEXEC_LOCATION'" || err "bash-preexec not found"
 
-command -v zoxide >/dev/null 2>&1 && wrap_prompt_command_initializer "zoxide init --cmd cd --hook pwd bash" || err "zoxide not found"
+# Removed zoxide - not used
 
 # Source bash-preexec LAST to ensure it can see all hooks
 # [ -f "$BASH_PREEXEC_LOCATION" ] && source "$BASH_PREEXEC_LOCATION" || err "bash-preexec not found"

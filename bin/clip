@@ -5,7 +5,7 @@ source $HOME/dotfiles/bin/src/truthy.sh
 # Debug function
 debug() {
 	if truthy DEBUG; then
-		echo -e "\033[33mDEBUG: $*\033[0m" &>2
+		echo -e "\033[33mDEBUG: $*\033[0m" >&2
 	else
 		:
 	fi
@@ -76,7 +76,7 @@ clip() {
 	local save_clipboard=false
 	local restore_clipboard=false
 	local clipboard_file="/tmp/clip_$$"
-
+	debug "clip called with args: '$*'"
 	# Parse options
 	while [ $# -gt 0 ]; do
 		case "$1" in

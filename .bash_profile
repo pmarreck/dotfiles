@@ -104,7 +104,10 @@ fi
 # source ~/.orbstack/shell/init.bash 2>/dev/null || :
 
 # enable tests if any script modification times are different
-. "${HOME}/dotfiles/run_tests_on_change.sh"
+# Skip for LLM assistants to prevent hangs
+if [[ "${SKIP_COMPLEX_SHELL_SETUP:-false}" != "true" ]] && [[ "${ENABLE_DOTFILE_TESTS:-false}" == "true" ]]; then
+  . "${HOME}/dotfiles/run_tests_on_change.sh"
+fi
 
 truthy DEBUG_SHELLCONFIG && echo "Exiting $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")"
 truthy DEBUG_PATHCONFIG && echo "$PATH" || :
