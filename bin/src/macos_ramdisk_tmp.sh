@@ -5,7 +5,7 @@
 set -euo pipefail
 
 # Configuration
-RAMFS_SIZE_MB=1024
+RAMFS_SIZE_MB=8192
 MOUNT_POINT="/private/tmp"
 VOLUME_NAME="RAM-Disk"
 
