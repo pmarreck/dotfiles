@@ -80,22 +80,13 @@ var_defined() {
 # Pull in path configuration
 . $HOME/.pathconfig
 
-# Warp terminal seems to have nonstandard behavior and non-gnu sed breaks things
-# so we are using this workaround:
-# Set SED env var to first gnu sed found on PATH; otherwise warn
-# Use [[ "$($candidate_sed --version 2>/dev/null | head -1)" =~ .*GNU.* ]] to detect
-# Find the first GNU sed in PATH if SED is unset
+# Set SED env var - with Nix, sed is already GNU sed
 if [ -z ${SED+x} ]; then
-  for candidate_sed in $(type -a -p gsed) $(type -a -p sed); do
-    if [[ "$($candidate_sed --version 2>/dev/null | head -1)" =~ .*GNU.* ]]; then
-      export SED=$candidate_sed
-      break
-    fi
-  done
-  # Warn if no GNU sed found
-  if [ -z ${SED+x} ]; then
-    echo "Warning from .bashrc: No GNU sed found in PATH. This may result in problems. Using system's default sed." >&2
-    export SED=`which sed`
+  if [[ "$(sed --version 2>/dev/null | head -1)" =~ .*GNU.* ]]; then
+    export SED="sed"
+  else
+    echo "Warning from .bashrc: sed is not GNU sed. Some scripts may fail." >&2
+    export SED="sed"
   fi
 fi
 # echo "SED in .bashrc:56 is: $SED"
