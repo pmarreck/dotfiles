@@ -197,3 +197,5 @@ alias t='supertop'
 alias surf='windsurf'
 
 alias rm='rm-safe'
+
+needs timeout 2>/dev/null || needs uutils-timeout "please install uutils-coreutils" && alias timeout='uutils-timeout'
