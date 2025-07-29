@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+type func_defined >/dev/null 2>&1 || func_defined() { declare -F "$1" >/dev/null; }
+
 # Test the func_defined function
 test_func_defined() {
   # Define a test function

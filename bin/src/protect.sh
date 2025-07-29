@@ -14,7 +14,7 @@ error_exit() {
   exit 1
 }
 
-func_defined debug || \
+declare -F debug >/dev/null 2>&1 || \
 debug() {
   [ -n "$DEBUG" ] && echo "DEBUG: $1" >&2
 }
