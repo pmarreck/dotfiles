@@ -33,14 +33,23 @@ test_clip() {
 		return 0
 	fi
 	
+	# Save original clipboard content BEFORE any clipboard operations
+	local original_clipboard_file=$(mktemp -t clip_original_$$_XXXXXX)
+	timeout 1s clip > "$original_clipboard_file" 2>/dev/null || true
+	local original_clipboard_content=$(cat "$original_clipboard_file")
+	
 	# Quick clipboard functionality test with short timeout
 	echo "Testing clipboard functionality..."
 	if ! timeout 2s bash -c 'echo "test" | clip >/dev/null && [ "$(clip)" = "test" ]' 2>/dev/null; then
 		echo "Skipping clip tests: Clipboard not responding within 2 seconds"
+		# Clean up the original clipboard file before returning
+		rm "$original_clipboard_file"
 		return 0
 	fi
 
 	# Debug function
+	# Fallback definition for func_defined if not available
+	type func_defined >/dev/null 2>&1 || func_defined() { declare -F "$1" >/dev/null; }
 	func_defined debug || \
 	debug() {
 		if truthy DEBUG; then
@@ -48,9 +57,6 @@ test_clip() {
 			echo -e "\033[33mDEBUG: $*\033[0m" >&2
 		fi
 	}
-	
-	# Save original clipboard content
-	local original_clipboard_content=$(timeout 1s clip 2>/dev/null || true)
 	
 	local fails=0
 	local tests=0
@@ -63,6 +69,7 @@ test_clip() {
 	debug "Temp file: $temptestfile"
 	export clipboard_file=$(mktemp -t clip_$$_XXXXXX)
 	debug "Clipboard file: $clipboard_file"
+	debug "Original clipboard content captured: '$original_clipboard_content'"
 	
 	# Timing function for diagnostics
 	time_operation() {
@@ -229,20 +236,29 @@ test_clip() {
 	assert "$output" == "Usage: clip [OPTIONS] [TEXT...]" "$this_test"
 	(( fails += $? ))
 
-	# Clean up temp file
-	rm "$temptestfile"
-
-	# Restore original clipboard content (which counts as another test if it existed prior to the test!)
+	# Restore original clipboard content (always counts as a test, even if originally empty)
+	(( tests++ ))
+	debug "Test $tests"
 	if [ -n "$original_clipboard_content" ]; then
-		(( tests++ ))
-		debug "Test $tests"
-		this_test="Restoring original clipboard content"
+		this_test="Restoring original clipboard content: '$original_clipboard_content'"
 		$verbose && echo "TEST: $this_test"
 		debug "About to restore clipboard content: '$original_clipboard_content'"
 		printf "%s" "$original_clipboard_content" | clip >/dev/null 2>&1 || true
-		assert "$(clip)" == "$original_clipboard_content" "$this_test"
-		(( fails += $? ))
+	else
+		this_test="Restoring original clipboard content (was empty)"
+		$verbose && echo "TEST: $this_test"
+		debug "About to restore clipboard content: (empty)"
+		clip --clear >/dev/null 2>&1 || true
 	fi
+	# Verify restoration using file redirection to avoid command substitution hang
+	clip > "$temptestfile" 2>/dev/null || true
+	local restored_content=$(cat "$temptestfile")
+	assert "$restored_content" == "$original_clipboard_content" "$this_test"
+	(( fails += $? ))
+
+	# Clean up temp files
+	rm "$temptestfile"
+	rm "$original_clipboard_file"
 
 	if [ $fails -gt 0 ]; then
 		red_text "$fails of $tests clip tests failed!\n"
