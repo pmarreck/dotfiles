@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+
+# A timing function that shows elapsed seconds in real-time
+timed() {
+	if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+		cat << EOF
+Usage: timed COMMAND [ARGS...]
+
+Like 'time' but shows elapsed seconds in real-time to stderr while the command runs.
+
+Examples:
+  timed sleep 5
+  timed ./clip --test
+  timed make build
+EOF
+		return 0
+	fi
+
+	if [ $# -eq 0 ]; then
+		echo "Error: No command specified" >&2
+		echo "Usage: timed COMMAND [ARGS...]" >&2
+		return 1
+	fi
+
+	# Start the timer process in background
+	{
+		local seconds=0
+		while true; do
+			sleep 1
+			((seconds++))
+			echo -e "\033[90m${seconds}s\033[0m" >&2
+		done
+	} &
+	local timer_pid=$!
+
+	# Trap to ensure timer is killed if interrupted
+	trap "kill $timer_pid 2>/dev/null; exit 130" INT TERM
+
+	# Run the actual command and capture its exit code
+	local start_time=$(date +%s.%N)
+	"$@"
+	local exit_code=$?
+	local end_time=$(date +%s.%N)
+
+	# Kill the timer
+	kill $timer_pid 2>/dev/null
+	wait $timer_pid 2>/dev/null
+
+	# Calculate and display final timing (like 'time' command)
+	local duration=$(echo "$end_time - $start_time" | bc -l 2>/dev/null || echo "0")
+	if command -v bc >/dev/null 2>&1; then
+		printf "\nreal\t%.3fs\n" "$duration" >&2
+	else
+		# Fallback if bc is not available
+		local int_duration=$((${end_time%.*} - ${start_time%.*}))
+		printf "\nreal\t%ds\n" "$int_duration" >&2
+	fi
+
+	# Clean up trap
+	trap - INT TERM
+
+	return $exit_code
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

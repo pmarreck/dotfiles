@@ -14,6 +14,7 @@ error_exit() {
   exit 1
 }
 
+func_defined debug || \
 debug() {
   [ -n "$DEBUG" ] && echo "DEBUG: $1" >&2
 }

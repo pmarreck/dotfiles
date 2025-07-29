@@ -1,0 +1,95 @@
+#!/usr/bin/env luajit
+
+-- It's ridiculous that I had to resort to LuaJIT and C interop to get "detect stdin BUT NOT tty without consuming it"
+-- in a cross-platform way (linux/mac) for Bash scripts, but here we are.
+
+local ffi = require("ffi")
+local bit = require("bit")
+local args = {...}
+
+-- 🧠 Argument handling
+local function print_about()
+	print("has_stdin: check if stdin is ready (non-blocking), without consuming input.")
+	print("Written in LuaJIT using select(2) (works across macOS & Linux). Exits 0 if stdin is ready, 1 otherwise.")
+	os.exit(0)
+end
+
+local function print_help()
+	print([[
+Usage: has_stdin [OPTIONS]
+
+Options:
+	--about        Show a brief description of what this tool does.
+	-h, --help     Show this help message.
+	--test         Run built-in tests (requires Bash).
+
+Exit status:
+	0   stdin is ready (data can be read without blocking)
+	1   stdin is not ready
+]])
+	os.exit(0)
+end
+
+local function run_tests()
+	print("Running has_stdin tests...")
+
+	local function run(cmd, desc, expected)
+		expected = expected or 0
+		io.write(desc .. "... ")
+		local code = os.execute(cmd)
+		local exit_code = bit.rshift(code, 8)
+		if exit_code == expected then
+			print("✓")
+		else
+			print("✗ (expected " .. expected .. ", got " .. exit_code .. ")")
+			os.exit(1)
+		end
+	end
+
+	run("echo hi | " .. arg[0], "Test: data is piped (should return 0)")
+	run(arg[0] .. " < /dev/null", "Test: empty file (should return 1)")
+	run(arg[0] .. " <&- 2>/dev/null", "Test: stdin explicitly closed (should return 1)", 1)
+
+	print("All tests passed.")
+	os.exit(0)
+end
+
+-- 🧠 Dispatch options
+if args[1] == "--about" then print_about()
+elseif args[1] == "-h" or args[1] == "--help" then print_help()
+elseif args[1] == "--test" then run_tests()
+elseif #args > 0 then
+	io.stderr:write("Unknown option: " .. args[1] .. "\n")
+	os.exit(2)
+end
+
+-- 🧠 Stdin check
+ffi.cdef[[
+typedef unsigned long int nfds_t;
+typedef long time_t;
+typedef long suseconds_t;
+typedef struct timeval {
+	time_t tv_sec;
+	suseconds_t tv_usec;
+} timeval;
+
+typedef struct { unsigned long fds_bits[16]; } fd_set;
+
+int select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds, struct timeval *timeout);
+]]
+
+local fdset = ffi.new("fd_set[1]")
+-- Manually do FD_ZERO and FD_SET since these are not in libc
+for i = 0, 15 do fdset[0].fds_bits[i] = 0 end
+fdset[0].fds_bits[0] = bit.bor(fdset[0].fds_bits[0], bit.lshift(1, 0)) -- set bit for fd 0
+
+local timeout = ffi.new("timeval[1]")
+timeout[0].tv_sec = 0
+timeout[0].tv_usec = 0
+
+local ret = ffi.C.select(1, fdset, nil, nil, timeout)
+if ret < 0 then
+	-- Probably because stdin (fd 0) is closed
+	os.exit(1) -- meaning "not ready"
+end
+os.exit(ret > 0 and 0 or 1)

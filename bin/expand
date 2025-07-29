@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 
+func_defined debug || \
 debug() {
 	[ -n "$DEBUG" ] && echo "DEBUG: $*" >&2
 }

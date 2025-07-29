@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+
+source $HOME/dotfiles/bin/assert
+
+test_timed() {
+	local tests=0 fails=0
+	local verbose=false
+	
+	# Check for verbose mode
+	if [ -n "$VERBOSE" ] && [ "$VERBOSE" != "0" ] && [ "$VERBOSE" != "false" ]; then
+		verbose=true
+	fi
+
+	echo "Testing timed function..."
+
+	# Test 1: Basic functionality with short command
+	(( tests++ ))
+	local this_test="timed should execute command and show timing"
+	$verbose && echo "TEST: $this_test"
+	
+	# Capture stderr to check for timing output
+	local output=$($HOME/dotfiles/bin/timed echo "test" 2>&1)
+	local exit_code=$?
+	
+	# Check that command executed successfully
+	assert "$exit_code" == "0" "timed should preserve command exit code"
+	(( fails += $? ))
+	
+	# Check that output contains the command output
+	if [[ "$output" == *"test"* ]]; then
+		$verbose && echo "PASS: Command output preserved"
+	else
+		echo "FAIL: Command output not preserved in: $output"
+		(( fails++ ))
+	fi
+	
+	# Check that timing information is present
+	if [[ "$output" == *"real"* ]]; then
+		$verbose && echo "PASS: Timing information present"
+	else
+		echo "FAIL: No timing information found in: $output"
+		(( fails++ ))
+	fi
+
+	# Test 2: Help option
+	(( tests++ ))
+	this_test="timed --help should show usage"
+	$verbose && echo "TEST: $this_test"
+	
+	local help_output=$($HOME/dotfiles/bin/timed --help 2>&1)
+	if [[ "$help_output" == *"Usage: timed COMMAND"* ]]; then
+		$verbose && echo "PASS: Help message displayed"
+	else
+		echo "FAIL: Help message not displayed correctly"
+		(( fails++ ))
+	fi
+
+	# Test 3: Error handling for no arguments
+	(( tests++ ))
+	this_test="timed with no arguments should show error"
+	$verbose && echo "TEST: $this_test"
+	
+	# Call timed executable and capture both output and exit code
+	local temp_file=$(mktemp)
+	$HOME/dotfiles/bin/timed 2>"$temp_file"; local error_exit_code=$?
+	local error_output=$(cat "$temp_file")
+	rm -f "$temp_file"
+	
+	if [ "$error_exit_code" != "0" ] && [[ "$error_output" == *"No command specified"* ]]; then
+		$verbose && echo "PASS: Error handling works correctly"
+	else
+		echo "FAIL: Error handling not working. Exit code: $error_exit_code, Output: $error_output"
+		(( fails++ ))
+	fi
+
+	# Test 4: Command failure preservation
+	(( tests++ ))
+	this_test="timed should preserve command exit codes"
+	$verbose && echo "TEST: $this_test"
+	
+	# Use a command that will fail
+	$HOME/dotfiles/bin/timed false 2>/dev/null
+	local false_exit_code=$?
+	
+	assert "$false_exit_code" == "1" "timed should preserve non-zero exit codes"
+	(( fails += $? ))
+
+	# Summary
+	if [ $fails -eq 0 ]; then
+		echo "All $tests timed tests passed!"
+	else
+		echo "$fails of $tests timed tests failed!"
+		return 1
+	fi
+}
+
+# Run the test if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	test_timed
+else
+	# If sourced (like from timed --test), run the test
+	test_timed
+fi

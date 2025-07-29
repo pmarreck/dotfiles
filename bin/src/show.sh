@@ -16,34 +16,6 @@ restore_console_settings() {
 	unset __oldstate
 }
 
-function var_defined {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-	declare -p "$1" >/dev/null 2>&1
-}
-
-function func_defined {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-	declare -F "$1" >/dev/null
-}
-
-function alias_defined {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-	alias "$1" >/dev/null 2>&1
-}
-
-function defined {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-	local word="$1"
-	shift
-	if [ -z "$word" ] && [ -z "$1" ]; then
-		echo "Usage: defined <function or alias or variable or builtin or executable-in-PATH name> [...function|alias] ..."
-		echo "Returns 0 if all the arguments are defined as a function or alias or variable or builtin or executable-in-PATH name."
-		echo "This function is defined in ${BASH_SOURCE[0]}"
-		return 0
-	fi
-	( "var_defined" "$word" || >/dev/null type -t "$word" ) && ( [ -z "$1" ] || "defined" "$@" )
-}
-
 function determine_language_from_source() {
 	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	local file="$1"

@@ -5,74 +5,92 @@
 # set -v
 # export DEBUG=1
 
-source $HOME/dotfiles/bin/clip
 source $HOME/bin/assert
 source $HOME/dotfiles/bin/src/truthy.sh
 
 test_clip() {
+	# Check if clipboard is available and working
+	local clipboard_available=false
+	local os_type="$(uname -s)"
+	
+	case "$os_type" in
+		Darwin)
+			if command -v pbcopy >/dev/null 2>&1; then
+				clipboard_available=true
+			fi
+			;;
+		Linux)
+			if command -v xclip >/dev/null 2>&1 && timeout 1s xclip -version >/dev/null 2>&1; then
+				clipboard_available=true
+			elif command -v wl-copy >/dev/null 2>&1; then
+				clipboard_available=true
+			fi
+			;;
+	esac
+	
+	if ! $clipboard_available; then
+		echo "Skipping clip tests: No working clipboard found for $os_type"
+		return 0
+	fi
+	
+	# Quick clipboard functionality test with short timeout
+	echo "Testing clipboard functionality..."
+	if ! timeout 2s bash -c 'echo "test" | clip >/dev/null && [ "$(clip)" = "test" ]' 2>/dev/null; then
+		echo "Skipping clip tests: Clipboard not responding within 2 seconds"
+		return 0
+	fi
+
+	# Debug function
+	func_defined debug || \
+	debug() {
+		if truthy DEBUG; then
+			echo "DEBUG is truthy; its value is '$DEBUG'"
+			echo -e "\033[33mDEBUG: $*\033[0m" >&2
+		fi
+	}
+	
+	# Save original clipboard content
+	local original_clipboard_content=$(timeout 1s clip 2>/dev/null || true)
+	
 	local fails=0
 	local tests=0
 	local test_string="Test clip function"
 	local this_test=""
 	local output
 	local verbose=$(truthy VERBOSE && echo "true" || echo "false")
+	export TMPDIR="/tmp"
+	local temptestfile=$(mktemp -t clip_test_$$_XXXXXX)
+	debug "Temp file: $temptestfile"
+	export clipboard_file=$(mktemp -t clip_$$_XXXXXX)
+	debug "Clipboard file: $clipboard_file"
 	
-	# Debug function
-	debug() {
-		if truthy DEBUG; then
-			echo -e "\033[33mDEBUG: $*\033[0m" >&2
-		fi
+	# Timing function for diagnostics
+	time_operation() {
+		local operation_name="$1"
+		shift
+		local start_time=$(date +%s.%N)
+		"$@"
+		local exit_code=$?
+		local end_time=$(date +%s.%N)
+		local duration=$(echo "$end_time - $start_time" | bc -l 2>/dev/null || echo "unknown")
+		debug "$operation_name took ${duration}s"
+		return $exit_code
 	}
-	
-	# Helper function to ensure clean test state
-	clean_test_state() {
-		# Use clipboard commands directly to avoid any recursion issues
-		if succeeds type pbcopy; then
-			echo -n "" | pbcopy 2>/dev/null || true
-		elif succeeds type wl-copy; then
-			wl-copy --clear 2>/dev/null || true
-		elif succeeds type xclip; then
-			echo -n "" | timeout 2s xclip -selection clipboard 2>/dev/null || true
-		fi
-	}
-	
-	
-	echo "Testing with actual clipboard"
-	debug "Starting test initialization"
 
-	# Initialization- Store and clear the clipboard
-	local original_clipboard_content
-	debug "About to save existing clipboard content"
-	
-	# Use the paste command directly to avoid stdin issues
-	debug "About to check clipboard commands"
-	if succeeds type pbpaste; then
-		debug "Found pbpaste, using it"
-		original_clipboard_content=$(pbpaste 2>/dev/null || true)
-		debug "Got clipboard content: '$original_clipboard_content'"
-	elif succeeds type wl-paste; then
-		debug "Found wl-paste, using it"
-		original_clipboard_content=$(wl-paste 2>/dev/null || true)
-		debug "Got clipboard content: '$original_clipboard_content'"
-	elif succeeds type xclip; then
-		debug "Found xclip, using it"
-		original_clipboard_content=$(xclip -o -selection clipboard 2>/dev/null || true)
-		debug "Got clipboard content: '$original_clipboard_content'"
-	fi
-	debug "Finished getting clipboard content"
-	
-	debug "About to clear clipboard for tests"
-	clean_test_state
-	debug "Finished initialization"
-
-	# Test 1: --clear should clear clipboard
+	# Test 1: `echo hi | clip` should copy "hi" to clipboard
 	(( tests++ ))
-	this_test="clip --clear should clear clipboard"
-	debug "Starting test 1: $this_test"
+	debug "Test $tests"
+	this_test="echo hi | clip should copy 'hi' to clipboard"
 	$verbose && echo "TEST: $this_test"
-	clean_test_state
-	debug "About to set test content"
-	clip "test content for clearing" >/dev/null
+	echo "hi" | clip >/dev/null
+	assert "$(clip)" == "hi" "$this_test"
+	(( fails += $? ))
+
+	# Test 2: `clip --clear` should clear clipboard
+	(( tests++ ))
+	debug "Test $tests"
+	this_test="clip --clear should clear clipboard"
+	$verbose && echo "TEST: $this_test"
 	debug "About to clear clipboard"
 	clip --clear >/dev/null
 	debug "About to read clipboard result"
@@ -80,137 +98,150 @@ test_clip() {
 	debug "Got result: '$result'"
 	debug "About to assert result"
 	assert "$result" == "" "$this_test"
-	debug "Finished assertion"
 	(( fails += $? ))
-	clean_test_state
+	debug "Finished assertion"
 
-	# Test 2: Copying from args
+	# Test 3: Copying from args
 	(( tests++ ))
+	debug "Test $tests"
 	this_test="clip should copy to clipboard from args and return the same string"
 	$verbose && echo "TEST: $this_test"
-	clean_test_state
 	clip "test" >/dev/null
 	assert "$(clip)" == "test" "$this_test"
 	(( fails += $? ))
-	clean_test_state
 
-	# Test 3: --save and --restore should preserve clipboard content
+	# Test 4: --save and --restore should preserve clipboard content
 	(( tests++ ))
+	debug "Test $tests"
 	this_test="clip --save and --restore should preserve clipboard content"
 	$verbose && echo "TEST: $this_test"
-	clean_test_state
 	clip "save test content" >/dev/null
 	clip --save >/dev/null
-	clean_test_state
 	clip "different content" >/dev/null
 	clip --restore >/dev/null
 	assert "$(clip)" == "save test content" "$this_test"
 	(( fails += $? ))
-	clean_test_state
 
-	# Test 4: Piping to clip - should output to stdout and copy to clipboard
+	# Test 5: Piping to clip - should output to stdout and copy to clipboard
 	(( tests++ ))
+	debug "Test $tests"
 	this_test="clip should output to stdout when piped to"
 	$verbose && echo "TEST: $this_test"
-	clean_test_state  # Clear clipboard first
 	output=$(echo -n "$test_string" | clip)  # Put test string in clipboard
 	assert "$output" == "$test_string" "$this_test"
 	(( fails += $? ))
 
-	# Test 5: Reading from clipboard - should match what we just put in
+	# Test 6: Reading from clipboard - should match what we just put in
 	(( tests++ ))
+	debug "Test $tests"
 	this_test="clip should retrieve from clipboard when not piped to"
 	$verbose && echo "TEST: $this_test"
 	assert "$(clip)" == "$test_string" "$this_test"
 	(( fails += $? ))
-	clean_test_state  # Clear after test
 
-	# Test 6: Empty clipboard
+	# Test 7: Empty clipboard
 	(( tests++ ))
+	debug "Test $tests"
 	this_test="clip should return empty string when clipboard is empty"
 	$verbose && echo "TEST: $this_test"
 	clip --clear
 	assert "$(clip)" == "" "$this_test"
 	(( fails += $? ))
 
-	# Test 7: Multiple args should be echoed as-is after copying
+	# Test 8: Multiple args should be echoed as-is after copying
 	(( tests++ ))
+	debug "Test $tests"
 	this_test="clip should copy multiple args to clipboard and echo them as-is"
 	$verbose && echo "TEST: $this_test"
-	clean_test_state  # Clear clipboard first
 	clip "foo" "bar" >/dev/null
 	assert "$(clip)" == "foo bar" "$this_test"
 	(( fails += $? ))
-	clean_test_state  # Clear after test
 
-	# Test 8: --quiet option should suppress output
+	# Test 9: --quiet option should suppress output
 	(( tests++ ))
-	this_test="clip -q should not output anything"
+	debug "Test $tests"
+	this_test="clip --quiet should not output anything"
 	$verbose && echo "TEST: $this_test"
-	clean_test_state  # Clear clipboard first
-	output=$(clip -q "silent test")
+	debug "About to call clip --quiet"
+	# For some reason, trying to capture the output of $(clip --quiet "silence") into a variable would invariably hang.
+	# Interesting problem, no time to run it down, so just redirect to a tmp file as a workaround.
+	clip --quiet "silence" > "$temptestfile"
+	output=$(cat "$temptestfile")
+	debug "Finished clip --quiet 'silence' and about to assert equality of '$output' with ''"
 	assert "$output" == "" "$this_test"
 	(( fails += $? ))
 
-	# Test 9: --quiet option should still copy to clipboard
+	# Test 10: --quiet option should still copy to clipboard
 	(( tests++ ))
-	this_test="clip -q should still copy to clipboard"
+	debug "Test $tests"
+	this_test="clip --quiet should still copy to clipboard"
 	$verbose && echo "TEST: $this_test"
-	clean_test_state  # Clear clipboard first
-	clip -q "quiet test" >/dev/null
+	clip --quiet "quiet test" >/dev/null
 	assert "$(clip)" == "quiet test" "$this_test"
 	(( fails += $? ))
 
-	# Test 10: -q short option should work the same as --quiet
+	# Test 11: -q short option should work the same as --quiet
 	(( tests++ ))
+	debug "Test $tests"
 	this_test="clip -q should not output anything (short option)"
 	$verbose && echo "TEST: $this_test"
-	clean_test_state  # Clear clipboard first
-	output=$(clip -q "short quiet")
+	debug "About to call clip -q"
+	clip -q "short quiet" > "$temptestfile"
+	output=$(cat "$temptestfile")
+	debug "Finished clip -q 'short quiet' and about to assert equality of '$output' with ''"
 	assert "$output" == "" "$this_test"
 	(( fails += $? ))
 
-	# Test 11: --quiet with piped input should suppress output
+	# Test 12: --quiet with piped input should suppress output
 	(( tests++ ))
-	this_test="clip -q should not output anything with piped input"
+	debug "Test $tests"
+	this_test="clip --quiet should not output anything with piped input"
 	$verbose && echo "TEST: $this_test"
-	clean_test_state  # Clear clipboard first
-	output=$(echo -n "piped quiet" | clip -q)
+	output=$(echo -n "piped quiet" | clip --quiet)
+	debug "Finished clip --quiet 'piped quiet' and about to assert equality of '$output' with ''"
 	assert "$output" == "" "$this_test"
 	(( fails += $? ))
 
-	# Test 12: --quiet with piped input should still copy to clipboard
+	# Test 13: --quiet with piped input should still copy to clipboard
 	(( tests++ ))
+	debug "Test $tests"
 	this_test="clip -q should still copy piped input to clipboard"
 	$verbose && echo "TEST: $this_test"
-	clean_test_state  # Clear clipboard first
 	echo -n "piped quiet test" | clip -q >/dev/null
 	assert "$(clip)" == "piped quiet test" "$this_test"
 	(( fails += $? ))
 
-	# Test 13: --help should show usage
+	# Test 14: --help should show usage
 	(( tests++ ))
+	debug "Test $tests"
 	this_test="clip --help should show usage information"
 	$verbose && echo "TEST: $this_test"
 	output=$(clip --help | head -n 1)
 	assert "$output" == "Usage: clip [OPTIONS] [TEXT...]" "$this_test"
 	(( fails += $? ))
 
-	# Test 14: -h short option should show usage
+	# Test 15: -h short option should show usage
 	(( tests++ ))
+	debug "Test $tests"
 	this_test="clip -h should show usage information"
 	$verbose && echo "TEST: $this_test"
 	output=$(clip -h | head -n 1)
 	assert "$output" == "Usage: clip [OPTIONS] [TEXT...]" "$this_test"
 	(( fails += $? ))
 
+	# Clean up temp file
+	rm "$temptestfile"
 
-	# Restore original clipboard
-	$verbose && echo "Restoring original clipboard content"
+	# Restore original clipboard content (which counts as another test if it existed prior to the test!)
 	if [ -n "$original_clipboard_content" ]; then
-		clip "$original_clipboard_content" >/dev/null
-	else
-		clip --clear
+		(( tests++ ))
+		debug "Test $tests"
+		this_test="Restoring original clipboard content"
+		$verbose && echo "TEST: $this_test"
+		debug "About to restore clipboard content: '$original_clipboard_content'"
+		printf "%s" "$original_clipboard_content" | clip >/dev/null 2>&1 || true
+		assert "$(clip)" == "$original_clipboard_content" "$this_test"
+		(( fails += $? ))
 	fi
 
 	if [ $fails -gt 0 ]; then

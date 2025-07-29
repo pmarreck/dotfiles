@@ -2,12 +2,17 @@
 
 source $HOME/dotfiles/bin/src/truthy.sh
 
-# Debug function
+# Debug function. Can use as `debug` to check whether in debug mode (DEBUG=some truthy value), or `debug "some message"`
+declare -F debug > /dev/null || \
 debug() {
-	if truthy DEBUG; then
-		echo -e "\033[33mDEBUG: $*\033[0m" >&2
+	if [ $# = 0 ]; then
+		truthy DEBUG
 	else
-		:
+		if truthy DEBUG; then
+			echo -e "\033[33mDEBUG: $*\033[0m" >&2
+		else
+			:
+		fi
 	fi
 }
 
@@ -17,7 +22,7 @@ if [ -z "$CLIP_INITIALIZED" ]; then
 		# macOS
 		clip_copy() { printf "%s" "$1" | pbcopy; }
 		clip_copy_stdin() { pbcopy; }
-		clip_paste() { pbpaste 2>/dev/null || true; }
+		clip_paste() { pbpaste 2>/dev/null; }
 		clip_clear() { echo -n "" | pbcopy; }
 		clip_save() { pbpaste > "$1" 2>/dev/null; }
 		clip_restore() { pbcopy < "$1"; }
@@ -25,18 +30,18 @@ if [ -z "$CLIP_INITIALIZED" ]; then
 		# Wayland Linux
 		clip_copy() { printf "%s" "$1" | wl-copy; }
 		clip_copy_stdin() { wl-copy; }
-		clip_paste() { wl-paste 2>/dev/null || true; }
+		clip_paste() { wl-paste 2>/dev/null; }
 		clip_clear() { wl-copy --clear; }
 		clip_save() { wl-paste > "$1" 2>/dev/null; }
 		clip_restore() { wl-copy < "$1"; }
 	elif succeeds type xclip; then
 		# X11 Linux
-		clip_copy() { printf "%s" "$1" | timeout 2s xclip -selection clipboard 2>/dev/null || true; }
-		clip_copy_stdin() { timeout 2s xclip -selection clipboard 2>/dev/null || true; }
-		clip_paste() { timeout 2s xclip -o -selection clipboard 2>/dev/null || true; }
-		clip_clear() { timeout 2s xclip -selection clipboard -i /dev/null 2>/dev/null || true; }
-		clip_save() { timeout 2s xclip -o -selection clipboard > "$1" 2>/dev/null || true; }
-		clip_restore() { timeout 2s xclip -selection clipboard < "$1" 2>/dev/null || true; }
+		clip_copy() { printf "%s" "$1" | xclip -i -selection clipboard 2>/dev/null || true; }
+		clip_copy_stdin() { xclip -i -selection clipboard 2>/dev/null || true; }
+		clip_paste() { xclip -o -selection clipboard 2>/dev/null || true; }
+		clip_clear() { xclip -i -selection clipboard < /dev/null 2>/dev/null || true; }
+		clip_save() { xclip -o -selection clipboard > "$1" 2>/dev/null || true; }
+		clip_restore() { xclip -i -selection clipboard < "$1" 2>/dev/null || true; }
 	else
 		echo "Error: No clipboard command found (pbcopy, wl-copy, or xclip)" >&2
 		exit 1
@@ -71,12 +76,22 @@ EOF
 }
 
 clip() {
+	debug "Starting clip"
 	local quiet=false
 	local clear_clipboard=false
 	local save_clipboard=false
 	local restore_clipboard=false
-	local clipboard_file="/tmp/clip_$$"
-	debug "clip called with args: '$*'"
+	local clipboard_file=${clipboard_file:-"/tmp/clip_$$"}
+	debug "Clipboard file: $clipboard_file"
+	export clipboard_file # for subprocesses to use the same clipboard file with the same parent process ID
+	if truthy DEBUG; then
+		if [ $# = 0 ]; then
+			debug "No arguments provided"
+		else
+			debug "clip called with $# args: '$*'"
+		fi
+	fi
+	
 	# Parse options
 	while [ $# -gt 0 ]; do
 		case "$1" in
@@ -143,27 +158,42 @@ clip() {
 
 	# If arguments are provided, copy them to clipboard
 	if [ $# -gt 0 ]; then
+		debug "Path: Arguments provided ($# args)"
 		# Join all arguments with spaces and copy to clipboard
 		local joined_args="$*"
+		debug "About to call clip_copy with: '$joined_args'"
 		clip_copy "$joined_args"
+		debug "Finished clip_copy"
 
 		# Output the text unless quiet mode is enabled
-		if ! $quiet; then
-			printf "%s" "$joined_args"
-		fi
-	elif [ ! -t 0 ]; then
-		# stdin is not a terminal, so we have piped input
 		if $quiet; then
+			debug "Quiet mode - not outputting to stdout"
+		else
+			debug "About to output to stdout (not quiet mode)"
+			printf "%s" "$joined_args"
+			debug "Finished output to stdout"
+		fi
+	elif has_stdin; then
+		debug "Path: Piped input with data available"
+		# Stream stdin to clipboard
+		if $quiet; then
+			debug "About to call clip_copy_stdin in quiet mode"
 			# Copy stdin to clipboard without echoing to stdout
 			clip_copy_stdin >/dev/null
+			debug "Finished clip_copy_stdin in quiet mode"
 		else
+			debug "About to call tee with clip_copy_stdin"
 			# Use tee to both send to clipboard and output to stdout
 			tee >(clip_copy_stdin >/dev/null)
+			debug "Finished tee with clip_copy_stdin"
 		fi
 	else
-		# No arguments and stdin is a terminal - read from clipboard
+		debug "Path: No arguments and no stdin data - reading from clipboard"
+		# No arguments and no stdin data - read from clipboard
 		clip_paste
 	fi
+	debug "Finished clip"
+	return 0
 }
 
 # Run the function if this script is executed directly
@@ -181,3 +211,4 @@ if ! (return 0 2>/dev/null); then
 		fi
 	fi
 fi
+ 

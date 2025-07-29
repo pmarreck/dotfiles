@@ -26,15 +26,19 @@ set +h
 
 export NULL=${NULL:-/dev/null}
 
-source $HOME/dotfiles/bin/src/truthy.sh
+# I use "truthy" everywhere but it has to be defined in the current context
+# since it reads variable values, which wouldn't be seen by it if it was run
+# as an executable unless that variable was exported, which is not what we want
+. "$HOME/dotfiles/bin/src/truthy.sh"
 # Truthy contains its own debug function that does not depend on truthy,
 # to prevent the circular dependency.
-# So we redefine it here to now depend on truthy for the rest of our environment.
 debug() {
-	if truthy DEBUG; then
-		echo -e "\033[33mDEBUG: $*\033[0m" >&2
+	if [ $# = 0 ]; then
+		truthy DEBUG
 	else
-		:
+		if truthy DEBUG; then
+			echo -e "\033[33mDEBUG: $*\033[0m" >&2
+		fi
 	fi
 }
 
@@ -58,14 +62,30 @@ fi
 # define silently function here because it needs to know vars in the current namespace
 . "$HOME/dotfiles/bin/src/silently.sh"
 
-# I use "truthy" everywhere but it has to be defined in the current context
-# since it reads variable values, which wouldn't be seen by it if it was run
-# as an executable unless that variable was exported, which is not what we want
-. "$HOME/dotfiles/bin/src/truthy.sh"
-
-# Check if a variable is defined in the current context
-var_defined() {
-  declare -p "$1" >/dev/null 2>&1
+# Check if a variable, function, alias etc. is defined in the current context (which is why we need to define these here)
+function var_defined {
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	declare -p "$1" >/dev/null 2>&1
+}
+function func_defined {
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	declare -F "$1" >/dev/null
+}
+function alias_defined {
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	alias "$1" >/dev/null 2>&1
+}
+function defined {
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	local word="$1"
+	shift
+	if [ -z "$word" ] && [ -z "$1" ]; then
+		echo "Usage: defined <function or alias or variable or builtin or executable-in-PATH name> [...function|alias] ..."
+		echo "Returns 0 if all the arguments are defined as a function or alias or variable or builtin or executable-in-PATH name."
+		echo "This function is defined in ${BASH_SOURCE[0]}"
+		return 0
+	fi
+	( "var_defined" "$word" || >/dev/null type -t "$word" ) && ( [ -z "$1" ] || "defined" "$@" )
 }
 
 # have to define show here for the same reason we have to define truthy...
@@ -74,7 +94,7 @@ var_defined() {
 # have to source "functions" function for it to be able to see in-context functions
 . "$HOME/dotfiles/bin/src/functions.bash"
 
-# have to source "edit" function for it to be able to see the functions via "functions" lol sigh
+# have to source "edit" function for it to be able to see the functions via "functions"... lol sigh
 . "$HOME/dotfiles/bin/src/edit.bash"
 
 # Pull in path configuration

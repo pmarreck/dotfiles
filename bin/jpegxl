@@ -107,6 +107,7 @@ check_dependencies() {
 }
 
 # Debug output function
+func_defined debug || \
 debug() {
 	[ -n "$DEBUG" ] && echo "DEBUG: $*" >&2
 }

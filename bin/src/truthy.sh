@@ -4,7 +4,8 @@
 falsey() {
 	[ -n "${EDIT}" ] && unset EDIT && edit_function "$0" "$0" && return
 
-	debug() {
+	# Our normal env "debug" function actually depends on truthy/falsey so we define one specific to here
+	_truthy_free_debug() {
 		if [ -n "${DEBUG}" ]; then
 			echo -e "\033[33mDEBUG: $*\033[0m" >&2
 		else
@@ -50,27 +51,27 @@ EOF
 	# 2. Check if the variable exists; if not, return true immediately
 	# (nonexistent variables are falsey)
 	if ! eval "[ \"\${$var_name+set}\" = set ]"; then
-	  debug "Variable \"$var_name\" is not set and thus falsey"
+	  _truthy_free_debug "Variable \"$var_name\" is not set and thus falsey"
 	  return 0
 	fi
 
 	# 3. Retrieve the variable value (POSIX-compatible eval)
 	value=$(eval "printf '%s\n' \"\$$var_name\"")
-	debug "Value of \"$var_name\": \"$value\""
+	_truthy_free_debug "Value of \"$var_name\": \"$value\""
 
 	# 4. Convert value to lowercase (POSIX-compatible using tr)
 	lower_value=$(printf '%s' "$value" | tr 'A-Z' 'a-z')
-	debug "Lowercase value of \"$var_name\": \"$lower_value\""
+	_truthy_free_debug "Lowercase value of \"$var_name\": \"$lower_value\""
 
 	# 5. Check if the value is "falsey"
 	case "$lower_value" in
 		0|f|false|off|n|no|disable|disabled)
-			debug "\"$var_name\" is falsey"
+			_truthy_free_debug "\"$var_name\" is falsey"
 			return 0
 			;;
 		# If it exists and is not falsey, it is truthy
 		*)
-			debug "\"$var_name\" is truthy"
+			_truthy_free_debug "\"$var_name\" is truthy"
 			return 1
 			;;
 	esac

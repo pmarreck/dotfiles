@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 
-# debug() {
-#   [ -n "$DEBUG" ] && echo "DEBUG: $*" >&2
-# }
+func_defined debug || \
+debug() {
+  [ -n "$DEBUG" ] && echo "DEBUG: $*" >&2
+}
 
 sequentialize() {
 	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return

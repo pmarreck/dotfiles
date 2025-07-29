@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 
 # Usage: times_older_than <birthdate_1> <birthdate_2>
+
+
+declare -F "debug" > /dev/null || \
 debug() {
 	[ -n "$DEBUG" ] && echo "DEBUG: $*" >&2
 }

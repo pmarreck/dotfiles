@@ -709,6 +709,7 @@ debug_mode() {
 }
 
 # Debug output function
+func_defined debug || \
 debug() {
 	debug_mode && echo "DEBUG: $*" >&2
 }
