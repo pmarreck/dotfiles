@@ -9,6 +9,14 @@ source $HOME/bin/assert
 source $HOME/dotfiles/bin/src/truthy.sh
 
 test_clip() {
+	# Detect available timeout command first
+	local timeout_cmd=""
+	if command -v timeout >/dev/null 2>&1; then
+		timeout_cmd="timeout"
+	elif command -v gtimeout >/dev/null 2>&1; then
+		timeout_cmd="gtimeout"
+	fi
+
 	# Check if clipboard is available and working
 	local clipboard_available=false
 	local os_type="$(uname -s)"
@@ -20,7 +28,7 @@ test_clip() {
 			fi
 			;;
 		Linux)
-			if command -v xclip >/dev/null 2>&1 && timeout 1s xclip -version >/dev/null 2>&1; then
+			if command -v xclip >/dev/null 2>&1 && $timeout_cmd 1s xclip -version >/dev/null 2>&1; then
 				clipboard_available=true
 			elif command -v wl-copy >/dev/null 2>&1; then
 				clipboard_available=true
@@ -35,12 +43,12 @@ test_clip() {
 	
 	# Save original clipboard content BEFORE any clipboard operations
 	local original_clipboard_file=$(mktemp -t clip_original_$$_XXXXXX)
-	timeout 1s clip > "$original_clipboard_file" 2>/dev/null || true
+	$timeout_cmd 1s clip > "$original_clipboard_file" 2>/dev/null || true
 	local original_clipboard_content=$(cat "$original_clipboard_file")
 	
 	# Quick clipboard functionality test with short timeout
 	echo "Testing clipboard functionality..."
-	if ! timeout 2s bash -c 'echo "test" | clip >/dev/null && [ "$(clip)" = "test" ]' 2>/dev/null; then
+	if ! $timeout_cmd 2s bash -c 'echo "test" | clip >/dev/null && [ "$(clip)" = "test" ]' 2>/dev/null; then
 		echo "Skipping clip tests: Clipboard not responding within 2 seconds"
 		# Clean up the original clipboard file before returning
 		rm "$original_clipboard_file"
