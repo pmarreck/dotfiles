@@ -257,8 +257,8 @@ elif [[ "${REHASHING:-false}" != "true" ]] && [[ "${ENABLE_COMPLEX_HOOKS:-false}
   fi
 elif [[ "${REHASHING:-false}" != "true" ]]; then
   # Use simplified hooks that won't hang
-  if [[ -f "$HOME/dotfiles/bin/apply-hooks-simple" ]]; then
-    source "$HOME/dotfiles/bin/apply-hooks-simple" || echo "Problem when sourcing simplified hooks"
+  if [[ -f "$HOME/dotfiles/bin/apply-hooks" ]]; then
+    source "$HOME/dotfiles/bin/apply-hooks" || echo "Problem when sourcing apply-hooks"
   else
     # Fallback: basic prompt if nothing else works
     PS1='\u@\h:\w\$ '

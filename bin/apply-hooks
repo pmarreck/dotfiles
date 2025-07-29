@@ -27,6 +27,9 @@ fi
 [ -n "${DEBUG_SHELLCONFIG}" ] && echo "Entering $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")"
 [ -n "${DEBUG_PATHCONFIG}" ] && echo "$PATH"
 
+# CRITICAL: Remove any DEBUG traps that may cause command hanging
+trap - DEBUG
+
 ##### rust cargo hook and related environment dependencies
 # [[ -s "$HOME/.cargo/env" ]] && source "$HOME/.cargo/env"
 # needs rustc "curl https://sh.rustup.rs -sSf | sh"
@@ -277,13 +280,13 @@ set_up_osc7_home() {
 	fi
 }
 
-# DO_NOT() { :; }; ONLY() { :; };
+DO_NOT() { :; }; ONLY() { :; };
 
-# DO_NOT ADD ANY MORE CUSTOM COMMANDLINE HOOKS/INITIALIZERS AFTER THIS POINT
+DO_NOT ADD ANY MORE CUSTOM COMMANDLINE HOOKS/INITIALIZERS AFTER THIS POINT
 
-# ONLY BASH_PREEXEC CONFIG SHOULD BE BELOW THIS LINE
+ONLY BASH_PREEXEC CONFIG SHOULD BE BELOW THIS LINE
 
-# unset DO_NOT ONLY
+unset DO_NOT ONLY
 
 # echo "before bash-preexec hook: $(declare -p PROMPT_COMMAND)"
 ##### bash-preexec
