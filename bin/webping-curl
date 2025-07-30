@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+
+# Wrapper script for webping to handle complex curl commands with proper headers
+# Usage: webping-curl <url>
+
+# Source shared function for bot-detection-resistant curl arguments
+source "${BASH_SOURCE[0]%/*}/src/_get_bot_detection_resistant_curl_args_for_site.bash"
+
+url="$1"
+
+if [[ -z "$url" ]]; then
+    echo "Usage: webping-curl <url>" >&2
+    exit 1
+fi
+
+curl_args=$(get_curl_args "$url")
+eval "exec curl -L -f -s -o /dev/null $curl_args \"$url\""

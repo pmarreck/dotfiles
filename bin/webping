@@ -44,18 +44,14 @@ EXAMPLES:
 EOF
 }
 
-declare -F debug >/dev/null 2>&1 || \
-debug() {
-	if [ -n "$DEBUG" ]; then
-		echo "$@" >&2
-	fi
-}
-
 parse_sites() {
 	local sites_string="${WEBPING_SITES:-google.com;reddit.com;chatgpt.com;facebook.com;x.com;github.com;amazon.com}"
 	IFS=';' read -ra sites <<< "$sites_string"
 	printf '%s\n' "${sites[@]}"
 }
+
+# Source shared function for bot-detection-resistant curl arguments
+source "${BASH_SOURCE[0]%/*}/src/_get_bot_detection_resistant_curl_args_for_site.bash"
 
 resolve_redirects() {
 	local sites=("$@")
@@ -65,7 +61,9 @@ resolve_redirects() {
 			site="https://$site"
 		fi
 		debug "Resolving redirects for $site..."
-		resolved_site=$(curl -L -f -s -o /dev/null -w "%{url_effective}" -A "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:142.0) Gecko/20100101 Firefox/142.0" "$site")
+		local curl_args
+		curl_args=$(get_curl_args "$site")
+		resolved_site=$(eval "curl -L -f -s -o /dev/null -w \"%{url_effective}\" $curl_args \"$site\"")
 		debug "Resolved $site to $resolved_site"
 		resolved_sites+=("$resolved_site")
 	done
@@ -78,10 +76,9 @@ build_curl_command() {
 	if [[ ! "$site" =~ ^https?:// ]]; then
 		site="https://$site"
 	fi
-	# Simple command that just does the HTTP request - gping times the execution
-	# Include User-Agent to avoid being blocked by sites like Amazon
+	# Use wrapper script to handle complex headers properly with gping
 	debug "Building curl command for $site..."
-	local command="curl -L -f -s -o /dev/null -A 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:142.0) Gecko/20100101 Firefox/142.0' $site"
+	local command="webping-curl $site"
 	debug "$command"
 	echo "$command"
 }
@@ -99,6 +96,10 @@ check_dependencies() {
 
 	if ! command -v curl &> /dev/null; then
 		missing_deps+=("curl")
+	fi
+
+	if ! command -v webping-curl &> /dev/null; then
+		missing_deps+=("webping-curl")
 	fi
 
 	if [ ${#missing_deps[@]} -gt 0 ]; then
