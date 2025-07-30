@@ -66,7 +66,6 @@ calc() {
 
 	return $retcode
 }
-debug "wtf"
 # Run the function if this script is executed directly
 if ! (return 0 2>/dev/null); then
 	debug "Running calc with args: $@"

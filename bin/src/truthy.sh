@@ -6,13 +6,26 @@ falsey() {
 
 	# Our normal env "debug" function actually depends on truthy/falsey so we define one specific to here
 	_truthy_free_debug() {
-		if [ -n "${DEBUG}" ]; then
+		local debug_state
+		# if DEBUG is NOT set to anything, assume false
+		if [ -z "${DEBUG}" ]; then
+			debug_state=false
+		else
+			# if DEBUG is set to any value other than 0, false, off, n, no, disable, disabled, set it to true
+			if [ "${DEBUG}" != 0 ] && [ "${DEBUG}" != false ] && [ "${DEBUG}" != off ] && [ "${DEBUG}" != n ] && [ "${DEBUG}" != no ] && [ "${DEBUG}" != disable ] && [ "${DEBUG}" != disabled ]; then
+				debug_state=true
+			else
+				debug_state=false
+			fi
+		fi
+		# now we can assume debug_state is always set to either true or false
+		if $debug_state; then
 			echo -e "\033[33mDEBUG: $*\033[0m" >&2
 		else
 			:
 		fi
 	}
-	
+
 	# Print help for truthy/falsey
 	truthy_help() {
 		cat <<EOF
@@ -51,27 +64,27 @@ EOF
 	# 2. Check if the variable exists; if not, return true immediately
 	# (nonexistent variables are falsey)
 	if ! eval "[ \"\${$var_name+set}\" = set ]"; then
-	  _truthy_free_debug "Variable \"$var_name\" is not set and thus falsey"
+	  # _truthy_free_debug "Variable \"$var_name\" is not set and thus falsey"
 	  return 0
 	fi
 
 	# 3. Retrieve the variable value (POSIX-compatible eval)
 	value=$(eval "printf '%s\n' \"\$$var_name\"")
-	_truthy_free_debug "Value of \"$var_name\": \"$value\""
+	# _truthy_free_debug "Value of \"$var_name\": \"$value\""
 
 	# 4. Convert value to lowercase (POSIX-compatible using tr)
 	lower_value=$(printf '%s' "$value" | tr 'A-Z' 'a-z')
-	_truthy_free_debug "Lowercase value of \"$var_name\": \"$lower_value\""
+	# _truthy_free_debug "Lowercase value of \"$var_name\": \"$lower_value\""
 
 	# 5. Check if the value is "falsey"
 	case "$lower_value" in
 		0|f|false|off|n|no|disable|disabled)
-			_truthy_free_debug "\"$var_name\" is falsey"
+			# _truthy_free_debug "\"$var_name\" is falsey"
 			return 0
 			;;
 		# If it exists and is not falsey, it is truthy
 		*)
-			_truthy_free_debug "\"$var_name\" is truthy"
+			# _truthy_free_debug "\"$var_name\" is truthy"
 			return 1
 			;;
 	esac

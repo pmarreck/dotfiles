@@ -35,3 +35,4 @@ function test-term-live-reload() {
 		terminal_pid=$!
 	done
 }
+needs inotifywait "please install inotifywait" && test-term-live-reload

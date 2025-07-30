@@ -5,20 +5,29 @@ repeat() {
 	# add --help option
 	case "$1" in
 		-h|--help)
-			echo "Usage: repeat <count:integer> <command>" >&2
+			echo "Usage: repeat <count:integer> [--] <command>" >&2
 			return 0
 			;;
 		*)
 			;;
 	esac
+
 	local count=$1
-	local retcodes=0
+	if [ $# -lt 2 ]; then
+		echo "Usage: repeat <count> [--] <command>" >&2
+		return 1
+	fi
+
 	shift
-	local cmd="$@"
+	if [ "$1" = "--" ]; then shift; fi
+
+	local cmd=("$@")
+	local retcodes=0
+
 	for ((i = 0; i < count; i++)); do
-		eval "$cmd"
-		(( retcodes+=$? ))
+		"${cmd[@]}" || ((retcodes+=$?))
 	done
+
 	return $retcodes
 }
 

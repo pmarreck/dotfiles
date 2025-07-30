@@ -6,6 +6,10 @@
 imagine() {
 	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	needs magick Please install ImageCraptastick I mean ImageMagick
+	if ! check_sixel_support; then
+		echo "Error: Sixel support not detected. Please call this from a terminal that supports Sixel." >&2
+		return 1
+	fi
 	local prompt geometry create_img url rand_num stamp filename response maybe_error
 	prompt="$@"
 	geometry=${GEOMETRY:-512x512} # options: 256x256, 512x512, or 1024x1024
@@ -30,16 +34,6 @@ imagine() {
 	echo "This image is currently stored temporarily at: $filename" >&2
 }
 
-# Export the function so it can be used by find -exec
-
-# Run the function, passing along any args, if this file was run directly (such as via sudo) instead of as an include
-# Sometimes, $0 contains a leading dash to indicate an interactive (or is it login?) shell,
-# which is apparently an old convention (which also broke the basename call on OS X)
-_me=$(basename "${0##\-}")
-if [ "$_me" = "imagine" ]; then
-	$_me "$@"
-fi
-unset _me
 # Run the function if this script is executed directly
 if ! (return 0 2>/dev/null); then
 	# Check if we are running tests

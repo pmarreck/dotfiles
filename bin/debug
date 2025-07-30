@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+
+. "$(dirname "${0##\-}")/src/truthy.sh"
+
+debug() {
+  if [ $# = 0 ]; then
+    truthy DEBUG;
+  else
+    if truthy DEBUG; then
+      echo -e "\033[33mDEBUG: $*\033[0m" 1>&2;
+    fi;
+  fi
+}
+
+debug $*
