@@ -1,0 +1,3 @@
+#!/bin/sh
+
+open "$(CDPATH= cd "${0%/*}" 2>/dev/null || cd . ; pwd)/src/asteroids.html"

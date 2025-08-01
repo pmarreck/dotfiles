@@ -283,3 +283,8 @@ set +H
 # Added by LM Studio CLI (lms)
 # export PATH="$PATH:/Users/pmarreck/.cache/lm-studio/bin"
 # End of LM Studio CLI section
+
+# pnpm
+export PNPM_HOME="$HOME/.local/share/pnpm"
+prepend_path "$PNPM_HOME"
+# pnpm end

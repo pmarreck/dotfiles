@@ -1,0 +1,34 @@
+#!/usr/bin/env node
+
+// Simple Node.js test runner for Asteroids game
+// This extracts and runs the JavaScript code from the HTML file
+
+const fs = require('fs');
+const path = require('path');
+
+// Read the HTML file
+const htmlFile = path.join(__dirname, '..', 'src', 'asteroids.html');
+const htmlContent = fs.readFileSync(htmlFile, 'utf8');
+
+// Extract JavaScript code between <script> tags (excluding CDN script)
+const scriptMatches = htmlContent.match(/<script>[\s\S]*?<\/script>/g);
+if (!scriptMatches) {
+    console.error('No JavaScript code found in HTML file');
+    process.exit(1);
+}
+
+// Get the main script (should be the last and largest one)
+const mainScript = scriptMatches[scriptMatches.length - 1];
+const jsCode = mainScript.replace(/<\/?script>/g, '');
+
+// Set up global Math object for Node.js compatibility
+global.Math = Math;
+
+// Execute the code
+try {
+    eval(jsCode);
+    console.log('\nasteroids.html test suite completed successfully!');
+} catch (error) {
+    console.error('Error running tests:', error.message);
+    process.exit(1);
+}
