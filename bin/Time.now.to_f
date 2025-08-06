@@ -1,32 +1,61 @@
 #!/usr/bin/env bash
+# ------------------------------------------------------------
+# Time.now.to_f – Bash wrapper that prints the current epoch
+# time with nanosecond resolution.
+#
+#   * Tries to use GNU date (or gdate on macOS) for nanoseconds.
+#   * Falls back to Perl’s Time::HiRes when the date command’s
+#     resolution isn’t fine enough.
+# ------------------------------------------------------------
 
 # For the Ruby fans.
 # Floating point seconds since epoch, to nanosecond resolution.
 Time.now.to_f() {
-	# set the date bin to gdate (or one that recognizes --resolution) if available
-	local datebin="date"
-	$datebin --resolution >/dev/null 2>&1 || datebin="gdate"
-	$datebin --resolution >/dev/null 2>&1 || datebin="date"
+	# Detect a date binary that understands --resolution (prefer gdate if present)
+	local datebin
+	datebin=$(command -v gdate || command -v date) || {
+		echo "Error: neither 'gdate' nor 'date' found in PATH." >&2
+		return 1
+	}
 	# use perl for timestamps if the date timestamp resolution isn't small enough
 	local _use_perl_for_more_accurate_timestamps=0
-	if [ "$($datebin --resolution)" != "0.000000001" ]; then
+	if [ "$("$datebin" --resolution)" != "0.000000001" ]; then
 		_use_perl_for_more_accurate_timestamps=1
 	fi
-	if [ $_use_perl_for_more_accurate_timestamps -eq 1 ]; then
+	if [ "$_use_perl_for_more_accurate_timestamps" -eq 1 ]; then
 		perl -MTime::HiRes=time -e 'printf "%.9f\n", time'
 	else
-		$datebin +'%s.%N'
+		"$datebin" +'%s.%N'
 	fi
 }
 
 # Run the function if this script is executed directly
-if ! (return 0 2>/dev/null); then
-	# Check if we are running tests
-	if [ "$1" = "--test" ]; then
-		# Run tests from the test file
-		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+# If the script is being sourced, just define the function and exit early
+if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
+    return
+fi
+# Help flag (optional)
+if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+	cat <<'EOF'
+Usage:
+Time.now.to_f          # prints epoch time with nanosecond resolution
+Time.now.to_f --test  # runs the associated test suite
+Time.now.to_f -h|--help  # shows this help
+EOF
+	exit 0
+fi
+
+# Check if we are running tests
+if [ "$1" = "--test" ]; then
+	# Run tests from the test file
+	test_file="$HOME/dotfiles/bin/test/$(basename "${0##-}")_test"
+	if [[ -f "$test_file" ]]; then
+		. "$test_file"
 	else
-		# If called directly, pass all arguments to the function
-		$(basename "${0##\-}") "$@"
+		echo "Test file not found: $test_file" >&2
+		exit 1
 	fi
+else
+	# If called directly, pass all arguments to the function
+	$(basename "${0##-}") "$@"
 fi
