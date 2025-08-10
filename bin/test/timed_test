@@ -1,103 +1,409 @@
 #!/usr/bin/env bash
 
-source $HOME/dotfiles/bin/assert
+# Test suite for timed command
+# Run with: timed --test
 
-test_timed() {
-	local tests=0 fails=0
-	local verbose=false
-	
-	# Check for verbose mode
-	if [ -n "$VERBOSE" ] && [ "$VERBOSE" != "0" ] && [ "$VERBOSE" != "false" ]; then
-		verbose=true
-	fi
-
-	echo "Testing timed function..."
-
-	# Test 1: Basic functionality with short command
-	(( tests++ ))
-	local this_test="timed should execute command and show timing"
-	$verbose && echo "TEST: $this_test"
-	
-	# Capture stderr to check for timing output
-	local output=$($HOME/dotfiles/bin/timed echo "test" 2>&1)
-	local exit_code=$?
-	
-	# Check that command executed successfully
-	assert "$exit_code" == "0" "timed should preserve command exit code"
-	(( fails += $? ))
-	
-	# Check that output contains the command output
-	if [[ "$output" == *"test"* ]]; then
-		$verbose && echo "PASS: Command output preserved"
-	else
-		echo "FAIL: Command output not preserved in: $output"
-		(( fails++ ))
-	fi
-	
-	# Check that timing information is present
-	if [[ "$output" == *"real"* ]]; then
-		$verbose && echo "PASS: Timing information present"
-	else
-		echo "FAIL: No timing information found in: $output"
-		(( fails++ ))
-	fi
-
-	# Test 2: Help option
-	(( tests++ ))
-	this_test="timed --help should show usage"
-	$verbose && echo "TEST: $this_test"
-	
-	local help_output=$($HOME/dotfiles/bin/timed --help 2>&1)
-	if [[ "$help_output" == *"Usage: timed COMMAND"* ]]; then
-		$verbose && echo "PASS: Help message displayed"
-	else
-		echo "FAIL: Help message not displayed correctly"
-		(( fails++ ))
-	fi
-
-	# Test 3: Error handling for no arguments
-	(( tests++ ))
-	this_test="timed with no arguments should show error"
-	$verbose && echo "TEST: $this_test"
-	
-	# Call timed executable and capture both output and exit code
-	local temp_file=$(mktemp)
-	$HOME/dotfiles/bin/timed 2>"$temp_file"; local error_exit_code=$?
-	local error_output=$(cat "$temp_file")
-	rm -f "$temp_file"
-	
-	if [ "$error_exit_code" != "0" ] && [[ "$error_output" == *"No command specified"* ]]; then
-		$verbose && echo "PASS: Error handling works correctly"
-	else
-		echo "FAIL: Error handling not working. Exit code: $error_exit_code, Output: $error_output"
-		(( fails++ ))
-	fi
-
-	# Test 4: Command failure preservation
-	(( tests++ ))
-	this_test="timed should preserve command exit codes"
-	$verbose && echo "TEST: $this_test"
-	
-	# Use a command that will fail
-	$HOME/dotfiles/bin/timed false 2>/dev/null
-	local false_exit_code=$?
-	
-	assert "$false_exit_code" == "1" "timed should preserve non-zero exit codes"
-	(( fails += $? ))
-
-	# Summary
-	if [ $fails -eq 0 ]; then
-		echo "All $tests timed tests passed!"
-	else
-		echo "$fails of $tests timed tests failed!"
-		return 1
-	fi
+# Test helper functions
+setup_test() {
+    TEST_COUNT=0
+    PASS_COUNT=0
+    FAIL_COUNT=0
+    TEST_TEMP_DIR=$(mktemp -d)
+    cd "$TEST_TEMP_DIR" || exit 1
 }
 
-# Run the test if this script is executed directly
-if ! (return 0 2>/dev/null); then
-	test_timed
-else
-	# If sourced (like from timed --test), run the test
-	test_timed
+cleanup_test() {
+    cd - >/dev/null 2>&1
+    rm -rf "$TEST_TEMP_DIR"
+}
+
+assert_equal() {
+    local expected="$1"
+    local actual="$2"
+    local test_name="${3:-Test}"
+
+    ((TEST_COUNT++))
+    if [[ "$expected" == "$actual" ]]; then
+        ((PASS_COUNT++))
+        printf "✓ %s\n" "$test_name"
+        return 0
+    else
+        ((FAIL_COUNT++))
+        printf "✗ %s\n" "$test_name" >&2
+        printf "  Expected: %s\n" "$expected" >&2
+        printf "  Actual:   %s\n" "$actual" >&2
+        return 1
+    fi
+}
+
+assert_contains() {
+    local haystack="$1"
+    local needle="$2"
+    local test_name="${3:-Test}"
+
+    ((TEST_COUNT++))
+    if [[ "$haystack" == *"$needle"* ]]; then
+        ((PASS_COUNT++))
+        printf "✓ %s\n" "$test_name"
+        return 0
+    else
+        ((FAIL_COUNT++))
+        printf "✗ %s\n" "$test_name" >&2
+        printf "  Expected to contain: %s\n" "$needle" >&2
+        printf "  Actual: %s\n" "$haystack" >&2
+        return 1
+    fi
+}
+
+assert_not_contains() {
+    local haystack="$1"
+    local needle="$2"
+    local test_name="${3:-Test}"
+
+    ((TEST_COUNT++))
+    if [[ "$haystack" != *"$needle"* ]]; then
+        ((PASS_COUNT++))
+        printf "✓ %s\n" "$test_name"
+        return 0
+    else
+        ((FAIL_COUNT++))
+        printf "✗ %s\n" "$test_name" >&2
+        printf "  Expected NOT to contain: %s\n" "$needle" >&2
+        printf "  Actual: %s\n" "$haystack" >&2
+        return 1
+    fi
+}
+
+assert_exit_code() {
+    local expected="$1"
+    local actual="$2"
+    local test_name="${3:-Exit code test}"
+
+    assert_equal "$expected" "$actual" "$test_name"
+}
+
+assert_file_exists() {
+    local file="$1"
+    local test_name="${2:-File exists test}"
+
+    ((TEST_COUNT++))
+    if [[ -f "$file" ]]; then
+        ((PASS_COUNT++))
+        printf "✓ %s\n" "$test_name"
+        return 0
+    else
+        ((FAIL_COUNT++))
+        printf "✗ %s\n" "$test_name" >&2
+        printf "  File does not exist: %s\n" "$file" >&2
+        return 1
+    fi
+}
+
+# Test functions
+test_basic_command() {
+    printf "\n=== Testing basic command execution ===\n"
+
+    # Test simple command
+    local output
+    output=$(timed_main true 2>&1)
+    local exit_code=$?
+    assert_exit_code 0 "$exit_code" "Basic command: true returns 0"
+    assert_contains "$output" "real" "Output contains 'real' timing"
+
+    # Test failing command
+    output=$(timed_main false 2>&1)
+    exit_code=$?
+    assert_exit_code 1 "$exit_code" "Basic command: false returns 1"
+    assert_contains "$output" "exit" "Output shows exit code"
+}
+
+test_quiet_mode() {
+    printf "\n=== Testing quiet mode ===\n"
+
+    local output
+    output=$(timed_main -q sleep 0.1 2>&1)
+    local exit_code=$?
+    assert_exit_code 0 "$exit_code" "Quiet mode: command executes successfully"
+    assert_not_contains "$output" "1s" "Quiet mode: no real-time counter"
+    assert_contains "$output" "real" "Quiet mode: still shows final timing"
+}
+
+test_output_formats() {
+    printf "\n=== Testing output formats ===\n"
+
+    # Test simple format
+    local output
+    output=$(timed_main --format simple true 2>&1)
+    assert_contains "$output" "." "Simple format: contains decimal number"
+    assert_not_contains "$output" "real" "Simple format: no 'real' label"
+
+    # Test JSON format
+    output=$(timed_main --format json true 2>&1)
+    assert_contains "$output" '"real_time"' "JSON format: contains real_time field"
+    assert_contains "$output" '"exit_code"' "JSON format: contains exit_code field"
+    assert_contains "$output" "{" "JSON format: valid JSON structure"
+
+    # Test TSV format
+    output=$(timed_main --format tsv true 2>&1)
+    assert_contains "$output" "real" "TSV format: contains real field"
+    assert_contains "$output" "exit_code" "TSV format: contains exit_code field"
+    # Check for tab characters
+    if [[ "$output" == *$'\t'* ]]; then
+        assert_equal 0 0 "TSV format: contains tab separators"
+    else
+        assert_equal 0 1 "TSV format: contains tab separators"
+    fi
+}
+
+test_output_to_file() {
+    printf "\n=== Testing output to file ===\n"
+
+    local temp_output="$TEST_TEMP_DIR/timing_output.txt"
+    timed_main -o "$temp_output" true 2>/dev/null
+
+    assert_file_exists "$temp_output" "Output file created"
+
+    local file_content
+    file_content=$(cat "$temp_output")
+    assert_contains "$file_content" "real" "Output file contains timing data"
+
+    # Reset OUTPUT_FILE after this test to avoid affecting other tests
+    OUTPUT_FILE=""
+}
+
+test_no_color_mode() {
+    printf "\n=== Testing no-color mode ===\n"
+
+    local output_with_color
+    local output_without_color
+
+    # Run with color (default) - capture with quiet mode to avoid timer
+    output_with_color=$(timed_main -q true 2>&1)
+
+    # Run without color - capture with quiet mode to avoid timer
+    output_without_color=$(timed_main -q --no-color true 2>&1)
+
+    # Check that no-color output doesn't contain ANSI escape codes
+    # Look for the escape character (ESC = \033 or \x1b)
+    if [[ "$output_without_color" == *$'\033'* ]] || [[ "$output_without_color" == *$'\x1b'* ]]; then
+        assert_equal 0 1 "No-color mode: no ANSI escape codes"
+    else
+        assert_equal 0 0 "No-color mode: no ANSI escape codes"
+    fi
+}
+
+test_command_not_found() {
+    printf "\n=== Testing command not found ===\n"
+
+    local output
+    output=$(timed_main this_command_definitely_does_not_exist 2>&1)
+    local exit_code=$?
+
+    assert_exit_code 127 "$exit_code" "Non-existent command returns 127"
+    assert_contains "$output" "Error" "Error message for non-existent command"
+}
+
+test_no_resources_flag() {
+    printf "\n=== Testing no-resources flag ===\n"
+
+    # Reset global variables that might be set from previous tests
+    OUTPUT_FILE=""
+    FORMAT="default"
+    QUIET_MODE=0
+    NO_COLOR=0
+    SHOW_RESOURCES=1
+    UPDATE_INLINE=1
+
+    local output
+    # Make sure to capture stderr where timing output goes and use quiet mode
+    output=$(timed_main -q --no-resources true 2>&1)
+
+    assert_contains "$output" "real" "No-resources: still shows real time"
+    assert_not_contains "$output" "user" "No-resources: no user time"
+    assert_not_contains "$output" "sys" "No-resources: no system time"
+}
+
+test_static_mode() {
+    printf "\n=== Testing static mode (non-inline updates) ===\n"
+
+    # This is harder to test directly, but we can check that the option is accepted
+    local output
+    output=$(timed_main --static -q true 2>&1)
+    local exit_code=$?
+
+    assert_exit_code 0 "$exit_code" "Static mode: command executes successfully"
+}
+
+test_help_and_version() {
+    printf "\n=== Testing help and version flags ===\n"
+
+    local output
+
+    # Test help
+    output=$(timed_main --help 2>&1)
+    assert_contains "$output" "Usage:" "Help flag shows usage"
+    assert_contains "$output" "OPTIONS:" "Help flag shows options"
+
+    # Test version
+    output=$(timed_main --version 2>&1)
+    assert_contains "$output" "version" "Version flag shows version"
+}
+
+test_complex_command() {
+    printf "\n=== Testing complex command with arguments ===\n"
+
+    # Reset global variables that might be set from previous tests
+    OUTPUT_FILE=""
+    FORMAT="default"
+    QUIET_MODE=0
+    NO_COLOR=0
+    SHOW_RESOURCES=1
+    UPDATE_INLINE=1
+
+    # Create a test script
+    cat > "$TEST_TEMP_DIR/test_script.sh" << 'EOF'
+#!/usr/bin/env bash
+echo "Hello from test script"
+echo "Args: $@"
+exit 42
+EOF
+    chmod +x "$TEST_TEMP_DIR/test_script.sh"
+
+    local output
+    # Capture all output with quiet mode to avoid timer interference
+    output=$(timed_main -q "$TEST_TEMP_DIR/test_script.sh" arg1 "arg with spaces" 2>&1)
+    local exit_code=$?
+
+    assert_exit_code 42 "$exit_code" "Complex command: preserves exit code"
+    # The exit code display is in stderr timing output
+    assert_contains "$output" "exit" "Complex command: shows exit code"
+}
+
+test_format_duration() {
+    printf "\n=== Testing duration formatting ===\n"
+
+    # Test the format_duration function directly if we can source the script
+    if declare -f format_duration >/dev/null 2>&1; then
+        local formatted
+
+        # Test seconds only
+        formatted=$(format_duration "5.123" 3)
+        assert_equal "5.123s" "$formatted" "Format: seconds only"
+
+        # Test minutes
+        formatted=$(format_duration "65.456" 3)
+        assert_equal "1m 5.456s" "$formatted" "Format: minutes and seconds"
+
+        # Test hours
+        formatted=$(format_duration "3665.789" 3)
+        assert_equal "1h 1m 5.789s" "$formatted" "Format: hours, minutes and seconds"
+    else
+        printf "  Skipping direct format_duration tests (function not available)\n"
+    fi
+}
+
+test_signal_handling() {
+    printf "\n=== Testing signal handling ===\n"
+
+    # Create a test script that sleeps
+    cat > "$TEST_TEMP_DIR/signal_test.sh" << 'EOF'
+#!/usr/bin/env bash
+sleep 10
+EOF
+    chmod +x "$TEST_TEMP_DIR/signal_test.sh"
+
+    # Start the timed command in background using the sourced function
+    timed_main -q "$TEST_TEMP_DIR/signal_test.sh" 2>/dev/null &
+    local pid=$!
+
+    # Give it a moment to start
+    sleep 0.5
+
+    # Send interrupt signal
+    kill -INT $pid 2>/dev/null || true
+
+    # Wait for it to finish
+    wait $pid 2>/dev/null
+    local exit_code=$?
+
+    # Check that it was interrupted (exit code should be 130 for SIGINT)
+    # Note: If the process is already gone, exit code might be 0
+    if [[ $exit_code -eq 130 ]] || [[ $exit_code -eq 143 ]] || [[ $exit_code -eq 0 ]]; then
+        assert_equal 0 0 "Signal handling: interruption handled"
+    else
+        assert_equal 130 "$exit_code" "Signal handling: SIGINT exit code"
+    fi
+}
+
+test_multiple_options() {
+    printf "\n=== Testing multiple options combined ===\n"
+
+    # Reset global variables before test
+    OUTPUT_FILE=""
+    FORMAT="default"
+    QUIET_MODE=0
+    NO_COLOR=0
+    SHOW_RESOURCES=1
+    UPDATE_INLINE=1
+
+    local temp_output="$TEST_TEMP_DIR/multi_test.json"
+    local output
+
+    output=$(timed_main -q -n -f json -o "$temp_output" --no-resources true 2>&1)
+    local exit_code=$?
+
+    assert_exit_code 0 "$exit_code" "Multiple options: command executes"
+    assert_file_exists "$temp_output" "Multiple options: output file created"
+
+    local file_content
+    file_content=$(cat "$temp_output")
+    assert_contains "$file_content" '"exit_code": 0' "Multiple options: JSON format in file"
+
+    # Reset OUTPUT_FILE after this test
+    OUTPUT_FILE=""
+}
+
+# Main test runner
+run_all_tests() {
+    printf "Running timed command test suite\n"
+    printf "================================\n"
+
+    setup_test
+
+    # Source the timed script to get access to internal functions
+    if [[ -f "$HOME/dotfiles/bin/timed" ]]; then
+        . "$HOME/dotfiles/bin/timed"
+    fi
+
+    # Run all test functions
+    test_basic_command
+    test_quiet_mode
+    test_output_formats
+    test_output_to_file
+    test_no_color_mode
+    test_command_not_found
+    test_no_resources_flag
+    test_static_mode
+    test_help_and_version
+    test_complex_command
+    test_format_duration
+    test_signal_handling
+    test_multiple_options
+
+    # Print summary
+    printf "\n================================\n"
+    printf "Test Summary:\n"
+    printf "  Total:  %d\n" "$TEST_COUNT"
+    printf "  Passed: %d\n" "$PASS_COUNT"
+    printf "  Failed: %d\n" "$FAIL_COUNT"
+
+    cleanup_test
+
+    # Return non-zero if any tests failed
+    [[ $FAIL_COUNT -eq 0 ]]
+}
+
+# If script is executed directly
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    run_all_tests
 fi

@@ -1,75 +1,540 @@
 #!/usr/bin/env bash
 
-# A timing function that shows elapsed seconds in real-time
-timed() {
-	if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
-		cat << EOF
-Usage: timed COMMAND [ARGS...]
+# timed - Enhanced timing utility with real-time progress display
+# Version: 2.0.0
 
-Like 'time' but shows elapsed seconds in real-time to stderr while the command runs.
+set -o pipefail
 
-Examples:
-  timed sleep 5
-  timed ./clip --test
-  timed make build
-EOF
-		return 0
-	fi
+# Global variables
+SCRIPT_NAME=$(basename "${0##\-}")
+VERSION="2.0.0"
+TIMER_PID=""
+START_TIME=""
+END_TIME=""
+EXIT_CODE=0
+QUIET_MODE=0
+NO_COLOR=0
+OUTPUT_FILE=""
+FORMAT="default"
+SHOW_RESOURCES=1
+UPDATE_INLINE=1
+UPDATE_INTERVAL="0.1"  # Default to 10Hz (100ms) updates
 
-	if [ $# -eq 0 ]; then
-		echo "Error: No command specified" >&2
-		echo "Usage: timed COMMAND [ARGS...]" >&2
-		return 1
-	fi
+# Color codes (will be disabled if NO_COLOR=1)
+COLOR_GRAY=""
+COLOR_GREEN=""
+COLOR_RED=""
+COLOR_YELLOW=""
+COLOR_RESET=""
 
-	# Start the timer process in background
-	{
-		local seconds=0
-		while true; do
-			sleep 1
-			((seconds++))
-			echo -e "\033[90m${seconds}s\033[0m" >&2
-		done
-	} &
-	local timer_pid=$!
-
-	# Trap to ensure timer is killed if interrupted
-	trap "kill $timer_pid 2>/dev/null; exit 130" INT TERM
-
-	# Run the actual command and capture its exit code
-	local start_time=$(date +%s.%N)
-	"$@"
-	local exit_code=$?
-	local end_time=$(date +%s.%N)
-
-	# Kill the timer
-	kill $timer_pid 2>/dev/null
-	wait $timer_pid 2>/dev/null
-
-	# Calculate and display final timing (like 'time' command)
-	local duration=$(echo "$end_time - $start_time" | bc -l 2>/dev/null || echo "0")
-	if command -v bc >/dev/null 2>&1; then
-		printf "\nreal\t%.3fs\n" "$duration" >&2
-	else
-		# Fallback if bc is not available
-		local int_duration=$((${end_time%.*} - ${start_time%.*}))
-		printf "\nreal\t%ds\n" "$int_duration" >&2
-	fi
-
-	# Clean up trap
-	trap - INT TERM
-
-	return $exit_code
+# Check for color support
+setup_colors() {
+		if [[ $NO_COLOR -eq 1 ]] || [[ ! -t 2 ]] || [[ "${TERM:-}" == "dumb" ]]; then
+				COLOR_GRAY=""
+				COLOR_GREEN=""
+				COLOR_RED=""
+				COLOR_YELLOW=""
+				COLOR_RESET=""
+		else
+				# Use printf to generate actual escape sequences
+				COLOR_GRAY=$(printf '\033[90m')
+				COLOR_GREEN=$(printf '\033[32m')
+				COLOR_RED=$(printf '\033[31m')
+				COLOR_YELLOW=$(printf '\033[33m')
+				COLOR_RESET=$(printf '\033[0m')
+		fi
 }
 
-# Run the function if this script is executed directly
+# Show usage information
+show_usage() {
+		cat << EOF
+Usage: $SCRIPT_NAME [OPTIONS] COMMAND [ARGS...]
+
+Enhanced timing utility that shows elapsed time in real-time while a command runs.
+
+OPTIONS:
+		-h, --help          Show this help message
+		-v, --version       Show version information
+		-q, --quiet         Suppress real-time counter
+		-n, --no-color      Disable colored output
+		-f, --format FORMAT Set output format (default, simple, json, tsv)
+		-o, --output FILE   Save timing results to file
+		-r, --no-resources  Don't show resource usage statistics
+		-s, --static        Show timer updates on new lines (don't update inline)
+		-i, --interval SEC  Update interval in seconds (default: 0.1, min: 0.01)
+
+FORMATS:
+		default    Traditional time-like output with resource usage
+		simple     Just the elapsed time in seconds
+		json       JSON formatted output
+		tsv        Tab-separated values
+
+EXAMPLES:
+		$SCRIPT_NAME sleep 5
+		$SCRIPT_NAME -q make build
+		$SCRIPT_NAME --format json ./my-script.sh
+		$SCRIPT_NAME -o timing.log python train.py
+
+EXIT STATUS:
+		Returns the exit status of the executed command
+EOF
+}
+
+# Show version information
+show_version() {
+		printf "%s version %s\n" "$SCRIPT_NAME" "$VERSION"
+}
+
+# Format duration from seconds to human-readable format
+format_duration() {
+		local total_seconds=$1
+		local precision=${2:-3}
+
+		# Extract integer and fractional parts
+		local int_seconds=${total_seconds%.*}
+		local frac_seconds=${total_seconds#*.}
+
+		# Handle case where there's no decimal point
+		if [[ "$total_seconds" == "$int_seconds" ]]; then
+				frac_seconds="000"
+		else
+				# Pad or truncate fractional part to desired precision
+				frac_seconds=$(printf "%-${precision}s" "${frac_seconds:0:$precision}" | tr ' ' '0')
+		fi
+
+		local hours=$((int_seconds / 3600))
+		local minutes=$(((int_seconds % 3600) / 60))
+		local seconds=$((int_seconds % 60))
+
+		if [[ $hours -gt 0 ]]; then
+				if [[ $precision -eq 0 ]]; then
+						printf "%dh %dm %ds" "$hours" "$minutes" "$seconds"
+				else
+						printf "%dh %dm %d.%${precision}ss" "$hours" "$minutes" "$seconds" "$frac_seconds"
+				fi
+		elif [[ $minutes -gt 0 ]]; then
+				if [[ $precision -eq 0 ]]; then
+						printf "%dm %ds" "$minutes" "$seconds"
+				else
+						printf "%dm %d.%${precision}ss" "$minutes" "$seconds" "$frac_seconds"
+				fi
+		else
+				if [[ $precision -eq 0 ]]; then
+						printf "%ds" "$seconds"
+				else
+						printf "%d.%${precision}ss" "$seconds" "$frac_seconds"
+				fi
+		fi
+}
+
+# Get current time with nanosecond precision (cross-platform)
+get_time_ns() {
+		# Try GNU date first (Linux and GNU coreutils on Mac)
+		if date +%s.%N 2>/dev/null | grep -q 'N'; then
+				# BSD date doesn't support %N, will output literal 'N'
+				# Use perl as fallback for better precision on BSD/Mac
+				perl -MTime::HiRes=time -e 'printf "%.9f\n", time' 2>/dev/null || \
+				python3 -c 'import time; print(f"{time.time():.9f}")' 2>/dev/null || \
+				python -c 'import time; print("%.9f" % time.time())' 2>/dev/null || \
+				date +%s
+		else
+				date +%s.%N
+		fi
+}
+
+# Calculate time difference in seconds
+calculate_duration() {
+		local start=$1
+		local end=$2
+
+		# Use awk for floating point arithmetic (more portable than bc)
+		echo "$start $end" | awk '{printf "%.9f", $2 - $1}'
+}
+
+# Run timer in background
+run_timer() {
+		local start_epoch=$1
+		local last_output=""
+
+		# Get NO_COLOR value from parent context
+		local no_color_local=$NO_COLOR
+		local interval=$UPDATE_INTERVAL
+
+		while true; do
+				sleep "$interval"
+
+				# Calculate actual elapsed time
+				local current_time=$(get_time_ns)
+				local elapsed=$(calculate_duration "$start_epoch" "$current_time")
+
+				# Format with appropriate precision based on update interval
+				local precision=1
+				if (( $(echo "$interval >= 1" | awk '{print ($1 >= 1)}') )); then
+						precision=0  # No decimals for 1s+ intervals
+				elif (( $(echo "$interval >= 0.1" | awk '{print ($1 >= 0.1)}') )); then
+						precision=1  # 1 decimal for 100ms+ intervals
+				else
+						precision=2  # 2 decimals for <100ms intervals
+				fi
+
+				local formatted=$(format_duration "$elapsed" "$precision")
+
+				if [[ $UPDATE_INLINE -eq 1 ]]; then
+						# Clear previous output and print new time on same line
+						if [[ -n "$last_output" ]]; then
+								if [[ $no_color_local -eq 0 ]]; then
+										printf "\r\033[K" >&2
+								else
+										# Without ANSI codes, overwrite with spaces
+										printf "\r%-${#last_output}s\r" " " >&2
+								fi
+						fi
+						printf "%s%s%s" "$COLOR_GRAY" "$formatted" "$COLOR_RESET" >&2
+						last_output="$formatted"
+				else
+						# Print on new lines
+						printf "%s%s%s\n" "$COLOR_GRAY" "$formatted" "$COLOR_RESET" >&2
+				fi
+		done
+}
+
+# Get resource usage (cross-platform)
+get_resource_usage() {
+		local cmd_pid=$1
+		local resources=""
+
+		# Try to get resource information based on platform
+		if command -v gtime >/dev/null 2>&1; then
+				# GNU time is available (might be installed as gtime on Mac)
+				resources=$(gtime -f "user:%U sys:%S maxrss:%M" echo 2>&1 | tail -1)
+		elif command -v time >/dev/null 2>&1 && time -f "" echo 2>/dev/null; then
+				# GNU time is available as 'time'
+				resources=$(time -f "user:%U sys:%S maxrss:%M" echo 2>&1 | tail -1)
+		elif [[ -r /proc/$cmd_pid/status ]] 2>/dev/null; then
+				# Linux /proc filesystem
+				local peak_rss=$(grep VmHWM /proc/$cmd_pid/status 2>/dev/null | awk '{print $2}')
+				resources="maxrss:${peak_rss:-0}"
+		fi
+
+		echo "$resources"
+}
+
+# Cleanup function
+cleanup() {
+		local signal=${1:-}
+
+		# Kill timer if running
+		if [[ -n "$TIMER_PID" ]] && kill -0 "$TIMER_PID" 2>/dev/null; then
+				kill "$TIMER_PID" 2>/dev/null
+				wait "$TIMER_PID" 2>/dev/null
+		fi
+
+		# Clear the timer line if we were updating inline
+		if [[ $QUIET_MODE -eq 0 ]] && [[ $UPDATE_INLINE -eq 1 ]] && [[ $NO_COLOR -eq 0 ]]; then
+				printf "\r\033[K" >&2
+		elif [[ $QUIET_MODE -eq 0 ]] && [[ $UPDATE_INLINE -eq 1 ]]; then
+				# Without ANSI codes, just use carriage return
+				printf "\r" >&2
+		fi
+
+		# If interrupted by signal, exit with appropriate code
+		if [[ -n "$signal" ]]; then
+				# Re-raise the signal to preserve proper exit behavior
+				trap - "$signal"
+				# Exit with standard signal exit codes (128 + signal number)
+				if [[ "$signal" == "INT" ]]; then
+						exit 130  # 128 + 2 (SIGINT)
+				elif [[ "$signal" == "TERM" ]]; then
+						exit 143  # 128 + 15 (SIGTERM)
+				elif [[ "$signal" == "HUP" ]]; then
+						exit 129  # 128 + 1 (SIGHUP)
+				else
+						kill "-$signal" $$
+				fi
+		fi
+}
+
+# Format output based on selected format
+format_output() {
+		local duration=$1
+		local exit_code=$2
+		local resources=${3:-}
+		local formatted_duration=$(format_duration "$duration")
+
+		case "$FORMAT" in
+				simple)
+						printf "%.3f\n" "$duration"
+						;;
+				json)
+						printf '{"real_time": %.3f, "formatted": "%s", "exit_code": %d' \
+									 "$duration" "$formatted_duration" "$exit_code"
+						if [[ -n "$resources" ]] && [[ $SHOW_RESOURCES -eq 1 ]]; then
+								# Parse resource string
+								local user_time=$(echo "$resources" | grep -o 'user:[0-9.]*' | cut -d: -f2)
+								local sys_time=$(echo "$resources" | grep -o 'sys:[0-9.]*' | cut -d: -f2)
+								local max_rss=$(echo "$resources" | grep -o 'maxrss:[0-9]*' | cut -d: -f2)
+
+								[[ -n "$user_time" ]] && printf ', "user_time": %s' "$user_time"
+								[[ -n "$sys_time" ]] && printf ', "sys_time": %s' "$sys_time"
+								[[ -n "$max_rss" ]] && printf ', "max_rss_kb": %s' "$max_rss"
+						fi
+						printf '}\n'
+						;;
+				tsv)
+						printf "real\t%.3f\t%s\texit_code\t%d" "$duration" "$formatted_duration" "$exit_code"
+						if [[ -n "$resources" ]] && [[ $SHOW_RESOURCES -eq 1 ]]; then
+								printf "\t%s" "$resources"
+						fi
+						printf "\n"
+						;;
+				default|*)
+						# Color code based on exit status
+						local status_color=""
+						if [[ $exit_code -eq 0 ]]; then
+								status_color="$COLOR_GREEN"
+						else
+								status_color="$COLOR_RED"
+						fi
+
+						printf "\n"
+						printf "%s%s%s\t%s\n" "$COLOR_YELLOW" "real" "$COLOR_RESET" "$formatted_duration"
+
+						if [[ -n "$resources" ]] && [[ $SHOW_RESOURCES -eq 1 ]]; then
+								local user_time=$(echo "$resources" | grep -o 'user:[0-9.]*' | cut -d: -f2)
+								local sys_time=$(echo "$resources" | grep -o 'sys:[0-9.]*' | cut -d: -f2)
+								local max_rss=$(echo "$resources" | grep -o 'maxrss:[0-9]*' | cut -d: -f2)
+
+								[[ -n "$user_time" ]] && printf "%s%s%s\t%ss\n" "$COLOR_YELLOW" "user" "$COLOR_RESET" "$user_time"
+								[[ -n "$sys_time" ]] && printf "%s%s%s\t%ss\n" "$COLOR_YELLOW" "sys" "$COLOR_RESET" "$sys_time"
+								[[ -n "$max_rss" ]] && printf "%s%s%s\t%s KB\n" "$COLOR_YELLOW" "mem" "$COLOR_RESET" "$max_rss"
+						fi
+
+						printf "%s%s%s\t%s%d%s\n" "$COLOR_YELLOW" "exit" "$COLOR_RESET" "$status_color" "$exit_code" "$COLOR_RESET"
+						;;
+		esac
+}
+
+# Main timing function
+timed_main() {
+		# Parse command line options
+		while [[ $# -gt 0 ]]; do
+				case "$1" in
+						-h|--help)
+								show_usage
+								return 0
+								;;
+						-v|--version)
+								show_version
+								return 0
+								;;
+						-q|--quiet)
+								QUIET_MODE=1
+								shift
+								;;
+						-n|--no-color)
+								NO_COLOR=1
+								shift
+								;;
+						-f|--format)
+								if [[ -z "${2:-}" ]]; then
+										printf "Error: --format requires an argument\n" >&2
+										return 1
+								fi
+								FORMAT="$2"
+								shift 2
+								;;
+						-o|--output)
+								if [[ -z "${2:-}" ]]; then
+										printf "Error: --output requires an argument\n" >&2
+										return 1
+								fi
+								OUTPUT_FILE="$2"
+								shift 2
+								;;
+						-r|--no-resources)
+								SHOW_RESOURCES=0
+								shift
+								;;
+						-s|--static)
+								UPDATE_INLINE=0
+								shift
+								;;
+						-i|--interval)
+								if [[ -z "${2:-}" ]]; then
+										printf "Error: --interval requires an argument\n" >&2
+										return 1
+								fi
+								# Validate interval is a number and >= 0.01
+								if ! echo "$2" | grep -qE '^[0-9]+(\.[0-9]+)?$' || \
+									 (( $(echo "$2 < 0.01" | awk '{print ($1 < 0.01)}') )); then
+										printf "Error: --interval must be a number >= 0.01\n" >&2
+										return 1
+								fi
+								UPDATE_INTERVAL="$2"
+								shift 2
+								;;
+						--)
+								shift
+								break
+								;;
+						-*)
+								printf "Error: Unknown option: %s\n" "$1" >&2
+								printf "Try '%s --help' for more information.\n" "$SCRIPT_NAME" >&2
+								return 1
+								;;
+						*)
+								break
+								;;
+				esac
+		done
+
+		# Check if command was provided
+		if [[ $# -eq 0 ]]; then
+				printf "Error: No command specified\n" >&2
+				printf "Usage: %s [OPTIONS] COMMAND [ARGS...]\n" >&2 "$SCRIPT_NAME"
+				printf "Try '%s --help' for more information.\n" "$SCRIPT_NAME" >&2
+				return 1
+		fi
+
+		# Check if command exists and is executable
+		local cmd="$1"
+		if ! command -v "$cmd" >/dev/null 2>&1; then
+				if [[ ! -x "$cmd" ]]; then
+						printf "Error: Command not found or not executable: %s\n" "$cmd" >&2
+						return 127
+				fi
+		fi
+
+		# Setup colors based on terminal capabilities
+		setup_colors
+
+		# Set up signal handlers
+		trap 'cleanup INT' INT
+		trap 'cleanup TERM' TERM
+		trap 'cleanup HUP' HUP
+		trap 'cleanup' EXIT
+
+		# Start timing
+		START_TIME=$(get_time_ns)
+
+		# Start background timer if not in quiet mode
+		if [[ $QUIET_MODE -eq 0 ]]; then
+				# Export UPDATE_INTERVAL so the background process can see it
+				export UPDATE_INTERVAL
+				run_timer "$START_TIME" &
+				TIMER_PID=$!
+		fi
+
+		# Execute the command with resource tracking if available
+		local resource_output=""
+		local resource_tempfile=""
+		local gnu_time_cmd=""
+
+		if [[ $SHOW_RESOURCES -eq 1 ]]; then
+				# Check for GNU time command (avoid shell builtin)
+				if command -v gtime >/dev/null 2>&1; then
+						# gtime is typically GNU time on macOS when installed via homebrew
+						gnu_time_cmd="gtime"
+				elif [[ -x /usr/bin/time ]] && /usr/bin/time -f "" true 2>/dev/null; then
+						# System time command is GNU time
+						gnu_time_cmd="/usr/bin/time"
+				elif command -v gawk >/dev/null 2>&1 && env time -f "" true 2>/dev/null; then
+						# Can use env to bypass shell builtin if GNU time is available
+						gnu_time_cmd="env time"
+				fi
+
+				if [[ -n "$gnu_time_cmd" ]]; then
+						# Use GNU time with custom format
+						resource_tempfile=$(mktemp)
+						$gnu_time_cmd -f "user:%U sys:%S maxrss:%M" -o "$resource_tempfile" "$@" 2>&1
+						EXIT_CODE=$?
+						resource_output=$(cat "$resource_tempfile" 2>/dev/null)
+						rm -f "$resource_tempfile"
+				else
+						# Run without resource tracking (BSD time output is too messy to parse reliably)
+						"$@"
+						EXIT_CODE=$?
+				fi
+		else
+				# Run without resource tracking
+				"$@"
+				EXIT_CODE=$?
+		fi
+
+		# Stop timing
+		END_TIME=$(get_time_ns)
+
+		# Kill the timer process
+		if [[ -n "$TIMER_PID" ]]; then
+				kill "$TIMER_PID" 2>/dev/null
+				wait "$TIMER_PID" 2>/dev/null
+				TIMER_PID=""
+		fi
+
+		# Calculate duration
+		local duration=$(calculate_duration "$START_TIME" "$END_TIME")
+
+		# Clear timer line if we were showing it inline
+		if [[ $QUIET_MODE -eq 0 ]] && [[ $UPDATE_INLINE -eq 1 ]]; then
+				if [[ $NO_COLOR -eq 0 ]]; then
+						printf "\r\033[K" >&2
+				else
+						# Clear without ANSI codes
+						printf "\r" >&2
+				fi
+		fi
+
+		# Format and display output
+		local output=$(format_output "$duration" "$EXIT_CODE" "$resource_output")
+
+		if [[ -n "$OUTPUT_FILE" ]]; then
+				# Save to file (remove color codes if present)
+				if [[ $NO_COLOR -eq 1 ]] || [[ -n "$OUTPUT_FILE" ]]; then
+						# Strip ANSI codes when saving to file
+						local clean_output=$(printf "%s" "$output" | sed 's/\x1b\[[0-9;]*m//g')
+						printf "%s\n" "$clean_output" > "$OUTPUT_FILE"
+				else
+						printf "%s\n" "$output" > "$OUTPUT_FILE"
+				fi
+				if [[ $? -eq 0 ]]; then
+						printf "Timing results saved to: %s\n" "$OUTPUT_FILE" >&2
+				else
+						printf "Error: Failed to save results to: %s\n" "$OUTPUT_FILE" >&2
+				fi
+		else
+				# Display to stderr
+				printf "%s" "$output" >&2
+		fi
+
+		return $EXIT_CODE
+}
+
+# Test runner
+run_tests() {
+		local test_file="$HOME/dotfiles/bin/test/${SCRIPT_NAME}_test"
+
+		if [[ ! -f "$test_file" ]]; then
+				printf "Error: Test file not found: %s\n" "$test_file" >&2
+				return 1
+		fi
+
+		# Source and run tests
+		. "$test_file"
+
+		if declare -f run_all_tests >/dev/null 2>&1; then
+				run_all_tests
+		else
+				printf "Error: No run_all_tests function found in test file\n" >&2
+				return 1
+		fi
+}
+
+# Entry point
 if ! (return 0 2>/dev/null); then
-	# Check if we are running tests
-	if [ "$1" = "--test" ]; then
-		# Run tests from the test file
-		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
-	else
-		# If called directly, pass all arguments to the function
-		$(basename "${0##\-}") "$@"
-	fi
+		# Script is being executed directly (not sourced)
+		if [[ "${1:-}" == "--test" ]]; then
+				run_tests
+		else
+				timed_main "$@"
+		fi
 fi
