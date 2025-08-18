@@ -1,0 +1,156 @@
+#!/usr/bin/env bash
+
+# Test the nrandom function for normal distribution
+test_nrandom() {
+	local fails=0
+	local tests=0
+	local sample_size=1000
+	local range_start=0
+	local range_end=100
+	local expected_mean=50
+	local expected_stddev=$(echo "scale=2; (100 - 0) / 6" | bc -l)  # range/6 as used in nrandom
+	
+	echo "Generating $sample_size samples..." >&2
+	
+	# Generate samples and calculate statistics in one pass using awk
+	local stats=$(for ((i=0; i<sample_size; i++)); do 
+		nrandom $range_start $range_end
+	done | awk -v expected_mean="$expected_mean" -v expected_stddev="$expected_stddev" '
+	{
+		samples[NR] = $1
+		sum += $1
+		if (NR == 1 || $1 < min) min = $1
+		if (NR == 1 || $1 > max) max = $1
+	}
+	END {
+		# Calculate mean
+		mean = sum / NR
+		
+		# Calculate standard deviation
+		for (i = 1; i <= NR; i++) {
+			variance_sum += (samples[i] - mean) * (samples[i] - mean)
+		}
+		stddev = sqrt(variance_sum / (NR - 1))
+		
+		# Count samples within standard deviations
+		within_1sd = 0
+		within_2sd = 0
+		within_3sd = 0
+		outside_bounds = 0
+		theoretical_min = expected_mean - 3 * expected_stddev
+		theoretical_max = expected_mean + 3 * expected_stddev
+		
+		for (i = 1; i <= NR; i++) {
+			z_score = (samples[i] - mean) / stddev
+			abs_z = (z_score < 0) ? -z_score : z_score
+			
+			if (abs_z <= 1) within_1sd++
+			if (abs_z <= 2) within_2sd++
+			if (abs_z <= 3) within_3sd++
+			
+			if (samples[i] < theoretical_min || samples[i] > theoretical_max) {
+				outside_bounds++
+			}
+		}
+		
+		pct_1sd = within_1sd * 100 / NR
+		pct_2sd = within_2sd * 100 / NR
+		pct_3sd = within_3sd * 100 / NR
+		pct_outside = outside_bounds * 100 / NR
+		
+		printf "ACTUAL_MEAN=%.2f\n", mean
+		printf "ACTUAL_STDDEV=%.2f\n", stddev
+		printf "MIN=%.0f\n", min
+		printf "MAX=%.0f\n", max
+		printf "PCT_1SD=%.1f\n", pct_1sd
+		printf "PCT_2SD=%.1f\n", pct_2sd
+		printf "PCT_3SD=%.1f\n", pct_3sd
+		printf "PCT_OUTSIDE=%.1f\n", pct_outside
+	}')
+	
+	# Parse the results
+	eval "$stats"
+	
+	echo "Statistical Analysis:" >&2
+	echo "  Sample size: $sample_size" >&2
+	echo "  Range: [$MIN, $MAX]" >&2
+	echo "  Expected mean: $expected_mean" >&2
+	echo "  Actual mean: $ACTUAL_MEAN" >&2
+	echo "  Expected stddev: $expected_stddev" >&2
+	echo "  Actual stddev: $ACTUAL_STDDEV" >&2
+	
+	# Test 1: Mean should be close to expected (within 3% of range)
+	(( tests++ ))
+	local mean_diff=$(echo "scale=2; if ($ACTUAL_MEAN - $expected_mean < 0) $expected_mean - $ACTUAL_MEAN else $ACTUAL_MEAN - $expected_mean" | bc -l)
+	if (( $(echo "$mean_diff <= 3.0" | bc -l) )); then
+		echo "✓ Mean test passed (diff: $mean_diff <= 3.0)" >&2
+	else
+		echo "✗ Mean test failed: difference $mean_diff > 3.0" >&2
+		(( fails++ ))
+	fi
+	
+	# Test 2: Standard deviation should be close to expected (within 30%)
+	(( tests++ ))
+	local stddev_tolerance=$(echo "scale=2; $expected_stddev * 0.30" | bc -l)
+	local stddev_diff=$(echo "scale=2; if ($ACTUAL_STDDEV - $expected_stddev < 0) $expected_stddev - $ACTUAL_STDDEV else $ACTUAL_STDDEV - $expected_stddev" | bc -l)
+	if (( $(echo "$stddev_diff <= $stddev_tolerance" | bc -l) )); then
+		echo "✓ Standard deviation test passed (diff: $stddev_diff <= $stddev_tolerance)" >&2
+	else
+		echo "✗ Standard deviation test failed: difference $stddev_diff > $stddev_tolerance" >&2
+		(( fails++ ))
+	fi
+	
+	# Test 3: 68-95-99.7 rule
+	(( tests++ ))
+	echo "  Within 1σ: $PCT_1SD% (expected ~68%)" >&2
+	echo "  Within 2σ: $PCT_2SD% (expected ~95%)" >&2
+	echo "  Within 3σ: $PCT_3SD% (expected ~99.7%)" >&2
+	
+	local normal_distribution=true
+	if (( $(echo "$PCT_1SD < 55 || $PCT_1SD > 80" | bc -l) )); then
+		echo "✗ 68-95-99.7 rule failed for 1σ: $PCT_1SD% not in [55%, 80%]" >&2
+		normal_distribution=false
+	fi
+	if (( $(echo "$PCT_2SD < 85 || $PCT_2SD > 99" | bc -l) )); then
+		echo "✗ 68-95-99.7 rule failed for 2σ: $PCT_2SD% not in [85%, 99%]" >&2
+		normal_distribution=false
+	fi
+	if (( $(echo "$PCT_3SD < 98" | bc -l) )); then
+		echo "✗ 68-95-99.7 rule failed for 3σ: $PCT_3SD% < 98%" >&2
+		normal_distribution=false
+	fi
+	
+	if $normal_distribution; then
+		echo "✓ 68-95-99.7 rule test passed" >&2
+	else
+		(( fails++ ))
+	fi
+	
+	# Test 4: Range bounds test
+	(( tests++ ))
+	echo "  Outside 3σ theoretical bounds: $PCT_OUTSIDE% (should be < 2%)" >&2
+	
+	if (( $(echo "$PCT_OUTSIDE < 2.0" | bc -l) )); then
+		echo "✓ Bounds test passed" >&2
+	else
+		echo "✗ Bounds test failed: $PCT_OUTSIDE% outside bounds (should be < 2%)" >&2
+		(( fails++ ))
+	fi
+	
+	if [ $fails -gt 0 ]; then
+		echo "" >&2
+		echo "nrandom statistical test FAILED: $fails of $tests tests failed" >&2
+		echo "The nrandom function does not appear to generate a proper normal distribution." >&2
+		return 1
+	else
+		echo "" >&2
+		echo "nrandom statistical test PASSED: All $tests tests passed" >&2
+		return 0
+	fi
+}
+
+# Run the test if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	test_nrandom
+	exit $?
+fi

@@ -170,6 +170,20 @@ export OLLAMA_DEFAULT_MODEL=${OLLAMA_DEFAULT_MODEL:-granite3.3:latest}
 # (# of schedulers is automatic to # of CPU logical cores, but can be forced with +S arg)
 export ERL_FLAGS="+P 2000000";
 
+# Set up a few character set globals in ENV for the password generator functions
+export CHARSET_LOWER="$(echo -n {a..z} | tr -d ' ')"
+export CHARSET_UPPER="$(echo -n {A..Z} | tr -d ' ')"
+export CHARSET_NUM="$(echo -n {0..9} | tr -d ' ')"
+export CHARSET_ALPHA="$CHARSET_LOWER$CHARSET_UPPER"
+export CHARSET_ALNUM="$CHARSET_ALPHA$CHARSET_NUM"
+# delete glyphs that can be confused with other characters
+# zero and one are the preferred glyphs to capital O, lowercase l and capital I
+export CHARSET_ALNUM_SANE="$(printf "%s" "$CHARSET_ALNUM" | tr -d 'OlI')"
+# export CHARSET_PUNC='!@#$%^&*-_=+[]{}|;:,.<>/?~'
+# I shortened the possible punctuation chars above due to incompatibility with various sites
+export CHARSET_PUNC='!@#$%^&*'
+export CHARSET_HEX="${CHARSET_NUM}abcdef"
+
 # take any $HOME/.secrets and export them
 # Use set -a to automatically export all variables that are subsequently set
 if [ -f "$HOME/.secrets" ]; then

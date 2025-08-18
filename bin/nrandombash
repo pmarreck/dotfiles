@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+
+nrandom() {
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+		echo "Usage: nrandom <start> <end>"
+		echo "This function is defined in $BASH_SOURCE"
+		echo "Outputs a normally-distributed random number between <start> and <end>"
+		echo "If <start> is not specified, it defaults to 0"
+		echo "If <end> is not specified, it defaults to 100"
+		return 0
+	fi
+	start=${1:-0}
+	end=${2:-100}
+	if [[ $# -eq 0 ]]; then
+		note "(with a start of $start and an end of $end)"
+	fi
+	range=$(echo "$end - $start" | bc -l)
+
+	awk -v start=$start -v range=$range -v seed=$RANDOM '
+	BEGIN {
+			srand(seed);
+			u1 = rand();
+			u2 = rand();
+			z0 = sqrt(-2 * log(u1)) * cos(2 * 3.14159265358979323846 * u2);
+			# z1 = sqrt(-2 * log(u1)) * sin(2 * 3.14159265358979323846 * u2);
+
+			random_number = start + (z0 * (range / 6)) + (range / 2);
+			# random_number2 = start + (z1 * (range / 6)) + (range / 2);
+			printf("%.0f\n", random_number);
+	}'
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

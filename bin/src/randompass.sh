@@ -92,21 +92,6 @@ nrandom() {
 # First argument is password length
 # Can override the default character set by passing in PWCHARSET=<charset> as env
 
-# Set up a few character set globals in ENV
-
-export CHARSET_LOWER="$(echo -n {a..z} | tr -d ' ')"
-export CHARSET_UPPER="$(echo -n {A..Z} | tr -d ' ')"
-export CHARSET_NUM="$(echo -n {0..9} | tr -d ' ')"
-export CHARSET_ALPHA="$CHARSET_LOWER$CHARSET_UPPER"
-export CHARSET_ALNUM="$CHARSET_ALPHA$CHARSET_NUM"
-# delete glyphs that can be confused with other characters
-# zero and one are the preferred glyphs to capital O, lowercase l and capital I
-export CHARSET_ALNUM_SANE="$(printf "%s" "$CHARSET_ALNUM" | tr -d 'OlI')"
-# export CHARSET_PUNC='!@#$%^&*-_=+[]{}|;:,.<>/?~'
-# I shortened the possible punctuation chars above due to incompatibility with various sites
-export CHARSET_PUNC='!@#$%^&*'
-export CHARSET_HEX="${CHARSET_NUM}abcdef"
-
 randompass() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   if [[ $# -eq 0 || "$1" == "--help" ]]; then
