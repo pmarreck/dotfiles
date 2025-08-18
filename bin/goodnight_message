@@ -16,7 +16,7 @@ fi
 # and update the 'anthropic-version' header below if necessary.
 ANTHROPIC_API_VERSION="2023-06-01"
 
-OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-2024-08-06}
+OPENAI_MODEL=${OPENAI_MODEL:-gpt-5-mini}
 
 # ElevenLabs voice settings
 STABILITY="0.5"
@@ -43,7 +43,7 @@ generate_message() {
 		-d '{
 			"model": "'"$OPENAI_MODEL"'",
 			"messages": [{"role": "user", "content": "'"$prompt"'"}],
-			"max_tokens": 300
+			"max_completion_tokens": 300
 		}')
 
 	log "Received response from OpenAI API: $response"

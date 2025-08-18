@@ -19,7 +19,7 @@ function git_commit_ai() {
     return 1
   fi
 
-  model=${OPENAI_MODEL:-gpt-4o}
+  model=${OPENAI_MODEL:-gpt-5-mini}
   timeout=${OPENAI_TIMEOUT:-1200}
   openai_host=${OPENAI_HOST:-api.openai.com}
   openai_path=${OPENAI_PATH:-/v1/chat/completions}
@@ -65,7 +65,7 @@ function git_commit_ai() {
         {role: "system", content: $system_prompt},
         {role: "user", content: "\($user_prompt)\n\nBEGIN GIT DIFF\n\($diff)\nEND GIT DIFF\n"}
       ],
-      max_tokens: 200,
+      max_completion_tokens: 200,
       stream: false
     }' > "$temp_json"
   else # openAI
@@ -85,7 +85,7 @@ function git_commit_ai() {
         {role: "user", content: "\($user_prompt)\n\nBEGIN GIT DIFF\n\($diff)\nEND GIT DIFF\n"}
       ],
       temperature: $temperature,
-      max_tokens: 200,
+      max_completion_tokens: 200,
       stream: false
     }' > "$temp_json"
   fi

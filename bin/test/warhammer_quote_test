@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+
+# Test the warhammer_quote function
+test_warhammer_quote() {
+	local fails=0
+	local tests=0
+	
+	echo "Testing warhammer_quote functionality..."
+	
+	# Test 1: Basic execution (runs without error)
+	(( tests++ ))
+	echo "Testing basic execution..."
+	
+	local quote_output
+	quote_output=$(warhammer_quote 2>&1)
+	local exit_code=$?
+	
+	if [ "$exit_code" -eq 0 ] && [ -n "$quote_output" ]; then
+		echo "✓ Basic execution test passed: runs without error and produces output"
+	else
+		echo "✗ Basic execution test failed:" >&2
+		echo "  Exit code: $exit_code (expected 0)" >&2
+		echo "  Output: '$quote_output'" >&2
+		(( fails++ ))
+	fi
+	
+	# Test 2: Output format (should end with !)
+	(( tests++ ))
+	echo "Testing output format..."
+	
+	local quote=$(warhammer_quote 2>/dev/null)
+	
+	if [[ "$quote" == *"!" ]]; then
+		echo "✓ Output format test passed: quote ends with !"
+	else
+		echo "✗ Output format test failed: quote doesn't end with !" >&2
+		echo "  Output: '$quote'" >&2
+		(( fails++ ))
+	fi
+	
+	# Test 3: Randomness check (5 invocations shouldn't all be the same)
+	(( tests++ ))
+	echo "Testing randomness (5 invocations)..."
+	
+	local quotes=()
+	local unique_quotes=0
+	
+	# Generate 5 quotes
+	for ((i=0; i<5; i++)); do
+		quotes[i]=$(warhammer_quote 2>/dev/null)
+	done
+	
+	# Count unique quotes
+	printf '%s\n' "${quotes[@]}" | sort -u > /tmp/unique_warhammer_quotes.txt
+	unique_quotes=$(cat /tmp/unique_warhammer_quotes.txt | wc -l)
+	rm -f /tmp/unique_warhammer_quotes.txt
+	
+	# We expect at least 2 different quotes out of 5 (very lenient randomness check)
+	if [ "$unique_quotes" -ge 2 ]; then
+		echo "✓ Randomness test passed: $unique_quotes/5 unique quotes"
+	else
+		echo "✗ Randomness test failed: only $unique_quotes/5 unique quotes" >&2
+		echo "  Quotes:" >&2
+		for ((i=0; i<5; i++)); do
+			echo "    Quote $((i+1)): ${quotes[i]}" >&2
+		done
+		(( fails++ ))
+	fi
+	
+	# Final results
+	if [ $fails -gt 0 ]; then
+		echo ""
+		echo "warhammer_quote test FAILED: $fails of $tests tests failed" >&2
+		return 1
+	else
+		echo ""
+		echo "warhammer_quote test PASSED: All $tests tests passed"
+		return 0
+	fi
+}
+
+# Run the test if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	test_warhammer_quote
+	exit $?
+fi

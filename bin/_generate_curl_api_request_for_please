@@ -5,7 +5,7 @@ _generate_curl_api_request_for_please() {
 	needs jq
 	local request args timeout model curl
 	curl=${CURL:-curl}
-	model=${OPENAI_MODEL:-gpt-4o}
+	model=${OPENAI_MODEL:-gpt-5-mini}
 	timeout=${OPENAI_TIMEOUT:-30}
 	args="$@"
 	args=$(printf "%b" "$args" | $SED "s/'/'\\\\''/g") # This is just a narsty sed to escape single quotes.

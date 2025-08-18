@@ -1,0 +1,105 @@
+#!/usr/bin/env yuerun
+
+-- Get random bytes from /dev/urandom (or fallback)
+get_random_bytes = (num_bytes) ->
+	-- Try to read from /dev/urandom first (preferred)
+	urandom = io.open("/dev/urandom", "rb")
+	if urandom
+		bytes = urandom\read(num_bytes)
+		urandom\close!
+		return bytes if bytes and #bytes == num_bytes
+	
+	-- Fallback: try /dev/random (may block, but more entropy)
+	random_dev = io.open("/dev/random", "rb")  
+	if random_dev
+		bytes = random_dev\read(num_bytes)
+		random_dev\close!
+		return bytes if bytes and #bytes == num_bytes
+	
+	-- Final fallback: generate pseudo-random bytes from time
+	-- This shouldn't happen on Unix-like systems, but just in case
+	result = ""
+	for i = 1, num_bytes
+		-- Use current time with some variation
+		time_val = os.time! + os.clock! * 1000000 + i * 12345
+		byte_val = math.floor(time_val % 256)
+		result = result .. string.char(byte_val)
+	result
+
+-- Convert bytes to integer
+bytes_to_integer = (bytes) ->
+	result = 0
+	for i = 1, #bytes
+		result = result * 256 + string.byte(bytes, i)
+	result
+
+-- Main random function using /dev/urandom directly
+random = (start = 0, end_val = 100) ->
+	span = end_val - start + 1
+	return start if span <= 1
+	
+	-- Use rejection sampling with /dev/urandom to get uniform distribution
+	-- We need enough bytes to represent the range without bias
+	bytes_needed = math.ceil(math.log(span) / math.log(256)) + 1  -- Extra byte to reduce bias
+	max_val = 256^bytes_needed
+	limit = math.floor(max_val / span) * span
+	
+	-- Rejection sampling loop
+	while true
+		bytes = get_random_bytes(bytes_needed)
+		random_val = bytes_to_integer(bytes)
+		
+		-- Accept value if it's within the unbiased range
+		if random_val < limit
+			return start + (random_val % span)
+		-- Otherwise, try again (rejection sampling)
+
+-- Show help
+show_help = ->
+	print "Usage: random <start> <end>"
+	print ""
+	print "High-quality uniform random number generator using system entropy."
+	print "Outputs a random integer between <start> and <end> (inclusive)."
+	print "If <start> is not specified, it defaults to 0"
+	print "If <end> is not specified, it defaults to 100"
+	print ""
+	print "Sources entropy directly from /dev/urandom (with /dev/random fallback)"
+	print "and uses rejection sampling for perfect uniform distribution."
+
+-- Test function
+run_test = ->
+	test_file = "#{os.getenv('HOME')}/dotfiles/bin/test/random_test"
+	result = os.execute("#{test_file} >/dev/null")
+	os.exit(result and 0 or 1)
+
+-- Main execution logic
+main = ->
+	-- Handle command line arguments
+	switch #arg
+		when 0
+			-- No arguments, use defaults and show note
+			io.stderr\write "(with a start of 0 and an end of 100)\n"
+			print random!
+		else
+			switch arg[1]
+				when "--help", "-h"
+					show_help!
+				when "--test"
+					run_test!
+				else
+					-- Parse numeric arguments
+					start = tonumber(arg[1])
+					end_val = tonumber(arg[2])
+					
+					unless start
+						io.stderr\write "Error: start value must be a number\n"
+						os.exit(1)
+					
+					if arg[2] and not end_val
+						io.stderr\write "Error: end value must be a number\n"
+						os.exit(1)
+					
+					print random(start, end_val)
+
+-- Run main function
+main!
