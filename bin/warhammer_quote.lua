@@ -17,26 +17,10 @@ load_quotes = function()
 	file:close()
 	return quotes
 end
-local get_random_seed
-get_random_seed = function()
-	local urandom = io.open("/dev/urandom", "rb")
-	if urandom then
-		local bytes = urandom:read(4)
-		urandom:close()
-		local seed = 0
-		for i = 1, #bytes do
-			seed = seed * 256 + string.byte(bytes, i)
-		end
-		return seed
-	else
-		return os.time() + os.clock() * 1000000
-	end
-end
-math.randomseed(get_random_seed())
 local warhammer_quote
 warhammer_quote = function()
 	local quotes = load_quotes()
-	local random_index = math.random(1, #quotes)
+	local random_index = tonumber(io.popen("random 1 " .. tostring(#quotes)):read("*a"):match("%d+"))
 	local selected_quote = quotes[random_index]
 	return print(tostring(selected_quote) .. "!")
 end

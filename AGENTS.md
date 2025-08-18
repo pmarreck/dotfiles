@@ -101,12 +101,72 @@ Since all `bin/` scripts are on PATH, these utilities are available:
 #### Random Number Generation
 - **`nrandom`**: Normal distribution random numbers
 - **`drandom`**: Deterministic random numbers (for reproducible testing)
+- **`random`**: High-quality uniform random numbers using system entropy
+
+### Advanced Development Utilities
+
+#### Testing Framework (`bin/src/test_factory.moon`)
+
+A sophisticated MoonScript testing framework available as an alternative to bash tests:
+
+**Features:**
+- **Multiple output formats**: TAP and dot-style output
+- **Rich assertion library**: `assert_equal`, `assert_contains`, `assert_deep_equal`, `assert_raise`, etc.
+- **Colored output** with ANSI coloring for better readability  
+- **Stack traces** for debugging test failures
+- **Statistical testing support** for building custom assertions
+- **Error handling** with `refute` (negative assertions)
+
+**Usage Example:**
+```moonscript
+test_factory = require("src/test_factory").test_factory
+t = test_factory("dot")
+t.assert_equal(42, 42, "Numbers should be equal")
+t.assert_contains("hello world", "world", "String should contain substring")
+t.report()
+```
+
+**When to consider:**
+- Complex statistical testing (like our `random` tests)
+- Projects that need structured test suites
+- Integration with TAP-compatible test runners
+- When bash tests become too unwieldy
+
+#### CLI Utilities (`bin/src/cli_utils.moon`)
+
+Provides standardized CLI argument parsing and better RNG seeding:
+
+**Features:**
+- **`parse_args(config, argv)`**: Sophisticated argument parser with:
+  - Flag validation and type checking
+  - Automatic help generation
+  - Support for both flags and positional arguments
+  - Custom validators per argument
+- **`seed_rng()`**: High-precision seeding using `gettimeofday` with microsecond precision
+- **Structured configuration** for consistent CLI interfaces
+
+**Usage Example:**
+```moonscript
+cli_utils = require("src/cli_utils")
+config = {
+  { name: "verbose", flags: {"-v", "--verbose"}, has_arg: false, description: "Enable verbose mode" }
+  { name: "file", flags: {"-f", "--file"}, has_arg: true, description: "Path to input file" }
+}
+options, positionals = cli_utils.parse_args(config)
+```
+
+**When to consider:**
+- Scripts with complex argument parsing needs
+- When you want consistent help formatting across tools
+- Projects that need argument validation
+- Alternative to manual argument parsing in current scripts
 
 ### Test Coverage
 
 - Test coverage is a **work in progress** - not everything has tests yet
 - When working on existing code, add tests if missing
 - When creating new code, follow TDD principles
+- **Consider `test_factory.moon`** for complex test scenarios
 
 ## Cleanup
 
