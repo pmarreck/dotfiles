@@ -1,40 +1,188 @@
-#!/usr/bin/env bash
+#!/usr/bin/env yuerun
 
-drandom() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-	needs sha256sum || return 1
-	# if unset, initialize to hash of nanoseconds since epoch,
-	# otherwise, set to hash of previous seed
-	if [ -z $DRANDOM_SEED ]; then
-		export DRANDOM_SEED="$(date +%s%N | sha256sum | cut -d' ' -f1)"
-	else
-		export DRANDOM_SEED="$(echo -n $DRANDOM_SEED | sha256sum | cut -d' ' -f1)"
-	fi
-	case "$1" in
-		--hex)
-			echo $DRANDOM_SEED
-			;;
-		-h|--help)
-			echo "drandom is a deterministic random number generator."
-			echo "Usage: [DRANDOM_SEED=<whatever>] drandom [--hex]"
-			echo "Outputs an integer between 0 and 2^256-1 or an equivalent hex string if --hex is specified"
-			echo "If no seed is specified, it will be seeded to the sha256 hash of the nanoseconds since epoch on first run."
-			;;
-		*)
-			# convert to unsigned int from 256-bit hex
-			printf "%u\n" $((16#$DRANDOM_SEED))
-			;;
-	esac
-}
+-- Import bitwise operations
+bit = require "bit"
 
-# Run the function if this script is executed directly
-if ! (return 0 2>/dev/null); then
-	# Check if we are running tests
-	if [ "$1" = "--test" ]; then
-		# Run tests from the test file
-		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+-- Linear Congruential Generator with good parameters
+-- Using constants from Numerical Recipes (simple but effective)
+class LCG
+	new: (@state = 1) =>
+		-- Ensure state is never 0
+		@state = @state == 0 and 1 or @state
+
+	-- Generate next 32-bit random number using LCG algorithm
+	next: =>
+		-- Use constants: a=1664525, c=1013904223, m=2^32
+		-- These are well-tested LCG parameters
+		@state = (@state * 1664525 + 1013904223) % (2^32)
+		@state
+
+	-- Generate random number in range [min, max]
+	range: (min = 0, max = 100) =>
+		span = max - min + 1
+		return min if span <= 1
+
+		-- For small ranges (especially binary), use upper bits to avoid LCG low-bit issues
+		-- For larger ranges, use standard rejection sampling
+		if span <= 16
+			-- Use upper 16 bits for small ranges to avoid low-bit correlation
+			raw = @next!
+			upper_bits = bit.rshift(raw, 16)  -- Use upper 16 bits
+			min + (upper_bits % span)
+		else
+			-- Use rejection sampling for larger ranges to avoid bias
+			limit = math.floor(0xFFFFFFFF / span) * span
+			local r
+			while true
+				r = @next!
+				break if r < limit
+
+			min + (r % span)
+
+-- Get per-process seed file path
+get_seed_file = ->
+	-- Create a session-specific identifier
+	session_id = os.getenv('DRANDOM_SESSION') or 'default'
+	"/tmp/drandom_seed_#{session_id}"
+
+-- Generate initial seed from nanosecond timestamp
+generate_initial_seed = ->
+	-- Get nanoseconds since epoch and create a simple hash
+	time_ns = os.time! * 1000000000 + math.floor(os.clock! * 1000000000)
+	-- Simple hash: multiply by large prime and take modulo
+	(time_ns * 2654435761) % (2^32)
+
+-- Read seed from file, return nil if file doesn't exist
+read_seed_file = ->
+	seed_file = get_seed_file!
+	file = io.open(seed_file, "r")
+	return nil unless file
+
+	content = file\read("*a")
+	file\close!
+
+	tonumber(content) or nil
+
+-- Write seed to file
+write_seed_file = (seed) ->
+	seed_file = get_seed_file!
+	file = io.open(seed_file, "w")
+	return false unless file
+
+	file\write(tostring(seed))
+	file\close!
+	true
+
+-- Main drandom function
+drandom = (start = 0, end_val = 100) ->
+	-- Determine seed: DRANDOM_SEED env var, seed file, or generate new
+	local seed
+	env_seed = os.getenv("DRANDOM_SEED")
+
+	if env_seed
+		-- Use environment variable (parse hex if needed)
+		if env_seed\match("^%x+$")
+			seed_str = env_seed\sub(1, 16)
+			seed = tonumber(seed_str, 16) or generate_initial_seed!
+		else
+			seed = tonumber(env_seed) or generate_initial_seed!
 	else
-		# If called directly, pass all arguments to the function
-		$(basename "${0##\-}") "$@"
-	fi
-fi
+		-- Try to read from seed file
+		seed = read_seed_file!
+		unless seed
+			-- Generate new initial seed
+			seed = generate_initial_seed!
+
+	-- Create RNG instance with current seed
+	rng = LCG seed
+
+	-- Generate the random number
+	result = rng\range start, end_val
+
+	-- Save new state for next invocation (only if not using env var)
+	unless env_seed
+		write_seed_file rng.state
+
+	result
+
+-- Show help
+show_help = ->
+	print "Usage: drandom <start> <end>"
+	print "       DRANDOM_SEED=<seed> drandom <start> <end>"
+	print ""
+	print "Deterministic random number generator using Linear Congruential Generator."
+	print "Outputs a random integer between <start> and <end> (inclusive)."
+	print "If <start> is not specified, it defaults to 0"
+	print "If <end> is not specified, it defaults to 100"
+	print ""
+	print "Set DRANDOM_SEED environment variable for reproducible sequences."
+	print "Seed can be a number or hex string."
+	print ""
+	print "Uses high-quality LCG parameters with upper-bit extraction for small ranges"
+	print "to ensure good randomness across all range sizes."
+
+-- Test function
+run_test = ->
+	test_file = "#{os.getenv('HOME')}/dotfiles/bin/test/drandom_test"
+	result = os.execute ". #{test_file}"
+	os.exit result == 0 and 0 or 1
+
+-- Reset RNG state for testing
+reset_rng = (seed = generate_initial_seed!) ->
+	write_seed_file seed
+
+-- Get current internal state (for testing)
+get_state = ->
+	current_seed = read_seed_file!
+	return nil unless current_seed
+	{ seed: current_seed }
+
+-- Main execution logic
+main = ->
+	-- Handle command line arguments
+	switch #arg
+		when 0
+			-- No arguments, use defaults and show note
+			io.stderr\write "(with a start of 0 and an end of 100)\n"
+			print drandom!
+		else
+			switch arg[1]
+				when "--help", "-h"
+					show_help!
+				when "--test"
+					run_test!
+				when "--reset"
+					-- Hidden option for testing: reset with optional seed
+					seed = arg[2]
+					reset_rng seed
+					print "RNG reset#{seed and ' with seed: ' .. seed or ''}"
+				when "--state"
+					-- Hidden option for testing: show internal state
+					state = get_state!
+					if state
+						print "Seed file: #{get_seed_file!}"
+						print "Current seed: #{state.seed}"
+					else
+						print "No seed file found at #{get_seed_file!}"
+				else
+					-- Parse numeric arguments
+					start = tonumber arg[1]
+					end_val = tonumber arg[2]
+
+					unless start
+						io.stderr\write "Error: start value must be a number\n"
+						os.exit 1
+
+					if arg[2] and not end_val
+						io.stderr\write "Error: end value must be a number\n"
+						os.exit 1
+
+					print drandom start, end_val
+
+-- Export functions for testing
+_G.drandom = drandom
+_G.reset_rng = reset_rng
+_G.get_state = get_state
+
+-- Run main function
+main!

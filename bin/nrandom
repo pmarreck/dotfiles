@@ -1,76 +1,69 @@
-#!/usr/bin/env luajit
+#!/usr/bin/env yuerun
 
 -- Normal random number generator using Box-Muller transformation
-local function nrandom(start, end_val)
-    -- Default values
-    start = start or 0
-    end_val = end_val or 100
-    
-    -- Calculate range
-    local range = end_val - start
-    
-    -- Box-Muller transformation to generate normally distributed random numbers
-    local u1 = math.random()
-    local u2 = math.random()
-    
-    -- Generate standard normal (mean=0, stddev=1)
-    local z0 = math.sqrt(-2 * math.log(u1)) * math.cos(2 * math.pi * u2)
-    
-    -- Transform to desired range: scale by range/6 and shift to center
-    -- Using range/6 as standard deviation (same as original implementation)
-    local random_number = start + (z0 * (range / 6)) + (range / 2)
-    
-    -- Round to nearest integer
-    return math.floor(random_number + 0.5)
-end
+nrandom = (start = 0, end_val = 100) ->
+	-- Calculate range
+	range = end_val - start
+
+	-- Box-Muller transformation to generate normally distributed random numbers
+	u1, u2 = math.random!, math.random!
+
+	-- Generate standard normal (mean=0, stddev=1)
+	z0 = math.sqrt(-2 * math.log u1) * math.cos(2 * math.pi * u2)
+
+	-- Transform to desired range: scale by range/6 and shift to center
+	-- Using range/6 as standard deviation (same as original implementation)
+	random_number = start + (z0 * (range / 6)) + (range / 2)
+
+	-- Round to nearest integer
+	math.floor random_number + 0.5
 
 -- Help function
-local function show_help()
-    print("Usage: nrandom <start> <end>")
-    print("Outputs a normally-distributed random number between <start> and <end>")
-    print("If <start> is not specified, it defaults to 0")
-    print("If <end> is not specified, it defaults to 100")
-end
+show_help = ->
+	print "Usage: nrandom <start> <end>"
+	print "Outputs a normally-distributed random number between <start> and <end>"
+	print "If <start> is not specified, it defaults to 0"
+	print "If <end> is not specified, it defaults to 100"
 
 -- Test function (runs the test from the test file)
-local function run_test()
-    local test_file = os.getenv("HOME") .. "/dotfiles/bin/test/nrandom_test"
-    local result = os.execute(". " .. test_file)
-    os.exit(result == 0 and 0 or 1)
-end
+run_test = ->
+	test_file = "#{os.getenv('HOME')}/dotfiles/bin/test/nrandom_test"
+	result = os.execute ". #{test_file}"
+	os.exit result == 0 and 0 or 1
 
 -- Main execution logic
-local function main()
-    -- Initialize random seed
-    math.randomseed(os.time() + os.clock() * 1000000)
-    
-    -- Handle command line arguments
-    if #arg == 0 then
-        -- No arguments, use defaults and show note
-        io.stderr:write("(with a start of 0 and an end of 100)\n")
-        print(nrandom())
-    elseif arg[1] == "--help" or arg[1] == "-h" then
-        show_help()
-    elseif arg[1] == "--test" then
-        run_test()
-    else
-        -- Parse numeric arguments
-        local start = tonumber(arg[1])
-        local end_val = tonumber(arg[2])
-        
-        if start == nil then
-            io.stderr:write("Error: start value must be a number\n")
-            os.exit(1)
-        end
-        
-        if arg[2] and end_val == nil then
-            io.stderr:write("Error: end value must be a number\n")
-            os.exit(1)
-        end
-        
-        print(nrandom(start, end_val))
-    end
-end
+main = ->
+	-- Initialize random seed
+	math.randomseed os.time! + os.clock! * 1000000
+
+	-- Handle command line arguments using switch statement
+	switch #arg
+		when 0
+			-- No arguments, use defaults and show note
+			io.stderr\write "(with a start of 0 and an end of 100)\n"
+			print nrandom!
+		else
+			switch arg[1]
+				when "--help", "-h"
+					show_help!
+				when "--test"
+					run_test!
+				else
+					-- Parse numeric arguments
+					start = tonumber arg[1]
+					end_val = tonumber arg[2]
+
+					-- Validation with nil coalescing operator
+					unless start
+						io.stderr\write "Error: start value must be a number\n"
+						os.exit 1
+
+					if arg[2] and not end_val
+						io.stderr\write "Error: end value must be a number\n"
+						os.exit 1
+
+					-- Use default end_val if not provided
+					print nrandom start, end_val
 
 -- Run main function
-main()
+main!
