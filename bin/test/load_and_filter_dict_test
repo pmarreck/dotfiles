@@ -1,0 +1,174 @@
+#!/usr/bin/env bash
+
+# Test the load_and_filter_dict function
+test_load_and_filter_dict() {
+	local fails=0
+	local tests=0
+	
+	# Override dictionary to use test file
+	export WORDLIST_FILEPATH="/tmp/test_dictionary.txt"
+	
+	echo "Testing load_and_filter_dict with test dictionary..."
+	echo "Test dictionary contains:"
+	echo "  Short words (1-3): a, at, cat, dog"
+	echo "  Medium words (4-8): fish, bird, house, password, computer, elephant"
+	echo "  Long words (9+): fantastic, wonderful, programming, dictionary, beautiful"
+	echo "  Proper nouns: Apple, Bobby, Charlie, David, Edward"
+	echo "  Very long: extraordinary, supercalifragilisticexpialidocious"
+	echo ""
+	
+	# Test 1: Basic length filtering (4-8 characters)
+	(( tests++ ))
+	echo "Testing length filtering (4-8)..."
+	
+	unset FILTERPROPERNOUNS
+	local result=$(load_and_filter_dict 4 8)
+	local expected_words=("fish" "bird" "house" "Apple" "Bobby" "Charlie" "David" "Edward" "password" "computer" "elephant")
+	
+	# Count words in result
+	local result_count=$(echo "$result" | wc -l)
+	local expected_count=${#expected_words[@]}
+	
+	if [ "$result_count" -eq "$expected_count" ]; then
+		echo "✓ Length filtering test passed: got $result_count words (expected $expected_count)"
+	else
+		echo "✗ Length filtering test failed: got $result_count words, expected $expected_count" >&2
+		echo "  Result: $result" >&2
+		(( fails++ ))
+	fi
+	
+	# Test 2: Proper noun filtering enabled (4-8 characters, no capitals)
+	(( tests++ ))
+	echo "Testing proper noun filtering (4-8, no capitals)..."
+	
+	export FILTERPROPERNOUNS=1
+	local result_filtered=$(load_and_filter_dict 4 8)
+	local expected_filtered=("fish" "bird" "house" "password" "computer" "elephant")
+	
+	# Check that proper nouns are filtered out
+	local filtered_count=$(echo "$result_filtered" | wc -l)
+	local expected_filtered_count=${#expected_filtered[@]}
+	
+	# Verify no capital letters at start of lines
+	local capitals_found=$(echo "$result_filtered" | grep -c '^[A-Z]' || true)
+	
+	if [ "$filtered_count" -eq "$expected_filtered_count" ] && [ "$capitals_found" -eq 0 ]; then
+		echo "✓ Proper noun filtering test passed: got $filtered_count words, no capitals found"
+	else
+		echo "✗ Proper noun filtering test failed:" >&2
+		echo "  Got $filtered_count words (expected $expected_filtered_count)" >&2
+		echo "  Capitals found: $capitals_found (expected 0)" >&2
+		echo "  Result: $result_filtered" >&2
+		(( fails++ ))
+	fi
+	
+	# Test 3: Very short words (1-3 characters)
+	(( tests++ ))
+	echo "Testing short word filtering (1-3)..."
+	
+	unset FILTERPROPERNOUNS
+	local short_result=$(load_and_filter_dict 1 3)
+	local expected_short=("a" "at" "cat" "dog")
+	local short_count=$(echo "$short_result" | wc -l)
+	
+	if [ "$short_count" -eq ${#expected_short[@]} ]; then
+		echo "✓ Short word filtering test passed: got $short_count words"
+	else
+		echo "✗ Short word filtering test failed: got $short_count words, expected ${#expected_short[@]}" >&2
+		echo "  Result: $short_result" >&2
+		(( fails++ ))
+	fi
+	
+	# Test 4: Long words (9+ characters)
+	(( tests++ ))
+	echo "Testing long word filtering (9-15)..."
+	
+	local long_result=$(load_and_filter_dict 9 15)
+	# Should include: fantastic, wonderful, programming, dictionary, beautiful, extraordinary
+	local long_count=$(echo "$long_result" | wc -l)
+	local expected_long_count=6
+	
+	if [ "$long_count" -eq "$expected_long_count" ]; then
+		echo "✓ Long word filtering test passed: got $long_count words"
+	else
+		echo "✗ Long word filtering test failed: got $long_count words, expected $expected_long_count" >&2
+		echo "  Result: $long_result" >&2
+		(( fails++ ))
+	fi
+	
+	# Test 5: Very long words (20+ characters) 
+	(( tests++ ))
+	echo "Testing very long word filtering (20+)..."
+	
+	local verylong_result=$(load_and_filter_dict 20 50)
+	# Should only include: supercalifragilisticexpialidocious (34 chars)
+	local verylong_count=$(echo "$verylong_result" | wc -l)
+	
+	if [ "$verylong_count" -eq 1 ]; then
+		echo "✓ Very long word filtering test passed: got 1 word"
+	else
+		echo "✗ Very long word filtering test failed: got $verylong_count words, expected 1" >&2
+		echo "  Result: $verylong_result" >&2
+		(( fails++ ))
+	fi
+	
+	# Test 6: No matches (impossible range)
+	(( tests++ ))
+	echo "Testing no matches (100-200 chars)..."
+	
+	local empty_result=$(load_and_filter_dict 100 200)
+	local empty_count=$(echo "$empty_result" | wc -l)
+	
+	# Empty result should have 0 or 1 lines (empty string)
+	if [ "$empty_count" -eq 0 ] || ([ "$empty_count" -eq 1 ] && [ -z "$empty_result" ]); then
+		echo "✓ Empty result test passed: no words found for impossible range"
+	else
+		echo "✗ Empty result test failed: got $empty_count lines, expected 0" >&2
+		echo "  Result: '$empty_result'" >&2
+		(( fails++ ))
+	fi
+	
+	# Test 7: Proper noun filtering with mixed case range
+	(( tests++ ))
+	echo "Testing proper noun filtering with mixed case (5-8 chars)..."
+	
+	export FILTERPROPERNOUNS=1
+	local mixed_result=$(load_and_filter_dict 5 8)
+	# Should include: house, password, computer, elephant (no Apple, Bobby, Charlie, David, Edward)
+	local mixed_count=$(echo "$mixed_result" | wc -l)
+	local expected_mixed_count=4
+	
+	# Verify content
+	local has_proper_nouns=$(echo "$mixed_result" | grep -c '^[A-Z]' || true)
+	
+	if [ "$mixed_count" -eq "$expected_mixed_count" ] && [ "$has_proper_nouns" -eq 0 ]; then
+		echo "✓ Mixed case filtering test passed: $mixed_count words, no proper nouns"
+	else
+		echo "✗ Mixed case filtering test failed:" >&2
+		echo "  Got $mixed_count words (expected $expected_mixed_count)" >&2
+		echo "  Proper nouns found: $has_proper_nouns (expected 0)" >&2
+		echo "  Result: $mixed_result" >&2
+		(( fails++ ))
+	fi
+	
+	# Clean up
+	unset FILTERPROPERNOUNS
+	unset WORDLIST_FILEPATH
+	
+	# Final results
+	if [ $fails -gt 0 ]; then
+		echo ""
+		echo "load_and_filter_dict test FAILED: $fails of $tests tests failed" >&2
+		return 1
+	else
+		echo ""
+		echo "load_and_filter_dict test PASSED: All $tests tests passed"
+		return 0
+	fi
+}
+
+# Run the test if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	test_load_and_filter_dict
+	exit $?
+fi

@@ -1,0 +1,197 @@
+#!/usr/bin/env bash
+
+# Test the randompassdict function
+test_randompassdict() {
+	local fails=0
+	local tests=0
+	
+	# Override dictionary to use test file
+	export WORDLIST_FILEPATH="/tmp/test_dictionary.txt"
+	
+	echo "Testing randompassdict with test dictionary..."
+	
+	# Test 1: Usage message (no arguments)
+	(( tests++ ))
+	echo "Testing usage message..."
+	
+	# Capture exit code first
+	randompassdict >/dev/null 2>&1
+	local usage_exit_code=$?
+	# Then capture output
+	local usage_output=$(randompassdict 2>&1)
+	
+	if [[ "$usage_output" == *"Usage: randompassdict"* ]] && [ "$usage_exit_code" -eq 2 ]; then
+		echo "✓ Usage message test passed: shows usage and exits 2"
+	else
+		echo "✗ Usage message test failed:" >&2
+		echo "  Exit code: $usage_exit_code (expected 2)" >&2
+		echo "  Output: $usage_output" >&2
+		(( fails++ ))
+	fi
+	
+	# Test 2: Basic argument parsing (1 word, default length)
+	(( tests++ ))
+	echo "Testing basic argument parsing (1 word)..."
+	unset FILTERPROPERNOUNS
+	local single_word=$(randompassdict 1 2>/dev/null)
+	local word_count=$(echo "$single_word" | wc -w)
+	
+	if [ "$word_count" -eq 1 ]; then
+		echo "✓ Single word test passed: got 1 word"
+	else
+		echo "✗ Single word test failed: got $word_count words, expected 1" >&2
+		echo "  Output: '$single_word'" >&2
+		(( fails++ ))
+	fi
+	
+	# Test 3: Multiple words (3 words)
+	(( tests++ ))
+	echo "Testing multiple words (3 words)..."
+	local three_words=$(randompassdict 3 2>/dev/null)
+	local three_word_count=$(echo "$three_words" | wc -w)
+	
+	if [ "$three_word_count" -eq 3 ]; then
+		echo "✓ Three words test passed: got 3 words"
+	else
+		echo "✗ Three words test failed: got $three_word_count words, expected 3" >&2
+		echo "  Output: '$three_words'" >&2
+		(( fails++ ))
+	fi
+	
+	# Test 4: Custom word length (5 words, 4-6 chars each)
+	(( tests++ ))
+	echo "Testing custom word length (5 words, 4-6 chars)..."
+	local custom_length=$(randompassdict 5 4 6 2>/dev/null)
+	local custom_count=$(echo "$custom_length" | wc -w)
+	
+	# Check that all words are within length range
+	local length_violations=0
+	for word in $custom_length; do
+		local len=${#word}
+		if [ "$len" -lt 4 ] || [ "$len" -gt 6 ]; then
+			(( length_violations++ ))
+		fi
+	done
+	
+	if [ "$custom_count" -eq 5 ] && [ "$length_violations" -eq 0 ]; then
+		echo "✓ Custom length test passed: 5 words, all 4-6 chars"
+	else
+		echo "✗ Custom length test failed:" >&2
+		echo "  Word count: $custom_count (expected 5)" >&2
+		echo "  Length violations: $length_violations (expected 0)" >&2
+		echo "  Output: '$custom_length'" >&2
+		(( fails++ ))
+	fi
+	
+	# Test 5: Proper noun filtering
+	(( tests++ ))
+	echo "Testing proper noun filtering..."
+	export FILTERPROPERNOUNS=1
+	local no_proper_nouns=$(randompassdict 10 4 8 2>/dev/null)
+	
+	# Check for capital letters at start of words (proper nouns)
+	local proper_noun_count=0
+	for word in $no_proper_nouns; do
+		if [[ "$word" =~ ^[A-Z] ]]; then
+			(( proper_noun_count++ ))
+		fi
+	done
+	
+	if [ "$proper_noun_count" -eq 0 ]; then
+		echo "✓ Proper noun filtering test passed: no capitalized words"
+	else
+		echo "✗ Proper noun filtering test failed: found $proper_noun_count capitalized words" >&2
+		echo "  Output: '$no_proper_nouns'" >&2
+		(( fails++ ))
+	fi
+	
+	# Test 6: Statistical randomness (multiple runs should produce different results)
+	(( tests++ ))
+	echo "Testing statistical randomness (10 runs, 2 words each)..."
+	unset FILTERPROPERNOUNS
+	local runs=()
+	local unique_runs=0
+	
+	# Generate 10 different password runs
+	for ((i=0; i<10; i++)); do
+		local run_result=$(randompassdict 2 4 8 2>/dev/null)
+		runs[i]="$run_result"
+	done
+	
+	# Count unique results
+	printf '%s\n' "${runs[@]}" | sort -u > /tmp/unique_runs.txt
+	unique_runs=$(cat /tmp/unique_runs.txt | wc -l)
+	rm -f /tmp/unique_runs.txt
+	
+	# We expect most runs to be different (at least 7 out of 10)
+	if [ "$unique_runs" -ge 7 ]; then
+		echo "✓ Statistical randomness test passed: $unique_runs/10 unique results"
+	else
+		echo "✗ Statistical randomness test failed: only $unique_runs/10 unique results" >&2
+		echo "  Results:" >&2
+		for ((i=0; i<10; i++)); do
+			echo "    Run $((i+1)): ${runs[i]}" >&2
+		done
+		(( fails++ ))
+	fi
+	
+	# Test 7: JUST_OUTPUT_DICTIONARY mode
+	(( tests++ ))
+	echo "Testing dictionary output mode..."
+	export JUST_OUTPUT_DICTIONARY=1
+	local dict_output=$(randompassdict 1 4 8 2>/dev/null)
+	unset JUST_OUTPUT_DICTIONARY
+	
+	# Should output the filtered dictionary, not a password
+	local dict_lines=$(echo "$dict_output" | wc -l)
+	local has_multiple_lines=false
+	
+	if [ "$dict_lines" -gt 5 ]; then
+		has_multiple_lines=true
+	fi
+	
+	if $has_multiple_lines; then
+		echo "✓ Dictionary output test passed: got $dict_lines lines of dictionary"
+	else
+		echo "✗ Dictionary output test failed: got $dict_lines lines, expected multiple" >&2
+		echo "  Output: '$dict_output'" >&2
+		(( fails++ ))
+	fi
+	
+	# Test 8: Edge case - very restrictive length (should still work)
+	(( tests++ ))
+	echo "Testing restrictive length range..."
+	unset FILTERPROPERNOUNS
+	# Use length 3-3 (only "cat", "dog" available)
+	local restrictive=$(randompassdict 1 3 3 2>/dev/null)
+	local restrictive_length=${#restrictive}
+	
+	if [ "$restrictive_length" -eq 3 ]; then
+		echo "✓ Restrictive length test passed: got 3-char word"
+	else
+		echo "✗ Restrictive length test failed: got ${restrictive_length}-char word '$restrictive'" >&2
+		(( fails++ ))
+	fi
+	
+	# Clean up
+	unset FILTERPROPERNOUNS
+	unset WORDLIST_FILEPATH
+	unset JUST_OUTPUT_DICTIONARY
+	
+	# Final results
+	if [ $fails -gt 0 ]; then
+		echo ""
+		echo "randompassdict test FAILED: $fails of $tests tests failed" >&2
+		return 1
+	else
+		echo ""
+		echo "randompassdict test PASSED: All $tests tests passed"
+		return 0
+	fi
+}
+
+# Run the test if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	test_randompassdict
+	exit $?
+fi

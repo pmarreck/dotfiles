@@ -2,15 +2,15 @@
 
 load_and_filter_dict() {
 	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-	# local dict_loc="${WORDLIST:-"/usr/share/dict/words"}"
-	# [ -f "$dict_loc" ] || { echo "$dict_loc missing. May need to install 'words' package (or just pass in a WORDLIST env var that paths to a file of words). Exiting."; return 1; }
+	# local dict_loc="${WORDLIST_FILEPATH:-"/usr/share/dict/words"}"
+	# [ -f "$dict_loc" ] || { echo "$dict_loc missing. May need to install 'words' package (or just pass in a WORDLIST_FILEPATH env var that paths to a file of words). Exiting."; return 1; }
 	# local dict=$(sed '0,/^__DICT__$/d' "${BASH_SOURCE[0]}")
 	# The above broke on OS X because of differences between gnu sed and BSD sed,
 	# so just use good ol' awk to strip out the dict from this script
 	# local dict=$(awk 'p;/^__DICT__$/{p=1}' "${BASH_SOURCE[0]}")
 	# CORRECTION: We moved it out to its own file instead of being clever.
 	# Use the extracted dictionary file
-	local dict_file="${WORDLIST:-"$HOME/dotfiles/bin/data/dictionary.txt"}"
+	local dict_file="${WORDLIST_FILEPATH:-"$HOME/dotfiles/bin/data/dictionary.txt"}"
 	[ -f "$dict_file" ] || { echo "error from load_and_filter_dict: $dict_file missing. Exiting."; return 1; }
 	# take the dict, filter out anything not within the min/max length
 	# optionally filter out anything that starts with a capital letter (e.g. proper nouns)
@@ -27,8 +27,9 @@ load_and_filter_dict() {
 if ! (return 0 2>/dev/null); then
 	# Check if we are running tests
 	if [ "$1" = "--test" ]; then
-		# Run tests from the test file
-		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+		# Execute the test file, silence stdout but show stderr (errors)
+		"$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test" >/dev/null
+		exit $?
 	else
 		# If called directly, pass all arguments to the function
 		$(basename "${0##\-}") "$@"
