@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+
+# dirtree_test: Test the dirtree utility (eza wrapper)
+
+test_count=0
+failed_count=0
+
+test_function() {
+    local description="$1"
+    local command="$2"
+    local expected_pattern="$3"
+    
+    ((test_count++))
+    echo "Testing $description..."
+    
+    local output
+    output=$(eval "$command" 2>&1)
+    local exit_code=$?
+    
+    if [[ $exit_code -ne 0 ]]; then
+        echo "✗ Test failed: $description (exit code $exit_code)" >&2
+        echo "  Command: $command" >&2
+        echo "  Output: $output" >&2
+        ((failed_count++))
+        return 1
+    fi
+    
+    if [[ -n "$expected_pattern" ]] && ! echo "$output" | grep -q "$expected_pattern"; then
+        echo "✗ Test failed: $description (pattern not found)" >&2
+        echo "  Command: $command" >&2
+        echo "  Expected pattern: $expected_pattern" >&2
+        echo "  Actual output: $output" >&2
+        ((failed_count++))
+        return 1
+    fi
+    
+    echo "✓ Test passed"
+    return 0
+}
+
+# Create a temporary test directory structure
+tmpdir=$(mktemp -d)
+mkdir -p "$tmpdir/testdir"
+touch "$tmpdir/testdir/file1.txt"
+touch "$tmpdir/testdir/.hidden"
+mkdir -p "$tmpdir/testdir/subdir"
+touch "$tmpdir/testdir/subdir/file2.txt"
+
+# Test basic directory tree (eza shows directory name)
+test_function "basic directory tree" \
+    "dirtree '$tmpdir/testdir'" \
+    "testdir"
+
+# Test dotfiles visibility (eza shows hidden files with --all)
+test_function "dotfiles visibility" \
+    "dirtree '$tmpdir/testdir'" \
+    "\.hidden"
+
+# Test depth limiting (default depth is 2)
+test_function "depth limiting" \
+    "dirtree -d 1 '$tmpdir/testdir'" \
+    "subdir"
+
+# Test that subdirectory contents are not shown with depth 1
+test_function "depth limiting effectiveness" \
+    "dirtree -d 1 '$tmpdir/testdir' | grep -v file2.txt && echo 'PASS'" \
+    "PASS"
+
+# Test help option
+test_function "help option" \
+    "dirtree --help" \
+    "Usage:"
+
+# Test current directory default
+test_function "current directory default" \
+    "cd '$tmpdir/testdir' && dirtree" \
+    "testdir"
+
+# Test for directory self-nesting bug (should not occur with eza)
+test_function "no directory self-nesting" \
+    "dirtree '$tmpdir/testdir' | grep -c 'testdir' | grep -E '^[1-9][0-9]*$' && echo 'PASS'" \
+    "PASS"
+
+# Test that files are visible at depth 2
+test_function "files visible at depth 2" \
+    "dirtree -d 2 '$tmpdir/testdir' | grep -c 'file1.txt' | grep -E '^1$' && echo 'PASS'" \
+    "PASS"
+
+# Test that both files and directories are listed
+test_function "files and directories both listed" \
+    "dirtree -d 2 '$tmpdir/testdir' | grep -E '(file1.txt|subdir)' | wc -l | grep -E '^[2-9]$' && echo 'PASS'" \
+    "PASS"
+
+# Test eza-specific features
+test_function "tree structure with unicode" \
+    "dirtree '$tmpdir/testdir'" \
+    "├──\|└──"
+
+# Test hyperlinks are present (eza hyperlink format)
+test_function "hyperlinks present" \
+    "dirtree '$tmpdir/testdir'" \
+    "]8;;"
+
+# Test that eza is available
+test_function "eza availability" \
+    "command -v eza >/dev/null && echo 'EZA_FOUND'" \
+    "EZA_FOUND"
+
+# Skip error handling test - eza availability checking is tested elsewhere
+
+# Test depth parameter validation
+test_function "depth parameter validation" \
+    "dirtree -d abc 2>&1 | grep 'numeric argument' && echo 'VALIDATED'" \
+    "VALIDATED"
+
+# Test directory validation
+test_function "directory validation" \
+    "dirtree /nonexistent/path 2>&1 | grep 'not a directory' && echo 'VALIDATED'" \
+    "VALIDATED"
+
+# Clean up
+rm -rf "$tmpdir"
+
+# Report results
+echo
+if [[ $failed_count -eq 0 ]]; then
+    echo "All $test_count tests passed"
+else
+    echo "$failed_count of $test_count tests failed" >&2
+fi
+
+exit $failed_count

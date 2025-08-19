@@ -28,7 +28,7 @@ git_commit_ai() {
 	top_k=${TOP_K:-40}
 	top_p=${TOP_P:-0.9}
 	repeat_penalty=${REPEAT_PENALTY:-1.1}
-	temperature=${TEMPERATURE:-0.2}
+	temperature=${TEMPERATURE:-1}
 	num_ctx=${NUM_CTX:-32000}
 	temp_json=$(mktemp -t git_commit_ai.XXXXXX --tmpdir)
 	temp_json_out=$(mktemp -t git_commit_ai.XXXXXX --tmpdir)
