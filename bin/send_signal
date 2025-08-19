@@ -1,0 +1,59 @@
+#!/usr/bin/env sh
+
+# Function to handle sending signals to processes
+send_signal() {
+	signal=$1
+	process_name_or_pid=$2
+
+	if [ -z "$signal" ] || [ -z "$process_name_or_pid" ]; then
+		echo "Usage: send_signal <signal> <process_name_or_pid>"
+		return 1
+	fi
+
+	# Check if input is a PID (numeric) or process name
+	case "$process_name_or_pid" in
+		''|*[!0-9]*)
+			# Not a number, assume it's a process name
+			pids=$(pgrep -f "$process_name_or_pid")
+			;;
+		*)
+			# It's a number, treat it as a PID
+			pids="$process_name_or_pid"
+			;;
+	esac
+
+	# Convert pids to a comma-separated list
+	pids=$(echo "$pids" | paste -sd "," -)
+
+	# Check number of matches
+	num_matches=$(echo "$pids" | tr -cd ',' | wc -c)
+	num_matches=$((num_matches + 1))
+
+	if [ "$num_matches" -eq 0 ]; then
+		echo "No processes found matching: $process_name_or_pid"
+		return 1
+	elif [ "$num_matches" -gt 1 ]; then
+		echo "Multiple processes found matching: $process_name_or_pid"
+		ps -f -p "$pids"
+		return 1
+	else
+		# Single match, send the signal to the process
+		kill "-$signal" "$pids"
+		echo "Signal $signal sent to process with PID $pids."
+	fi
+}
+
+# Run the function, passing along any args, if this file was run directly instead of as an include.
+# Sometimes, $0 contains a leading dash to indicate an interactive (or is it login?) shell,
+# which is apparently an old convention (which also broke the basename call on OS X)
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		exec "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test" >/dev/null
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi
