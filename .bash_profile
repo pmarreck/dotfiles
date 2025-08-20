@@ -41,7 +41,7 @@ fi
 [ -z "${AWK+x}" ] && \
   export AWK=$(command -v frawk || command -v gawk || command -v awk)
 
-. "$HOME/dotfiles/bin/append_dotfile_progress"
+. "$HOME/dotfiles/bin/src/append_dotfile_progress.sh"
 
 [ "${DEBUG_SHELLCONFIG+set}" = "set" ] && echo "Entering $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")" || $INTERACTIVE_SHELL && $LOGIN_SHELL && append_dotfile_progress "bp"
 [ "${DEBUG_PATHCONFIG+set}" = "set" ] && echo "$PATH"

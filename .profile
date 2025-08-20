@@ -1,6 +1,61 @@
 #!/bin/sh
 # .profile must remain POSIX-compliant, use shellcheck to verify
 # There is currently 1 exception to this rule: the use of ${BASH_SOURCE[0]} for debugging
+
+in_bash() {
+	[ -n "${BASH_VERSION+set}" ]
+}
+
+# Check if a variable, function, alias etc. is defined in the current context (which is why we need to define these here)
+var_defined() {
+	in_bash && [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	if in_bash; then
+		declare -p "$1" >/dev/null 2>&1
+	else
+		# POSIX-compliant version is gross unfortunately:
+		eval '[ "${'"$1"'+x}" ]'
+	fi
+}
+
+func_defined() {
+	in_bash && [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	# POSIX-compliant
+	type "$1" 2>/dev/null | {
+		IFS= read -r line || exit 1
+		case $line in
+			*function*) exit 0 ;;
+			*)          exit 1 ;;
+		esac
+	}
+}
+
+alias_defined() {
+	in_bash && [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	alias "$1" >/dev/null 2>&1
+}
+
+defined() {
+	in_bash && [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	if [ $# -eq 0 ]; then
+		printf '%s\n' "Usage: defined <function or alias or variable or builtin or executable-in-PATH name> [...function|alias] ..." \
+			"Returns 0 if all the arguments are defined as a function or alias or variable or builtin or executable-in-PATH name." \
+			"This function is defined in ${BASH_SOURCE[0]}"
+		return 2
+	fi
+	for word; do
+		if command -v -- "$word" >/dev/null 2>&1; then
+			continue
+		fi
+		if var_defined "$word"; then
+			continue
+		fi
+		return 1
+	done
+	return 0
+}
+
+func_defined truthy || . "$HOME/dotfiles/bin/src/truthy.sh"
+func_defined append_dotfile_progress || . "$HOME/dotfiles/bin/src/append_dotfile_progress.sh"
 truthy DEBUG_SHELLCONFIG && echo "Entering $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")" || $INTERACTIVE_SHELL && $LOGIN_SHELL && append_dotfile_progress "prof"
 truthy DEBUG_PATHCONFIG && echo $PATH
 
@@ -28,7 +83,10 @@ $INTERACTIVE_SHELL && $LOGIN_SHELL && echo "$DISTRO_PRETTY"
 
 # set default tab stops to 2 spaces
 # Note that this may mess up ncurses code that might assume 8 spaces
-tabs -2
+# Only tweak tabs on an interactive TTY if `tabs` exists:
+if ${INTERACTIVE_SHELL:-false} && command -v tabs >/dev/null 2>&1 && tty -s; then
+	tabs -2
+fi
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "set tabs to 2 spaces"
 
 # If you hate noise
@@ -36,9 +94,6 @@ tabs -2
 
 # ulimit. to see all configs, run `ulimit -a`
 # ulimit -n 10000
-
-# only enable this on arch somehow
-# source ~/bin/pac
 
 # git functions
 #$PIPEABLE_EDITOR;
@@ -123,7 +178,6 @@ fi
 export SIXEL_ENV SIXEL_CAPABLE
 
 ${INTERACTIVE_SHELL:-false} && ${LOGIN_SHELL:-false} && fun_intro
-
 
 [ -n "$DEBUG_SHELLCONFIG" ] && echo "Exiting $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")"
 [ -n "$DEBUG_PATHCONFIG" ] && echo $PATH || :

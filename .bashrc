@@ -12,13 +12,13 @@
 
 # require at least Bash 4.2
 if [[ $BASH_VERSION =~ ^([0-9]+)\.([0-9]+) ]]; then
-  if (( BASH_REMATCH[1] > 4 || ( BASH_REMATCH[1] == 4 && BASH_REMATCH[2] >= 2 ) )); then
-    : # echo "Bash version is greater than or equal to 4.2"
-  else
-    echo "Warning: Bash version less than 4.2 detected. Expect incompatible behavior." >&2
-  fi
+	if (( BASH_REMATCH[1] > 4 || ( BASH_REMATCH[1] == 4 && BASH_REMATCH[2] >= 2 ) )); then
+		: # echo "Bash version is greater than or equal to 4.2"
+	else
+		echo "Warning: Bash version less than 4.2 detected. Expect incompatible behavior." >&2
+	fi
 else
-  echo "Warning: Couldn't parse Bash version: $BASH_VERSION"
+	echo "Warning: Couldn't parse Bash version: $BASH_VERSION"
 fi
 
 # Turn off command hashing
@@ -50,9 +50,9 @@ shopt -q login_shell && LOGIN_SHELL=true || LOGIN_SHELL=false
 
 # Detect if being run by Claude CLI or other LLM assistants and skip complex setup
 if [[ "${PPID:-}" ]] && ps -p "${PPID}" -o comm= 2>/dev/null | grep -q "claude\|llm\|assistant"; then
-    export SKIP_COMPLEX_SHELL_SETUP=true
+		export SKIP_COMPLEX_SHELL_SETUP=true
 elif [[ "$0" == *"claude"* ]] || [[ "${_:-}" == *"claude"* ]]; then
-    export SKIP_COMPLEX_SHELL_SETUP=true
+		export SKIP_COMPLEX_SHELL_SETUP=true
 fi
 
 # most things should be sourced via source_relative... except source_relative itself
@@ -61,32 +61,6 @@ fi
 
 # define silently function here because it needs to know vars in the current namespace
 . "$HOME/dotfiles/bin/src/silently.sh"
-
-# Check if a variable, function, alias etc. is defined in the current context (which is why we need to define these here)
-function var_defined {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-	declare -p "$1" >/dev/null 2>&1
-}
-function func_defined {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-	declare -F "$1" >/dev/null
-}
-function alias_defined {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-	alias "$1" >/dev/null 2>&1
-}
-function defined {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-	local word="$1"
-	shift
-	if [ -z "$word" ] && [ -z "$1" ]; then
-		echo "Usage: defined <function or alias or variable or builtin or executable-in-PATH name> [...function|alias] ..."
-		echo "Returns 0 if all the arguments are defined as a function or alias or variable or builtin or executable-in-PATH name."
-		echo "This function is defined in ${BASH_SOURCE[0]}"
-		return 0
-	fi
-	( "var_defined" "$word" || >/dev/null type -t "$word" ) && ( [ -z "$1" ] || "defined" "$@" )
-}
 
 # have to define show here for the same reason we have to define truthy...
 . "$HOME/dotfiles/bin/src/show.sh"
@@ -102,17 +76,17 @@ function defined {
 
 # Set SED env var - with Nix, sed is already GNU sed
 if [ -z ${SED+x} ]; then
-  if [[ "$(sed --version 2>/dev/null | head -1)" =~ .*GNU.* ]]; then
-    export SED="sed"
-  else
-    echo "Warning from .bashrc: sed is not GNU sed. Some scripts may fail." >&2
-    export SED="sed"
-  fi
+	if [[ "$(sed --version 2>/dev/null | head -1)" =~ .*GNU.* ]]; then
+		export SED="sed"
+	else
+		echo "Warning from .bashrc: sed is not GNU sed. Some scripts may fail." >&2
+		export SED="sed"
+	fi
 fi
 # echo "SED in .bashrc:56 is: $SED"
 # Awk-ward! (see note below about "using the right awk"...)
 [ -z "${AWK+x}" ] && \
-  export AWK=$(command -v frawk || command -v gawk || command -v awk)
+	export AWK=$(command -v frawk || command -v gawk || command -v awk)
 
 [ "${DEBUG_SHELLCONFIG+set}" = "set" ] && echo "Entering $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")" || $INTERACTIVE_SHELL && $LOGIN_SHELL && append_dotfile_progress "rc"
 [ "${DEBUG_PATHCONFIG+set}" = "set" ] && echo "$PATH"
@@ -138,12 +112,12 @@ export LANG=en_US.UTF-8
 # Preferred editor with logic for local and remote sessions
 unset VISUAL EDITOR
 if [[ -n $SSH_CONNECTION ]]; then
-  needs micro "please install the micro editor; defaulting to nano" && export EDITOR='micro' || export EDITOR='nano'
-  unset VISUAL # note: this indicates to other tooling later on that we are not in a GUI context
+	needs micro "please install the micro editor; defaulting to nano" && export EDITOR='micro' || export EDITOR='nano'
+	unset VISUAL # note: this indicates to other tooling later on that we are not in a GUI context
 else
-  needs micro "please install the micro editor; defaulting to nano for EDITOR" && export EDITOR='micro' || export EDITOR='nano'
-  needs code "please install the VSCode editor and commandline access for it" && export VISUAL='code' || export VISUAL="$EDITOR"
-  needs windsurf "please install the Codeium Windsurf editor and commandline access for it" && export VISUAL='windsurf -g' || export VISUAL="${VISUAL:-$EDITOR}"
+	needs micro "please install the micro editor; defaulting to nano for EDITOR" && export EDITOR='micro' || export EDITOR='nano'
+	needs code "please install the VSCode editor and commandline access for it" && export VISUAL='code' || export VISUAL="$EDITOR"
+	needs windsurf "please install the Codeium Windsurf editor and commandline access for it" && export VISUAL='windsurf -g' || export VISUAL="${VISUAL:-$EDITOR}"
 fi
 
 # Compilation flags
@@ -161,46 +135,46 @@ export SSH_KEY_PATH="$HOME/.ssh/id_ed25519"
 # platform info
 export PLATFORM
 case $OSTYPE in
-  darwin*)
-    export PLATFORM="osx"
-    export DISTRO="macOS"
-    export DISTRO_PRETTY="$DISTRO $(mac_os_version_number_to_name)"
-    export DISTRO_VERSION="$(distro_version)"
-    # Initialize RAM disk for /private/tmp if interactive login shell
-    # NOTE: This is now handled by a LaunchAgent (com.pmarreck.ramdisk.plist)
-    # which runs ~/dotfiles/bin/ramdisk-daemon on login. Use 'ramdisk-status' to check status.
-    # Disabled the old method to prevent conflicts:
-    # if $INTERACTIVE_SHELL && $LOGIN_SHELL; then
-    #   "$HOME/dotfiles/bin/src/macos_ramdisk_tmp.sh"
-    # fi
-    ;;
-  linux*)
-    export PLATFORM="linux"
-    export DISTRO="$(distro)"
-    export DISTRO_PRETTY="$(distro_pretty)"
-    export DISTRO_VERSION="$(distro_version)"
-    ;;
-  msys*|cygwin*|mingw*)
-    export PLATFORM="windows"
-    export DISTRO="Windows"
-    export DISTRO_PRETTY="$(distro_pretty)"
-    export DISTRO_VERSION="$(distro_version)"
-    ;;
-  *)
-    # this downcase requires bash 4+; you can pipe to tr '[:upper:]' '[:lower:]' instead
-    export PLATFORM="$OSTYPE"
-    ;;
+	darwin*)
+		export PLATFORM="osx"
+		export DISTRO="macOS"
+		export DISTRO_PRETTY="$DISTRO $(mac_os_version_number_to_name)"
+		export DISTRO_VERSION="$(distro_version)"
+		# Initialize RAM disk for /private/tmp if interactive login shell
+		# NOTE: This is now handled by a LaunchAgent (com.pmarreck.ramdisk.plist)
+		# which runs ~/dotfiles/bin/ramdisk-daemon on login. Use 'ramdisk-status' to check status.
+		# Disabled the old method to prevent conflicts:
+		# if $INTERACTIVE_SHELL && $LOGIN_SHELL; then
+		#   "$HOME/dotfiles/bin/src/macos_ramdisk_tmp.sh"
+		# fi
+		;;
+	linux*)
+		export PLATFORM="linux"
+		export DISTRO="$(distro)"
+		export DISTRO_PRETTY="$(distro_pretty)"
+		export DISTRO_VERSION="$(distro_version)"
+		;;
+	msys*|cygwin*|mingw*)
+		export PLATFORM="windows"
+		export DISTRO="Windows"
+		export DISTRO_PRETTY="$(distro_pretty)"
+		export DISTRO_VERSION="$(distro_version)"
+		;;
+	*)
+		# this downcase requires bash 4+; you can pipe to tr '[:upper:]' '[:lower:]' instead
+		export PLATFORM="$OSTYPE"
+		;;
 esac
 
 if [ "$AWK" = "" ]; then
-  export AWK=$(command -v frawk || command -v gawk || command -v awk)
+	export AWK=$(command -v frawk || command -v gawk || command -v awk)
 fi
 # echo "AWK in .bashrc:258 is: $AWK"
 # using the right awk is a PITA on macOS vs. Linux so let's ensure GNU Awk everywhere
 is_gnu_awk=$($AWK --version | grep -q -m 1 'GNU Awk' && echo true || echo false)
 [ "${PLATFORM}$(basename $AWK)" == "osxawk" ] && \
-  $is_gnu_awk && \
-  echo "WARNING: The awk on PATH is not GNU Awk on macOS, which may cause problems" >&2
+	$is_gnu_awk && \
+	echo "WARNING: The awk on PATH is not GNU Awk on macOS, which may cause problems" >&2
 
 # # asdf config
 # [[ -s "$HOME/.asdf/asdf.sh" ]] && source "$HOME/.asdf/asdf.sh"
@@ -214,14 +188,14 @@ is_gnu_awk=$($AWK --version | grep -q -m 1 'GNU Awk' && echo true || echo false)
 # partial history search
 if $INTERACTIVE_SHELL
 then
-  bind '"\e[A": history-search-backward' # up-arrow
-  bind '"\e[B": history-search-forward'  # down-arrow
+	bind '"\e[A": history-search-backward' # up-arrow
+	bind '"\e[B": history-search-forward'  # down-arrow
 fi
 
 # who am I? (should work even when sourced from elsewhere, but only in Bash)
 me() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-  basename -- "${BASH_SOURCE[0]}"
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	basename -- "${BASH_SOURCE[0]}"
 }
 
 needs eza "cargo install eza, or your package manager"
@@ -247,22 +221,22 @@ needs delta "cargo install git-delta"
 # Load hooks (skip during rehash to avoid issues)
 # Skip all hook loading for LLM assistants to prevent hangs
 if [[ "${SKIP_COMPLEX_SHELL_SETUP:-false}" == "true" ]]; then
-  # Minimal setup for LLM assistants - just basic prompt
-  PS1='\u@\h:\w\$ '
+	# Minimal setup for LLM assistants - just basic prompt
+	PS1='\u@\h:\w\$ '
 elif [[ "${REHASHING:-false}" != "true" ]] && [[ "${ENABLE_COMPLEX_HOOKS:-false}" == "true" ]]; then
-  if [[ -f "$HOME/bin/apply-hooks" ]]; then
-    source "$HOME/bin/apply-hooks" || echo "Problem when sourcing $HOME/bin/apply-hooks"
-  else
-    echo "apply-hooks not found at $HOME/bin/apply-hooks" >&2
-  fi
+	if [[ -f "$HOME/bin/apply-hooks" ]]; then
+		source "$HOME/bin/apply-hooks" || echo "Problem when sourcing $HOME/bin/apply-hooks"
+	else
+		echo "apply-hooks not found at $HOME/bin/apply-hooks" >&2
+	fi
 elif [[ "${REHASHING:-false}" != "true" ]]; then
-  # Use simplified hooks that won't hang
-  if [[ -f "$HOME/dotfiles/bin/apply-hooks" ]]; then
-    source "$HOME/dotfiles/bin/apply-hooks" || echo "Problem when sourcing apply-hooks"
-  else
-    # Fallback: basic prompt if nothing else works
-    PS1='\u@\h:\w\$ '
-  fi
+	# Use simplified hooks that won't hang
+	if [[ -f "$HOME/dotfiles/bin/apply-hooks" ]]; then
+		source "$HOME/dotfiles/bin/apply-hooks" || echo "Problem when sourcing apply-hooks"
+	else
+		# Fallback: basic prompt if nothing else works
+		PS1='\u@\h:\w\$ '
+	fi
 fi
 
 # aliases- source these on every interactive shell because they do not inherit
