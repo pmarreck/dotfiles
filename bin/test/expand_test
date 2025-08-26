@@ -42,16 +42,23 @@ test_expand() {
   assert "$output" == "test\\ with\\ spaces.jpg " "expand should handle patterns with spaces"
   (( fails += $? ))
 
-  # Test 5: Non-matching pattern
+  # Test 5: Non-matching pattern (new behavior: empty result)
   (( tests++ ))
   output=$(expand "nonexistent*.jpg" 2>/dev/null)
-  assert "$output" == "nonexistent\*.jpg " "expand should return the original pattern when no matches are found"
+  assert "$output" == "" "expand should return empty result when no matches are found"
   (( fails += $? ))
 
-  # Test 6: Command with non-matching pattern
+  # Test 5b: Non-matching pattern exit code
+  (( tests++ ))
+  expand "nonexistent*.jpg" >/dev/null 2>&1
+  exit_code=$?
+  assert "$exit_code" == "1" "expand should return exit code 1 when no matches are found"
+  (( fails += $? ))
+
+  # Test 6: Command with non-matching pattern (should execute command with no args)
   (( tests++ ))
   output=$(expand echo "nonexistent*.jpg" 2>/dev/null)
-  assert "$output" == "nonexistent*.jpg" "expand should pass non-matching patterns as-is to commands"
+  assert "$output" == "" "expand should execute command with no arguments when no patterns match"
   (( fails += $? ))
 
   # Test 7: Command with options
@@ -215,6 +222,27 @@ test_expand() {
   
   # Clean up case-insensitive test files
   rm -f "Test.JPG" "test.Jpg" "TEST.jpg" "other.png"
+  
+  # Test 20: Mixed matching and non-matching patterns
+  (( tests++ ))
+  output=$(expand "test1.jpg" "nonexistent*.jpg" "test2.jpg" 2>/dev/null)
+  expected_files="test1.jpg test2.jpg "
+  assert "$output" == "$expected_files" "expand should include only matching patterns, skip non-matching ones"
+  (( fails += $? ))
+  
+  # Test 21: All patterns non-matching should return empty and exit 1
+  (( tests++ ))
+  expand "nonexistent1*.jpg" "nonexistent2*.png" >/dev/null 2>&1
+  exit_code=$?
+  assert "$exit_code" == "1" "expand should return exit code 1 when no patterns match"
+  (( fails += $? ))
+  
+  # Test 22: Mixed patterns with command execution
+  (( tests++ ))
+  output=$(expand echo "test1.jpg" "nonexistent*.jpg" "test2.jpg" 2>/dev/null)
+  expected_files="test1.jpg test2.jpg"
+  assert "$output" == "$expected_files" "expand should pass only matching patterns to commands"
+  (( fails += $? ))
   
   # Clean up test files and leave temp dir
   rm -rf test1.jpg test2.jpg "test with spaces.jpg" zzlast.jpg aafirst.jpg subdir1

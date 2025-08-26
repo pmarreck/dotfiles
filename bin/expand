@@ -19,7 +19,7 @@ USAGE:
 	expand [OPTIONS] PATTERN                   Expand a glob pattern and print results
 	expand [OPTIONS] COMMAND [ARG...]          Run a command with expanded arguments
 	expand --test                              Run self-tests
-	expand --help                              Show this help message
+	expand -h, --help                          Show this help message
 
 OPTIONS:
 	-i, --ignore-case                Case-insensitive pattern matching
@@ -30,6 +30,26 @@ EXAMPLES:
 	expand ls -la "*.jpg"            Run ls -la with expanded jpg files
 	expand --ignore-case ls "*.JPG"  Run ls with case-insensitive matching
 	expand jpegxl --lossless "*.jpg" Run jpegxl with expanded jpg files
+	
+	# Multiple file types (let shell do brace expansion):
+	expand *.{png,jpg,gif}           Find png, jpg, and gif files
+	expand -i *.{png,jpg,gif}        Case-insensitive multiple types
+	
+	# Multiple patterns (alternative to brace expansion):
+	expand "*.png" "*.jpg" "*.gif"   Find png, jpg, and gif files
+	
+	# Recursive patterns:
+	expand "**/*.jpg"                Find all jpg files in subdirectories
+	expand -i **/*.{png,jpg}         Case-insensitive recursive search (unquoted)
+	
+	# Dotfiles (hidden files):
+	expand ".*"                      Find dotfiles in current directory
+	expand "**/.git"                 Find all .git directories recursively
+	
+	# Non-matching pattern behavior:
+	expand "*.nonexistent"           Empty output, exit code 1
+	expand "*.txt" "*.nonexistent"   Only shows *.txt files (skips non-matching)
+	expand ls "*.txt" "*.missing"    ls only gets the *.txt arguments
 
 DESCRIPTION:
 	The expand function provides controlled glob expansion even when
@@ -37,8 +57,26 @@ DESCRIPTION:
 	and properly quotes results for shell consumption.
 
 	When used with a command, it expands any glob patterns in the arguments
-	before passing them to the command. If a pattern doesn't match any files,
-	it's passed as-is to the command.
+	before passing them to the command. Non-matching patterns are skipped
+	entirely.
+
+	PATTERN BEHAVIOR:
+	- Standard glob patterns: * ? [abc]
+	- Recursive patterns: ** (matches subdirectories)
+	- Dotfiles: Hidden files (.*) are excluded by default unless explicitly matched
+	- Case sensitivity: Patterns are case-sensitive by default
+	- Brace expansion: Use unquoted patterns like *.{png,jpg} for multiple types
+
+	NON-MATCHING PATTERNS:
+	When a glob pattern matches no files, it is SKIPPED entirely:
+	- Direct mode: Returns empty result and exit code 1
+	- Command mode: Runs command with only the matching patterns as arguments
+	- Mixed patterns: Only matching patterns are included in the results
+
+	EXIT CODES:
+	- 0: At least one pattern matched files
+	- 1: No patterns matched any files
+	- 2: Invalid usage (no arguments, etc.)
 
 	The -i/--ignore-case option enables case-insensitive pattern matching,
 	so "*.jpg" will match "*.JPG", "*.Jpg", etc.
@@ -117,6 +155,7 @@ EOF
 	# Step 1: Check if first arg is a command
 	local exec_command=""
 	local args=("$@")
+	local found_any_matches=false
 
 	# If first arg exists and is an executable, use it as command
 	if [[ ${#args[@]} -gt 0 ]] && command -v "${args[0]}" &>/dev/null; then
@@ -181,6 +220,7 @@ EOF
 
 				# Otherwise, add the matches
 				debug "Found ${#matches[@]} matches for pattern '$arg'"
+				found_any_matches=true
 				processed_args+=("${matches[@]}")
 				continue
 			fi
@@ -275,20 +315,12 @@ EOF
 					done < <(eval "$find_cmd" 2>/dev/null)
 				fi
 
-				# If no matches found and nullglob is not set, keep the original pattern
+				# If no matches found, skip the pattern (new default behavior for all modes)
 				if [[ ${#found_files[@]} -eq 0 ]]; then
-					debug "No matches found for pattern with spaces: $arg"
-
-					# If we're in command mode and nullglob is set, skip non-matching patterns
-					if [[ -n "$exec_command" ]] && $nullglob_set; then
-						debug "Command mode with nullglob set, skipping non-matching pattern"
-						# Skip this pattern entirely
-					else
-						debug "Keeping original pattern"
-						processed_args+=("$arg")
-					fi
+					debug "No matches found for pattern with spaces: $arg - skipping"
 				else
 					debug "Found ${#found_files[@]} matches for pattern with spaces: $arg"
+					found_any_matches=true
 					processed_args+=("${found_files[@]}")
 				fi
 			else
@@ -344,20 +376,11 @@ EOF
 
 					# Handle the results based on whether we found matches
 					if [[ ${#found_files[@]} -eq 0 ]]; then
-						debug "No matches found for recursive pattern: $arg"
-
-						# If nullglob is set and we're in command mode, skip this pattern
-						if [[ -n "$exec_command" ]] && $nullglob_set; then
-							debug "Command mode with nullglob set, skipping non-matching recursive pattern"
-							# Skip this pattern entirely
-						else
-							# Otherwise keep the original pattern
-							debug "Keeping original recursive pattern"
-							processed_args+=("$arg")
-						fi
+						debug "No matches found for recursive pattern: $arg - skipping"
 					else
 						# We found matches, add them to the processed args
 						debug "Found ${#found_files[@]} matches for recursive pattern: $arg"
+						found_any_matches=true
 						processed_args+=("${found_files[@]}")
 					fi
 
@@ -383,29 +406,37 @@ EOF
 					fi
 				fi
 
-				# If no matches found, handle based on mode and nullglob setting
+				# If no matches found, skip the pattern (new default behavior for all modes)
 				if [[ ${#files[@]} -eq 0 ]]; then
-					debug "No matches found for pattern: $arg"
-
-					# If we're in command mode and nullglob is set, skip non-matching patterns
-					if [[ -n "$exec_command" ]] && $nullglob_set; then
-						debug "Command mode with nullglob set, skipping non-matching pattern"
-						# Skip this pattern entirely
-					else
-						debug "Keeping original pattern"
-						processed_args+=("$arg")
-					fi
+					debug "No matches found for pattern: $arg - skipping"
 				else
 					debug "Found ${#files[@]} matches for pattern: $arg"
+					found_any_matches=true
 					processed_args+=("${files[@]}")
 				fi
 			fi
 		else
 			# Not a glob pattern, add as is
 			debug "Adding non-glob argument: $arg"
+			found_any_matches=true
 			processed_args+=("$arg")
 		fi
 	done
+
+	# Check if we found any matches
+	if ! $found_any_matches; then
+		debug "No matches found for any patterns"
+		# Restore globbing states before returning
+		$glob_disabled && set -f
+		if $ignore_case; then
+			if $nocaseglob_set; then
+				shopt -s nocaseglob
+			else
+				shopt -u nocaseglob
+			fi
+		fi
+		return 1
+	fi
 
 	# Step 3: Sort and emit results
 	local sorted_output
