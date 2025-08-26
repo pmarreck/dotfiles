@@ -181,6 +181,41 @@ test_expand() {
   # Restore original nullglob setting
   $old_nullglob_setting || shopt -u nullglob
   
+  # Test 16: Case-insensitive matching with --ignore-case
+  (( tests++ ))
+  # Create test files with mixed case
+  touch "Test.JPG" "test.Jpg" "TEST.jpg" "other.png"
+  
+  # Test without ignore-case flag (should only match exact case)
+  output=$(expand "test*.jpg" 2>/dev/null)
+  expected_files="test\ with\ spaces.jpg test1.jpg test2.jpg "
+  assert "$output" == "$expected_files" "expand should be case-sensitive by default"
+  (( fails += $? ))
+  
+  # Test with --ignore-case flag (should match all case variations)
+  (( tests++ ))
+  output=$(expand --ignore-case "test*.jpg" 2>/dev/null)
+  expected_files="TEST.jpg Test.JPG test\ with\ spaces.jpg test.Jpg test1.jpg test2.jpg "
+  assert "$output" == "$expected_files" "expand should match case-insensitively with --ignore-case"
+  (( fails += $? ))
+  
+  # Test 18: Case-insensitive matching with -i (shorthand)
+  (( tests++ ))
+  output=$(expand -i "test*.jpg" 2>/dev/null)
+  expected_files="TEST.jpg Test.JPG test\ with\ spaces.jpg test.Jpg test1.jpg test2.jpg "
+  assert "$output" == "$expected_files" "expand should match case-insensitively with -i shorthand"
+  (( fails += $? ))
+  
+  # Test 19: Case-insensitive with command execution
+  (( tests++ ))
+  output=$(expand -i echo "test*.jpg" 2>/dev/null)
+  expected_files="TEST.jpg Test.JPG test with spaces.jpg test.Jpg test1.jpg test2.jpg"
+  assert "$output" == "$expected_files" "expand should execute commands with case-insensitive matching"
+  (( fails += $? ))
+  
+  # Clean up case-insensitive test files
+  rm -f "Test.JPG" "test.Jpg" "TEST.jpg" "other.png"
+  
   # Clean up test files and leave temp dir
   rm -rf test1.jpg test2.jpg "test with spaces.jpg" zzlast.jpg aafirst.jpg subdir1
   popd >/dev/null

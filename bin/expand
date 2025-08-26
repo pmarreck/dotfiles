@@ -16,14 +16,19 @@ expand() {
 expand: A utility for controlled glob expansion
 
 USAGE:
-	expand PATTERN                   Expand a glob pattern and print results
-	expand COMMAND [ARG...]          Run a command with expanded arguments
-	expand --test                    Run self-tests
-	expand --help                    Show this help message
+	expand [OPTIONS] PATTERN                   Expand a glob pattern and print results
+	expand [OPTIONS] COMMAND [ARG...]          Run a command with expanded arguments
+	expand --test                              Run self-tests
+	expand --help                              Show this help message
+
+OPTIONS:
+	-i, --ignore-case                Case-insensitive pattern matching
 
 EXAMPLES:
 	expand "*.jpg"                   Expand and print all jpg files
+	expand -i "*.JPG"                Expand jpg files ignoring case
 	expand ls -la "*.jpg"            Run ls -la with expanded jpg files
+	expand --ignore-case ls "*.JPG"  Run ls with case-insensitive matching
 	expand jpegxl --lossless "*.jpg" Run jpegxl with expanded jpg files
 
 DESCRIPTION:
@@ -34,6 +39,9 @@ DESCRIPTION:
 	When used with a command, it expands any glob patterns in the arguments
 	before passing them to the command. If a pattern doesn't match any files,
 	it's passed as-is to the command.
+
+	The -i/--ignore-case option enables case-insensitive pattern matching,
+	so "*.jpg" will match "*.JPG", "*.Jpg", etc.
 EOF
 	}
 
@@ -47,8 +55,35 @@ EOF
 		return 2
 	fi
 
+	# Parse flags
+	local ignore_case=false
+	local processed_argv=()
+	
+	# Process arguments to extract flags
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+			-i|--ignore-case)
+				ignore_case=true
+				shift
+				;;
+			*)
+				# Not a flag, add to processed arguments
+				processed_argv+=("$1")
+				shift
+				;;
+		esac
+	done
+	
+	# Restore arguments without flags
+	set -- "${processed_argv[@]}"
+	
+	if [[ $# -eq 0 ]]; then
+		_show_help
+		return 2
+	fi
+
 	# Store original globbing states to restore later
-	local glob_disabled nullglob_set dotglob_set
+	local glob_disabled nullglob_set dotglob_set nocaseglob_set
 
 	# Check if globbing is disabled (set -f sets the noglob option)
 	# This is the proper way to check if set -f is active
@@ -67,10 +102,17 @@ EOF
 	# Store other globbing options
 	[[ -o nullglob ]] && nullglob_set=true || nullglob_set=false
 	[[ -o dotglob ]] && dotglob_set=true || dotglob_set=false
+	shopt -q nocaseglob && nocaseglob_set=true || nocaseglob_set=false
 
 	# Enable globbing but respect existing nullglob and dotglob settings
 	set +f           # Enable globbing
 	# We don't change nullglob and dotglob settings - respect user's preferences
+	
+	# Enable nocaseglob if ignore_case flag is set
+	if $ignore_case; then
+		debug "Enabling case-insensitive globbing"
+		shopt -s nocaseglob
+	fi
 
 	# Step 1: Check if first arg is a command
 	local exec_command=""
@@ -108,6 +150,11 @@ EOF
 
 				# Temporarily enable nullglob for pattern matching
 				shopt -s nullglob
+				# Preserve case-insensitive setting during matching
+				if $ignore_case && ! $nocaseglob_set; then
+					shopt -s nocaseglob
+				fi
+				
 				if [[ "$arg" == *" "* ]]; then
 					# For patterns with spaces, use find
 					while IFS= read -r -d $'\0' file; do
@@ -119,7 +166,12 @@ EOF
 					# For patterns without spaces, use bash globbing
 					matches=($arg)
 				fi
+				
 				shopt -u nullglob
+				# Restore original nocaseglob setting if we changed it
+				if $ignore_case && ! $nocaseglob_set; then
+					shopt -u nocaseglob
+				fi
 
 				# If no matches and nullglob is set, skip this pattern entirely
 				if [[ ${#matches[@]} -eq 0 ]]; then
@@ -133,41 +185,95 @@ EOF
 				continue
 			fi
 
-			# Handle patterns with spaces using find
+			# Handle patterns with spaces using find or absolute paths
 			if [[ "$arg" == *" "* ]]; then
-				debug "Pattern contains spaces, using find"
+				debug "Pattern contains spaces, using find or absolute path matching"
 				local found_files=()
 
-				# Check if pattern contains ** for recursive globbing
-				local is_recursive=false
-				if [[ "$arg" == *"**"* ]]; then
-					is_recursive=true
-					debug "Detected recursive globbing pattern with **"
-				fi
-
-				# Adjust find command based on recursive flag
-				local find_cmd="find ."
-				if ! $is_recursive; then
-					find_cmd="$find_cmd -maxdepth 1"
-				fi
-
-				# If dotglob is set, include hidden files
-				if $dotglob_set; then
-					debug "dotglob is set, including hidden files in find"
-					find_cmd="$find_cmd -name \"$arg\" -print0"
+				# Check if this is an absolute path pattern
+				if [[ "$arg" == /* ]]; then
+					debug "Absolute path pattern detected: $arg"
+					
+					# Extract the directory part and the pattern part
+					local dir_part="${arg%/*}"
+					local pattern_part="${arg##*/}"
+					
+					debug "Directory part: $dir_part"
+					debug "Pattern part: $pattern_part"
+					
+					# Check if directory exists
+					if [[ -d "$dir_part" ]]; then
+						# Change to that directory temporarily
+						local orig_pwd="$PWD"
+						cd "$dir_part" 2>/dev/null || {
+							debug "Failed to cd to $dir_part"
+							processed_args+=("$arg")
+							continue
+						}
+						
+						# Use bash globbing in that directory
+						local temp_files=()
+						shopt -s nullglob
+						# Preserve case-insensitive setting during matching
+						if $ignore_case && ! $nocaseglob_set; then
+							shopt -s nocaseglob
+						fi
+						
+						temp_files=($pattern_part)
+						
+						shopt -u nullglob
+						# Restore original nocaseglob setting if we changed it
+						if $ignore_case && ! $nocaseglob_set; then
+							shopt -u nocaseglob
+						fi
+						
+						# Convert back to full paths
+						for file in "${temp_files[@]}"; do
+							found_files+=("$dir_part/$file")
+						done
+						
+						# Return to original directory
+						cd "$orig_pwd"
+					else
+						debug "Directory $dir_part does not exist"
+						processed_args+=("$arg")
+						continue
+					fi
 				else
-					debug "dotglob is not set, excluding hidden files in find"
-					# Exclude files that start with a dot
-					find_cmd="$find_cmd -name \"$arg\" -not -path \"*/\.*\" -print0"
+					# Relative path with spaces - use find
+					debug "Relative pattern with spaces, using find"
+					
+					# Check if pattern contains ** for recursive globbing
+					local is_recursive=false
+					if [[ "$arg" == *"**"* ]]; then
+						is_recursive=true
+						debug "Detected recursive globbing pattern with **"
+					fi
+
+					# Adjust find command based on recursive flag
+					local find_cmd="find ."
+					if ! $is_recursive; then
+						find_cmd="$find_cmd -maxdepth 1"
+					fi
+
+					# If dotglob is set, include hidden files
+					if $dotglob_set; then
+						debug "dotglob is set, including hidden files in find"
+						find_cmd="$find_cmd -name \"$arg\" -print0"
+					else
+						debug "dotglob is not set, excluding hidden files in find"
+						# Exclude files that start with a dot
+						find_cmd="$find_cmd -name \"$arg\" -not -path \"*/\.*\" -print0"
+					fi
+
+					debug "Find command: $find_cmd"
+
+					while IFS= read -r -d $'\0' file; do
+						# Remove ./ prefix if present
+						file="${file#./}"
+						found_files+=("$file")
+					done < <(eval "$find_cmd" 2>/dev/null)
 				fi
-
-				debug "Find command: $find_cmd"
-
-				while IFS= read -r -d $'\0' file; do
-					# Remove ./ prefix if present
-					file="${file#./}"
-					found_files+=("$file")
-				done < <(eval "$find_cmd" 2>/dev/null)
 
 				# If no matches found and nullglob is not set, keep the original pattern
 				if [[ ${#found_files[@]} -eq 0 ]]; then
@@ -263,8 +369,18 @@ EOF
 
 					# Enable nullglob temporarily to detect if there are no matches
 					shopt -s nullglob
+					# Preserve case-insensitive setting during matching
+					if $ignore_case && ! $nocaseglob_set; then
+						shopt -s nocaseglob
+					fi
+					
 					files=($arg)
+					
 					shopt -u nullglob
+					# Restore original nocaseglob setting if we changed it
+					if $ignore_case && ! $nocaseglob_set; then
+						shopt -u nocaseglob
+					fi
 				fi
 
 				# If no matches found, handle based on mode and nullglob setting
@@ -294,8 +410,9 @@ EOF
 	# Step 3: Sort and emit results
 	local sorted_output
 	if [[ ${#processed_args[@]} -gt 0 ]]; then
-		# Sort the output
-		sorted_output=$(printf "%s\n" "${processed_args[@]}" | sort)
+		# Sort the output using C locale for consistent behavior
+		# This ensures predictable sorting regardless of system locale
+		sorted_output=$(printf "%s\n" "${processed_args[@]}" | LC_ALL=C sort)
 
 		# Step 4: Execute command or print results
 		if [[ -n "$exec_command" ]]; then
@@ -321,6 +438,15 @@ EOF
 
 			# Only restore the globbing state (noglob) since we didn't change nullglob or dotglob
 			$glob_disabled && set -f
+			
+			# Restore original nocaseglob setting
+			if $ignore_case; then
+				if $nocaseglob_set; then
+					shopt -s nocaseglob
+				else
+					shopt -u nocaseglob
+				fi
+			fi
 
 			return $retcode
 		else
@@ -338,6 +464,15 @@ EOF
 
 	# Only restore the globbing state (noglob) since we didn't change nullglob or dotglob
 	$glob_disabled && set -f
+	
+	# Restore original nocaseglob setting
+	if $ignore_case; then
+		if $nocaseglob_set; then
+			shopt -s nocaseglob
+		else
+			shopt -u nocaseglob
+		fi
+	fi
 
 	return 0
 }
