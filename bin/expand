@@ -31,16 +31,16 @@ EXAMPLES:
 	expand --ignore-case ls "*.JPG"  Run ls with case-insensitive matching
 	expand jpegxl --lossless "*.jpg" Run jpegxl with expanded jpg files
 	
-	# Multiple file types (let shell do brace expansion):
-	expand *.{png,jpg,gif}           Find png, jpg, and gif files
-	expand -i *.{png,jpg,gif}        Case-insensitive multiple types
+	# Multiple file types (quoted brace expansion):
+	expand "*.{png,jpg,gif}"         Find png, jpg, and gif files
+	expand -i "*.{png,jpg,gif}"      Case-insensitive multiple types
 	
 	# Multiple patterns (alternative to brace expansion):
 	expand "*.png" "*.jpg" "*.gif"   Find png, jpg, and gif files
 	
 	# Recursive patterns:
 	expand "**/*.jpg"                Find all jpg files in subdirectories
-	expand -i **/*.{png,jpg}         Case-insensitive recursive search (unquoted)
+	expand -i "**/*.{png,jpg}"       Case-insensitive recursive search
 	
 	# Dotfiles (hidden files):
 	expand ".*"                      Find dotfiles in current directory
@@ -65,7 +65,16 @@ DESCRIPTION:
 	- Recursive patterns: ** (matches subdirectories)
 	- Dotfiles: Hidden files (.*) are excluded by default unless explicitly matched
 	- Case sensitivity: Patterns are case-sensitive by default
-	- Brace expansion: Use unquoted patterns like *.{png,jpg} for multiple types
+	- Brace expansion: Use quoted patterns like "*.{png,jpg}" for multiple types
+	
+	BRACE EXPANSION:
+	The expand function supports quoted brace expansion, allowing you to match
+	multiple file types or patterns in a single argument:
+	
+	expand "*.{jpg,png,gif}"         # Match all image files
+	expand "file.{txt,log,bak}"      # Match specific file with different extensions
+	expand "**/*.{js,ts,jsx,tsx}"    # Recursive search for JavaScript/TypeScript files
+	expand -i "**/*.{JPG,PNG}"       # Case-insensitive recursive image search
 
 	NON-MATCHING PATTERNS:
 	When a glob pattern matches no files, it is SKIPPED entirely:
@@ -120,6 +129,44 @@ EOF
 		return 2
 	fi
 
+	# Preprocess arguments for brace expansion
+	local brace_expanded_argv=()
+	local arg
+	
+	for arg in "$@"; do
+		# Check if argument contains brace expansion patterns
+		# Regex matches: {word1,word2} or {word1,word2,word3} etc.
+		# Must have at least one comma inside braces
+		if [[ "$arg" =~ \{[^}]*,[^}]*\} ]]; then
+			debug "Detected brace expansion in: $arg"
+			
+			# Use bash to expand the braces 
+			# First escape spaces in the argument so bash treats it as one argument
+			local escaped_arg="${arg// /\\ }"
+			local expanded_items
+			expanded_items=$(bash -c "printf '%s\\n' $escaped_arg" 2>/dev/null) || {
+				debug "Brace expansion failed, using original: $arg"
+				brace_expanded_argv+=("$arg")
+				continue
+			}
+			
+			# Add each expanded item to the array
+			while IFS= read -r expanded_item; do
+				[[ -n "$expanded_item" ]] && brace_expanded_argv+=("$expanded_item")
+			done <<< "$expanded_items"
+			
+			debug "Brace expansion result: ${brace_expanded_argv[*]}"
+		else
+			# No brace expansion needed
+			brace_expanded_argv+=("$arg")
+		fi
+	done
+	
+	# Replace the original arguments with brace-expanded ones
+	set -- "${brace_expanded_argv[@]}"
+	
+	debug "Final arguments after brace expansion: $*"
+
 	# Store original globbing states to restore later
 	local glob_disabled nullglob_set dotglob_set nocaseglob_set
 
@@ -157,16 +204,42 @@ EOF
 	local args=("$@")
 	local found_any_matches=false
 
-	# If first arg exists and is an executable, use it as command
-	if [[ ${#args[@]} -gt 0 ]] && command -v "${args[0]}" &>/dev/null; then
-		exec_command="${args[0]}"
-		debug "Found command: $exec_command"
-		# Remove the command from args
-		args=("${args[@]:1}")
+	# Use which + file to robustly detect if first arg is an executable command
+	if [[ ${#args[@]} -gt 0 ]]; then
+		local resolved_path
+		# Try to resolve the first argument using which
+		resolved_path=$(which "${args[0]}" 2>/dev/null)
+		
+		if [[ -n "$resolved_path" ]]; then
+			debug "which resolved '${args[0]}' to: $resolved_path"
+			
+			# Check if the resolved path contains "executable" in file output
+			local file_output
+			file_output=$(file -L "$resolved_path" 2>/dev/null)
+			debug "file output: $file_output"
+			
+			# Also check if this looks like a data file by extension
+			local data_file_extensions="\.(jpg|jpeg|png|gif|pdf|mp4|avi|mp3|wav|doc|docx|txt|log|csv)$"
+			
+			if [[ "$file_output" == *"executable"* ]] && [[ ! "$resolved_path" =~ $data_file_extensions ]]; then
+				exec_command="${args[0]}"
+				debug "Found executable command: $exec_command (resolved to: $resolved_path)"
+				# Remove the command from args
+				args=("${args[@]:1}")
 
-		# Special handling for nullglob in command mode
-		if $nullglob_set; then
-			debug "Command mode with nullglob set - will filter out non-matching patterns"
+				# Special handling for nullglob in command mode
+				if $nullglob_set; then
+					debug "Command mode with nullglob set - will filter out non-matching patterns"
+				fi
+			else
+				if [[ "$resolved_path" =~ $data_file_extensions ]]; then
+					debug "which resolved '${args[0]}' but it has a data file extension: $resolved_path"
+				else
+					debug "which resolved '${args[0]}' but file says it's not executable: $file_output"
+				fi
+			fi
+		else
+			debug "which could not resolve '${args[0]}' - treating as pattern"
 		fi
 	fi
 

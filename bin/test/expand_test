@@ -7,40 +7,53 @@ test_expand() {
   local tests=0
   local output
 
-  # Create test files in temp dir
+  # Create test directory
   pushd $(mktemp -d) >/dev/null
-  touch test1.jpg test2.jpg "test with spaces.jpg" zzlast.jpg aafirst.jpg
 
   # Test 1: Direct pattern expansion
   (( tests++ ))
+  # Create test files for this test
+  touch test1.jpg test2.jpg "test with spaces.jpg"
   output=$(expand "test*.jpg" 2>/dev/null)
-  # Expected output is the sorted list of files
-  local expected_files="test\\ with\\ spaces.jpg test1.jpg test2.jpg "
+  expected_files="test\\ with\\ spaces.jpg test1.jpg test2.jpg "
   assert "$output" == "$expected_files" "expand should expand glob patterns correctly"
   (( fails += $? ))
+  # Clean up test files
+  rm -f test1.jpg test2.jpg "test with spaces.jpg"
 
   # Test 2: Command with pattern
   (( tests++ ))
+  # Create test files for this test
+  touch test1.jpg test2.jpg "test with spaces.jpg"
   output=$(expand echo "test*.jpg" 2>/dev/null)
-  # Expected output is the sorted list of files
   expected_files="test with spaces.jpg test1.jpg test2.jpg"
   assert "$output" == "$expected_files" "expand should execute commands with expanded arguments"
   (( fails += $? ))
+  # Clean up test files
+  rm -f test1.jpg test2.jpg "test with spaces.jpg"
 
   # Test 3: Command with multiple patterns
   (( tests++ ))
+  # Create test files for this test
+  touch test1.jpg test2.jpg "test with spaces.jpg"
   # For this test, we expect test1.jpg to appear twice, once from direct arg and once from expansion
   output=$(expand echo "test1.jpg" "test*.jpg" 2>/dev/null)
   # Expected output is the sorted list of files with test1.jpg appearing twice
   expected_files="test with spaces.jpg test1.jpg test1.jpg test2.jpg"
   assert "$output" == "$expected_files" "expand should handle multiple arguments correctly"
   (( fails += $? ))
+  # Clean up test files
+  rm -f test1.jpg test2.jpg "test with spaces.jpg"
 
   # Test 4: Pattern with spaces
   (( tests++ ))
+  # Create test file for this test
+  touch "test with spaces.jpg"
   output=$(expand "test with*.jpg" 2>/dev/null)
   assert "$output" == "test\\ with\\ spaces.jpg " "expand should handle patterns with spaces"
   (( fails += $? ))
+  # Clean up test file
+  rm -f "test with spaces.jpg"
 
   # Test 5: Non-matching pattern (new behavior: empty result)
   (( tests++ ))
@@ -63,28 +76,42 @@ test_expand() {
 
   # Test 7: Command with options
   (( tests++ ))
+  # Create test files for this test
+  touch test1.jpg test2.jpg "test with spaces.jpg"
   output=$(expand echo -n "test*.jpg" 2>/dev/null)
   # The -n option should be passed through
   expected_files="test with spaces.jpg test1.jpg test2.jpg"
   assert "$output" == "$expected_files" "expand should pass options to commands"
   (( fails += $? ))
+  # Clean up test files
+  rm -f test1.jpg test2.jpg "test with spaces.jpg"
 
   # Test 8: Verify sorting order with diverse filenames
   (( tests++ ))
+  # Create diverse files to test sorting
+  touch aafirst.jpg "test with spaces.jpg" test1.jpg test2.jpg zzlast.jpg
   output=$(expand "*.jpg" 2>/dev/null)
   expected_files="aafirst.jpg test\\ with\\ spaces.jpg test1.jpg test2.jpg zzlast.jpg "
   assert "$output" == "$expected_files" "expand should sort filenames correctly"
   (( fails += $? ))
+  # Clean up test files
+  rm -f aafirst.jpg "test with spaces.jpg" test1.jpg test2.jpg zzlast.jpg
 
   # Test 9: Sorting with multiple patterns
   (( tests++ ))
+  # Create diverse files to test sorting with multiple patterns
+  touch aafirst.jpg "test with spaces.jpg" test1.jpg test2.jpg zzlast.jpg
   output=$(expand echo "a*.jpg" "t*.jpg" "z*.jpg" 2>/dev/null)
   expected_files="aafirst.jpg test with spaces.jpg test1.jpg test2.jpg zzlast.jpg"
   assert "$output" == "$expected_files" "expand should handle multiple patterns and sort correctly"
   (( fails += $? ))
+  # Clean up test files
+  rm -f aafirst.jpg "test with spaces.jpg" test1.jpg test2.jpg zzlast.jpg
   
   # Test 10: Respect nullglob setting (when nullglob is set, non-matching patterns disappear)
   (( tests++ ))
+  # Create test file for this test
+  touch aafirst.jpg
   # Save current nullglob setting
   local old_nullglob_setting
   [[ -o nullglob ]] && old_nullglob_setting=true || old_nullglob_setting=false
@@ -102,11 +129,13 @@ test_expand() {
   
   # Restore original nullglob setting
   $old_nullglob_setting || shopt -u nullglob
+  # Clean up test file
+  rm -f aafirst.jpg
   
   # Test 11: Respect dotglob setting (when dotglob is set, hidden files are included)
   (( tests++ ))
-  # Create a hidden test file
-  touch ".hidden.jpg"
+  # Create test files including a hidden file
+  touch ".hidden.jpg" aafirst.jpg "test with spaces.jpg" test1.jpg test2.jpg zzlast.jpg
   
   # Save current dotglob setting
   local old_dotglob_setting
@@ -131,13 +160,14 @@ test_expand() {
   # Restore original dotglob setting
   $old_dotglob_setting && shopt -s dotglob || shopt -u dotglob
   
-  # Clean up the hidden file
-  rm -f ".hidden.jpg"
+  # Clean up all test files
+  rm -f ".hidden.jpg" aafirst.jpg "test with spaces.jpg" test1.jpg test2.jpg zzlast.jpg
   
   # Test 12: Recursive globbing with ** pattern
   (( tests++ ))
-  # Create a subdirectory structure
+  # Create a subdirectory structure and files
   mkdir -p subdir1/subdir2
+  touch aafirst.jpg "test with spaces.jpg" test1.jpg test2.jpg zzlast.jpg
   touch subdir1/nested1.jpg subdir1/subdir2/nested2.jpg
   
   # Test recursive globbing
@@ -145,9 +175,16 @@ test_expand() {
   expected_files="aafirst.jpg subdir1/nested1.jpg subdir1/subdir2/nested2.jpg test\ with\ spaces.jpg test1.jpg test2.jpg zzlast.jpg "
   assert "$output" == "$expected_files" "expand should handle recursive ** patterns"
   (( fails += $? ))
+  # Clean up test files and directories
+  rm -f aafirst.jpg "test with spaces.jpg" test1.jpg test2.jpg zzlast.jpg
+  rm -rf subdir1
   
   # Test 13: Recursive globbing with set -f (globbing disabled)
   (( tests++ ))
+  # Create a subdirectory structure and files
+  mkdir -p subdir1/subdir2
+  touch aafirst.jpg "test with spaces.jpg" test1.jpg test2.jpg zzlast.jpg
+  touch subdir1/nested1.jpg subdir1/subdir2/nested2.jpg
   # Save current noglob setting
   local old_noglob_setting
   [[ -o noglob ]] && old_noglob_setting=true || old_noglob_setting=false
@@ -161,13 +198,23 @@ test_expand() {
   
   # Restore original noglob setting
   $old_noglob_setting || set +f
+  # Clean up test files and directories
+  rm -f aafirst.jpg "test with spaces.jpg" test1.jpg test2.jpg zzlast.jpg
+  rm -rf subdir1
   
   # Test 14: Command with recursive pattern
   (( tests++ ))
+  # Create a subdirectory structure and files
+  mkdir -p subdir1/subdir2
+  touch aafirst.jpg "test with spaces.jpg" test1.jpg test2.jpg zzlast.jpg
+  touch subdir1/nested1.jpg subdir1/subdir2/nested2.jpg
   output=$(expand echo "**/*.jpg" 2>/dev/null)
   expected_files="aafirst.jpg subdir1/nested1.jpg subdir1/subdir2/nested2.jpg test with spaces.jpg test1.jpg test2.jpg zzlast.jpg"
   assert "$output" == "$expected_files" "expand should execute commands with recursive ** patterns"
   (( fails += $? ))
+  # Clean up test files and directories
+  rm -f aafirst.jpg "test with spaces.jpg" test1.jpg test2.jpg zzlast.jpg
+  rm -rf subdir1
   
   # Test 15: Recursive pattern with nullglob
   (( tests++ ))
@@ -190,8 +237,8 @@ test_expand() {
   
   # Test 16: Case-insensitive matching with --ignore-case
   (( tests++ ))
-  # Create test files with mixed case
-  touch "Test.JPG" "test.Jpg" "TEST.jpg" "other.png"
+  # Create test files with mixed case (including lowercase files for case-sensitive test)
+  touch "Test.JPG" "test.Jpg" "TEST.jpg" "other.png" "test with spaces.jpg" "test1.jpg" "test2.jpg"
   
   # Test without ignore-case flag (should only match exact case)
   output=$(expand "test*.jpg" 2>/dev/null)
@@ -221,14 +268,18 @@ test_expand() {
   (( fails += $? ))
   
   # Clean up case-insensitive test files
-  rm -f "Test.JPG" "test.Jpg" "TEST.jpg" "other.png"
+  rm -f "Test.JPG" "test.Jpg" "TEST.jpg" "other.png" "test with spaces.jpg" "test1.jpg" "test2.jpg"
   
   # Test 20: Mixed matching and non-matching patterns
   (( tests++ ))
+  # Create test files for this test
+  touch test1.jpg test2.jpg
   output=$(expand "test1.jpg" "nonexistent*.jpg" "test2.jpg" 2>/dev/null)
   expected_files="test1.jpg test2.jpg "
   assert "$output" == "$expected_files" "expand should include only matching patterns, skip non-matching ones"
   (( fails += $? ))
+  # Clean up test files
+  rm -f test1.jpg test2.jpg
   
   # Test 21: All patterns non-matching should return empty and exit 1
   (( tests++ ))
@@ -239,13 +290,164 @@ test_expand() {
   
   # Test 22: Mixed patterns with command execution
   (( tests++ ))
+  # Create test files for this test
+  touch test1.jpg test2.jpg
   output=$(expand echo "test1.jpg" "nonexistent*.jpg" "test2.jpg" 2>/dev/null)
   expected_files="test1.jpg test2.jpg"
   assert "$output" == "$expected_files" "expand should pass only matching patterns to commands"
   (( fails += $? ))
+  # Clean up test files
+  rm -f test1.jpg test2.jpg
   
-  # Clean up test files and leave temp dir
-  rm -rf test1.jpg test2.jpg "test with spaces.jpg" zzlast.jpg aafirst.jpg subdir1
+  # Test 23: Quoted brace expansion with simple patterns
+  (( tests++ ))
+  # Create test files for brace expansion
+  touch test1.jpg test2.jpg test.png
+  output=$(expand "*.{jpg,png}" 2>/dev/null)
+  expected_files="test.png test1.jpg test2.jpg "
+  assert "$output" == "$expected_files" "expand should handle quoted brace expansion"
+  (( fails += $? ))
+  # Clean up test files
+  rm -f test1.jpg test2.jpg test.png
+  
+  # Test 24: Quoted brace expansion with spaces in paths
+  (( tests++ ))
+  # Create directory and files with spaces for this test
+  mkdir -p "dir with spaces"
+  touch "dir with spaces/file.jpg" "dir with spaces/file.png"
+  output=$(expand "dir with spaces/*.{jpg,png}" 2>/dev/null)
+  expected_files="dir\ with\ spaces/file.jpg dir\ with\ spaces/file.png "
+  assert "$output" == "$expected_files" "expand should handle quoted brace expansion with spaces in paths"
+  (( fails += $? ))
+  # Clean up test files and directory
+  rm -rf "dir with spaces"
+  
+  # Test 25: Quoted brace expansion with command execution
+  (( tests++ ))
+  # Create test files for command mode brace expansion
+  touch test1.jpg test2.jpg test.png
+  output=$(expand echo "*.{jpg,png}" 2>/dev/null)
+  expected_files="test.png test1.jpg test2.jpg"
+  assert "$output" == "$expected_files" "expand should handle quoted brace expansion in command mode"
+  (( fails += $? ))
+  # Clean up test files
+  rm -f test1.jpg test2.jpg test.png
+  
+  # Test 26: Complex brace expansion with multiple braces
+  (( tests++ ))
+  touch "a.txt" "b.txt" "c.log" "d.log"
+  output=$(expand "*.{txt,log}" 2>/dev/null)
+  expected_files="a.txt b.txt c.log d.log "
+  assert "$output" == "$expected_files" "expand should handle multiple files with brace expansion"
+  (( fails += $? ))
+  # Clean up test files
+  rm -f "a.txt" "b.txt" "c.log" "d.log"
+  
+  # Test 27: Nested brace expansion (if supported by bash)
+  (( tests++ ))
+  touch "file1.jpg" "file2.jpg" "file1.png" "file2.png"
+  output=$(expand "file{1,2}.{jpg,png}" 2>/dev/null)
+  expected_files="file1.jpg file1.png file2.jpg file2.png "
+  assert "$output" == "$expected_files" "expand should handle nested brace expansion"
+  (( fails += $? ))
+  # Clean up test files
+  rm -f "file1.jpg" "file2.jpg" "file1.png" "file2.png"
+  
+  # Test 28: Case-insensitive with quoted brace expansion and wildcards
+  (( tests++ ))
+  touch "CaseTest.jpg" "CaseTest.png"
+  output=$(expand -i "casetest*.{jpg,png}" 2>/dev/null)
+  expected_files="CaseTest.jpg CaseTest.png "
+  assert "$output" == "$expected_files" "expand should handle case-insensitive quoted brace expansion"
+  (( fails += $? ))
+  # Clean up test files
+  rm -f "CaseTest.jpg" "CaseTest.png"
+  
+  # Test 29: Case-insensitive recursive brace expansion should not treat first result as command
+  (( tests++ ))
+  # Create test files in subdirectories (recursive patterns only match subdirectories)
+  mkdir -p "subdir with spaces"
+  touch "subdir with spaces/image.jpg" "subdir with spaces/image.png"
+  output=$(expand -i "**/*.{jpg,png}" 2>/dev/null)
+  expected_files="subdir\\ with\\ spaces/image.jpg subdir\\ with\\ spaces/image.png "
+  assert "$output" == "$expected_files" "expand should not treat first match as command in direct mode"
+  (( fails += $? ))
+  # Clean up test files
+  rm -rf "subdir with spaces"
+  
+  # Test 30: Relative path to executable should work in command mode
+  (( tests++ ))
+  # Create a substantial executable script that file will recognize
+  cat > my-script << 'EOF'
+#!/usr/bin/env bash
+# A test script for expand testing
+# This needs to be substantial enough for file to recognize it as a shell script
+
+echo "script output: $*"
+EOF
+  chmod +x my-script
+  touch test.txt other.txt
+  output=$(expand ./my-script "*.txt" 2>/dev/null)
+  expected_output="script output: other.txt test.txt"
+  assert "$output" == "$expected_output" "expand should treat relative path to executable as command"
+  (( fails += $? ))
+  # Clean up
+  rm -f my-script test.txt other.txt
+  
+  # Test 31: Absolute path to executable should work in command mode  
+  (( tests++ ))
+  touch test.txt other.txt
+  # Use the actual path to echo on this system
+  local echo_path=$(which echo)
+  output=$(expand "$echo_path" "*.txt" 2>/dev/null)
+  expected_output="other.txt test.txt"
+  assert "$output" == "$expected_output" "expand should treat absolute path to executable as command"
+  (( fails += $? ))
+  # Clean up
+  rm -f test.txt other.txt
+  
+  # Test 32: Non-executable file should be treated as pattern (direct mode)
+  (( tests++ ))
+  echo "not a script" > not-executable
+  touch test.txt
+  output=$(expand "not-executable" "*.txt" 2>/dev/null)
+  expected_files="not-executable test.txt "
+  assert "$output" == "$expected_files" "expand should treat non-executable file as pattern in direct mode"
+  (( fails += $? ))
+  # Clean up
+  rm -f not-executable test.txt
+  
+  # Test 33: File path with spaces should be direct mode (not treated as command)
+  (( tests++ ))
+  touch "file with spaces.jpg" "other.txt"
+  output=$(expand "file with spaces.jpg" "*.txt" 2>/dev/null)
+  expected_files="file\\ with\\ spaces.jpg other.txt "
+  assert "$output" == "$expected_files" "expand should treat file paths as patterns in direct mode"
+  (( fails += $? ))
+  # Clean up
+  rm -f "file with spaces.jpg" "other.txt"
+  
+  # Test 34: Executable file with path separators should be direct mode when it's clearly a filename
+  (( tests++ ))
+  mkdir -p subdir
+  # Create a file that looks like a data file but is technically executable
+  # The .jpg extension should make it clear this isn't meant to be a command
+  cat > "subdir/fake-command.jpg" << 'EOF'
+#!/usr/bin/env bash
+# This looks like a script but has a .jpg extension
+# so it should be treated as a data file, not a command
+echo "should not execute"
+EOF
+  chmod +x "subdir/fake-command.jpg"
+  touch test.txt
+  output=$(expand "subdir/fake-command.jpg" "*.txt" 2>/dev/null)
+  expected_files="subdir/fake-command.jpg test.txt "
+  assert "$output" == "$expected_files" "expand should treat executable files that look like data files as patterns"
+  (( fails += $? ))
+  # Clean up
+  rm -rf subdir test.txt
+  
+  # Leave temp dir (mktemp -d creates a temporary directory that will be cleaned up by the system)
   popd >/dev/null
 
   # Final summary
