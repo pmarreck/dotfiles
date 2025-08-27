@@ -17,7 +17,7 @@ _generate_curl_api_request_for_please() {
 	-H "Content-Type: application/json" \
 	--silent \
 	--max-time $timeout \
-	-d '{"model": "$model", "messages": [{"role": "user", "content": "$args"}], "temperature": 0.7}'
+	-d '{"model": "$model", "messages": [{"role": "user", "content": "$args"}], "temperature": 1}'
 EOF
 	printf "%b" "$request"
 }
