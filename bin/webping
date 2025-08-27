@@ -63,7 +63,11 @@ resolve_redirects() {
 		debug "Resolving redirects for $site..."
 		local curl_args
 		curl_args=$(get_curl_args "$site")
-		resolved_site=$(eval "curl -L -f -s -o /dev/null -w \"%{url_effective}\" $curl_args \"$site\"")
+		# Do not use -f so HTTP errors still provide url_effective. If empty, fall back to original site.
+		resolved_site=$(eval "curl -L -s -o /dev/null -w \"%{url_effective}\" $curl_args \"$site\"")
+		if [[ -z "$resolved_site" ]]; then
+			resolved_site="$site"
+		fi
 		debug "Resolved $site to $resolved_site"
 		resolved_sites+=("$resolved_site")
 	done

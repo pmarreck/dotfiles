@@ -14,4 +14,15 @@ if [[ -z "$url" ]]; then
 fi
 
 curl_args=$(get_curl_args "$url")
-eval "exec curl -L -f -s -o /dev/null $curl_args \"$url\""
+
+# Timeouts to avoid hanging. Override with WEBPING_CONNECT_TIMEOUT and WEBPING_MAX_TIME
+CONNECT_TIMEOUT="${WEBPING_CONNECT_TIMEOUT:-5}"
+MAX_TIME="${WEBPING_MAX_TIME:-20}"
+
+# Do not use -f so HTTP errors still count as a timed sample.
+# Build an array from the args string to avoid eval/quoting issues.
+declare -a ARGS
+read -r -a ARGS <<< "$curl_args"
+
+curl -L -s -o /dev/null --connect-timeout "$CONNECT_TIMEOUT" --max-time "$MAX_TIME" "${ARGS[@]}" "$url" >/dev/null 2>&1 || true
+exit 0
