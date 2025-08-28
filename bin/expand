@@ -23,9 +23,13 @@ USAGE:
 
 OPTIONS:
 	-i, --ignore-case                Case-insensitive pattern matching
+	-n                               Space-separated output with shell escaping
+	-0                               Null-separated output without escaping
 
 EXAMPLES:
-	expand "*.jpg"                   Expand and print all jpg files
+	expand "*.jpg"                   Expand and print all jpg files (newline-separated)
+	expand -n "*.jpg"                Expand jpg files (space-separated with escaping)
+	expand -0 "*.jpg"                Expand jpg files (null-separated)
 	expand -i "*.JPG"                Expand jpg files ignoring case
 	expand ls -la "*.jpg"            Run ls -la with expanded jpg files
 	expand --ignore-case ls "*.JPG"  Run ls with case-insensitive matching
@@ -53,8 +57,9 @@ EXAMPLES:
 
 DESCRIPTION:
 	The expand function provides controlled glob expansion even when
-	globbing is disabled (set -f). It preserves spaces in filenames
-	and properly quotes results for shell consumption.
+	globbing is disabled (set -f). By default, output is newline-separated
+	without shell escaping. Use -n for space-separated output with escaping,
+	or -0 for null-separated output.
 
 	When used with a command, it expands any glob patterns in the arguments
 	before passing them to the command. Non-matching patterns are skipped
@@ -104,6 +109,7 @@ EOF
 
 	# Parse flags
 	local ignore_case=false
+	local output_format="newline"  # default: newline-separated
 	local processed_argv=()
 	
 	# Process arguments to extract flags
@@ -111,6 +117,14 @@ EOF
 		case "$1" in
 			-i|--ignore-case)
 				ignore_case=true
+				shift
+				;;
+			-n)
+				output_format="space"
+				shift
+				;;
+			-0)
+				output_format="null"
 				shift
 				;;
 			*)
@@ -169,20 +183,12 @@ EOF
 
 	# Store original globbing states to restore later
 	local glob_disabled nullglob_set dotglob_set nocaseglob_set
-
-	# Check if globbing is disabled (set -f sets the noglob option)
-	# This is the proper way to check if set -f is active
-	# Commented out because it always seems to be true (enabled) even though it's not
-	# and the function works correctly...
-	# if [[ $- == *f* ]]; then
-	# 	glob_disabled=true
-	# 	debug "Globbing is disabled (noglob is set)"
-	# else
-	# 	glob_disabled=false
-	# 	echo "Warning: 'expand' is being called when globbing is already enabled." >&2
-	# 	echo "This function is primarily intended for use when globbing is disabled (set -f)." >&2
-	# 	debug "Globbing is enabled (noglob is not set)"
-	# fi
+	
+	glob_disabled=false
+	if [[ $- == *f* ]]; then
+		glob_disabled=true
+		debug "Globbing is disabled (noglob is set)"
+	fi
 
 	# Store other globbing options
 	[[ -o nullglob ]] && nullglob_set=true || nullglob_set=false
@@ -356,6 +362,53 @@ EOF
 					# Relative path with spaces - use find
 					debug "Relative pattern with spaces, using find"
 					
+					# Check if pattern contains slash - if so, handle it specially
+					if [[ "$arg" == */* ]]; then
+						debug "Relative pattern contains slash; globbing inside directory"
+						local dir_part="${arg%/*}"
+						local pattern_part="${arg##*/}"
+						local found_files=()
+						
+						if [[ -d "$dir_part" ]]; then
+							local orig_pwd="$PWD"
+							cd "$dir_part" 2>/dev/null || {
+								debug "Failed to cd to $dir_part"
+								processed_args+=("$arg")
+								continue
+							}
+							
+							local temp_files=()
+							shopt -s nullglob
+							if $ignore_case && ! $nocaseglob_set; then
+								shopt -s nocaseglob
+							fi
+
+							temp_files=($pattern_part)
+
+							shopt -u nullglob
+							if $ignore_case && ! $nocaseglob_set; then
+								shopt -u nocaseglob
+							fi
+
+							for file in "${temp_files[@]}"; do
+								found_files+=("$dir_part/$file")
+							done
+
+							cd "$orig_pwd"
+						else
+							debug "Directory $dir_part does not exist"
+						fi
+						
+						if [[ ${#found_files[@]} -eq 0 ]]; then
+							debug "No matches found for pattern with spaces: $arg - skipping"
+						else
+							debug "Found ${#found_files[@]} matches for pattern with spaces: $arg"
+							found_any_matches=true
+							processed_args+=("${found_files[@]}")
+						fi
+						continue
+					fi
+					
 					# Check if pattern contains ** for recursive globbing
 					local is_recursive=false
 					if [[ "$arg" == *"**"* ]]; then
@@ -500,7 +553,7 @@ EOF
 	if ! $found_any_matches; then
 		debug "No matches found for any patterns"
 		# Restore globbing states before returning
-		$glob_disabled && set -f
+		if $glob_disabled; then set -f; fi
 		if $ignore_case; then
 			if $nocaseglob_set; then
 				shopt -s nocaseglob
@@ -541,7 +594,7 @@ EOF
 			local retcode=$?
 
 			# Only restore the globbing state (noglob) since we didn't change nullglob or dotglob
-			$glob_disabled && set -f
+			if $glob_disabled; then set -f; fi
 			
 			# Restore original nocaseglob setting
 			if $ignore_case; then
@@ -554,20 +607,46 @@ EOF
 
 			return $retcode
 		else
-			# Print each item properly quoted
-			while IFS= read -r item; do
-				[[ -z "$item" ]] && continue
-				builtin printf "%q " "$item"
-			done <<< "$sorted_output"
-			echo
+			# Print results according to output format
+			case "$output_format" in
+				"space")
+					# Space-separated output with quoting (original behavior)
+					while IFS= read -r item; do
+						[[ -z "$item" ]] && continue
+						builtin printf "%q " "$item"
+					done <<< "$sorted_output"
+					echo
+					;;
+				"null")
+					# Null-separated output without quoting
+					while IFS= read -r item; do
+						[[ -z "$item" ]] && continue
+						builtin printf "%s\0" "$item"
+					done <<< "$sorted_output"
+					;;
+				*)
+					# Default: newline-separated output without quoting
+					while IFS= read -r item; do
+						[[ -z "$item" ]] && continue
+						builtin printf "%s\n" "$item"
+					done <<< "$sorted_output"
+					;;
+			esac
 		fi
 	else
-		# No arguments to process
-		echo
+		# No arguments to process - output depends on format
+		case "$output_format" in
+			"space")
+				echo
+				;;
+			"null"|*)
+				# For null and newline formats, output nothing when no args
+				;;
+		esac
 	fi
 
 	# Only restore the globbing state (noglob) since we didn't change nullglob or dotglob
-	$glob_disabled && set -f
+	if $glob_disabled; then set -f; fi
 	
 	# Restore original nocaseglob setting
 	if $ignore_case; then

@@ -46,7 +46,7 @@ if [ "$PLATFORM" = "osx" ]; then
 fi
 
 # Added by Windsurf
-prepend_path "$HOME/.codeium/windsurf/bin"
+IGNORE_PREPEND_PATH_WARNINGS=true prepend_path "$HOME/.codeium/windsurf/bin"
 
 # BINSTUBS
 # add binstub to front of PATH which overrides everything
@@ -58,15 +58,19 @@ prepend_path "$HOME/.codeium/windsurf/bin"
 prepend_path $HOME/bin
 
 # include the custom project executables I usually like in PATH
-# Due to race condition issues with iCloud backup, on my Mac, my Github projects are in Documents-CloudManaged (dcm)
-prepend_path "$HOME/Documents/ixnay"
-prepend_path "$HOME/Documents-CloudManaged/ixnay"
-prepend_path "$HOME/Documents/jumpscript"
-prepend_path "$HOME/Documents-CloudManaged/jumpscript"
-prepend_path "$HOME/Documents/yt-transcriber"
-prepend_path "$HOME/Documents-CloudManaged/yt-transcriber"
-prepend_path "$HOME/Documents/baseN"
-prepend_path "$HOME/Documents-CloudManaged/baseN"
+# Due to race condition issues with iCloud backup, on my Mac, my Github projects are in Documents-CloudManaged (alias dcm)
+# and not in ~/Documents, which is where they still live on my Linux installs
+# if on mac, set DOCUMENTS to $HOME/Documents-CloudManaged, otherwise set it to $HOME/Documents
+if [ "$PLATFORM" = "osx" ]; then
+  DOCUMENTS="$HOME/Documents-CloudManaged"
+else
+  DOCUMENTS="$HOME/Documents"
+fi
+prepend_path "$DOCUMENTS/ixnay"
+prepend_path "$DOCUMENTS/jumpscript"
+prepend_path "$DOCUMENTS/yt-transcriber"
+prepend_path "$DOCUMENTS/baseN"
+prepend_path "$DOCUMENTS/printable-binary"
 
 # Now exclude every path from PATH that does not actually exist.
 # I don't like this way of doing it, but it was the only way that worked easily.

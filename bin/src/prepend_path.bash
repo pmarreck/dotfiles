@@ -70,6 +70,10 @@ prepend_path() {
     docs
     return 2 # incorrect usage return code, may be an informal standard
   fi
+  if [ ! -d "$dir" ]; then
+    $IGNORE_PREPEND_PATH_WARNINGS || echo "prepend_path warning: '$dir' does not exist, which may be unexpected" >&2
+    return
+  fi
   case "$dir" in
     /*) :;; # absolute path, do nothing
     *) $IGNORE_PREPEND_PATH_WARNINGS || echo "prepend_path warning: '$dir' is not an absolute path, which may be unexpected" >&2;;
