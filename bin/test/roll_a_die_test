@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 
+# Source the functions we need to test
+source "$HOME/dotfiles/bin/roll_a_die"
+source "$HOME/dotfiles/bin/assert"
+
 # Test the roll_a_die function
 test_roll_a_die() {
   # Test with fixed RANDOM values

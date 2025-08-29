@@ -9,18 +9,18 @@ local bit = require "bit"
 
 -- FFI declarations for terminal and signal handling
 ffi.cdef[[
-  struct winsize {
-    unsigned short ws_row;
-    unsigned short ws_col;
-    unsigned short ws_xpixel;
-    unsigned short ws_ypixel;
-  };
+	struct winsize {
+		unsigned short ws_row;
+		unsigned short ws_col;
+		unsigned short ws_xpixel;
+		unsigned short ws_ypixel;
+	};
 
-  int ioctl(int fd, unsigned long request, ...);
-  typedef void (*sighandler_t)(int);
-  int signal(int signum, sighandler_t handler);
-  int usleep(unsigned int usec);
-  unsigned int sleep(unsigned int seconds);
+	int ioctl(int fd, unsigned long request, ...);
+	typedef void (*sighandler_t)(int);
+	int signal(int signum, sighandler_t handler);
+	int usleep(unsigned int usec);
+	unsigned int sleep(unsigned int seconds);
 ]]
 
 -- Constants
@@ -31,445 +31,548 @@ local SIGINT = 2           -- Interrupt signal (Ctrl+C)
 local STDOUT_FILENO = 1
 local STDERR_FILENO = 2
 
+-- Preset glyphs for convenience
+local GLYPH_PRESETS = {
+	middledot:  "·",   -- U+00B7
+	tinydot:    "˙",   -- U+02D9 (default empty)
+	lightblock: "░",   -- U+2591
+	darkblock:  "▓",   -- U+2593
+	fullblock:  "█",   -- U+2588 (default full)
+	period:     ".",
+	space:      " ",
+}
+
+-- Resolve a glyph value, supporting preset:name or raw character
+resolve_glyph = (value, fallback) ->
+	if not value or #value == 0
+		return fallback
+	name = value\match("^preset:(.+)$")
+	if name
+		key = name\lower()
+		ch = GLYPH_PRESETS[key]
+		if ch then return ch else error("Unknown preset: #{name}")
+	return value
+
 -- Global state for signal handling
 local terminal_resized = false
 local interrupted = false
 
 -- Timer class - core timing logic
 class Timer
-  new: (seconds) =>
-    @total_seconds = seconds
-    @remaining_seconds = seconds
-    @elapsed_seconds = 0
-    @start_time = os.time()
-    @is_running = false
+	new: (seconds) =>
+		@total_seconds = seconds
+		@remaining_seconds = seconds
+		@elapsed_seconds = 0
+		@start_time = os.time()
+		@is_running = false
 
-  start: =>
-    @is_running = true
-    @start_time = os.time()
+	start: =>
+		@is_running = true
+		@start_time = os.time()
 
-  stop: =>
-    @is_running = false
+	stop: =>
+		@is_running = false
 
-  -- Advance timer to specific elapsed time (for testing)
-  advance_to: (elapsed_seconds) =>
-    @elapsed_seconds = math.min(elapsed_seconds, @total_seconds)
-    @remaining_seconds = math.max(0, @total_seconds - @elapsed_seconds)
-    @start_time = os.time() - @elapsed_seconds
+	-- Advance timer to specific elapsed time (for testing)
+	advance_to: (elapsed_seconds) =>
+		@elapsed_seconds = math.min(elapsed_seconds, @total_seconds)
+		@remaining_seconds = math.max(0, @total_seconds - @elapsed_seconds)
+		@start_time = os.time() - @elapsed_seconds
 
-  update: =>
-    if @is_running
-      current_time = os.time()
-      @elapsed_seconds = current_time - @start_time
-      @remaining_seconds = math.max(0, @total_seconds - @elapsed_seconds)
+	update: =>
+		if @is_running
+			current_time = os.time()
+			@elapsed_seconds = current_time - @start_time
+			@remaining_seconds = math.max(0, @total_seconds - @elapsed_seconds)
 
-      if @remaining_seconds == 0
-        @is_running = false
-        return true  -- Timer completed
-    return false
+			if @remaining_seconds == 0
+				@is_running = false
+				return true  -- Timer completed
+		return false
 
-  get_progress: =>
-    if @total_seconds == 0 then return 1.0
-    return @elapsed_seconds / @total_seconds
+	get_progress: =>
+		if @total_seconds == 0 then return 1.0
+		return @elapsed_seconds / @total_seconds
 
-  is_finished: =>
-    @remaining_seconds <= 0
+	is_finished: =>
+		@remaining_seconds <= 0
 
 -- Terminal class - handles terminal dimensions and control
 class Terminal
-  new: (override_rows = nil, override_cols = nil) =>
-    @last_rows = 0
-    @last_cols = 0
-    @override_rows = override_rows
-    @override_cols = override_cols
-    @update_dimensions()
+	new: (override_rows = nil, override_cols = nil) =>
+		@last_rows = 0
+		@last_cols = 0
+		@override_rows = override_rows
+		@override_cols = override_cols
+		@update_dimensions()
 
-  try_ioctl_detection: =>
-    winsize = ffi.new("struct winsize")
+	try_ioctl_detection: =>
+		winsize = ffi.new("struct winsize")
 
-    -- Try different ioctl constants and file descriptors
-    ioctls = {TIOCGWINSZ, TIOCGWINSZ_BSD}
-    fds = {STDOUT_FILENO, STDERR_FILENO, 0}  -- 0 is STDIN_FILENO
+		-- Try different ioctl constants and file descriptors
+		ioctls = {TIOCGWINSZ, TIOCGWINSZ_BSD}
+		fds = {STDOUT_FILENO, STDERR_FILENO, 0}  -- 0 is STDIN_FILENO
 
-    for ioctl_val in *ioctls
-      for fd in *fds
-        result = ffi.C.ioctl(fd, ioctl_val, winsize)
-        if result == 0 and winsize.ws_row > 0 and winsize.ws_col > 0
-          return winsize.ws_row, winsize.ws_col, "ioctl(#{fd}, #{string.format('0x%x', ioctl_val)})"
+		for ioctl_val in *ioctls
+			for fd in *fds
+				result = ffi.C.ioctl(fd, ioctl_val, winsize)
+				if result == 0 and winsize.ws_row > 0 and winsize.ws_col > 0
+					return winsize.ws_row, winsize.ws_col, "ioctl(#{fd}, #{string.format('0x%x', ioctl_val)})"
 
-    return nil, nil, "ioctl failed"
+		return nil, nil, "ioctl failed"
 
-  try_tput_detection: =>
-    -- Try using the tput command to get terminal dimensions
-    success, result = pcall(->
-      rows_cmd = io.popen("tput lines 2>/dev/null")
-      if rows_cmd
-        rows_str = rows_cmd\read("*l")
-        rows_cmd\close()
+	try_tput_detection: =>
+		-- Try using the tput command to get terminal dimensions
+		success, result = pcall(->
+			rows_cmd = io.popen("tput lines 2>/dev/null")
+			if rows_cmd
+				rows_str = rows_cmd\read("*l")
+				rows_cmd\close()
 
-        cols_cmd = io.popen("tput cols 2>/dev/null")
-        if cols_cmd
-          cols_str = cols_cmd\read("*l")
-          cols_cmd\close()
+				cols_cmd = io.popen("tput cols 2>/dev/null")
+				if cols_cmd
+					cols_str = cols_cmd\read("*l")
+					cols_cmd\close()
 
-          rows = tonumber(rows_str)
-          cols = tonumber(cols_str)
-          if rows and cols and rows > 0 and cols > 0
-            return rows, cols, "tput command"
-    )
+					rows = tonumber(rows_str)
+					cols = tonumber(cols_str)
+					if rows and cols and rows > 0 and cols > 0
+						return rows, cols, "tput command"
+		)
 
-    if success and result
-      return result
+		if success and result
+			return result
 
-    return nil, nil, "tput command failed"
+		return nil, nil, "tput command failed"
 
-  get_dimensions: =>
-    -- Use overrides if provided (for testing)
-    if @override_rows and @override_cols
-      return @override_rows, @override_cols
+	get_dimensions: =>
+		-- Use overrides if provided (for testing)
+		if @override_rows and @override_cols
+			return @override_rows, @override_cols
 
-    -- Try ioctl detection first
-    rows, cols, method = @try_ioctl_detection()
-    if rows and cols
-      @last_rows = rows
-      @last_cols = cols
-      @detection_method = method
-      return rows, cols
+		-- Try ioctl detection first
+		rows, cols, method = @try_ioctl_detection()
+		if rows and cols
+			@last_rows = rows
+			@last_cols = cols
+			@detection_method = method
+			return rows, cols
 
-    -- Try tput command detection
-    rows, cols, method = @try_tput_detection()
-    if rows and cols
-      @last_rows = rows
-      @last_cols = cols
-      @detection_method = method
-      return rows, cols
+		-- Try tput command detection
+		rows, cols, method = @try_tput_detection()
+		if rows and cols
+			@last_rows = rows
+			@last_cols = cols
+			@detection_method = method
+			return rows, cols
 
-    -- Fallback to environment variables
-    rows = tonumber(os.getenv("LINES"))
-    cols = tonumber(os.getenv("COLUMNS"))
-    if rows and cols and rows > 0 and cols > 0
-      @last_rows = rows
-      @last_cols = cols
-      @detection_method = "environment variables"
-      return rows, cols
+		-- Fallback to environment variables
+		rows = tonumber(os.getenv("LINES"))
+		cols = tonumber(os.getenv("COLUMNS"))
+		if rows and cols and rows > 0 and cols > 0
+			@last_rows = rows
+			@last_cols = cols
+			@detection_method = "environment variables"
+			return rows, cols
 
-    -- Final fallback to sensible defaults
-    rows = @last_rows or 24
-    cols = @last_cols or 80
-    if rows <= 0 then rows = 24
-    if cols <= 0 then cols = 80
+		-- Final fallback to sensible defaults
+		rows = @last_rows or 24
+		cols = @last_cols or 80
+		if rows <= 0 then rows = 24
+		if cols <= 0 then cols = 80
 
-    @last_rows = rows
-    @last_cols = cols
-    @detection_method = "defaults"
-    return rows, cols
+		@last_rows = rows
+		@last_cols = cols
+		@detection_method = "defaults"
+		return rows, cols
 
-  update_dimensions: =>
-    @rows, @cols = @get_dimensions()
+	update_dimensions: =>
+		@rows, @cols = @get_dimensions()
 
-  clear_screen: =>
-    io.write("\027[2J\027[H")  -- ANSI clear screen and move cursor to home
+	clear_screen: =>
+		io.write("\027[2J\027[H")  -- ANSI clear screen and move cursor to home
 
-  move_cursor: (row, col) =>
-    io.write(string.format("\027[%d;%dH", row, col))
+	move_cursor: (row, col) =>
+		io.write(string.format("\027[%d;%dH", row, col))
 
-  hide_cursor: =>
-    io.write("\027[?25l")
+	hide_cursor: =>
+		io.write("\027[?25l")
 
-  show_cursor: =>
-    io.write("\027[?25h")
+	show_cursor: =>
+		io.write("\027[?25h")
 
 -- VisualDisplay class - handles the block-filling visualization
 class VisualDisplay
-  new: (terminal) =>
-    @terminal = terminal
-    @fill_char = "█"    -- Full block character
-    @empty_char = "░"   -- Light shade character
-    @update_dimensions()
+	new: (terminal, fill_char = nil, empty_char = nil) =>
+		@terminal = terminal
+		-- Defaults, can be overridden by args/env
+		@fill_char = fill_char or "█"
+		@empty_char = empty_char or "˙"  -- Tiny dot above baseline by default
+		@update_dimensions()
 
-  update_dimensions: =>
-    @terminal\update_dimensions()
-    @display_rows = @terminal.rows - 2  -- Leave space for timer info and controls
-    @rows = @display_rows  -- Keep for compatibility
-    @cols = @terminal.cols
-    @total_blocks = @display_rows * @cols
+	update_dimensions: =>
+		@terminal\update_dimensions()
+		@display_rows = @terminal.rows - 2  -- Leave space for timer info and controls
+		@rows = @display_rows  -- Keep for compatibility
+		@cols = @terminal.cols
+		@total_blocks = @display_rows * @cols
 
-  blocks_for_progress: (progress) =>
-    math.floor(@total_blocks * math.min(1.0, progress))
+	blocks_for_progress: (progress) =>
+		math.floor(@total_blocks * math.min(1.0, progress))
 
-  render: (progress, remaining_time, total_time) =>
-    blocks_filled = @blocks_for_progress(progress)
+	render: (progress, remaining_time, total_time) =>
+		blocks_filled = @blocks_for_progress(progress)
 
-    @terminal\clear_screen()
-    @terminal\hide_cursor()
+		@terminal\clear_screen()
+		@terminal\hide_cursor()
 
-    -- Render the visual progress
-    block_count = 0
-    for row = 1, @display_rows
-      @terminal\move_cursor(row, 1)
-      for col = 1, @cols
-        block_count += 1
-        if block_count <= blocks_filled
-          io.write(@fill_char)
-        else
-          io.write(@empty_char)
+		-- Render the visual progress
+		block_count = 0
+		for row = 1, @display_rows
+			@terminal\move_cursor(row, 1)
+			for col = 1, @cols
+				block_count += 1
+				if block_count <= blocks_filled
+					io.write(@fill_char)
+				else
+					io.write(@empty_char)
 
-    -- Show timer information at bottom
-    @terminal\move_cursor(@display_rows + 1, 1)
-    progress_percent = math.floor(progress * 100)
-    time_str = @format_time(remaining_time)
-    total_str = @format_time(total_time)
+		-- Show timer information at bottom
+		@terminal\move_cursor(@display_rows + 1, 1)
+		progress_percent = math.floor(progress * 100)
+		time_str = @format_time(remaining_time)
+		total_str = @format_time(total_time)
 
-    info_line = string.format("Progress: %d%% | Time: %s / %s | Press Ctrl+C to exit",
-                             progress_percent, time_str, total_str)
-    io.write(info_line)
+		info_line = string.format("Progress: %d%% | Time: %s / %s | Press Ctrl+C to exit",
+														 progress_percent, time_str, total_str)
+		io.write(info_line)
 
-    io.flush()
+		io.flush()
 
-  format_time: (seconds) =>
-    hours = math.floor(seconds / 3600)
-    minutes = math.floor((seconds % 3600) / 60)
-    secs = seconds % 60
+	format_time: (seconds) =>
+		hours = math.floor(seconds / 3600)
+		minutes = math.floor((seconds % 3600) / 60)
+		secs = seconds % 60
 
-    if hours > 0
-      return string.format("%d:%02d:%02d", hours, minutes, secs)
-    else
-      return string.format("%d:%02d", minutes, secs)
+		if hours > 0
+			return string.format("%d:%02d:%02d", hours, minutes, secs)
+		else
+			return string.format("%d:%02d", minutes, secs)
 
 -- SignalHandler class - manages SIGWINCH for terminal resizing and SIGINT for graceful exit
 class SignalHandler
-  new: =>
-    @setup_signal_handlers()
+	new: =>
+		@setup_signal_handlers()
 
-  setup_signal_handlers: =>
-    -- Create a C callback for window resize (safe for signal context)
-    winch_handler = ffi.cast("sighandler_t", (signum) ->
-      terminal_resized = true
-    )
+	setup_signal_handlers: =>
+		-- Create a C callback for window resize (safe for signal context)
+		@winch_handler = ffi.cast("sighandler_t", (signum) ->
+			terminal_resized = true
+		)
 
-    -- Create a C callback for interrupt (safe for signal context)
-    int_handler = ffi.cast("sighandler_t", (signum) ->
-      interrupted = true
-    )
+		-- Create a C callback for interrupt (safe for signal context)
+		@int_handler = ffi.cast("sighandler_t", (signum) ->
+			interrupted = true
+		)
 
-    winch_result = ffi.C.signal(SIGWINCH, winch_handler)
-    int_result = ffi.C.signal(SIGINT, int_handler)
+		winch_result = ffi.C.signal(SIGWINCH, @winch_handler)
+		int_result = ffi.C.signal(SIGINT, @int_handler)
 
-    return (winch_result != ffi.cast("sighandler_t", -1)) and (int_result != ffi.cast("sighandler_t", -1))  -- SIG_ERR = -1
+		-- Define teardown on the instance to cleanly reset handlers during shutdown
+		@teardown_signal_handlers = ->
+			-- Reset to default handlers to avoid callbacks firing during VM shutdown
+			ffi.C.signal(SIGWINCH, ffi.cast("sighandler_t", 0)) -- SIG_DFL
+			ffi.C.signal(SIGINT,   ffi.cast("sighandler_t", 0)) -- SIG_DFL
+
+		return (winch_result != ffi.cast("sighandler_t", -1)) and (int_result != ffi.cast("sighandler_t", -1))  -- SIG_ERR = -1
 
 -- Time preset parser
 parse_time_preset = (preset) ->
-  preset = preset\lower()\gsub("%s+", "")  -- Remove spaces and lowercase
+	-- Accept composite and space-separated tokens in any order, e.g. "1h30m15s", "15s 30m".
+	-- Bare numbers are treated as minutes.
+	original = preset
+	preset = tostring(preset or "")\lower()\gsub("^%s+", "")\gsub("%s+$", "")
+	if #preset == 0
+		error("Invalid time format: #{original}. Provide a duration like '30s', '5m', '1h', or '1h30m15s'.")
 
-  -- Handle different formats: "30s", "5m", "55m", "30m", "1h", "2h"
-  if preset\match("^%d+s$")
-    seconds = tonumber(preset\match("^(%d+)s$"))
-    return seconds
-  elseif preset\match("^%d+m$")
-    minutes = tonumber(preset\match("^(%d+)m$"))
-    return minutes * 60
-  elseif preset\match("^%d+h$")
-    hours = tonumber(preset\match("^(%d+)h$"))
-    return hours * 3600
-  elseif preset\match("^%d+$")
-    -- Just a number, assume minutes
-    return tonumber(preset) * 60
-  else
-    error("Invalid time format: #{preset}. Use formats like '30s', '5m', '1h', etc.")
+	total = 0
+	-- Split by whitespace to allow tokens like "15s 30m 1h"
+	parts = {}
+	for token in preset\gmatch("%S+")
+		table.insert(parts, token)
+	if #parts == 0
+		table.insert(parts, preset)
+
+	valid = false
+	for _, part in ipairs(parts)
+		p = part
+		-- If it's a bare number, treat as minutes
+		if p\match("^%d+$")
+			total += tonumber(p) * 60
+			valid = true
+		else
+			-- Consume repeated number+unit segments within the token, in any order
+			for num, unit in p\gmatch("(%d+)([hms])")
+				n = tonumber(num)
+				if unit == 'h'
+					total += n * 3600
+				elseif unit == 'm'
+					total += n * 60
+				elseif unit == 's'
+					total += n
+				valid = true
+
+			-- Validate that the whole token was valid (no stray characters)
+			-- Remove all matched segments and check if anything remains besides whitespace
+			leftover = p\gsub("%d+[hms]", "")
+			leftover = leftover\gsub("%s+", "")
+			if #leftover > 0
+				error("Invalid time format segment: '#{part}' in '#{original}'")
+
+	if not valid or total <= 0
+		error("Invalid time format: #{original}. Examples: '30s', '5m', '1h', '1h30m15s', '45m 30s'.")
+
+	return total
 
 -- Main application class
 class VisualTimer
-  new: (options = {}) =>
-    @options = options or {}
-    @terminal = Terminal(@options.rows, @options.cols)
-    @display = VisualDisplay(@terminal)
-    @signal_handler = SignalHandler()
-    @timer = nil
-    @setup_signal_handling()
+	new: (options = {}) =>
+		@options = options or {}
+		@terminal = Terminal(@options.rows, @options.cols)
+		-- Resolve character options from CLI options or environment (support presets)
+		if not @options.full_char
+			env_full = os.getenv("VISUAL_TIMER_FULLCHAR")
+			if env_full and #env_full > 0 then @options.full_char = env_full
+		if not @options.empty_char
+			env_empty = os.getenv("VISUAL_TIMER_EMPTYCHAR")
+			if env_empty and #env_empty > 0 then @options.empty_char = env_empty
 
-  play_completion_beeps: =>
-    unless @options.silence
-      for i = 1, 3
-        os.execute("tput bel 2>/dev/null")
-        if i < 3
-          ffi.C.usleep(1000000)  -- 1 second pause between beeps
+		resolved_full  = resolve_glyph(@options.full_char,  "█")
+		resolved_empty = resolve_glyph(@options.empty_char, "˙")
 
-  setup_signal_handling: =>
-    -- Signal handlers now only set flags, we handle signals in main loop
+		@display = VisualDisplay(@terminal, resolved_full, resolved_empty)
+		@signal_handler = SignalHandler()
+		@timer = nil
+		@setup_signal_handling()
 
-  run: (time_preset) =>
-    seconds = parse_time_preset(time_preset)
-    @timer = Timer(seconds)
+	play_completion_beeps: =>
+		unless @options.silence
+			for i = 1, 3
+				os.execute("tput bel 2>/dev/null")
+				if i < 3
+					ffi.C.usleep(1000000)  -- 1 second pause between beeps
 
-    -- Show info for normal mode (but not test modes)
-    unless @options.single_frame or @options.advance_time
-      print("Visual Timer starting for #{@display\format_time(seconds)}")
-      print("Terminal: #{@terminal.rows}x#{@terminal.cols} (#{@display.display_rows}x#{@display.cols} display area)")
-      print("Detection method: #{@terminal.detection_method or 'unknown'}")
-      print("Total blocks: #{@display.total_blocks}")
-      print("Starting timer... (Press Ctrl+C to exit)")
+	setup_signal_handling: =>
+		-- Signal handlers now only set flags, we handle signals in main loop
 
-    @timer\start()
+	run: (time_preset) =>
+		seconds = parse_time_preset(time_preset)
+		@timer = Timer(seconds)
 
-    -- Advance timer if requested (for testing)
-    if @options.advance_time
-      @timer\advance_to(@options.advance_time)
+		-- Show info for normal mode (but not test modes)
+		unless @options.single_frame or @options.advance_time
+			print("Visual Timer starting for #{@display\format_time(seconds)}")
+			print("Terminal: #{@terminal.rows}x#{@terminal.cols} (#{@display.display_rows}x#{@display.cols} display area)")
+			print("Detection method: #{@terminal.detection_method or 'unknown'}")
+			print("Total blocks: #{@display.total_blocks}")
+			print("Starting timer... (Press Ctrl+C to exit)")
 
-    -- Preserve terminal history by outputting newlines equal to terminal height
-    -- This pushes existing content up and out of the way
-    unless @options.single_frame
-      for i = 1, @terminal.rows
-        print("")
+		@timer\start()
 
-    -- Single frame mode (for testing)
-    if @options.single_frame
-      progress = @timer\get_progress()
-      @display\render(progress, @timer.remaining_seconds, @timer.total_seconds)
-      @terminal\show_cursor()
-      return
+		-- Advance timer if requested (for testing)
+		if @options.advance_time
+			@timer\advance_to(@options.advance_time)
 
-    -- Normal timer loop
-    while not @timer\is_finished()
-      -- Check for interrupt signal (Ctrl+C)
-      if interrupted
-        @terminal\show_cursor()
-        @terminal\move_cursor(@terminal.rows, 1)
-        print("\n\nTimer interrupted. Goodbye!")
-        return
+		-- Preserve terminal history by outputting newlines equal to terminal height
+		-- This pushes existing content up and out of the way
+		unless @options.single_frame
+			for i = 1, @terminal.rows
+				print("")
 
-      completed = @timer\update()
+		-- Single frame mode (for testing)
+		if @options.single_frame
+			progress = @timer\get_progress()
+			@display\render(progress, @timer.remaining_seconds, @timer.total_seconds)
+			@terminal\show_cursor()
+			return
 
-      -- Check if terminal was resized
-      if terminal_resized
-        terminal_resized = false
-        @display\update_dimensions()
+		-- Normal timer loop (render throttled to once per second or on resize)
+		last_render_sec = -1
+		while not @timer\is_finished()
+			-- Check for interrupt signal (Ctrl+C)
+			if interrupted
+				@signal_handler\teardown_signal_handlers()
+				@terminal\show_cursor()
+				@terminal\move_cursor(@terminal.rows, 1)
+				print("\n\nTimer interrupted. Goodbye!")
+				return
 
-      -- Render current state
-      progress = @timer\get_progress()
-      @display\render(progress, @timer.remaining_seconds, @timer.total_seconds)
+			completed = @timer\update()
 
-      if completed
-        break
+			-- Check if terminal was resized
+			if terminal_resized
+				terminal_resized = false
+				@display\update_dimensions()
 
-      -- Sleep for a short interval (100ms)
-      ffi.C.usleep(100000)
+			-- Render only once per second, on resize, or on completion
+			current_sec = math.floor(@timer.remaining_seconds)
+			if terminal_resized or current_sec != last_render_sec or completed
+				progress = @timer\get_progress()
+				@display\render(progress, @timer.remaining_seconds, @timer.total_seconds)
+				last_render_sec = current_sec
 
-    -- Timer finished
-    @display\render(1.0, 0, @timer.total_seconds)
-    @play_completion_beeps()
-    @terminal\move_cursor(@terminal.rows, 1)
-    print("\n\n🎉 Timer completed! Press Enter to exit.")
-    @terminal\show_cursor()
-    io.read()
+			if completed
+				break
+
+			-- Sleep for a short interval (100ms)
+			ffi.C.usleep(100000)
+
+		-- Timer finished
+		@display\render(1.0, 0, @timer.total_seconds)
+		@play_completion_beeps()
+		@terminal\move_cursor(@terminal.rows, 1)
+		print("\n\n🎉 Timer completed! Press Enter to exit.")
+		@terminal\show_cursor()
+		io.read()
+		@signal_handler\teardown_signal_handlers()
 
 -- Command line argument parsing
 parse_args = (args) ->
-  options = {}
-  time_preset = nil
-  i = 1
+	options = {}
+	time_preset = nil
+	i = 1
 
-  while i <= #args
-    arg_val = args[i]
+	while i <= #args
+		arg_val = args[i]
 
-    if arg_val == "--dimensions" or arg_val == "-d"
-      if i + 1 <= #args
-        dims = args[i + 1]\match("^(%d+)x(%d+)$")
-        if dims
-          rows, cols = args[i + 1]\match("^(%d+)x(%d+)$")
-          options.rows = tonumber(rows)
-          options.cols = tonumber(cols)
-          i += 2
-        else
-          error("Invalid dimensions format. Use: 24x80")
-      else
-        error("--dimensions requires a value (e.g., 24x80)")
-    elseif arg_val == "--advance-time" or arg_val == "-a"
-      if i + 1 <= #args
-        options.advance_time = tonumber(args[i + 1])
-        i += 2
-      else
-        error("--advance-time requires a value (seconds)")
-    elseif arg_val == "--single-frame"
-      options.single_frame = true
-      i += 1
-    elseif arg_val == "--silence" or arg_val == "-s"
-      options.silence = true
-      i += 1
-    elseif arg_val == "--help" or arg_val == "-h"
-      print("Visual Terminal Timer")
-      print("")
-      print("A visual countdown timer that fills your terminal with blocks as time progresses.")
-      print("Perfect for pomodoro sessions, cooking timers, or any timed activity.")
-      print("The display automatically adapts to your terminal size and redraws properly")
-      print("when the window is resized. Plays 3 beeps when the timer completes.")
-      print("")
-      print("Usage: visual_timer <time> [options]")
-      print("")
-      print("Time formats:")
-      print("  30s     # 30 seconds")
-      print("  5m      # 5 minutes")
-      print("  55m     # 55 minutes")
-      print("  1h      # 1 hour")
-      print("  2h      # 2 hours")
-      print("")
-      print("Options:")
-      print("  --silence, -s               Disable completion beeps")
-      print("")
-      print("Testing options:")
-      print("  --dimensions, -d ROWSxCOLS  Override terminal dimensions (e.g., 24x80)")
-      print("  --advance-time, -a SECONDS  Advance timer to specific time position")
-      print("  --single-frame              Output single frame and exit (no loop)")
-      print("  --help, -h                  Show this help message")
-      print("")
-      print("Examples:")
-      print("  visual_timer 5m             # 5-minute timer with beeps")
-      print("  visual_timer 30m --silence  # 30-minute silent timer")
-      print("  visual_timer 25m            # Pomodoro timer")
-      print("")
-      print("The timer shows:")
-      print("  • Filled blocks (█) for elapsed time")
-      print("  • Empty blocks (░) for remaining time")
-      print("  • Progress percentage and remaining time")
-      print("  • Terminal dimensions detected automatically")
-      os.exit(0)
-    elseif not time_preset
-      -- Check if this looks like an option (starts with -)
-      if arg_val\match("^%-")
-        error("Unknown option: #{arg_val}. Use --help for available options.")
-      else
-        time_preset = arg_val
-        i += 1
-    else
-      error("Unknown argument: #{arg_val}")
+		if arg_val == "--dimensions" or arg_val == "-d"
+			if i + 1 <= #args
+				dims = args[i + 1]\match("^(%d+)x(%d+)$")
+				if dims
+					rows, cols = args[i + 1]\match("^(%d+)x(%d+)$")
+					options.rows = tonumber(rows)
+					options.cols = tonumber(cols)
+					i += 2
+				else
+					error("Invalid dimensions format. Use: 24x80")
+			else
+				error("--dimensions requires a value (e.g., 24x80)")
+		elseif arg_val == "--advance-time" or arg_val == "-a"
+			if i + 1 <= #args
+				options.advance_time = tonumber(args[i + 1])
+				i += 2
+			else
+				error("--advance-time requires a value (seconds)")
+		elseif arg_val == "--single-frame"
+			options.single_frame = true
+			i += 1
+		elseif arg_val == "--emptychar"
+			if i + 1 <= #args
+				options.empty_char = args[i + 1]
+				i += 2
+			else
+				error("--emptychar requires a value (character)")
+		elseif arg_val == "--fullchar" or arg_val == "--fillchar"
+			if i + 1 <= #args
+				options.full_char = args[i + 1]
+				i += 2
+			else
+				error("--fullchar/--fillchar requires a value (character)")
+		elseif arg_val == "--silence" or arg_val == "-s"
+			options.silence = true
+			i += 1
+		elseif arg_val == "--help" or arg_val == "-h"
+			print("Visual Terminal Timer")
+			print("")
+			print("A visual countdown timer that fills your terminal with blocks as time progresses.")
+			print("Perfect for pomodoro sessions, cooking timers, or any timed activity.")
+			print("The display automatically adapts to your terminal size and redraws properly")
+			print("when the window is resized. Plays 3 beeps when the timer completes.")
+			print("")
+			print("Usage: visual_timer <time> [options]")
+			print("")
+			print("Time formats:")
+			print("  30s          # 30 seconds")
+			print("  5m           # 5 minutes")
+			print("  55m          # 55 minutes")
+			print("  1h           # 1 hour")
+			print("  2h           # 2 hours")
+			print("  1h30m15s     # composite token (any order)")
+			print("  45m 30s      # space-separated tokens (any order)")
+			print("  10           # bare number = minutes")
+			print("")
+			print("Options:")
+			print("  --silence, -s               Disable completion beeps")
+			print("  --emptychar CHAR            Set remaining-time glyph (default from $VISUAL_TIMER_EMPTYCHAR or '˙')")
+			print("  --fullchar CHAR             Set elapsed-time glyph (default from $VISUAL_TIMER_FULLCHAR or '█')")
+			print("  --fillchar CHAR             Alias for --fullchar")
+			print("")
+			print("Glyph presets (usable with either --emptychar/--fullchar or env vars via 'preset:NAME'):")
+			print("  preset:middledot   = ·   (U+00B7)")
+			print("  preset:tinydot     = ˙   (U+02D9)  [default empty]")
+			print("  preset:lightblock  = ░   (U+2591)")
+			print("  preset:darkblock   = ▓   (U+2593)")
+			print("  preset:fullblock   = █   (U+2588)  [default full]")
+			print("")
+			print("Environment variables:")
+			print("  VISUAL_TIMER_EMPTYCHAR      Default for --emptychar (supports 'preset:NAME')")
+			print("  VISUAL_TIMER_FULLCHAR       Default for --fullchar  (supports 'preset:NAME')")
+			print("")
+			print("Testing options:")
+			print("  --dimensions, -d ROWSxCOLS  Override terminal dimensions (e.g., 24x80)")
+			print("  --advance-time, -a SECONDS  Advance timer to specific time position")
+			print("  --single-frame              Output single frame and exit (no loop)")
+			print("  --help, -h                  Show this help message")
+			print("")
+			print("Examples:")
+			print("  visual_timer 5m             # 5-minute timer with beeps")
+			print("  visual_timer 30m --silence  # 30-minute silent timer")
+			print("  visual_timer 25m            # Pomodoro timer")
+			print("")
+			print("The timer shows:")
+			print("  • Filled area (full glyph) for elapsed time")
+			print("  • Empty area (empty glyph) for remaining time")
+			print("  • Progress percentage and remaining time")
+			print("  • Terminal dimensions detected automatically")
+			os.exit(0)
+		elseif not time_preset
+			-- Check if this looks like an option (starts with -)
+			if arg_val\match("^%-")
+				error("Unknown option: #{arg_val}. Use --help for available options.")
+			else
+				time_preset = arg_val
+				i += 1
+		else
+			error("Unknown argument: #{arg_val}")
 
-  return time_preset, options
+	return time_preset, options
 
 -- Command line interface
 main = ->
-  if #arg == 0
-    print("Visual Terminal Timer")
-    print("Usage: visual_timer <time> [options]")
-    print("Use --help for more information")
-    os.exit(2)
+	if #arg == 0
+		print("Visual Terminal Timer")
+		print("Usage: visual_timer <time> [options]")
+		print("Use --help for more information")
+		os.exit(2)
 
-  success, err = pcall(->
-    time_preset, options = parse_args(arg)
+	success, err = pcall(->
+		time_preset, options = parse_args(arg)
 
-    if not time_preset
-      error("Time preset is required")
+		if not time_preset
+			error("Time preset is required")
 
-    app = VisualTimer(options)
-    app\run(time_preset)
-  )
+		app = VisualTimer(options)
+		app\run(time_preset)
+	)
 
-  if not success
-    print("Error: #{err}")
-    -- Check if it's a usage error (unknown option, invalid format, etc.)
-    if err\match("Unknown option:") or err\match("Invalid time format:") or err\match("Time preset is required") or err\match("requires a value")
-      os.exit(2)  -- Usage error
-    else
-      os.exit(1)  -- General error
+	if not success
+		print("Error: #{err}")
+		-- Check if it's a usage error (unknown option, invalid format, etc.)
+		if err\match("Unknown option:") or err\match("Invalid time format:") or err\match("Time preset is required") or err\match("requires a value")
+			os.exit(2)  -- Usage error
+		else
+			os.exit(1)  -- General error
 
 -- Run main if this file is executed directly
 if arg and arg[0] and arg[0]\match("visual_timer")
-  main()
+	main()

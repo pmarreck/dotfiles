@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+
+# Test script for histogram
+# Run directly to see progress, or via `histogram --test` for silent operation
+
+test_count=0
+fail_count=0
+
+# Helper function to run a test
+run_test() {
+	local description="$1"
+	local test_cmd="$2"
+	local expected_pattern="$3"
+
+	test_count=$((test_count + 1))
+	echo "Testing $description..."
+
+	if eval "$test_cmd" | grep -q "$expected_pattern"; then
+		echo "✓ Test $test_count passed: $description"
+		return 0
+	else
+		echo "✗ Test $test_count failed: $description" >&2
+		echo "  Command: $test_cmd" >&2
+		echo "  Expected pattern: $expected_pattern" >&2
+		echo "  Actual output:" >&2
+		eval "$test_cmd" 2>&1 | sed 's/^/    /' >&2
+		fail_count=$((fail_count + 1))
+		return 1
+	fi
+}
+
+# Helper function to test exit codes
+run_exit_test() {
+	local description="$1"
+	local test_cmd="$2"
+	local expected_exit="$3"
+
+	test_count=$((test_count + 1))
+	echo "Testing $description..."
+
+	eval "$test_cmd" >/dev/null 2>&1
+	actual_exit=$?
+
+	if [ "$actual_exit" -eq "$expected_exit" ]; then
+		echo "✓ Test $test_count passed: $description"
+		return 0
+	else
+		echo "✗ Test $test_count failed: $description" >&2
+		echo "  Command: $test_cmd" >&2
+		echo "  Expected exit code: $expected_exit" >&2
+		echo "  Actual exit code: $actual_exit" >&2
+		fail_count=$((fail_count + 1))
+		return 1
+	fi
+}
+
+# Test 1: Help flag
+run_test "help flag shows usage" "histogram --help" "Usage:"
+
+# Test 2: Help flag shows expected options
+run_test "help shows -n option" "histogram --help" "\-n"
+
+# Test 3: Invalid arguments should fail
+run_exit_test "invalid arguments fail" "histogram" 1
+
+# Test 4: Simple numeric command (should create histogram)
+run_test "numeric command creates histogram" "histogram -n 10 'echo 1'" "1.*│"
+
+# Test 5: Multiple numeric values
+run_test "multiple numeric values" "histogram -n 20 'echo \$((RANDOM % 3 + 1))'" "│"
+
+# Test 6: Non-numeric command creates histogram with letters
+run_test "non-numeric command uses letters" "histogram -n 10 'echo hello'" "│"
+
+# Test 7: Non-numeric command shows legend
+run_test "non-numeric command shows legend" "histogram -n 10 'echo hello'" "A.*hello"
+
+# Test 8: Custom run count works
+run_test "custom run count works" "histogram -n 5 'echo test'" "│"
+
+# Test 9: Command with spaces works
+run_test "command with spaces" "histogram -n 5 'echo \"hello world\"'" "│"
+
+# Test 10: Mixed numeric/non-numeric should be treated as non-numeric
+run_test "mixed output treated as non-numeric" "histogram -n 10 'if (( RANDOM % 2 == 0 )); then echo \"text\"; else echo 42; fi'" "Legend:"
+
+# Test 11: Normal distribution ordering should follow correct alphabet pattern
+run_test "normal distribution ordering" "histogram -n 260 'letters=\"ABCDEFGHIJKLMNOPQRSTUVWXYZ\"; val=\$(nrandom 0 25); echo \"\${letters:\$val:1}\"'" "Normal distribution detected."
+
+# Test 12: Uniform random data produces numeric output (numeric ordering, not normal distribution)
+run_test "uniform random data shows numeric ordering" "histogram -n 100 'random'" "[0-9]"
+
+# Summary
+echo
+if [ $fail_count -eq 0 ]; then
+	echo "All $test_count tests passed!"
+else
+	echo "$fail_count of $test_count tests failed" >&2
+fi
+
+exit $fail_count

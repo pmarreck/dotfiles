@@ -36,16 +36,16 @@ bytes_to_integer = function(bytes)
 	return result
 end
 local random
-random = function(start, end_val)
-	if start == nil then
-		start = 0
+random = function(start_val, end_val)
+	if start_val == nil then
+		start_val = 0
 	end
 	if end_val == nil then
-		end_val = 100
+		end_val = 99
 	end
-	local span = end_val - start + 1
+	local span = end_val - start_val + 1
 	if span <= 1 then
-		return start
+		return start_val
 	end
 	local bytes_needed = math.ceil(math.log(span) / math.log(256)) + 1
 	local max_val = 256 ^ bytes_needed
@@ -54,7 +54,7 @@ random = function(start, end_val)
 		local bytes = get_random_bytes(bytes_needed)
 		local random_val = bytes_to_integer(bytes)
 		if random_val < limit then
-			return start + (random_val % span)
+			return start_val + (random_val % span)
 		end
 	end
 end
@@ -65,7 +65,7 @@ show_help = function()
 	print("High-quality uniform random number generator using system entropy.")
 	print("Outputs a random integer between <start> and <end> (inclusive).")
 	print("If <start> is not specified, it defaults to 0")
-	print("If <end> is not specified, it defaults to 100")
+	print("If <end> is not specified, it defaults to 99")
 	print("")
 	print("Sources entropy directly from /dev/urandom (with /dev/random fallback)")
 	return print("and uses rejection sampling for perfect uniform distribution.")
@@ -80,7 +80,7 @@ local main
 main = function()
 	local _exp_0 = #arg
 	if 0 == _exp_0 then
-		io.stderr:write("(with a start of 0 and an end of 100)\n")
+		io.stderr:write("(with a start of 0 and an end of 99)\n")
 		return print(random())
 	else
 		local _exp_1 = arg[1]

@@ -1,0 +1,615 @@
+#!/usr/bin/env bash
+
+# histogram: Generate histograms from command output
+# Usage: histogram [-n COUNT] COMMAND
+
+set -euo pipefail
+
+# Default values
+DEFAULT_COUNT=1000
+count=$DEFAULT_COUNT
+command_to_run=""
+
+# Show usage information
+show_help() {
+	cat << EOF
+Usage: histogram [-n COUNT] COMMAND
+
+Generate a histogram from repeated command execution output.
+
+Options:
+  -n, --count COUNT    Number of times to run command (default: 1000)
+  -h, --help          Show this help message
+  --test              Run tests
+
+Examples:
+  histogram 'echo \$((RANDOM % 6 + 1))'     # Dice roll histogram
+  histogram -n 500 'date +%H'              # Hour distribution
+  histogram 'curl -s api.example.com/status' # API response histogram
+EOF
+}
+
+# Run tests
+run_tests() {
+	HISTOGRAM_QUIET=true exec "$(dirname "$0")/test/histogram_test" >/dev/null
+}
+
+# Get terminal dimensions
+get_terminal_size() {
+	local width height
+	width=$(tput cols 2>/dev/null || echo 80)
+	height=$(tput lines 2>/dev/null || echo 24)
+	echo "$width $height"
+}
+
+# Check if a string is numeric
+is_numeric() {
+	local str="$1"
+	# Remove leading/trailing whitespace
+	str=$(echo "$str" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+	# Check if it matches a number pattern
+	[[ "$str" =~ ^-?[0-9]*\.?[0-9]+$ ]]
+}
+
+# Collect data by running command N times
+collect_data() {
+	local cmd="$1"
+	local n="$2"
+	local i output
+
+	if [[ "${HISTOGRAM_QUIET:-}" != "true" ]]; then
+		echo "Running command '$cmd' $n times..." >&2
+	fi
+
+	for ((i=1; i<=n; i++)); do
+		if output=$(eval "$cmd" 2>/dev/null); then
+			# Remove trailing newline and output non-empty results
+			output=$(echo "$output" | sed 's/[[:space:]]*$//')
+			if [[ -n "$output" ]]; then
+				if [[ "${HISTOGRAM_DEBUG:-}" == "true" && "$i" -le 5 ]]; then
+					echo "DEBUG: Sample data point $i: '$output'" >&2
+				fi
+				echo "$output"
+			fi
+		fi
+	done
+}
+
+# Create frequency map and determine if data is numeric
+# Sets global variables: g_is_numeric and g_freq_file
+analyze_data() {
+	local temp_file="$1"
+	g_freq_file="/tmp/histogram_freq.$$"
+	g_is_numeric=true
+
+	# Create frequency count
+	if ! sort "$temp_file" | uniq -c | sort -nr > "$g_freq_file"; then
+		g_is_numeric=false
+		g_freq_file=""
+		return 1
+	fi
+
+	if [[ "${HISTOGRAM_DEBUG:-}" == "true" ]]; then
+		echo "DEBUG: Top 5 frequency entries:" >&2
+		head -5 "$g_freq_file" >&2
+	fi
+
+	# Check if all values are numeric
+	while read -r count value; do
+		if ! is_numeric "$value"; then
+			g_is_numeric=false
+			break
+		fi
+	done < "$g_freq_file"
+
+	return 0
+}
+
+# Sort numeric data by value or normal distribution
+# Sets global variable: g_sorted_file
+sort_numeric_data() {
+	local freq_file="$1"
+	local is_normal="$2"
+	g_sorted_file="/tmp/histogram_sorted.$$"
+
+	if [[ "$is_normal" == "true" ]]; then
+		echo "Normal distribution detected."
+		# For normal distribution: sort by frequency (most to least) then create bell curve ordering
+		local temp_sorted="/tmp/histogram_temp_sorted.$$"
+		# First sort by frequency (already sorted in freq_file), then rearrange for bell curve
+		local total_entries
+		total_entries=$(wc -l < "$freq_file")
+
+		# Create bell curve ordering: most frequent in center, least at edges
+		# Handle even/odd bucket counts to avoid mirroring
+		if [[ "${HISTOGRAM_DEBUG:-}" == "true" ]]; then
+			echo "DEBUG: Before reordering - frequency file contents:" >&2
+			cat "$freq_file" >&2
+			local even_odd="odd"
+			if ((total_entries % 2 == 0)); then
+				even_odd="even"
+			fi
+			echo "DEBUG: Total entries: $total_entries, Even/odd: $even_odd" >&2
+		fi
+
+		{
+			if ((total_entries % 2 == 0)); then
+				# Even number: backwards from end by 2, then forwards from 1 by 2
+				if [[ "${HISTOGRAM_DEBUG:-}" == "true" ]]; then
+					echo "DEBUG: Even reordering - backwards from $total_entries to 2 by 2:" >&2
+				fi
+				for ((i=total_entries; i>=2; i-=2)); do
+					local line=$(sed -n "${i}p" "$freq_file")
+					if [[ "${HISTOGRAM_DEBUG:-}" == "true" ]]; then
+						echo "DEBUG: Position $i: $line" >&2
+					fi
+					echo "$line"
+				done
+				if [[ "${HISTOGRAM_DEBUG:-}" == "true" ]]; then
+					echo "DEBUG: Even reordering - forwards from 1 to $((total_entries-1)) by 2:" >&2
+				fi
+				for ((i=1; i<=total_entries-1; i+=2)); do
+					local line=$(sed -n "${i}p" "$freq_file")
+					if [[ "${HISTOGRAM_DEBUG:-}" == "true" ]]; then
+						echo "DEBUG: Position $i: $line" >&2
+					fi
+					echo "$line"
+				done
+			else
+				# Odd number: backwards from end by 2 until 1, then forwards from 2 until second-to-last
+				if [[ "${HISTOGRAM_DEBUG:-}" == "true" ]]; then
+					echo "DEBUG: Odd reordering - backwards from $total_entries to 1 by 2:" >&2
+				fi
+				for ((i=total_entries; i>=1; i-=2)); do
+					local line=$(sed -n "${i}p" "$freq_file")
+					if [[ "${HISTOGRAM_DEBUG:-}" == "true" ]]; then
+						echo "DEBUG: Position $i: $line" >&2
+					fi
+					echo "$line"
+				done
+				if [[ "${HISTOGRAM_DEBUG:-}" == "true" ]]; then
+					echo "DEBUG: Odd reordering - forwards from 2 to $((total_entries-1)) by 2:" >&2
+				fi
+				for ((i=2; i<=total_entries-1; i+=2)); do
+					local line=$(sed -n "${i}p" "$freq_file")
+					if [[ "${HISTOGRAM_DEBUG:-}" == "true" ]]; then
+						echo "DEBUG: Position $i: $line" >&2
+					fi
+					echo "$line"
+				done
+			fi
+		} > "$g_sorted_file"
+
+		if [[ "${HISTOGRAM_DEBUG:-}" == "true" ]]; then
+			echo "DEBUG: After normal distribution reordering (first 10):" >&2
+			head -10 "$g_sorted_file" >&2
+		fi
+	else
+		# Sort by numeric value (second column)
+		if ! sort -k2,2n "$freq_file" > "$g_sorted_file"; then
+			g_sorted_file=""
+			return 1
+		fi
+	fi
+	return 0
+}
+
+# Test if frequency data follows a normal distribution pattern using 68-95-99.7 rule
+is_normally_distributed() {
+	local freq_file="$1"
+	local total_entries
+	total_entries=$(wc -l < "$freq_file")
+
+	# Need at least 10 entries to test for normal distribution reliably
+	if ((total_entries < 10)); then
+		return 1  # Not enough data, assume non-normal
+	fi
+
+	# Calculate statistics using awk (similar to nrandom_test approach)
+	local stats=$(awk '
+	{
+		freq = $1
+		value = NR - 1  # Convert to 0-based index for position
+		for (i = 1; i <= freq; i++) {
+			samples[++sample_count] = value
+			sum += value
+			if (sample_count == 1 || value < min) min = value
+			if (sample_count == 1 || value > max) max = value
+		}
+	}
+	END {
+		if (sample_count < 10) {
+			print "INSUFFICIENT_DATA"
+			exit
+		}
+
+		# Calculate mean
+		mean = sum / sample_count
+
+		# Calculate standard deviation
+		variance_sum = 0
+		for (i = 1; i <= sample_count; i++) {
+			variance_sum += (samples[i] - mean) * (samples[i] - mean)
+		}
+		stddev = sqrt(variance_sum / (sample_count - 1))
+
+		if (stddev <= 0) {
+			print "NO_VARIANCE"
+			exit
+		}
+
+		# Count samples within standard deviations (68-95-99.7 rule)
+		within_1sd = 0
+		within_2sd = 0
+		within_3sd = 0
+
+		for (i = 1; i <= sample_count; i++) {
+			z_score = (samples[i] - mean) / stddev
+			abs_z = (z_score < 0) ? -z_score : z_score
+
+			if (abs_z <= 1) within_1sd++
+			if (abs_z <= 2) within_2sd++
+			if (abs_z <= 3) within_3sd++
+		}
+
+		pct_1sd = within_1sd * 100 / sample_count
+		pct_2sd = within_2sd * 100 / sample_count
+		pct_3sd = within_3sd * 100 / sample_count
+
+		printf "PCT_1SD=%.1f PCT_2SD=%.1f PCT_3SD=%.1f SAMPLES=%d\n", pct_1sd, pct_2sd, pct_3sd, sample_count
+	}' "$freq_file")
+
+	# Parse results
+	if [[ "$stats" == "INSUFFICIENT_DATA" || "$stats" == "NO_VARIANCE" ]]; then
+		return 1
+	fi
+
+	eval "$stats"
+
+	# Apply 68-95-99.7 rule (with reasonable tolerances)
+	# 68% within 1σ (allow 55-80%), 95% within 2σ (allow 85-99%), 99.7% within 3σ (allow 95%+)
+	if (( $(echo "$PCT_1SD >= 55 && $PCT_1SD <= 80" | bc -l 2>/dev/null || echo 0) )) && \
+	   (( $(echo "$PCT_2SD >= 85 && $PCT_2SD <= 99" | bc -l 2>/dev/null || echo 0) )) && \
+	   (( $(echo "$PCT_3SD >= 95" | bc -l 2>/dev/null || echo 0) )); then
+		return 0  # Appears normally distributed
+	fi
+
+	return 1  # Not normally distributed
+}
+
+# Sort non-numeric data and create appropriate ordering
+# Sets global variables: g_labeled_file and g_ordered_file
+sort_non_numeric_data() {
+	local freq_file="$1"
+	local is_normal="$2"
+	g_labeled_file="/tmp/histogram_labeled.$$"
+	g_ordered_file="/tmp/histogram_ordered.$$"
+
+	# Take top 26 entries and assign letters A-Z
+	local letters="ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	local i=0
+
+	if ! head -n 26 "$freq_file" > "/tmp/histogram_temp.$$"; then
+		g_labeled_file=""
+		g_ordered_file=""
+		return 1
+	fi
+
+	while read -r count value; do
+		letter="${letters:$i:1}"
+		echo "$count $value $letter"
+		((i++))
+	done < "/tmp/histogram_temp.$$" > "$g_labeled_file"
+
+	# Choose ordering based on distribution pattern
+	local total_entries
+	total_entries=$(wc -l < "$g_labeled_file")
+
+	if [[ "$is_normal" == "true" ]]; then
+		echo "Normal distribution detected."
+		# Create normal distribution ordering: Z,X,V,T,R,P,N,L,J,H,F,D,B,A,C,E,G,I,K,M,O,Q,S,U,W,Y
+		# First pass: backwards from end by 2 (Z, X, V, T, R, P, N, L, J, H, F, D, B)
+		for ((i=total_entries; i>=2; i-=2)); do
+			sed -n "${i}p" "$g_labeled_file"
+		done > "$g_ordered_file"
+
+		# Second pass: forwards from position 1 by 2 (A, C, E, G, I, K, M, O, Q, S, U, W, Y)
+		for ((i=1; i<=total_entries; i+=2)); do
+			sed -n "${i}p" "$g_labeled_file"
+		done >> "$g_ordered_file"
+	else
+		# Use frequency ordering for non-normal data (most frequent to least frequent, left to right)
+		cp "$g_labeled_file" "$g_ordered_file"
+	fi
+
+	return 0
+}
+
+# Generate histogram plot
+generate_plot() {
+	local data_file="$1"
+	local is_numeric="$2"
+	local legend_file="$3"
+	local width height plot_width
+
+	read -r width height <<< "$(get_terminal_size)"
+	plot_width=$((width - 8))    # Reserve space for y-axis labels
+
+	# Find maximum count for scaling
+	local max_count=0
+	while read -r count value label; do
+		if ((count > max_count)); then
+			max_count=$count
+		fi
+	done < "$data_file"
+
+	if ((max_count == 0)); then
+		echo "No data to plot"
+		return
+	fi
+
+	# Calculate logical increment and plot height based on data range
+	local increment=1
+	local plot_height
+	if ((max_count <= 15)); then
+		increment=1
+		plot_height=$((max_count * 2))  # Double height for small ranges
+	elif ((max_count <= 30)); then
+		increment=1
+		plot_height=$max_count  # 1:1 ratio
+	elif ((max_count <= 60)); then
+		increment=2
+		plot_height=$((max_count / 2))  # Half height
+	elif ((max_count <= 150)); then
+		increment=5
+		plot_height=$((max_count / 5))
+	elif ((max_count <= 300)); then
+		increment=10
+		plot_height=$((max_count / 10))
+	else
+		increment=20
+		plot_height=$((max_count / 20))
+	fi
+
+	# Ensure minimum plot height
+	if ((plot_height < 5)); then
+		plot_height=5
+	fi
+
+	# Cap plot height to reasonable terminal size
+	local max_terminal_height=$((height - 6))
+	if ((plot_height > max_terminal_height)); then
+		plot_height=$max_terminal_height
+		increment=$(((max_count + plot_height - 1) / plot_height))  # Round up
+	fi
+
+	# Read data into arrays for plotting
+	local counts=()
+	local labels=()
+	local values=()
+
+	while read -r count value label; do
+		counts+=("$count")
+		if [[ -n "$label" ]]; then
+			labels+=("$label")
+		else
+			labels+=("$value")
+		fi
+		values+=("$value")
+
+		if [[ "${HISTOGRAM_DEBUG:-}" == "true" && "${#labels[@]}" -le 10 ]]; then
+			echo "DEBUG: Label ${#labels[@]}: '${labels[-1]}' (from value: '$value')" >&2
+		fi
+	done < "$data_file"
+
+	local num_bars=${#counts[@]}
+
+	# Generate plot from top to bottom
+	local prev_y_value=""
+	for ((row=plot_height; row>=1; row--)); do
+		local line=""
+		local y_value=$((row * increment))
+
+		# Y-axis label (only show if different from previous)
+		if [[ "$y_value" != "$prev_y_value" ]]; then
+			printf "%4d │" "$y_value"
+		else
+			printf "     │"
+		fi
+		prev_y_value="$y_value"
+
+		# Plot bars
+		for ((i=0; i<num_bars; i++)); do
+			local bar_height=$(((counts[i] + increment - 1) / increment))  # Round up
+			if ((row <= bar_height)); then
+				printf "█"
+			else
+				printf " "
+			fi
+		done
+		echo
+	done
+
+	# X-axis
+	printf "     ├"
+	for ((i=0; i<num_bars; i++)); do
+		printf "─"
+	done
+	echo
+
+	# X-axis labels (up to 3 character rows)
+	if [[ "${HISTOGRAM_DEBUG:-}" == "true" ]]; then
+		echo "DEBUG: Starting X-axis generation with $num_bars bars" >&2
+		echo "DEBUG: First 10 labels: ${labels[@]:0:10}" >&2
+	fi
+
+	# Row 1: First characters
+	printf "      "
+	for ((i=0; i<num_bars; i++)); do
+		local char="${labels[i]:0:1}"
+		if [[ "${HISTOGRAM_DEBUG:-}" == "true" && "$i" -lt 5 ]]; then
+			echo "DEBUG: Bar $i, label='${labels[i]}', first char='$char'" >&2
+		fi
+		printf "%s" "$char"
+	done
+	echo
+
+	# Row 2: Second characters (if they exist)
+	local has_second_chars=false
+	for ((i=0; i<num_bars; i++)); do
+		if [[ "${#labels[i]}" -gt 1 ]]; then
+			has_second_chars=true
+			break
+		fi
+	done
+
+	if [[ "$has_second_chars" == "true" ]]; then
+		printf "      "
+		for ((i=0; i<num_bars; i++)); do
+			if [[ "${#labels[i]}" -gt 1 ]]; then
+				local char="${labels[i]:1:1}"
+				if [[ "${HISTOGRAM_DEBUG:-}" == "true" && "$i" -lt 5 ]]; then
+					echo "DEBUG: Bar $i, second char='$char'" >&2
+				fi
+				printf "%s" "$char"
+			else
+				printf " "
+			fi
+		done
+		echo
+
+		# Row 3: Third characters (if they exist)
+		local has_third_chars=false
+		for ((i=0; i<num_bars; i++)); do
+			if [[ "${#labels[i]}" -gt 2 ]]; then
+				has_third_chars=true
+				break
+			fi
+		done
+
+		if [[ "$has_third_chars" == "true" ]]; then
+			printf "      "
+			for ((i=0; i<num_bars; i++)); do
+				if [[ "${#labels[i]}" -gt 2 ]]; then
+					local char="${labels[i]:2:1}"
+					if [[ "${HISTOGRAM_DEBUG:-}" == "true" && "$i" -lt 5 ]]; then
+						echo "DEBUG: Bar $i, third char='$char'" >&2
+					fi
+					printf "%s" "$char"
+				else
+					printf " "
+				fi
+			done
+			echo
+		fi
+	fi
+
+	# Legend for non-numeric data
+	if [[ "$is_numeric" == "false" && -n "$legend_file" ]]; then
+		echo
+		echo "Legend:"
+		while read -r count value label; do
+			printf "  %s = %s\n" "$label" "$value"
+		done < "$legend_file"
+	fi
+}
+
+# Parse command line arguments
+parse_args() {
+	while [[ $# -gt 0 ]]; do
+		case $1 in
+			-h|--help)
+				show_help
+				exit 0
+				;;
+			--test)
+				run_tests
+				exit $?
+				;;
+			-n|--count)
+				if [[ -z "${2:-}" ]]; then
+					echo "Error: -n requires an argument" >&2
+					exit 1
+				fi
+				if ! [[ "$2" =~ ^[1-9][0-9]*$ ]]; then
+					echo "Error: count must be a positive integer" >&2
+					exit 1
+				fi
+				count="$2"
+				shift 2
+				;;
+			-*)
+				echo "Error: Unknown option $1" >&2
+				exit 1
+				;;
+			*)
+				if [[ -n "$command_to_run" ]]; then
+					echo "Error: Multiple commands specified" >&2
+					exit 1
+				fi
+				command_to_run="$1"
+				shift
+				;;
+		esac
+	done
+}
+
+# Cleanup function
+cleanup() {
+	rm -f "/tmp/histogram_"*".$$"
+}
+
+# Main function
+main() {
+	trap cleanup EXIT
+
+	parse_args "$@"
+
+	if [[ -z "$command_to_run" ]]; then
+		echo "Error: Command argument required" >&2
+		echo >&2
+		show_help >&2
+		exit 1
+	fi
+
+	# Collect data
+	local temp_data="/tmp/histogram_data.$$"
+	collect_data "$command_to_run" "$count" > "$temp_data"
+
+	if [[ ! -s "$temp_data" ]]; then
+		echo "No output collected from command" >&2
+		exit 1
+	fi
+
+	# Analyze data
+	if ! analyze_data "$temp_data"; then
+		echo "Failed to analyze data" >&2
+		exit 1
+	fi
+
+	# Test for normal distribution on all data types
+	local is_normal_distribution="false"
+	if is_normally_distributed "$g_freq_file"; then
+		is_normal_distribution="true"
+	fi
+
+	# Sort and plot data
+	if [[ "$g_is_numeric" == "true" ]]; then
+		# Numeric data
+		if ! sort_numeric_data "$g_freq_file" "$is_normal_distribution"; then
+			echo "Failed to sort numeric data" >&2
+			exit 1
+		fi
+		generate_plot "$g_sorted_file" "true" ""
+	else
+		# Non-numeric data
+		if ! sort_non_numeric_data "$g_freq_file" "$is_normal_distribution"; then
+			echo "Failed to sort non-numeric data" >&2
+			exit 1
+		fi
+		generate_plot "$g_ordered_file" "false" "$g_labeled_file"
+	fi
+}
+
+# Run main function with all arguments
+main "$@"

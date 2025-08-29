@@ -33,12 +33,14 @@ Most executables in `bin/` support a `--test` flag:
 #### Output Standards
 
 **When run directly (`bin/test/script_test`):**
+
 - Progress messages → **stdout** (e.g., "Testing feature X...", "✓ Test passed")
 - Success summaries → **stdout** (e.g., "All 5 tests passed")
 - Error details → **stderr** (e.g., "✗ Test failed:", diagnostic info)
 - Failure summaries → **stderr** (e.g., "3 of 5 tests failed")
 
 **When run via `--test` flag:**
+
 - Stdout is muted (`>/dev/null`)
 - Only stderr (errors) are visible
 - Should run quickly and silently when all tests pass
@@ -63,12 +65,22 @@ Remember: failing tests often reveal important insights about the problem domain
 ## Script Standards
 
 All scripts in `bin/` should support at minimum:
+
 - **`-h`** or **`--help`**: Show usage information
 - **`--test`**: Run associated tests (if available)
 
+Shebangs should be `#!/usr/bin/env <language executable>`.
+
 Optionally:
+
 - **`-a`** or **`--about`**: Show detailed description
 - **`-v`** or **`--version`**: Show version information
+-
+
+## Formatting
+
+- Use tabs for indentation in every language that supports it (MoonScript, Yuescript, Lua/LuaJIT, Bash, etc.)
+- Use 2 spaces for indentation in every language that does not support tabs
 
 ## Development Environment
 
@@ -83,22 +95,32 @@ Optionally:
 Since all `bin/` scripts are on PATH, these utilities are available:
 
 #### Language Runners
-- **`moonrun`**: Execute MoonScript files (shortcuts to `.lua` via luajit if available)
-- **`yuerun`**: Execute Yuescript files (shortcuts to `.lua` via luajit if available)
+
+- **`moonrun`**: Execute MoonScript files, recompiling to Lua on change if necessary (shortcuts to corresponding `.lua` via luajit if available)
+- **`yuerun`**: Execute Yuescript files, recompiling to Lua on change if necessary (shortcuts to corresponding `.lua` via luajit if available)
 
 #### Testing & Development
+
 - **`repeat`**: Repeat a command N times (e.g., `repeat 5 echo "hello"`)
 - **`assert`**: Assert conditions in scripts
 - **Various counters**: Global counter implementations for testing/debugging
 
 #### Shell Utilities
+
 - **`expand`**: Enable globbing for its arguments (globbing is disabled globally)
   ```bash
   # Example: list all .md files
   ls -al $(expand *.md)
+  # or just:
+  expand *.md
+  # or:
+  expand -i "**/*.{png,gif,jpg,jpeg,webp,svg}"
+  # You can also do this to pass commands to it which will then get pre-expanded arguments:
+  expand ls *.md
   ```
 
 #### Random Number Generation
+
 - **`nrandom`**: Normal distribution random numbers
 - **`drandom`**: Deterministic random numbers (for reproducible testing)
 - **`random`**: High-quality uniform random numbers using system entropy
@@ -107,17 +129,21 @@ Since all `bin/` scripts are on PATH, these utilities are available:
 
 #### Testing Framework (`bin/src/test_factory.moon`)
 
+Also available in YueScript: `bin/src/test_factory.yue`
+
 A sophisticated MoonScript testing framework available as an alternative to bash tests:
 
 **Features:**
+
 - **Multiple output formats**: TAP and dot-style output
 - **Rich assertion library**: `assert_equal`, `assert_contains`, `assert_deep_equal`, `assert_raise`, etc.
-- **Colored output** with ANSI coloring for better readability  
+- **Colored output** with ANSI coloring for better readability
 - **Stack traces** for debugging test failures
 - **Statistical testing support** for building custom assertions
 - **Error handling** with `refute` (negative assertions)
 
 **Usage Example:**
+
 ```moonscript
 test_factory = require("src/test_factory").test_factory
 t = test_factory("dot")
@@ -127,6 +153,7 @@ t.report()
 ```
 
 **When to consider:**
+
 - Complex statistical testing (like our `random` tests)
 - Projects that need structured test suites
 - Integration with TAP-compatible test runners
@@ -134,9 +161,12 @@ t.report()
 
 #### CLI Utilities (`bin/src/cli_utils.moon`)
 
+Also available in YueScript: `bin/src/cli_utils.yue`
+
 Provides standardized CLI argument parsing and better RNG seeding:
 
 **Features:**
+
 - **`parse_args(config, argv)`**: Sophisticated argument parser with:
   - Flag validation and type checking
   - Automatic help generation
@@ -146,6 +176,7 @@ Provides standardized CLI argument parsing and better RNG seeding:
 - **Structured configuration** for consistent CLI interfaces
 
 **Usage Example:**
+
 ```moonscript
 cli_utils = require("src/cli_utils")
 config = {
@@ -156,6 +187,7 @@ options, positionals = cli_utils.parse_args(config)
 ```
 
 **When to consider:**
+
 - Scripts with complex argument parsing needs
 - When you want consistent help formatting across tools
 - Projects that need argument validation
@@ -168,11 +200,18 @@ options, positionals = cli_utils.parse_args(config)
 - When creating new code, follow TDD principles
 - **Consider `test_factory.moon`** for complex test scenarios
 
+### Test Pattern
+
+- Test scripts should be directly executable with information about passing tests going to stdout and errors/fails to stderr; tests should exit with a code equal to the number of fails
+- Executable scripts that are not tests should accept a --test argument, which executes their associated test but with stdout directed to /dev/null (which will cause only errors/fails to appear on stderr)
+  - The idea is that directly running the test shows everything, but `commandname --test` is just a quick check that is normally silent (except for exit code and any errors)
+- Tests should be written in such a way that they can be run concurrently without interference or race conditions
+
 ## Cleanup
 
-- Clean up any **extraneous files** created only to produce core code
+- Clean up any **extraneous files** created only to produce core code or test out ideas
 - Files in `/tmp/` don't need manual cleanup (system handles this)
-- Remove temporary test files, build artifacts, etc.
+- Remove any other temporary test files, build artifacts, etc.
 
 ## Code Quality
 
@@ -180,21 +219,19 @@ options, positionals = cli_utils.parse_args(config)
 - Use available utilities rather than reimplementing functionality
 - Keep scripts focused and single-purpose
 - Document complex logic with comments
+- Clean up after yourself by documenting all newly-created files!
 
 ## Collaboration & Decision Making
 
-**We are pair-programmers.** For any major architectural decisions that are:
-- Left unspecified
-- Have ambiguous solutions 
-- Present significant tradeoffs
-- Could be implemented multiple ways
-
-**Always rope me into the conversation.** Don't make assumptions - ask for clarification and discuss the options.
+**We are pair-programmers.** For any architectural decisions that are: left incompletely specified, have ambiguous solutions, present significant tradeoffs, or could be implemented multiple ways: **Always rope me into the conversation.** Don't make assumptions - ask for clarification and discuss the options.
 
 **Constructive critique is always welcome:**
+
 - Suggest improvements to existing code
 - Point out potential issues or better approaches
 - Question design decisions when appropriate
 - Propose refactoring opportunities
 
 The goal is collaborative problem-solving, not just task execution.
+
+- NEVER say "You're absolutely right!" in response to anything I say. I already feel privileged to be working with an AI, and I'm well-aware that I'm sometimes right; I don't need the confirmation that I had a good idea.

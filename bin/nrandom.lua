@@ -7,25 +7,29 @@ nrandom = function(start, end_val)
 		start = 0
 	end
 	if end_val == nil then
-		end_val = 100
+		end_val = 99
 	end
 	local range = end_val - start
-	local u1, u2 = math.random(), math.random()
-	local z0 = math.sqrt(-2 * math.log(u1)) * math.cos(2 * math.pi * u2)
-	local random_number = start + (z0 * (range / 6)) + (range / 2)
-	return math.floor(random_number + 0.5)
+	local result
+	repeat
+		local u1, u2 = math.random(), math.random()
+		local z0 = math.sqrt(-2 * math.log(u1)) * math.cos(2 * math.pi * u2)
+		local random_number = start + (z0 * (range / 6)) + (range / 2)
+		result = math.floor(random_number + 0.5)
+	until result >= start and result <= end_val
+	return result
 end
 local show_help
 show_help = function()
 	print("Usage: nrandom <start> <end>")
 	print("Outputs a normally-distributed random number between <start> and <end>")
 	print("If <start> is not specified, it defaults to 0")
-	return print("If <end> is not specified, it defaults to 100")
+	return print("If <end> is not specified, it defaults to 99")
 end
 local run_test
 run_test = function()
 	local test_file = tostring(os.getenv('HOME')) .. "/dotfiles/bin/test/nrandom_test"
-	local result = os.execute(". " .. tostring(test_file))
+	local result = os.execute(tostring(test_file) .. " >/dev/null")
 	return os.exit(result == 0 and 0 or 1)
 end
 local main
@@ -33,7 +37,7 @@ main = function()
 	math.randomseed(os.time() + os.clock() * 1000000)
 	local _exp_0 = #arg
 	if 0 == _exp_0 then
-		io.stderr:write("(with a start of 0 and an end of 100)\n")
+		io.stderr:write("(with a start of 0 and an end of 99)\n")
 		return print(nrandom())
 	else
 		local _exp_1 = arg[1]

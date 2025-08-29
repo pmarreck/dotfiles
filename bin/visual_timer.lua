@@ -3,18 +3,18 @@
 
 local ffi = require("ffi")
 local bit = require("bit")
-ffi.cdef([[  struct winsize {
-    unsigned short ws_row;
-    unsigned short ws_col;
-    unsigned short ws_xpixel;
-    unsigned short ws_ypixel;
-  };
+ffi.cdef([[	struct winsize {
+		unsigned short ws_row;
+		unsigned short ws_col;
+		unsigned short ws_xpixel;
+		unsigned short ws_ypixel;
+	};
 
-  int ioctl(int fd, unsigned long request, ...);
-  typedef void (*sighandler_t)(int);
-  int signal(int signum, sighandler_t handler);
-  int usleep(unsigned int usec);
-  unsigned int sleep(unsigned int seconds);
+	int ioctl(int fd, unsigned long request, ...);
+	typedef void (*sighandler_t)(int);
+	int signal(int signum, sighandler_t handler);
+	int usleep(unsigned int usec);
+	unsigned int sleep(unsigned int seconds);
 ]])
 local TIOCGWINSZ = 0x5413
 local TIOCGWINSZ_BSD = 0x40087468
@@ -22,6 +22,32 @@ local SIGWINCH = 28
 local SIGINT = 2
 local STDOUT_FILENO = 1
 local STDERR_FILENO = 2
+local GLYPH_PRESETS = {
+	middledot = "·",
+	tinydot = "˙",
+	lightblock = "░",
+	darkblock = "▓",
+	fullblock = "█",
+	period = ".",
+	space = " "
+}
+local resolve_glyph
+resolve_glyph = function(value, fallback)
+	if not value or #value == 0 then
+		return fallback
+	end
+	local name = value:match("^preset:(.+)$")
+	if name then
+		local key = name:lower()
+		local ch = GLYPH_PRESETS[key]
+		if ch then
+			return ch
+		else
+			error("Unknown preset: " .. tostring(name))
+		end
+	end
+	return value
+end
 local terminal_resized = false
 local interrupted = false
 local Timer
@@ -274,10 +300,16 @@ do
 		_base_0.__index = _base_0
 	end
 	_class_0 = setmetatable({
-		__init = function(self, terminal)
+		__init = function(self, terminal, fill_char, empty_char)
+			if fill_char == nil then
+				fill_char = nil
+			end
+			if empty_char == nil then
+				empty_char = nil
+			end
 			self.terminal = terminal
-			self.fill_char = "█"
-			self.empty_char = "░"
+			self.fill_char = fill_char or "█"
+			self.empty_char = empty_char or "˙"
 			return self:update_dimensions()
 		end,
 		__base = _base_0,
@@ -298,14 +330,18 @@ do
 	local _class_0
 	local _base_0 = {
 		setup_signal_handlers = function(self)
-			local winch_handler = ffi.cast("sighandler_t", function(signum)
+			self.winch_handler = ffi.cast("sighandler_t", function(signum)
 				terminal_resized = true
 			end)
-			local int_handler = ffi.cast("sighandler_t", function(signum)
+			self.int_handler = ffi.cast("sighandler_t", function(signum)
 				interrupted = true
 			end)
-			local winch_result = ffi.C.signal(SIGWINCH, winch_handler)
-			local int_result = ffi.C.signal(SIGINT, int_handler)
+			local winch_result = ffi.C.signal(SIGWINCH, self.winch_handler)
+			local int_result = ffi.C.signal(SIGINT, self.int_handler)
+			self.teardown_signal_handlers = function()
+				ffi.C.signal(SIGWINCH, ffi.cast("sighandler_t", 0))
+				return ffi.C.signal(SIGINT, ffi.cast("sighandler_t", 0))
+			end
 			return (winch_result ~= ffi.cast("sighandler_t", -1)) and (int_result ~= ffi.cast("sighandler_t", -1))
 		end
 	}
@@ -331,21 +367,48 @@ do
 end
 local parse_time_preset
 parse_time_preset = function(preset)
-	preset = preset:lower():gsub("%s+", "")
-	if preset:match("^%d+s$") then
-		local seconds = tonumber(preset:match("^(%d+)s$"))
-		return seconds
-	elseif preset:match("^%d+m$") then
-		local minutes = tonumber(preset:match("^(%d+)m$"))
-		return minutes * 60
-	elseif preset:match("^%d+h$") then
-		local hours = tonumber(preset:match("^(%d+)h$"))
-		return hours * 3600
-	elseif preset:match("^%d+$") then
-		return tonumber(preset) * 60
-	else
-		return error("Invalid time format: " .. tostring(preset) .. ". Use formats like '30s', '5m', '1h', etc.")
+	local original = preset
+	preset = tostring(preset or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
+	if #preset == 0 then
+		error("Invalid time format: " .. tostring(original) .. ". Provide a duration like '30s', '5m', '1h', or '1h30m15s'.")
 	end
+	local total = 0
+	local parts = { }
+	for token in preset:gmatch("%S+") do
+		table.insert(parts, token)
+	end
+	if #parts == 0 then
+		table.insert(parts, preset)
+	end
+	local valid = false
+	for _, part in ipairs(parts) do
+		local p = part
+		if p:match("^%d+$") then
+			total = total + (tonumber(p) * 60)
+			valid = true
+		else
+			for num, unit in p:gmatch("(%d+)([hms])") do
+				local n = tonumber(num)
+				if unit == 'h' then
+					total = total + (n * 3600)
+				elseif unit == 'm' then
+					total = total + (n * 60)
+				elseif unit == 's' then
+					total = total + n
+				end
+				valid = true
+			end
+			local leftover = p:gsub("%d+[hms]", "")
+			leftover = leftover:gsub("%s+", "")
+			if #leftover > 0 then
+				error("Invalid time format segment: '" .. tostring(part) .. "' in '" .. tostring(original) .. "'")
+			end
+		end
+	end
+	if not valid or total <= 0 then
+		error("Invalid time format: " .. tostring(original) .. ". Examples: '30s', '5m', '1h', '1h30m15s', '45m 30s'.")
+	end
+	return total
 end
 local VisualTimer
 do
@@ -387,8 +450,10 @@ do
 				self.terminal:show_cursor()
 				return
 			end
+			local last_render_sec = -1
 			while not self.timer:is_finished() do
 				if interrupted then
+					self.signal_handler:teardown_signal_handlers()
 					self.terminal:show_cursor()
 					self.terminal:move_cursor(self.terminal.rows, 1)
 					print("\n\nTimer interrupted. Goodbye!")
@@ -399,8 +464,12 @@ do
 					terminal_resized = false
 					self.display:update_dimensions()
 				end
-				local progress = self.timer:get_progress()
-				self.display:render(progress, self.timer.remaining_seconds, self.timer.total_seconds)
+				local current_sec = math.floor(self.timer.remaining_seconds)
+				if terminal_resized or current_sec ~= last_render_sec or completed then
+					local progress = self.timer:get_progress()
+					self.display:render(progress, self.timer.remaining_seconds, self.timer.total_seconds)
+					last_render_sec = current_sec
+				end
 				if completed then
 					break
 				end
@@ -411,7 +480,8 @@ do
 			self.terminal:move_cursor(self.terminal.rows, 1)
 			print("\n\n🎉 Timer completed! Press Enter to exit.")
 			self.terminal:show_cursor()
-			return io.read()
+			io.read()
+			return self.signal_handler:teardown_signal_handlers()
 		end
 	}
 	if _base_0.__index == nil then
@@ -424,7 +494,21 @@ do
 			end
 			self.options = options or { }
 			self.terminal = Terminal(self.options.rows, self.options.cols)
-			self.display = VisualDisplay(self.terminal)
+			if not self.options.full_char then
+				local env_full = os.getenv("VISUAL_TIMER_FULLCHAR")
+				if env_full and #env_full > 0 then
+					self.options.full_char = env_full
+				end
+			end
+			if not self.options.empty_char then
+				local env_empty = os.getenv("VISUAL_TIMER_EMPTYCHAR")
+				if env_empty and #env_empty > 0 then
+					self.options.empty_char = env_empty
+				end
+			end
+			local resolved_full = resolve_glyph(self.options.full_char, "█")
+			local resolved_empty = resolve_glyph(self.options.empty_char, "˙")
+			self.display = VisualDisplay(self.terminal, resolved_full, resolved_empty)
 			self.signal_handler = SignalHandler()
 			self.timer = nil
 			return self:setup_signal_handling()
@@ -473,6 +557,20 @@ parse_args = function(args)
 		elseif arg_val == "--single-frame" then
 			options.single_frame = true
 			i = i + 1
+		elseif arg_val == "--emptychar" then
+			if i + 1 <= #args then
+				options.empty_char = args[i + 1]
+				i = i + 2
+			else
+				error("--emptychar requires a value (character)")
+			end
+		elseif arg_val == "--fullchar" or arg_val == "--fillchar" then
+			if i + 1 <= #args then
+				options.full_char = args[i + 1]
+				i = i + 2
+			else
+				error("--fullchar/--fillchar requires a value (character)")
+			end
 		elseif arg_val == "--silence" or arg_val == "-s" then
 			options.silence = true
 			i = i + 1
@@ -487,14 +585,31 @@ parse_args = function(args)
 			print("Usage: visual_timer <time> [options]")
 			print("")
 			print("Time formats:")
-			print("  30s     # 30 seconds")
-			print("  5m      # 5 minutes")
-			print("  55m     # 55 minutes")
-			print("  1h      # 1 hour")
-			print("  2h      # 2 hours")
+			print("  30s          # 30 seconds")
+			print("  5m           # 5 minutes")
+			print("  55m          # 55 minutes")
+			print("  1h           # 1 hour")
+			print("  2h           # 2 hours")
+			print("  1h30m15s     # composite token (any order)")
+			print("  45m 30s      # space-separated tokens (any order)")
+			print("  10           # bare number = minutes")
 			print("")
 			print("Options:")
 			print("  --silence, -s               Disable completion beeps")
+			print("  --emptychar CHAR            Set remaining-time glyph (default from $VISUAL_TIMER_EMPTYCHAR or '˙')")
+			print("  --fullchar CHAR             Set elapsed-time glyph (default from $VISUAL_TIMER_FULLCHAR or '█')")
+			print("  --fillchar CHAR             Alias for --fullchar")
+			print("")
+			print("Glyph presets (usable with either --emptychar/--fullchar or env vars via 'preset:NAME'):")
+			print("  preset:middledot   = ·   (U+00B7)")
+			print("  preset:tinydot     = ˙   (U+02D9)  [default empty]")
+			print("  preset:lightblock  = ░   (U+2591)")
+			print("  preset:darkblock   = ▓   (U+2593)")
+			print("  preset:fullblock   = █   (U+2588)  [default full]")
+			print("")
+			print("Environment variables:")
+			print("  VISUAL_TIMER_EMPTYCHAR      Default for --emptychar (supports 'preset:NAME')")
+			print("  VISUAL_TIMER_FULLCHAR       Default for --fullchar  (supports 'preset:NAME')")
 			print("")
 			print("Testing options:")
 			print("  --dimensions, -d ROWSxCOLS  Override terminal dimensions (e.g., 24x80)")
@@ -508,8 +623,8 @@ parse_args = function(args)
 			print("  visual_timer 25m            # Pomodoro timer")
 			print("")
 			print("The timer shows:")
-			print("  • Filled blocks (█) for elapsed time")
-			print("  • Empty blocks (░) for remaining time")
+			print("  • Filled area (full glyph) for elapsed time")
+			print("  • Empty area (empty glyph) for remaining time")
 			print("  • Progress percentage and remaining time")
 			print("  • Terminal dimensions detected automatically")
 			os.exit(0)

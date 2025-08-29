@@ -5,32 +5,32 @@
 
 # canonical gcc tweaks for OS X's homebrew gcc; Linux shouldn't need these
 # if [ "$PLATFORM" = "osx" ]; then
-  # needs brew
-  # brew_prefix=$(brew --prefix)
-  # Homebrew LLVM and compiler toolchain config
-  # export LDFLAGS="-L/opt/homebrew/opt/llvm/lib -Wl,-rpath,/opt/homebrew/opt/llvm/lib"
-  # export CPPFLAGS="-I/opt/homebrew/opt/llvm/include"
-  # Experimental "Plan 9 from User Space" PATH config
-  # export PLAN9=/usr/local/plan9
-  # export PATH=$PATH:$PLAN9/bin
-  # gcc_ver="11"
-  # brew_prefix_bin=$brew_prefix/bin
-  # export CC=$brew_prefix_bin/gcc-$gcc_ver
-  # export GCC=$CC
-  # export CXX=$brew_prefix_bin/g++-$gcc_ver
-  # export CPP=$brew_prefix_bin/cpp-$gcc_ver
-  # export LD=$brew_prefix_bin/gcc-$gcc_ver
-  # alias c++=$brew_prefix_bin/c++-$gcc_ver
-  # alias g++=$brew_prefix_bin/g++-$gcc_ver
-  # alias gcc=$brew_prefix_bin/gcc-$gcc_ver
-  # alias cpp=$brew_prefix_bin/cpp-$gcc_ver
-  # alias ld=$brew_prefix_bin/gcc-$gcc_ver
-  # alias cc=$brew_prefix_bin/gcc-$gcc_ver
-  # alias clang=$brew_prefix_bin/clang-$gcc_ver
-  # alias clang++=$brew_prefix_bin/clang++-$gcc_ver
-  # alias gcov=$brew_prefix_bin/gcov-$gcc_ver
-  # alias gcov-dump=$brew_prefix_bin/gcov-dump-$gcc_ver
-  # alias gcov-tool=$brew_prefix_bin/gcov-tool-$gcc_ver
+	# needs brew
+	# brew_prefix=$(brew --prefix)
+	# Homebrew LLVM and compiler toolchain config
+	# export LDFLAGS="-L/opt/homebrew/opt/llvm/lib -Wl,-rpath,/opt/homebrew/opt/llvm/lib"
+	# export CPPFLAGS="-I/opt/homebrew/opt/llvm/include"
+	# Experimental "Plan 9 from User Space" PATH config
+	# export PLAN9=/usr/local/plan9
+	# export PATH=$PATH:$PLAN9/bin
+	# gcc_ver="11"
+	# brew_prefix_bin=$brew_prefix/bin
+	# export CC=$brew_prefix_bin/gcc-$gcc_ver
+	# export GCC=$CC
+	# export CXX=$brew_prefix_bin/g++-$gcc_ver
+	# export CPP=$brew_prefix_bin/cpp-$gcc_ver
+	# export LD=$brew_prefix_bin/gcc-$gcc_ver
+	# alias c++=$brew_prefix_bin/c++-$gcc_ver
+	# alias g++=$brew_prefix_bin/g++-$gcc_ver
+	# alias gcc=$brew_prefix_bin/gcc-$gcc_ver
+	# alias cpp=$brew_prefix_bin/cpp-$gcc_ver
+	# alias ld=$brew_prefix_bin/gcc-$gcc_ver
+	# alias cc=$brew_prefix_bin/gcc-$gcc_ver
+	# alias clang=$brew_prefix_bin/clang-$gcc_ver
+	# alias clang++=$brew_prefix_bin/clang++-$gcc_ver
+	# alias gcov=$brew_prefix_bin/gcov-$gcc_ver
+	# alias gcov-dump=$brew_prefix_bin/gcov-dump-$gcc_ver
+	# alias gcov-tool=$brew_prefix_bin/gcov-tool-$gcc_ver
 # fi
 
 # stop checking for unix mail, OS X!
@@ -145,14 +145,14 @@ export PS4='$0:$LINENO+ '
 # (and you only did it because of the licensing difference, anyway)
 # (If this is unset on macos, it will keep reminding you to switch to zsh)
 if [ "$PLATFORM" = "osx" ]; then
-  export BASH_SILENCE_DEPRECATION_WARNING=1
+	export BASH_SILENCE_DEPRECATION_WARNING=1
 fi
 
 # steam custom proton stuff, but only on linux
 if [ "$PLATFORM" = "linux" ]; then
-  export STEAM_COMPAT_DATA_PATH="$HOME/.steam/steam/steamapps/compatdata"
-  export STEAM_COMPAT_CLIENT_INSTALL_PATH="$HOME/.steam/root"
-  export STEAM_EXTRA_COMPAT_TOOLS_PATHS="$HOME/.steam/root/compatibilitytools.d"
+	export STEAM_COMPAT_DATA_PATH="$HOME/.steam/steam/steamapps/compatdata"
+	export STEAM_COMPAT_CLIENT_INSTALL_PATH="$HOME/.steam/root"
+	export STEAM_EXTRA_COMPAT_TOOLS_PATHS="$HOME/.steam/root/compatibilitytools.d"
 fi
 
 # Nix config
@@ -184,12 +184,27 @@ export CHARSET_ALNUM_SANE="$(printf "%s" "$CHARSET_ALNUM" | tr -d 'OlI')"
 export CHARSET_PUNC='!@#$%^&*'
 export CHARSET_HEX="${CHARSET_NUM}abcdef"
 
+# Bash integer handling
+_bash_int_max_helper() {
+	local n=1 next
+	while :; do
+		next=$((n<<1))
+		(( next > 0 )) || break
+		n=$next
+	done
+	printf '%s' $((n*2 - 1))
+}
+# make it feel like an env var:
+declare -irx BASH_INT_MAX="$(_bash_int_max_helper)"
+declare -irx BASH_INT_MIN=$(( -BASH_INT_MAX - 1 ))
+unset _bash_int_max_helper
+
 # take any $HOME/.secrets and export them
 # Use set -a to automatically export all variables that are subsequently set
 if [ -f "$HOME/.secrets" ]; then
-  set -a
-  source "$HOME/.secrets"
-  set +a
+	set -a
+	source "$HOME/.secrets"
+	set +a
 fi
 
 [ -n "${DEBUG_SHELLCONFIG}" ] && echo "Exiting $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")"

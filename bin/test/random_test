@@ -4,17 +4,17 @@
 test_random() {
 	local fails=0
 	local tests=0
-	
+
 	echo "Testing uniform random number generator..."
-	
+
 	# Test 1: Basic execution (runs without error)
 	(( tests++ ))
 	echo "Testing basic execution..."
-	
+
 	local random_output
 	random_output=$(random 2>&1)
 	local exit_code=$?
-	
+
 	if [ "$exit_code" -eq 0 ] && [ -n "$random_output" ]; then
 		echo "✓ Basic execution test passed: runs without error and produces output"
 	else
@@ -23,62 +23,62 @@ test_random() {
 		echo "  Output: '$random_output'" >&2
 		(( fails++ ))
 	fi
-	
+
 	# Test 2: Default range (0-100)
 	(( tests++ ))
-	echo "Testing default range (0-100)..."
-	
+	echo "Testing default range (0-99)..."
+
 	local num=$(random 2>/dev/null)
-	
-	if [ "$num" -ge 0 ] && [ "$num" -le 100 ]; then
-		echo "✓ Default range test passed: $num is in range [0, 100]"
+
+	if [ "$num" -ge 0 ] && [ "$num" -le 99 ]; then
+		echo "✓ Default range test passed: $num is in range [0, 99]"
 	else
-		echo "✗ Default range test failed: $num is not in range [0, 100]" >&2
+		echo "✗ Default range test failed: $num is not in range [0, 99]" >&2
 		(( fails++ ))
 	fi
-	
+
 	# Test 3: Custom range (10-20)
 	(( tests++ ))
 	echo "Testing custom range (10-20)..."
-	
+
 	local custom_num=$(random 10 20 2>/dev/null)
-	
+
 	if [ "$custom_num" -ge 10 ] && [ "$custom_num" -le 20 ]; then
 		echo "✓ Custom range test passed: $custom_num is in range [10, 20]"
 	else
 		echo "✗ Custom range test failed: $custom_num is not in range [10, 20]" >&2
 		(( fails++ ))
 	fi
-	
+
 	# Test 4: Single value range (should always return the same value)
 	(( tests++ ))
 	echo "Testing single value range (5-5)..."
-	
+
 	local single_val=$(random 5 5 2>/dev/null)
-	
+
 	if [ "$single_val" -eq 5 ]; then
 		echo "✓ Single value range test passed: got $single_val"
 	else
 		echo "✗ Single value range test failed: got $single_val, expected 5" >&2
 		(( fails++ ))
 	fi
-	
+
 	# Test 5: Statistical uniformity test (range 1-10, 1000 samples)
 	(( tests++ ))
 	echo "Testing statistical uniformity (1000 samples, range 1-10)..."
-	
+
 	local samples=1000
 	local range_start=1
 	local range_end=10
 	local expected_per_bucket=$((samples / (range_end - range_start + 1)))
 	local tolerance=$((expected_per_bucket / 2))  # Allow 50% deviation
-	
+
 	# Count occurrences of each value
 	declare -A counts
 	for ((i=range_start; i<=range_end; i++)); do
 		counts[$i]=0
 	done
-	
+
 	# Generate samples
 	for ((i=0; i<samples; i++)); do
 		local val=$(random $range_start $range_end 2>/dev/null)
@@ -86,19 +86,19 @@ test_random() {
 			(( counts[$val]++ ))
 		fi
 	done
-	
+
 	# Check uniformity
 	local uniformity_fails=0
 	for ((i=range_start; i<=range_end; i++)); do
 		local count=${counts[$i]}
 		local deviation=$((count - expected_per_bucket))
 		local abs_deviation=${deviation#-}  # absolute value
-		
+
 		if [ "$abs_deviation" -gt "$tolerance" ]; then
 			(( uniformity_fails++ ))
 		fi
 	done
-	
+
 	if [ "$uniformity_fails" -le 2 ]; then  # Allow up to 2 buckets to be outside tolerance
 		echo "✓ Statistical uniformity test passed: $uniformity_fails/10 buckets outside tolerance"
 		echo "    Expected ~$expected_per_bucket per bucket, tolerance ±$tolerance"
@@ -111,11 +111,11 @@ test_random() {
 		done
 		(( fails++ ))
 	fi
-	
+
 	# Test 6: Chi-square goodness of fit test (simple version)
 	(( tests++ ))
 	echo "Testing chi-square goodness of fit..."
-	
+
 	local chi_square=0
 	for ((i=range_start; i<=range_end; i++)); do
 		local observed=${counts[$i]}
@@ -125,7 +125,7 @@ test_random() {
 		local contribution=$((squared_diff / expected))
 		chi_square=$((chi_square + contribution))
 	done
-	
+
 	# For 9 degrees of freedom (10 buckets - 1), critical value at p=0.05 is ~16.9
 	# We'll use a more lenient threshold of 20 to account for variability
 	if [ "$chi_square" -lt 20 ]; then
@@ -135,23 +135,23 @@ test_random() {
 		echo "    This suggests non-uniform distribution" >&2
 		(( fails++ ))
 	fi
-	
+
 	# Test 7: Randomness between invocations (10 consecutive calls should have variety)
 	(( tests++ ))
 	echo "Testing randomness between invocations..."
-	
+
 	local consecutive_samples=()
 	local unique_count=0
-	
+
 	for ((i=0; i<10; i++)); do
 		consecutive_samples[i]=$(random 1 100 2>/dev/null)
 	done
-	
+
 	# Count unique values
 	printf '%s\n' "${consecutive_samples[@]}" | sort -u > /tmp/unique_random_samples.txt
 	unique_count=$(cat /tmp/unique_random_samples.txt | wc -l)
 	rm -f /tmp/unique_random_samples.txt
-	
+
 	# Expect at least 7 unique values out of 10 (lenient check)
 	if [ "$unique_count" -ge 7 ]; then
 		echo "✓ Consecutive randomness test passed: $unique_count/10 unique values"
@@ -163,12 +163,12 @@ test_random() {
 		done
 		(( fails++ ))
 	fi
-	
+
 	# Final results
 	if [ $fails -gt 0 ]; then
 		echo ""
 		echo "random test FAILED: $fails of $tests tests failed" >&2
-		return 1
+		return $fails
 	else
 		echo ""
 		echo "random test PASSED: All $tests tests passed"

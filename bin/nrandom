@@ -1,34 +1,40 @@
 #!/usr/bin/env yuerun
 
 -- Normal random number generator using Box-Muller transformation
-nrandom = (start = 0, end_val = 100) ->
+nrandom = (start = 0, end_val = 99) ->
 	-- Calculate range
 	range = end_val - start
 
-	-- Box-Muller transformation to generate normally distributed random numbers
-	u1, u2 = math.random!, math.random!
+	-- Use rejection sampling to ensure proper distribution without edge artifacts
+	local result
+	repeat
+		-- Box-Muller transformation to generate normally distributed random numbers
+		u1, u2 = math.random!, math.random!
 
-	-- Generate standard normal (mean=0, stddev=1)
-	z0 = math.sqrt(-2 * math.log u1) * math.cos(2 * math.pi * u2)
+		-- Generate standard normal (mean=0, stddev=1)
+		z0 = math.sqrt(-2 * math.log u1) * math.cos(2 * math.pi * u2)
 
-	-- Transform to desired range: scale by range/6 and shift to center
-	-- Using range/6 as standard deviation (same as original implementation)
-	random_number = start + (z0 * (range / 6)) + (range / 2)
+		-- Transform to desired range: scale by range/6 and shift to center
+		-- Using range/6 as standard deviation (same as original implementation)
+		random_number = start + (z0 * (range / 6)) + (range / 2)
 
-	-- Round to nearest integer
-	math.floor random_number + 0.5
+		-- Round to nearest integer
+		result = math.floor random_number + 0.5
+	until result >= start and result <= end_val
+
+	result
 
 -- Help function
 show_help = ->
 	print "Usage: nrandom <start> <end>"
 	print "Outputs a normally-distributed random number between <start> and <end>"
 	print "If <start> is not specified, it defaults to 0"
-	print "If <end> is not specified, it defaults to 100"
+	print "If <end> is not specified, it defaults to 99"
 
 -- Test function (runs the test from the test file)
 run_test = ->
 	test_file = "#{os.getenv('HOME')}/dotfiles/bin/test/nrandom_test"
-	result = os.execute ". #{test_file}"
+	result = os.execute "#{test_file} >/dev/null"
 	os.exit result == 0 and 0 or 1
 
 -- Main execution logic
@@ -40,7 +46,7 @@ main = ->
 	switch #arg
 		when 0
 			-- No arguments, use defaults and show note
-			io.stderr\write "(with a start of 0 and an end of 100)\n"
+			io.stderr\write "(with a start of 0 and an end of 99)\n"
 			print nrandom!
 		else
 			switch arg[1]

@@ -8,71 +8,71 @@ test_drandom() {
 	local range_start=0
 	local range_end=100
 	local expected_mean=50
-	
-	echo "Testing drandom deterministic RNG..." >&2
-	
+
+	echo "Testing drandom deterministic RNG..."
+
 	# Test 1: Determinism - same seed should produce same sequence
 	(( tests++ ))
-	echo "Testing determinism..." >&2
-	
+	echo "Testing determinism..."
+
 	local seed="12345"
-	local seq1=$(DRANDOM_SEED=$seed bash -c 'for i in {1..10}; do bin/drandom; done' 2>/dev/null | tr '\n' ' ')
-	local seq2=$(DRANDOM_SEED=$seed bash -c 'for i in {1..10}; do bin/drandom; done' 2>/dev/null | tr '\n' ' ')
-	
+	local seq1=$(DRANDOM_SEED=$seed bash -c 'for i in {1..10}; do drandom; done' 2>/dev/null | tr '\n' ' ')
+	local seq2=$(DRANDOM_SEED=$seed bash -c 'for i in {1..10}; do drandom; done' 2>/dev/null | tr '\n' ' ')
+
 	if [ "$seq1" = "$seq2" ]; then
-		echo "✓ Determinism test passed: same seed produces same sequence" >&2
+		echo "✓ Determinism test passed: same seed produces same sequence"
 	else
 		echo "✗ Determinism test failed:" >&2
 		echo "  Sequence 1: $seq1" >&2
 		echo "  Sequence 2: $seq2" >&2
 		(( fails++ ))
 	fi
-	
+
 	# Test 2: Different seeds produce different sequences
 	(( tests++ ))
-	echo "Testing seed variation..." >&2
-	
-	local seq_a=$(DRANDOM_SEED=11111 bash -c 'for i in {1..10}; do bin/drandom; done' 2>/dev/null | tr '\n' ' ')
-	local seq_b=$(DRANDOM_SEED=22222 bash -c 'for i in {1..10}; do bin/drandom; done' 2>/dev/null | tr '\n' ' ')
-	
+	echo "Testing seed variation..."
+
+	local seq_a=$(DRANDOM_SEED=11111 bash -c 'for i in {1..10}; do drandom; done' 2>/dev/null | tr '\n' ' ')
+	local seq_b=$(DRANDOM_SEED=22222 bash -c 'for i in {1..10}; do drandom; done' 2>/dev/null | tr '\n' ' ')
+
 	if [ "$seq_a" != "$seq_b" ]; then
-		echo "✓ Seed variation test passed: different seeds produce different sequences" >&2
+		echo "✓ Seed variation test passed: different seeds produce different sequences"
 	else
 		echo "✗ Seed variation test failed: different seeds produced identical sequences" >&2
 		echo "  Sequence A: $seq_a" >&2
 		echo "  Sequence B: $seq_b" >&2
 		(( fails++ ))
 	fi
-	
+
 	# Test 3: Range bounds - all values should be within specified range
 	(( tests++ ))
-	echo "Testing range bounds..." >&2
-	
+	echo "Testing range bounds..."
+
 	local out_of_bounds=0
 	local test_start=10
 	local test_end=20
-	
+
 	for ((i=0; i<100; i++)); do
-		local val=$(DRANDOM_SEED=$i bin/drandom $test_start $test_end 2>/dev/null)
+		local val=$(DRANDOM_SEED=$i drandom $test_start $test_end 2>/dev/null)
 		if (( val < test_start || val > test_end )); then
 			(( out_of_bounds++ ))
 		fi
 	done
-	
+
 	if [ $out_of_bounds -eq 0 ]; then
-		echo "✓ Range bounds test passed: all values within [$test_start, $test_end]" >&2
+		echo "✓ Range bounds test passed: all values within [$test_start, $test_end]"
 	else
 		echo "✗ Range bounds test failed: $out_of_bounds values out of bounds" >&2
 		(( fails++ ))
 	fi
-	
+
 	# Test 4: Statistical properties - should be reasonably uniform over large sample
 	(( tests++ ))
-	echo "Testing statistical uniformity (this may take a moment)..." >&2
-	
+	echo "Testing statistical uniformity (this may take a moment)..."
+
 	# Generate samples and calculate statistics using awk
-	local stats=$(for ((i=0; i<sample_size; i++)); do 
-		DRANDOM_SEED=$((12345 + i)) bin/drandom $range_start $range_end 2>/dev/null
+	local stats=$(for ((i=0; i<sample_size; i++)); do
+		DRANDOM_SEED=$((12345 + i)) drandom $range_start $range_end 2>/dev/null
 	done | awk -v range_start="$range_start" -v range_end="$range_end" -v expected_mean="$expected_mean" '
 	{
 		samples[NR] = $1
@@ -82,94 +82,94 @@ test_drandom() {
 	}
 	END {
 		mean = sum / NR
-		
+
 		# Calculate standard deviation
 		for (i = 1; i <= NR; i++) {
 			variance_sum += (samples[i] - mean) * (samples[i] - mean)
 		}
 		stddev = sqrt(variance_sum / (NR - 1))
-		
+
 		# For uniform distribution over [a,b], expected stddev = (b-a)/sqrt(12)
 		expected_stddev = (range_end - range_start) / sqrt(12)
-		
+
 		printf "ACTUAL_MEAN=%.2f\n", mean
 		printf "ACTUAL_STDDEV=%.2f\n", stddev
 		printf "EXPECTED_STDDEV=%.2f\n", expected_stddev
 		printf "MIN=%d\n", min
 		printf "MAX=%d\n", max
 	}')
-	
+
 	# Parse the results
 	eval "$stats"
-	
-	echo "  Statistical Analysis:" >&2
-	echo "    Sample size: $sample_size" >&2
-	echo "    Range: [$MIN, $MAX]" >&2
-	echo "    Expected mean: $expected_mean" >&2
-	echo "    Actual mean: $ACTUAL_MEAN" >&2
-	echo "    Expected stddev (uniform): $EXPECTED_STDDEV" >&2
-	echo "    Actual stddev: $ACTUAL_STDDEV" >&2
-	
+
+	echo "  Statistical Analysis:"
+	echo "    Sample size: $sample_size"
+	echo "    Range: [$MIN, $MAX]"
+	echo "    Expected mean: $expected_mean"
+	echo "    Actual mean: $ACTUAL_MEAN"
+	echo "    Expected stddev (uniform): $EXPECTED_STDDEV"
+	echo "    Actual stddev: $ACTUAL_STDDEV"
+
 	# Mean should be close to expected (within 5% of range)
 	local mean_diff=$(echo "scale=2; if ($ACTUAL_MEAN - $expected_mean < 0) $expected_mean - $ACTUAL_MEAN else $ACTUAL_MEAN - $expected_mean" | bc -l)
 	local mean_tolerance=5.0
-	
+
 	# Standard deviation should be reasonably close to uniform distribution expectation (within 50%)
 	local stddev_tolerance=$(echo "scale=2; $EXPECTED_STDDEV * 0.50" | bc -l)
 	local stddev_diff=$(echo "scale=2; if ($ACTUAL_STDDEV - $EXPECTED_STDDEV < 0) $EXPECTED_STDDEV - $ACTUAL_STDDEV else $ACTUAL_STDDEV - $EXPECTED_STDDEV" | bc -l)
-	
+
 	local statistical_pass=true
-	
+
 	if (( $(echo "$mean_diff > $mean_tolerance" | bc -l) )); then
 		echo "    ✗ Mean test failed: difference $mean_diff > $mean_tolerance" >&2
 		statistical_pass=false
 	else
-		echo "    ✓ Mean test passed (diff: $mean_diff <= $mean_tolerance)" >&2
+		echo "    ✓ Mean test passed (diff: $mean_diff <= $mean_tolerance)"
 	fi
-	
+
 	if (( $(echo "$stddev_diff > $stddev_tolerance" | bc -l) )); then
 		echo "    ✗ Standard deviation test failed: difference $stddev_diff > $stddev_tolerance" >&2
 		statistical_pass=false
 	else
-		echo "    ✓ Standard deviation test passed (diff: $stddev_diff <= $stddev_tolerance)" >&2
+		echo "    ✓ Standard deviation test passed (diff: $stddev_diff <= $stddev_tolerance)"
 	fi
-	
+
 	if $statistical_pass; then
-		echo "✓ Statistical uniformity test passed" >&2
+		echo "✓ Statistical uniformity test passed"
 	else
 		(( fails++ ))
 	fi
-	
+
 	# Test 5: Binary range test (0-1 should not alternate mechanically AND should be statistically balanced)
 	(( tests++ ))
-	echo "Testing binary range for quality..." >&2
-	
+	echo "Testing binary range for quality..."
+
 	# Generate a larger sample for statistical analysis
 	local binary_sample_size=1000
-	local binary_data=$(for ((i=0; i<binary_sample_size; i++)); do 
-		DRANDOM_SEED=$((5000 + i)) bin/drandom 0 1 2>/dev/null
+	local binary_data=$(for ((i=0; i<binary_sample_size; i++)); do
+		DRANDOM_SEED=$((5000 + i)) drandom 0 1 2>/dev/null
 	done)
-	
+
 	# Count 0s and 1s
 	local count_0=$(echo "$binary_data" | grep -c "^0$")
 	local count_1=$(echo "$binary_data" | grep -c "^1$")
 	local total_count=$((count_0 + count_1))
-	
+
 	# Calculate percentages
 	local pct_0=$(echo "scale=1; $count_0 * 100 / $total_count" | bc -l)
 	local pct_1=$(echo "scale=1; $count_1 * 100 / $total_count" | bc -l)
-	
-	echo "  Binary sample analysis ($binary_sample_size samples):" >&2
-	echo "    0s: $count_0 ($pct_0%)" >&2
-	echo "    1s: $count_1 ($pct_1%)" >&2
-	
+
+	echo "  Binary sample analysis ($binary_sample_size samples):"
+	echo "    0s: $count_0 ($pct_0%)"
+	echo "    1s: $count_1 ($pct_1%)"
+
 	# Test for mechanical alternation with a smaller sequence
-	local short_seq=$(DRANDOM_SEED=1000 bash -c 'for i in {1..20}; do bin/drandom 0 1; done' 2>/dev/null | tr -d '\n')
+	local short_seq=$(DRANDOM_SEED=1000 bash -c 'for i in {1..20}; do drandom 0 1; done' 2>/dev/null | tr -d '\n')
 	local alternating_pattern="01010101010101010101"
 	local reverse_alternating="10101010101010101010"
-	
+
 	local binary_test_pass=true
-	
+
 	# Test 1: No mechanical alternation
 	if [ "$short_seq" = "$alternating_pattern" ] || [ "$short_seq" = "$reverse_alternating" ]; then
 		echo "  ✗ Mechanical alternation detected in sequence: $short_seq" >&2
@@ -183,55 +183,55 @@ test_drandom() {
 				break
 			fi
 		done
-		
+
 		if $has_runs; then
-			echo "  ✓ No mechanical alternation, runs detected" >&2
+			echo "  ✓ No mechanical alternation, runs detected"
 		else
 			echo "  ✗ Suspicious: no runs found in sequence: $short_seq" >&2
 			binary_test_pass=false
 		fi
 	fi
-	
+
 	# Test 2: Statistical balance (should be within 40%-60% for each value)
 	if (( $(echo "$pct_0 >= 40 && $pct_0 <= 60" | bc -l) )) && (( $(echo "$pct_1 >= 40 && $pct_1 <= 60" | bc -l) )); then
-		echo "  ✓ Statistical balance maintained (both values 40-60%)" >&2
+		echo "  ✓ Statistical balance maintained (both values 40-60%)"
 	else
 		echo "  ✗ Statistical imbalance: 0s=$pct_0%, 1s=$pct_1% (expected 40-60% each)" >&2
 		binary_test_pass=false
 	fi
-	
+
 	if $binary_test_pass; then
-		echo "✓ Binary range test passed: no alternation + statistical balance" >&2
+		echo "✓ Binary range test passed: no alternation + statistical balance"
 	else
 		(( fails++ ))
 	fi
-	
+
 	# Test 6: Hex seed support
 	(( tests++ ))
-	echo "Testing hex seed support..." >&2
-	
-	local hex_seq1=$(DRANDOM_SEED="DEADBEEF" bash -c 'for i in {1..5}; do bin/drandom; done' 2>/dev/null | tr '\n' ' ')
-	local hex_seq2=$(DRANDOM_SEED="DEADBEEF" bash -c 'for i in {1..5}; do bin/drandom; done' 2>/dev/null | tr '\n' ' ')
-	
+	echo "Testing hex seed support..."
+
+	local hex_seq1=$(DRANDOM_SEED="DEADBEEF" bash -c 'for i in {1..5}; do drandom; done' 2>/dev/null | tr '\n' ' ')
+	local hex_seq2=$(DRANDOM_SEED="DEADBEEF" bash -c 'for i in {1..5}; do drandom; done' 2>/dev/null | tr '\n' ' ')
+
 	if [ "$hex_seq1" = "$hex_seq2" ]; then
-		echo "✓ Hex seed test passed: hex seeds work deterministically" >&2
+		echo "✓ Hex seed test passed: hex seeds work deterministically"
 	else
 		echo "✗ Hex seed test failed: hex seed not deterministic" >&2
 		echo "  Sequence 1: $hex_seq1" >&2
 		echo "  Sequence 2: $hex_seq2" >&2
 		(( fails++ ))
 	fi
-	
+
 	# Final results
 	if [ $fails -gt 0 ]; then
 		echo "" >&2
 		echo "drandom test FAILED: $fails of $tests tests failed" >&2
 		echo "The drandom function has issues with determinism or statistical properties." >&2
-		return 1
+		return $fails
 	else
-		echo "" >&2
-		echo "drandom test PASSED: All $tests tests passed" >&2
-		echo "The drandom function provides good deterministic randomness." >&2
+		echo ""
+		echo "drandom test PASSED: All $tests tests passed"
+		echo "The drandom function provides good deterministic randomness."
 		return 0
 	fi
 }
