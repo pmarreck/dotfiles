@@ -9,7 +9,7 @@ zfs-status() {
 		return 127
 	fi
 
-	local pools=() p tsz=12 color=false
+	local pools=() p tsz=14 color=false
 	local ESC=$'\033[' RESET="" DIM="" ULINE="" NULINE="" GREEN="" RED="" YELLOW=""
 
 	# color only if stdout is a TTY
@@ -40,6 +40,20 @@ zfs-status() {
 		fi; }
 	ratio_color() { local r="${1%x}"
 		if $color && awk -v r="$r" 'BEGIN{exit (r+0 < 1.10)?0:1}'; then printf "%s%s%s" "$RED" "$1" "$RESET"; else printf "%s" "$1"; fi; }
+	frag_color() { local f="${1%\%}"
+		if $color && awk -v f="$f" 'BEGIN{exit (f+0 >= 60)?0:1}'; then 
+			printf "%s%s%s" "$RED" "$1" "$RESET"
+		elif $color && awk -v f="$f" 'BEGIN{exit (f+0 >= 30)?0:1}'; then 
+			printf "%s%s%s" "$YELLOW" "$1" "$RESET"
+		else 
+			printf "%s" "$1"
+		fi; }
+	cap_color() { local c="${1%\%}"
+		if $color && awk -v c="$c" 'BEGIN{exit (c+0 >= 80)?0:1}'; then 
+			printf "%s%s%s" "$RED" "$1" "$RESET"
+		else 
+			printf "%s" "$1"
+		fi; }
 	scan_color() { 
 		case "$1" in 
 			"scrub repaired 0B"*" 0 errors"*) 
@@ -69,38 +83,67 @@ zfs-status() {
 		errs="$(zpool status "$p" | awk '/^errors:/{sub(/^errors: /,""); print; exit}')"
 		autotrim="$(zpool get -H -o value autotrim "$p" 2>/dev/null || echo "?")"
 		featmsg="$(features_msg "$p")"
+		active_features="$(zpool get all "$p" | rg --color=never "$p +feature@[a-z0-9_]+ +active" | awk '$2 ~ /feature@/ {sub(/feature@/,"",$2); print $2}' | paste -sd, -)"
+		dedup_active=false
+		if echo "$active_features" | grep -q "dedup"; then dedup_active=true; fi
+		pool_frag="$(zpool get -H -o value fragmentation "$p" 2>/dev/null || echo "0%")"
 
 		$color && printf "%sPool%s\t%s\n" "$DIM" "$RESET" "$p" || printf "Pool\t%s\n" "$p"
 		$color && printf "%sState%s\t%s\n" "$DIM" "$RESET" "$(health_color "$HEALTH")" || printf "State\t%s\n" "$(health_color "$HEALTH")"
 		$color && printf "%sScan%s\t%s\n" "$DIM" "$RESET" "$(scan_color "$scan")" || printf "Scan\t%s\n" "$(scan_color "$scan")"
-		$color && printf "%sCapacity%s\t%s / %s  (%s)  free %s\n" "$DIM" "$RESET" "$ALLOC" "$SIZE" "$CAP" "$FREE" || printf "Capacity\t%s / %s  (%s)  free %s\n" "$ALLOC" "$SIZE" "$CAP" "$FREE"
+		$color && printf "%sCapacity%s\t%s / %s  (%s)  free %s\n" "$DIM" "$RESET" "$ALLOC" "$SIZE" "$(cap_color "$CAP")" "$FREE" || printf "Capacity\t%s / %s  (%s)  free %s\n" "$ALLOC" "$SIZE" "$CAP" "$FREE"
 		$color && printf "%sAutotrim%s\t%s\n" "$DIM" "$RESET" "$(yesno_color "$autotrim")" || printf "Autotrim\t%s\n" "$(yesno_color "$autotrim")"
 		$color && printf "%sFeatures%s\t%s\n" "$DIM" "$RESET" "$featmsg" || printf "Features\t%s\n" "$featmsg"
+		$color && printf "%s└Active%s\t%s\n" "$DIM" "$RESET" "$active_features" || printf "Active\t%s\n" "$active_features"
+		$color && printf "%sFragmentation%s\t%s\n" "$DIM" "$RESET" "$(frag_color "$pool_frag")" || printf "Fragmentation\t%s\n" "$pool_frag"
 		[ -n "$errs" ] && { $color && printf "%sErrors%s\t%s\n" "$DIM" "$RESET" "$(errors_color "$errs")" || printf "Errors\t%s\n" "$(errors_color "$errs")"; }
 
 		# header
-		if $color; then
-			printf "%sDatasets:%s\n" "$DIM" "$RESET"
-			printf "%sname\tcompression\tlogical\tphysical\tratio\tlegacy\tmountpoint%s\n" "$ULINE" "$NULINE"
-		else
-			printf "Datasets:\n"
-			printf "name\tcompression\tlogical\tphysical\tratio\tlegacy\tmountpoint\n"
-		fi
+		local header="name\tcompression\tlogical\tphysical\tratio"
+		$dedup_active && header="${header}\tdedupratio"
+		header="${header}\tlegacy\tmountpoint"
+		
+		$color && printf "%sDatasets:%s\n" "$DIM" "$RESET" || printf "Datasets:\n"
+		$color && printf "%s%b%s\n" "$ULINE" "$header" "$NULINE" || printf "%b\n" "$header"
 
 		# rows (depth=1), tight loop; no stray prints
-		while IFS=$'\t' read -r name comp lused used ratio mnt; do
-			local legacy="no" mp="$mnt"
-			if [ "$mnt" = "legacy" ]; then 
-				legacy="yes"
-				mp="$(resolve_legacy_mount "$name")"
-			fi
-			local comp_out ratio_out legacy_out
-			comp_out="$(comp_color "$comp")"
-			ratio_out="$(ratio_color "$ratio")"
-			legacy_out="$(yesno_color "$legacy")"
-			printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
-				"$name" "$comp_out" "$lused" "$used" "$ratio_out" "$legacy_out" "$mp"
-		done < <(zfs list -H -r -d 1 -o name,compression,logicalused,used,compressratio,mountpoint "$p")
+		if $dedup_active; then
+			while IFS=$'\t' read -r name comp lused used ratio dedupratio mnt; do
+				local legacy="no" mp="$mnt"
+				if [ "$mnt" = "legacy" ]; then 
+					legacy="yes"
+					mp="$(resolve_legacy_mount "$name")"
+				fi
+				local comp_out ratio_out legacy_out
+				comp_out="$(comp_color "$comp")"
+				ratio_out="$(ratio_color "$ratio")"
+				legacy_out="$(yesno_color "$legacy")"
+				printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+					"$name" "$comp_out" "$lused" "$used" "$ratio_out" "$dedupratio" "$legacy_out" "$mp"
+			done < <(zfs list -H -r -d 1 -o name,compression,logicalused,used,compressratio,dedupratio,mountpoint "$p")
+		else
+			while IFS=$'\t' read -r name comp lused used ratio mnt; do
+				local legacy="no" mp="$mnt"
+				if [ "$mnt" = "legacy" ]; then 
+					legacy="yes"
+					mp="$(resolve_legacy_mount "$name")"
+				fi
+				local comp_out ratio_out legacy_out
+				comp_out="$(comp_color "$comp")"
+				ratio_out="$(ratio_color "$ratio")"
+				legacy_out="$(yesno_color "$legacy")"
+				printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+					"$name" "$comp_out" "$lused" "$used" "$ratio_out" "$legacy_out" "$mp"
+			done < <(zfs list -H -r -d 1 -o name,compression,logicalused,used,compressratio,mountpoint "$p")
+		fi
+
+		# Check for performance warning conditions
+		local frag_num="${pool_frag%\%}"
+		local cap_num="${CAP%\%}"
+		if awk -v f="$frag_num" -v c="$cap_num" 'BEGIN{exit (f+0 > 30 && c+0 > 80)?0:1}'; then
+			echo
+			$color && printf "%sWARNING: High fragmentation (%s) combined with low free space (%s available) may cause degraded performance. Consider freeing space or defragmenting.%s\n" "$RED" "$pool_frag" "$((100-cap_num))%" "$RESET" || printf "WARNING: High fragmentation (%s) combined with low free space (%s available) may cause degraded performance. Consider freeing space or defragmenting.\n" "$pool_frag" "$((100-cap_num))%"
+		fi
 
 		echo
 	done
