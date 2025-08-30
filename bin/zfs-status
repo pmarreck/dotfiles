@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+
+export DEFAULT_TABSIZE=2
+
+zfs-status() {
+	# bail fast on systems without ZFS
+	if ! command -v zfs >/dev/null 2>&1 || ! command -v zpool >/dev/null 2>&1; then
+		echo "zfs-status: zfs not found on this system." >&2
+		return 127
+	fi
+
+	local pools=() p tsz=12 color=false
+	local ESC=$'\033[' RESET="" DIM="" ULINE="" NULINE="" GREEN="" RED="" YELLOW=""
+
+	# color only if stdout is a TTY
+	if [ -t 1 ]; then
+		color=true
+		RESET="${ESC}0m"; DIM="${ESC}2m"; ULINE="${ESC}4m"; NULINE="${ESC}24m"
+		GREEN="${ESC}32m"; RED="${ESC}31m"; YELLOW="${ESC}33m"
+		tabs -${tsz} 2>/dev/null || true
+	fi
+
+	# helpers
+	yesno_color() { case "$1" in on|yes|enabled|true|up) $color && printf "%s%s%s" "$GREEN" "$1" "$RESET" || printf "%s" "$1" ;;
+															 off|no|disabled|false|down) $color && printf "%s%s%s" "$RED" "$1" "$RESET" || printf "%s" "$1" ;;
+															 *) printf "%s" "$1" ;; esac; }
+	comp_color() { case "$1" in on) $color && printf "%s%s%s" "$GREEN" "$1" "$RESET" || printf "%s" "$1" ;;
+															off) $color && printf "%s%s%s" "$RED" "$1" "$RESET"  || printf "%s" "$1" ;;
+															*) printf "%s" "$1" ;; esac; }
+	health_color() { case "$1" in ONLINE)   $color && printf "%sONLINE%s" "$GREEN" "$RESET" || printf "ONLINE" ;;
+															 DEGRADED) $color && printf "%sDEGRADED%s" "$YELLOW" "$RESET" || printf "DEGRADED" ;;
+															 OFFLINE|FAULTED|UNAVAIL|REMOVED|SUSPENDED)
+																					$color && printf "%s%s%s" "$RED" "$1" "$RESET" || printf "%s" "$1" ;;
+															 *)         printf "%s" "$1" ;; esac; }
+	features_msg() { local pool="$1"
+		if zpool status "$pool" | grep -q 'features are not enabled'; then
+			$color && printf "%snot fully enabled%s" "$RED" "$RESET" || printf "not fully enabled"
+		else
+			$color && printf "%sall features enabled%s" "$GREEN" "$RESET" || printf "all features enabled"
+		fi; }
+	ratio_color() { local r="${1%x}"
+		if $color && awk -v r="$r" 'BEGIN{exit (r+0 < 1.10)?0:1}'; then printf "%s%s%s" "$RED" "$1" "$RESET"; else printf "%s" "$1"; fi; }
+	scan_color() { 
+		case "$1" in 
+			"scrub repaired 0B"*" 0 errors"*) 
+				$color && printf "%s%s%s" "$GREEN" "$1" "$RESET" || printf "%s" "$1" ;;
+			*) 
+				$color && printf "%s%s%s" "$RED" "$1" "$RESET" || printf "%s" "$1" ;;
+		esac
+	}
+	errors_color() { if [ "$1" = "No known data errors" ]; then $color && printf "%s%s%s" "$GREEN" "$1" "$RESET" || printf "%s" "$1"; else $color && printf "%s%s%s" "$RED" "$1" "$RESET" || printf "%s" "$1"; fi; }
+	resolve_legacy_mount() { 
+		local ds="$1" mp
+		mp="$(findmnt -S "$ds" -no TARGET 2>/dev/null | head -1 | tr -d '\n')"
+		if [ -n "$mp" ] && [ "$mp" != "$ds" ]; then
+			printf "%s" "$mp"
+		else
+			printf "legacy"
+		fi
+	}
+
+	if [ "$#" -gt 0 ]; then pools=("$@"); else mapfile -t pools < <(zpool list -H -o name); fi
+	[ "${#pools[@]}" -eq 0 ] && { echo "No pools found." >&2; $color && tabs -$DEFAULT_TABSIZE 2>/dev/null; return 1; }
+
+	for p in "${pools[@]}"; do
+		# left-aligned labels, exactly one tab
+		read -r SIZE ALLOC FREE CAP HEALTH < <(zpool list -H -o size,alloc,free,cap,health "$p")
+		scan="$(zpool status "$p" | awk -F'scan: ' '/^\s*scan:/{print $2; exit}')" ; [ -z "$scan" ] && scan="none recorded"
+		errs="$(zpool status "$p" | awk '/^errors:/{sub(/^errors: /,""); print; exit}')"
+		autotrim="$(zpool get -H -o value autotrim "$p" 2>/dev/null || echo "?")"
+		featmsg="$(features_msg "$p")"
+
+		$color && printf "%sPool%s\t%s\n" "$DIM" "$RESET" "$p" || printf "Pool\t%s\n" "$p"
+		$color && printf "%sState%s\t%s\n" "$DIM" "$RESET" "$(health_color "$HEALTH")" || printf "State\t%s\n" "$(health_color "$HEALTH")"
+		$color && printf "%sScan%s\t%s\n" "$DIM" "$RESET" "$(scan_color "$scan")" || printf "Scan\t%s\n" "$(scan_color "$scan")"
+		$color && printf "%sCapacity%s\t%s / %s  (%s)  free %s\n" "$DIM" "$RESET" "$ALLOC" "$SIZE" "$CAP" "$FREE" || printf "Capacity\t%s / %s  (%s)  free %s\n" "$ALLOC" "$SIZE" "$CAP" "$FREE"
+		$color && printf "%sAutotrim%s\t%s\n" "$DIM" "$RESET" "$(yesno_color "$autotrim")" || printf "Autotrim\t%s\n" "$(yesno_color "$autotrim")"
+		$color && printf "%sFeatures%s\t%s\n" "$DIM" "$RESET" "$featmsg" || printf "Features\t%s\n" "$featmsg"
+		[ -n "$errs" ] && { $color && printf "%sErrors%s\t%s\n" "$DIM" "$RESET" "$(errors_color "$errs")" || printf "Errors\t%s\n" "$(errors_color "$errs")"; }
+
+		# header
+		if $color; then
+			printf "%sDatasets:%s\n" "$DIM" "$RESET"
+			printf "%sname\tcompression\tlogical\tphysical\tratio\tlegacy\tmountpoint%s\n" "$ULINE" "$NULINE"
+		else
+			printf "Datasets:\n"
+			printf "name\tcompression\tlogical\tphysical\tratio\tlegacy\tmountpoint\n"
+		fi
+
+		# rows (depth=1), tight loop; no stray prints
+		while IFS=$'\t' read -r name comp lused used ratio mnt; do
+			local legacy="no" mp="$mnt"
+			if [ "$mnt" = "legacy" ]; then 
+				legacy="yes"
+				mp="$(resolve_legacy_mount "$name")"
+			fi
+			local comp_out ratio_out legacy_out
+			comp_out="$(comp_color "$comp")"
+			ratio_out="$(ratio_color "$ratio")"
+			legacy_out="$(yesno_color "$legacy")"
+			printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+				"$name" "$comp_out" "$lused" "$used" "$ratio_out" "$legacy_out" "$mp"
+		done < <(zfs list -H -r -d 1 -o name,compression,logicalused,used,compressratio,mountpoint "$p")
+
+		echo
+	done
+
+	$color && tabs -${DEFAULT_TABSIZE:-2}
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		"$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		"$(basename "${0##\-}")" "$@"
+	fi
+fi

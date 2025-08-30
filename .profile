@@ -85,7 +85,8 @@ $INTERACTIVE_SHELL && $LOGIN_SHELL && echo "$DISTRO_PRETTY"
 # Note that this may mess up ncurses code that might assume 8 spaces
 # Only tweak tabs on an interactive TTY if `tabs` exists:
 if ${INTERACTIVE_SHELL:-false} && command -v tabs >/dev/null 2>&1 && tty -s; then
-	tabs -2
+	export DEFAULT_TABSIZE=2
+	tabs -${DEFAULT_TABSIZE}
 fi
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "set tabs to 2 spaces"
 
