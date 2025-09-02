@@ -138,6 +138,7 @@ A sophisticated MoonScript testing framework available as an alternative to bash
 - **Multiple output formats**: TAP and dot-style output
 - **Rich assertion library**: `assert_equal`, `assert_contains`, `assert_deep_equal`, `assert_raise`, etc.
 - **Colored output** with ANSI coloring for better readability
+- **Colored output** with ANSI coloring for better readability
 - **Stack traces** for debugging test failures
 - **Statistical testing support** for building custom assertions
 - **Error handling** with `refute` (negative assertions)
