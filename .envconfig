@@ -3,6 +3,66 @@
 [ -n "${DEBUG_SHELLCONFIG}" ] && echo "Entering $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")" || $INTERACTIVE_SHELL && $LOGIN_SHELL && append_dotfile_progress "env"
 [ -n "${DEBUG_PATHCONFIG}" ] && echo $PATH
 
+# Moved from .envrc to avoid direnv
+. "${HOME}/dotfiles/bin/src/truthy.sh"
+
+# XDG vars per spec: https://specifications.freedesktop.org/basedir-spec/basedir-spec-latest.html
+export XDG_STATE_HOME="$HOME/.local/state"
+export XDG_DATA_HOME="$HOME/.local/share"
+export XDG_BIN_HOME="$HOME/.local/bin"
+export XDG_CONFIG_HOME="$HOME/.config"
+export XDG_CACHE_HOME="$HOME/.cache"
+
+# SSL cert config validation
+if [ ! -d "$SSL_CERT_DIR" ]; then
+  if [ -d /etc/ssl/certs ]; then
+    export SSL_CERT_DIR=/etc/ssl/certs
+  fi
+  if [ -d /etc/pki/tls/certs ]; then
+    export SSL_CERT_DIR=/etc/pki/tls/certs
+  fi
+  if [ -d /nix/var/nix/profiles/default/etc/ssl/certs ]; then
+    export SSL_CERT_DIR=/nix/var/nix/profiles/default/etc/ssl/certs
+  fi
+fi
+if [ ! -d "$SSL_CERT_DIR" ]; then
+  echo "Warning: SSL_CERT_DIR is not set to a valid directory path even after mitigation attempts: $SSL_CERT_DIR" >&2
+fi
+if [ ! -f "$SSL_CERT_FILE" ]; then
+  if [ -f /etc/ssl/certs/ca-certificates.crt ]; then
+    export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+  fi
+  if [ -f /etc/pki/tls/certs/ca-bundle.crt ]; then
+    export SSL_CERT_FILE=/etc/pki/tls/certs/ca-bundle.crt
+  fi
+  if [ -f /nix/var/nix/profiles/default/etc/ssl/certs/ca-bundle.crt ]; then
+    export SSL_CERT_FILE=/nix/var/nix/profiles/default/etc/ssl/certs/ca-bundle.crt
+  fi
+fi
+if [ ! -f "$SSL_CERT_FILE" ]; then
+  echo "Warning: SSL_CERT_FILE is not set to a valid file path even after mitigation attempts: $SSL_CERT_FILE" >&2
+fi
+# obviously this is brittle and may change
+if [ -n "$SSL_CERT_FILE" ]; then
+  export CURL_CA_BUNDLE=$SSL_CERT_FILE
+  export GIT_SSL_CAINFO=$SSL_CERT_FILE
+fi
+
+# note that with ssl support on mac you may need to add "--with-ssl=$(brew --prefix openssl)" to the following:
+export KERL_CONFIGURE_OPTIONS="--disable-parallel-configure --disable-debug --disable-silent-rules --without-javac --enable-shared-zlib --enable-dynamic-ssl-lib --enable-sctp --enable-threads --enable-kernel-poll --enable-wx --enable-darwin-64bit"
+
+# Postgres stuff
+export PGDATA="$XDG_STATE_HOME/pgdata"
+export PGHOST=localhost
+export LANG=en_US.UTF-8
+export LANGUAGE=en_US
+export LC_CTYPE="en_US.UTF-8"
+
+# Fixed PAC_USE_AUR logic - was using $(...) which always returns 0
+if [ -f /etc/os-release ] && grep -q '^NAME="Arch' /etc/os-release; then
+    export PAC_USE_AUR=true
+fi
+
 # canonical gcc tweaks for OS X's homebrew gcc; Linux shouldn't need these
 # if [ "$PLATFORM" = "osx" ]; then
 	# needs brew
