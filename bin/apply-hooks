@@ -280,6 +280,7 @@ set_up_osc7_home() {
 	fi
 }
 
+# this is a little hack to make the following important comments super visible
 DO_NOT() { :; }; ONLY() { :; };
 
 DO_NOT ADD ANY MORE CUSTOM COMMANDLINE HOOKS/INITIALIZERS AFTER THIS POINT

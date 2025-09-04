@@ -138,15 +138,175 @@ function truncate_run() {
 	echo "$filename"
 }
 
+# Function to detect if a string is an HTTP(S) URL suitable for reader view
+is_web_url() {
+	local input="$1"
+	# Check for HTTP/HTTPS URLs only (reader view is for web content)
+	if [[ "$input" =~ ^https?://[^[:space:]]+$ ]]; then
+		return 0
+	fi
+	# Check for www. domains (assume HTTPS)
+	if [[ "$input" =~ ^www\.[^[:space:]]+\.[a-zA-Z]{2,}([/:].*)?$ ]]; then
+		return 0
+	fi
+	# Check for domain.tld patterns (assume HTTPS for basic domains)
+	if [[ "$input" =~ ^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}([/:].*)?$ ]] && [[ ! "$input" =~ \.\.|\.$ ]]; then
+		return 0
+	fi
+	return 1
+}
+
+# Help function for show command
+show_help() {
+	cat <<'EOF' | trim_leading_heredoc_whitespace
+		show - Display definitions, values, and content of various items
+
+		USAGE:
+			show [--help|-h] [--browser|-b <browser>] <item> [item2] [item3] ...
+			what [is] <item> [item2] [item3] ...
+
+		BROWSER OPTIONS:
+			reader: Uses 'reader -o url | glow' for fast markdown rendering
+			clx-reader: Uses clx (circumflex) terminal reader mode
+			links: Uses Links text-mode browser
+			browsh: Uses Browsh (headless Firefox) browser
+
+		DESCRIPTION:
+			The 'show' command is a versatile tool that can display information about:
+			- Bash functions, aliases, variables, and builtins
+			- Files and executables in PATH
+			- URLs (opens in terminal reader using clx)
+			- Images (displays using sixel graphics if supported)
+
+		SUPPORTED ITEM TYPES:
+
+			Variables:
+				Shows variable type, scope, and value with proper formatting.
+				Detects: local, exported, readonly, integer, arrays, namerefs, environment variables.
+				Example: show PATH
+
+			Functions:
+				Displays formatted function definition with syntax highlighting.
+				Example: show show
+
+			Aliases:
+				Shows alias definition.
+				Example: show ll
+
+			Builtins:
+				Identifies bash builtin commands.
+				Example: show cd
+
+			Files:
+				- Text files: Syntax-highlighted display using bat (or less as fallback)
+				- Images: Displays using sixel graphics via ImageMagick
+				- Markdown: Rendered display using glow (if available)
+				- Detects file type and language automatically
+				Example: show ~/.bashrc
+
+			Executables in PATH:
+				Shows location and content of executable files.
+				Follows symbolic links and displays target content.
+				Example: show git
+
+			URLs:
+				Opens web URLs in terminal browser mode.
+				Supports: http(s) protocols only (reader view is for web content)
+				Also detects www.domain.com and domain.com patterns (assumes HTTPS)
+				Browser options: reader (reader+glow), clx-reader (clx), links, browsh
+				Example: show https://example.com
+
+		FEATURES:
+			- Multiple items: Can process multiple items in one command
+			- Type detection: Automatically determines the best way to display each item
+			- Syntax highlighting: Uses bat for code/text files with language detection
+			- Image support: Displays images directly in terminal using sixel graphics
+			- Link following: Resolves symbolic links and shows target content
+			- Error handling: Graceful fallbacks when optional tools are unavailable
+
+		DEPENDENCIES:
+			Required: bash, file, readlink
+			Optional: bat (syntax highlighting), glow (markdown), magick (images)
+			URL browsers: reader+glow (fast), clx (clx-reader mode), links, browsh
+
+		ENVIRONMENT VARIABLES:
+			TUI_BROWSER: Default browser for URLs (reader|clx-reader|links|browsh, default: clx-reader)
+			BAT_OPTS: Options passed to bat (default: "--tabs 0")
+			BAT_STYLE: Bat style setting (default: "grid,snip")
+			PYGMENTIZE_STYLE: Syntax highlighting style (e.g., "monokai")
+
+		EXAMPLES:
+			show ls                    # Show ls command location and content
+			show ~/.vimrc             # Display vimrc with syntax highlighting
+			show PATH HOME            # Show multiple variables
+			show https://github.com   # Open URL in default browser (clx-reader)
+			show -b reader https://github.com  # Open URL with reader+glow (fast)
+			show -b links https://github.com  # Open URL in Links browser
+			show --browser browsh https://github.com  # Open URL in Browsh
+			show image.png            # Display image in terminal
+			show --help               # Show this help message
+
+		ALIASES:
+			what [is] <item>          # Alternative command name
+
+		EXIT STATUS:
+			0: All items found and displayed successfully
+			1: One or more items were undefined or inaccessible
+
+		This function is defined in: $HOME/dotfiles/bin/src/show.sh
+EOF
+}
+
 # "show": spit out the definition of any name
-# usage: show <function or alias or variable or builtin or file or executable-in-PATH name> [...function|alias] ...
+# usage: show <function or alias or variable or builtin or file or executable-in-PATH name or URL> [...function|alias] ...
 # It will dig out all definitions, helping you find things like overridden bins.
 # Also useful to do things like exporting specific definitions to sudo contexts etc.
 # or seeing if one definition is masking another.
+# For URLs, it will open them in a terminal reader view using clx (circumflex).
 # needs pygmentize "see pygments.org" # for syntax highlighting
 # export PYGMENTIZE_STYLE=monokai
 show() {
 	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	
+	# Parse arguments for browser selection
+	local browser="${TUI_BROWSER:-clx-reader}"  # Default to clx-reader, can be overridden by env var
+	local args=()
+	
+	while [[ $# -gt 0 ]]; do
+		case $1 in
+			--help|-h)
+				show_help
+				return 0
+				;;
+			--browser|-b)
+				if [[ -n "$2" && "$2" != -* ]]; then
+					browser="$2"
+					shift 2
+				else
+					err "--browser/-b requires an argument (reader|clx-reader|links|browsh)"
+					return 1
+				fi
+				;;
+			*)
+				args+=("$1")
+				shift
+				;;
+		esac
+	done
+	
+	# Validate browser option
+	case "$browser" in
+		reader|clx-reader|links|browsh)
+			# Valid options
+			;;
+		*)
+			err "Invalid browser option: '$browser'. Valid options are: reader, clx-reader, links, browsh"
+			return 1
+			;;
+	esac
+	
+	# Restore positional parameters
+	set -- "${args[@]}"
 	# on macOS, you need gnu-sed from homebrew or equivalent, which is installed as "gsed"
 	# I set PLATFORM elsewhere in my env config
 	# [ "$PLATFORM" = "osx" ] && local -r sed="gsed" || local -r sed="sed"
@@ -159,10 +319,58 @@ show() {
 	local found_undefined=0
 	shift
 	if [ -z "$word" ] && [ -z "$1" ]; then
-		echo "Usage: show <function or alias or variable or builtin or executable-in-PATH name> [...function|alias] ..."
-		echo "Returns the value or definition or location of those name(s)."
+		echo "Usage: show <function or alias or variable or builtin or executable-in-PATH name or URL> [...function|alias] ..."
+		echo "Returns the value or definition or location of those name(s), or opens URLs in terminal reader."
+		echo "Use 'show --help' for detailed usage information."
 		echo "This function is defined in ${BASH_SOURCE[0]}"
 		return 0
+	fi
+	# if it's a web URL, open it with selected browser
+	if is_web_url "$word"; then
+		echo "$word"
+		# All browsers need explicit protocol, add https:// if missing
+		local full_url="$word"
+		if [[ ! "$full_url" =~ ^https?:// ]]; then
+			full_url="https://$full_url"
+		fi
+		case "$browser" in
+			reader)
+				note "'${word}' is a web URL, opening with reader + glow:"
+				if needs reader "please install reader to fetch web URLs" && needs glow "please install glow to render markdown"; then
+					reader -o "$full_url" | glow
+				else
+					err "reader and glow are required to view web URLs but one or both are not available in PATH"
+					return 1
+				fi
+				;;
+			clx-reader)
+				note "'${word}' is a web URL, opening in clx terminal reader:"
+				if needs clx "please install clx (circumflex) to view web URLs in terminal reader mode"; then
+					clx url "$full_url"
+				else
+					err "clx (circumflex) is required to view web URLs but is not available in PATH"
+					return 1
+				fi
+				;;
+			links)
+				note "'${word}' is a web URL, opening in Links browser:"
+				if needs links "please install links to view web URLs in Links browser"; then
+					links "$full_url"
+				else
+					err "links is required to view web URLs but is not available in PATH"
+					return 1
+				fi
+				;;
+			browsh)
+				note "'${word}' is a web URL, opening in Browsh browser:"
+				if needs browsh "please install browsh to view web URLs in Browsh browser"; then
+					browsh "$full_url"
+				else
+					err "browsh is required to view web URLs but is not available in PATH"
+					return 1
+				fi
+				;;
+		esac
 	fi
 	# if it's a file, syntax-colorize it with bat or less, or display it via sixels if it's an image
 	if [ -f "$word" ]; then
@@ -224,12 +432,18 @@ show() {
 		note "'${word}' is $(a_or_an "${traits[0]}") ${traits[*]} variable"
 		echo "$declare_str"
 	fi
-	if ! [ -f "$word" ] && [ -z "$(type -a -t "$word")" ]; then
-		warn "'${word}' is undefined"
-		found_undefined=1
-	else
-		# if there are multiple types to search for, loop through them
-		for type in $(type -a -t "$word" | uniq); do
+	# Only check for types if it's not a file (files are already handled above)
+	if ! [ -f "$word" ]; then
+		local types_found=$(type -a -t "$word" | uniq)
+		if [ -z "$types_found" ]; then
+			# Not a file, not a type, check if it was already found as a variable
+			if ! var_defined "$word"; then
+				warn "'${word}' is undefined"
+				found_undefined=1
+			fi
+		else
+			# if there are multiple types to search for, loop through them
+			for type in $types_found; do
 			case $type in
 				alias)
 					note "'${word}' is an alias"
@@ -284,7 +498,8 @@ show() {
 					note "'${word}' is not a variable, builtin, function, alias, or file; it is a $type"
 					;;
 			esac
-		done
+			done
+		fi
 	fi
 	# if there are any words left to look up, recurse with them.
 	# Note that any undefined term will return 1 and stop evaluating the rest.

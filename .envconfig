@@ -195,8 +195,8 @@ _bash_int_max_helper() {
 	printf '%s' $((n*2 - 1))
 }
 # make it feel like an env var:
-declare -irx BASH_INT_MAX="$(_bash_int_max_helper)"
-declare -irx BASH_INT_MIN=$(( -BASH_INT_MAX - 1 ))
+declare -p "BASH_INT_MAX" >/dev/null 2>&1 || declare -irx BASH_INT_MAX="$(_bash_int_max_helper)"
+declare -p "BASH_INT_MIN" >/dev/null 2>&1 || declare -irx BASH_INT_MIN=$(( -BASH_INT_MAX - 1 ))
 unset _bash_int_max_helper
 
 # take any $HOME/.secrets and export them

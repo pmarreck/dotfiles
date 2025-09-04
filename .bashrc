@@ -91,8 +91,8 @@ fi
 [ "${DEBUG_SHELLCONFIG+set}" = "set" ] && echo "Entering $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")" || $INTERACTIVE_SHELL && $LOGIN_SHELL && append_dotfile_progress "rc"
 [ "${DEBUG_PATHCONFIG+set}" = "set" ] && echo "$PATH"
 
-# mute direnv constantly telling me what it's loading
-export DIRENV_LOG_FORMAT=""
+# direnv output cannot be muted due to bug in version 2.36.0
+# See: https://github.com/direnv/direnv/issues/1418
 
 # blesh (ble.sh) config
 # needs the system stty softlinked from ~/bin (or ~/dotfiles/bin) to temporarily be ahead of PATH for ble.sh to work
@@ -250,6 +250,9 @@ set -f
 # TODO: function to turn on history expansion temporarily, like what I do
 # with the expand function to handle globbing
 set +H
+
+# Tab completion for show/what/d commands
+. "$HOME/dotfiles/completions/show_completion.bash"
 
 # activate ble.sh/blesh
 # [[ ! ${BLE_VERSION-} ]] || ble-attach

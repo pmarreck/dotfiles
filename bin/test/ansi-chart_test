@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+
+# Test for ansi-chart
+
+test_count=0
+fail_count=0
+
+# Test that the script exists and is executable
+if [[ -x "$HOME/dotfiles/bin/ansi-chart" ]]; then
+	echo "✓ ansi-chart is executable"
+	((test_count++))
+else
+	echo "✗ ansi-chart is not executable" >&2
+	((fail_count++))
+	((test_count++))
+fi
+
+# Test that it runs without errors
+if output=$(ansi-chart 2>&1); then
+	echo "✓ ansi-chart runs without errors"
+	((test_count++))
+else
+	echo "✗ ansi-chart failed to run" >&2
+	echo "Output: $output" >&2
+	((fail_count++))
+	((test_count++))
+fi
+
+# Test that it outputs 3/4-bit color section
+if ansi-chart 2>/dev/null | grep -q "3/4-bit ANSI Colors"; then
+	echo "✓ Outputs 3/4-bit color section"
+	((test_count++))
+else
+	echo "✗ Missing 3/4-bit color section" >&2
+	((fail_count++))
+	((test_count++))
+fi
+
+# Test that it shows foreground and background sections
+if ansi-chart 2>/dev/null | grep -q "Foreground colors:"; then
+	echo "✓ Shows foreground colors section"
+	((test_count++))
+else
+	echo "✗ Missing foreground colors section" >&2
+	((fail_count++))
+	((test_count++))
+fi
+
+if ansi-chart 2>/dev/null | grep -q "Background colors:"; then
+	echo "✓ Shows background colors section"
+	((test_count++))
+else
+	echo "✗ Missing background colors section" >&2
+	((fail_count++))
+	((test_count++))
+fi
+
+# Test help flag
+if ansi-chart --help 2>/dev/null | grep -q "Display ANSI color charts"; then
+	echo "✓ Help flag works"
+	((test_count++))
+else
+	echo "✗ Help flag doesn't work" >&2
+	((fail_count++))
+	((test_count++))
+fi
+
+# Summary
+if [[ $fail_count -eq 0 ]]; then
+	echo ""
+	echo "All $test_count tests passed!"
+else
+	echo "" >&2
+	echo "$fail_count of $test_count tests failed" >&2
+fi
+
+exit $fail_count

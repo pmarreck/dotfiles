@@ -199,3 +199,6 @@ alias surf='windsurf'
 alias rm='rm-safe'
 
 needs timeout 2>/dev/null || needs uutils-timeout "please install uutils-coreutils" && alias timeout='uutils-timeout'
+# hacker news TUI
+alias hn='clx --nerdfonts --no-less-verify --comment-width 120'
+alias variables='compgen -v'

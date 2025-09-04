@@ -1,0 +1,294 @@
+#!/usr/bin/env bash
+
+ansi-chart() {
+	local reset="\e[0m"
+	
+	# Function to determine if background is light or dark
+	# Returns 0 for light (use black text), 1 for dark (use white text)
+	is_light_bg() {
+		local r=$1 g=$2 b=$3
+		# Using luminance formula: 0.299*R + 0.587*G + 0.114*B
+		local luminance=$(( (r * 299 + g * 587 + b * 114) / 1000 ))
+		[[ $luminance -gt 128 ]]
+	}
+	
+	# 3/4-bit colors (always supported)
+	echo -e "\n${reset}=== 3/4-bit ANSI Colors (Standard 16 Colors) ==="
+	echo "Foreground: \\e[30-37m and \\e[90-97m (bright)"
+	echo "Background: \\e[40-47m and \\e[100-107m (bright)"
+	echo ""
+	
+	# Foreground colors
+	echo "Foreground colors:"
+	for i in {30..37} {90..97}; do
+		printf "\e[${i}m%3d\e[0m " "$i"
+		[[ $i == 37 ]] && echo ""
+	done
+	echo -e "\n"
+	
+	# Background colors
+	echo "Background colors:"
+	for i in {40..47}; do
+		# Normal backgrounds (40-47) - determine text color based on brightness
+		case $i in
+			40|41|44) # Black, Red, Blue - dark backgrounds
+				printf "\e[${i};97m%3d\e[0m " "$i"  # White text
+				;;
+			42|43|45|46|47) # Green, Yellow, Magenta, Cyan, White - lighter backgrounds
+				printf "\e[${i};30m%3d\e[0m " "$i"  # Black text
+				;;
+		esac
+	done
+	echo ""
+	for i in {100..107}; do
+		# Bright backgrounds (100-107) - all use black text except dark ones
+		case $i in
+			100|104) # Bright Black, Bright Blue - still dark
+				printf "\e[${i};97m%3d\e[0m " "$i"  # White text
+				;;
+			*) # Rest are bright/light
+				printf "\e[${i};30m%3d\e[0m " "$i"  # Black text
+				;;
+		esac
+	done
+	echo -e "\n"
+	
+	# Check for 256 color support
+	if [[ "$TERM" == *"256color"* ]] || [[ -n "$COLORTERM" ]] || tput colors 2>/dev/null | grep -q "256\|16777216"; then
+		echo -e "\n${reset}=== 8-bit ANSI Colors (256 Colors) ==="
+		echo "Foreground: \\e[38;5;<0-255>m"
+		echo "Background: \\e[48;5;<0-255>m"
+		echo ""
+		
+		# Foreground - System colors (0-15)
+		echo "Foreground - System colors (0-15):"
+		for i in {0..15}; do
+			printf "\e[38;5;${i}m%3d\e[0m " "$i"
+			[[ $i == 7 || $i == 15 ]] && echo ""
+		done
+		echo ""
+		
+		# Foreground - Color cube (16-231)
+		echo "Foreground - 6x6x6 Color cube (16-231):"
+		for r in {0..5}; do
+			for g in {0..5}; do
+				for b in {0..5}; do
+					local color=$((16 + r * 36 + g * 6 + b))
+					printf "\e[38;5;${color}m%3d\e[0m " "$color"
+				done
+				echo -n "  "
+			done
+			echo ""
+		done
+		echo ""
+		
+		# Foreground - Grayscale (232-255)
+		echo "Foreground - Grayscale (232-255):"
+		for i in {232..255}; do
+			printf "\e[38;5;${i}m%3d\e[0m " "$i"
+			[[ $(( (i - 232 + 1) % 12 )) == 0 ]] && echo ""
+		done
+		echo -e "\n"
+		
+		# Background - System colors (0-15)
+		echo "Background - System colors (0-15):"
+		for i in {0..15}; do
+			# Choose text color based on background darkness
+			if [[ $i -eq 0 || $i -eq 1 || $i -eq 4 || $i -eq 5 || $i -eq 8 || $i -eq 9 || $i -eq 12 ]]; then
+				# Dark backgrounds - white text
+				printf "\e[48;5;${i};97m%3d\e[0m " "$i"
+			else
+				# Light backgrounds - black text
+				printf "\e[48;5;${i};30m%3d\e[0m " "$i"
+			fi
+			[[ $i == 7 || $i == 15 ]] && echo ""
+		done
+		echo ""
+		
+		# Background - Color cube (16-231) - sample every 6th color for readability
+		echo "Background - 6x6x6 Color cube (16-231, sampled):"
+		for r in {0..5}; do
+			for g in {0..5}; do
+				for b in 0 2 4; do  # Sample every other blue value
+					local color=$((16 + r * 36 + g * 6 + b))
+					# Approximate luminance calculation
+					local lum_r=$((r * 51))
+					local lum_g=$((g * 51))
+					local lum_b=$((b * 51))
+					if is_light_bg $lum_r $lum_g $lum_b; then
+						printf "\e[48;5;${color};30m%3d\e[0m " "$color"
+					else
+						printf "\e[48;5;${color};97m%3d\e[0m " "$color"
+					fi
+				done
+				echo -n "  "
+			done
+			echo ""
+		done
+		echo ""
+		
+		# Background - Grayscale (232-255)
+		echo "Background - Grayscale (232-255):"
+		for i in {232..255}; do
+			# Grayscale: darker values use white text, lighter use black
+			if [[ $i -lt 244 ]]; then
+				printf "\e[48;5;${i};97m%3d\e[0m " "$i"
+			else
+				printf "\e[48;5;${i};30m%3d\e[0m " "$i"
+			fi
+			[[ $(( (i - 232 + 1) % 12 )) == 0 ]] && echo ""
+		done
+		echo ""
+	fi
+	
+	# Check for 24-bit true color support
+	if [[ "$COLORTERM" == "truecolor" ]] || [[ "$COLORTERM" == "24bit" ]] || [[ "$TERM" == *"direct"* ]]; then
+		echo -e "\n${reset}=== 24-bit True Color (16.7 million colors) ==="
+		echo "Foreground: \\e[38;2;<r>;<g>;<b>m (r,g,b = 0-255)"
+		echo "Background: \\e[48;2;<r>;<g>;<b>m (r,g,b = 0-255)"
+		echo ""
+		
+		# Foreground - RGB gradient samples
+		echo "Foreground - RGB gradient samples:"
+		# Red gradient
+		echo -n "Red:   "
+		for r in 0 32 64 96 128 160 192 224 255; do
+			printf "\e[38;2;${r};0;0m■\e[0m "
+		done
+		echo ""
+		# Green gradient
+		echo -n "Green: "
+		for g in 0 32 64 96 128 160 192 224 255; do
+			printf "\e[38;2;0;${g};0m■\e[0m "
+		done
+		echo ""
+		# Blue gradient
+		echo -n "Blue:  "
+		for b in 0 32 64 96 128 160 192 224 255; do
+			printf "\e[38;2;0;0;${b}m■\e[0m "
+		done
+		echo -e "\n"
+		
+		# Background - RGB gradient samples
+		echo "Background - RGB gradient samples:"
+		# Red gradient
+		echo -n "Red:   "
+		for r in 0 32 64 96 128 160 192 224 255; do
+			if [[ $r -lt 128 ]]; then
+				printf "\e[48;2;${r};0;0;97m R \e[0m "
+			else
+				printf "\e[48;2;${r};0;0;30m R \e[0m "
+			fi
+		done
+		echo ""
+		# Green gradient
+		echo -n "Green: "
+		for g in 0 32 64 96 128 160 192 224 255; do
+			if [[ $g -lt 128 ]]; then
+				printf "\e[48;2;0;${g};0;97m G \e[0m "
+			else
+				printf "\e[48;2;0;${g};0;30m G \e[0m "
+			fi
+		done
+		echo ""
+		# Blue gradient
+		echo -n "Blue:  "
+		for b in 0 32 64 96 128 160 192 224 255; do
+			if [[ $b -lt 128 ]]; then
+				printf "\e[48;2;0;0;${b};97m B \e[0m "
+			else
+				printf "\e[48;2;0;0;${b};30m B \e[0m "
+			fi
+		done
+		echo -e "\n"
+		
+		# Rainbow gradient with alphabet
+		echo "Foreground - Rainbow gradient (alphabet):"
+		local alphabet="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+		local steps=52  # Length of alphabet
+		for ((i=0; i<steps; i++)); do
+			local hue=$((i * 360 / steps))
+			local r g b
+			local char="${alphabet:$i:1}"
+			
+			# HSV to RGB conversion (simplified, S=1, V=1)
+			local h=$((hue / 60))
+			local f=$((hue % 60))
+			local x=$((255 * f / 60))
+			local y=$((255 * (60 - f) / 60))
+			
+			case $h in
+				0) r=255; g=$x; b=0 ;;
+				1) r=$y; g=255; b=0 ;;
+				2) r=0; g=255; b=$x ;;
+				3) r=0; g=$y; b=255 ;;
+				4) r=$x; g=0; b=255 ;;
+				5) r=255; g=0; b=$y ;;
+				*) r=255; g=0; b=0 ;;
+			esac
+			
+			printf "\e[38;2;${r};${g};${b}m${char}\e[0m"
+		done
+		echo -e "\n"
+		
+		echo "Background - Rainbow gradient:"
+		for ((i=0; i<steps; i++)); do
+			local hue=$((i * 360 / steps))
+			local r g b
+			
+			# HSV to RGB conversion (simplified, S=1, V=1)
+			local h=$((hue / 60))
+			local f=$((hue % 60))
+			local x=$((255 * f / 60))
+			local y=$((255 * (60 - f) / 60))
+			
+			case $h in
+				0) r=255; g=$x; b=0 ;;
+				1) r=$y; g=255; b=0 ;;
+				2) r=0; g=255; b=$x ;;
+				3) r=0; g=$y; b=255 ;;
+				4) r=$x; g=0; b=255 ;;
+				5) r=255; g=0; b=$y ;;
+				*) r=255; g=0; b=0 ;;
+			esac
+			
+			if is_light_bg $r $g $b; then
+				printf "\e[48;2;${r};${g};${b};30m \e[0m"
+			else
+				printf "\e[48;2;${r};${g};${b};97m \e[0m"
+			fi
+		done
+		echo ""
+	fi
+	
+	echo ""
+}
+
+# Support for --help and --test flags
+case "$1" in
+	-h|--help)
+		echo "ansi-chart - Display ANSI color charts for the current terminal"
+		echo ""
+		echo "Usage: ansi-chart"
+		echo ""
+		echo "Displays color charts for:"
+		echo "  - 3/4-bit colors (16 standard colors)"
+		echo "  - 8-bit colors (256 colors) if supported"
+		echo "  - 24-bit true colors (16.7M colors) if supported"
+		echo ""
+		echo "Options:"
+		echo "  -h, --help    Show this help message"
+		echo "  --test        Run tests"
+		;;
+	--test)
+		if [[ -f "$HOME/dotfiles/bin/test/ansi-chart_test" ]]; then
+			"$HOME/dotfiles/bin/test/ansi-chart_test" >/dev/null
+		else
+			echo "Test file not found" >&2
+			exit 1
+		fi
+		;;
+	*)
+		ansi-chart
+		;;
+esac

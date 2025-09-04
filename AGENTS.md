@@ -119,6 +119,18 @@ Since all `bin/` scripts are on PATH, these utilities are available:
   expand ls *.md
   ```
 
+- **`trim_leading_heredoc_whitespace`**: Intelligently removes leading whitespace from heredocs
+  ```bash
+  # Instead of using <<-'EOF' which strips ALL leading tabs:
+  cat <<'EOF' | trim_leading_heredoc_whitespace
+  	This is indented with tabs
+  		This is indented more
+  	Back to base indentation
+  EOF
+  # This preserves relative indentation while removing the common leading whitespace
+  # Perfect for maintaining proper indentation in help text and multi-line strings
+  ```
+
 #### Random Number Generation
 
 - **`nrandom`**: Normal distribution random numbers
