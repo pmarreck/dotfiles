@@ -28,7 +28,11 @@ Most executables in `bin/` support a `--test` flag:
 - Tests should be written in **Bash**
 - **Never source** the script under test - call it directly via PATH
 - **Don't re-implement logic** - test the actual executable behavior
-- Use the pattern: `if condition; then success_msg; else error_details >&2; fi`
+- Use `((tests++))` to increment test counters, not `test_count=$((test_count + 1))`
+- For failure counting, use one of these patterns:
+  - With `assert`: `assert condition; ((fails+=$?))`
+  - With explicit checks: `if condition; then success_msg; else error_details >&2; ((fails++)); fi`
+- See `bin/test/expand_test` for assert pattern, `bin/test/hook_test` for if/then pattern
 
 #### Output Standards
 
@@ -73,9 +77,8 @@ Shebangs should be `#!/usr/bin/env <language executable>`.
 
 Optionally:
 
-- **`-a`** or **`--about`**: Show detailed description
+- **`-a`** or **`--about`**: Show a one-line summary of the command's functionality
 - **`-v`** or **`--version`**: Show version information
--
 
 ## Formatting
 
@@ -104,6 +107,14 @@ Since all `bin/` scripts are on PATH, these utilities are available:
 - **`repeat`**: Repeat a command N times (e.g., `repeat 5 echo "hello"`)
 - **`assert`**: Assert conditions in scripts
 - **Various counters**: Global counter implementations for testing/debugging
+
+#### Command Inspection
+
+- **`show`**: Shows ALL reachable definitions of any command, function, or alias
+  - Also available as **`what`** or **`what is`** wrapper
+  - Also available as **`d`** alias (short for "display" or "define")
+  - Essential for debugging command shadowing issues (e.g., builtin vs executable conflicts)
+  - Example: `show echo` reveals both the builtin and executable versions
 
 #### Shell Utilities
 
@@ -248,3 +259,4 @@ options, positionals = cli_utils.parse_args(config)
 The goal is collaborative problem-solving, not just task execution.
 
 - NEVER say "You're absolutely right!" in response to anything I say. I already feel privileged to be working with an AI, and I'm well-aware that I'm sometimes right; I don't need the confirmation that I had a good idea.
+- Avoid beginning responses with "You're absolutely right!" Instead, use "Damn, it must feel good to be a gangsta!"

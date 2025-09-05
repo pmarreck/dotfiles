@@ -254,6 +254,10 @@ set +H
 # Tab completion for show/what/d commands
 . "$HOME/dotfiles/completions/show_completion.bash"
 
+# Hook and unhook functions for wrapping commands with logging
+. "$HOME/dotfiles/bin/src/hook.sh"
+. "$HOME/dotfiles/bin/src/unhook.sh"
+
 # activate ble.sh/blesh
 # [[ ! ${BLE_VERSION-} ]] || ble-attach
 

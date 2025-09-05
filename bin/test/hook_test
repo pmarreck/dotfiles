@@ -1,0 +1,253 @@
+#!/usr/bin/env bash
+
+# Test for hook functionality
+# Exit code should be number of failed tests
+
+source "$HOME/dotfiles/bin/src/truthy.sh"
+source "$HOME/dotfiles/bin/src/hook.sh"
+source "$HOME/dotfiles/bin/src/unhook.sh"
+
+# Helper function for yellow text (mock if not available)
+if ! declare -f yellow_text >/dev/null 2>&1; then
+	yellow_text() {
+		echo -e "\033[93m$*\033[0m"
+	}
+fi
+
+fails=0
+tests=0
+
+# Test 1: Hook a simple command
+((tests++))
+echo "Testing: Hook a simple command (date)..."
+unhook date 2>/dev/null  # Clean slate
+hook date >/dev/null 2>&1
+if declare -f date >/dev/null 2>&1; then
+	echo "✓ Test passed: date command was hooked"
+else
+	echo "✗ Test failed: date command was not hooked" >&2
+	((fails++))
+fi
+unhook date >/dev/null 2>&1
+
+# Test 2: Hooked command produces correct output
+((tests++))
+echo "Testing: Hooked command produces output with logging..."
+unhook ls 2>/dev/null  # Clean slate
+hook ls >/dev/null 2>&1
+output=$(ls /dev/null 2>&1)
+if [[ "$output" == *"Calling: ls"* ]] && [[ "$output" == *"Returned from: ls"* ]]; then
+	echo "✓ Test passed: Hooked command shows calling/returning messages"
+else
+	echo "✗ Test failed: Hooked command doesn't show expected messages" >&2
+	echo "  Output was: $output" >&2
+	((fails++))
+fi
+unhook ls >/dev/null 2>&1
+
+# Test 3: Hook preserves exit codes
+((tests++))
+echo "Testing: Hooked command preserves exit codes..."
+unhook false 2>/dev/null  # Clean slate
+hook false >/dev/null 2>&1
+false 2>/dev/null
+exit_code=$?
+if [[ $exit_code -eq 1 ]]; then
+	echo "✓ Test passed: Hooked command preserves exit code"
+else
+	echo "✗ Test failed: Hooked command didn't preserve exit code (got $exit_code)" >&2
+	((fails++))
+fi
+unhook false >/dev/null 2>&1
+
+# Test 4: Hook with no arguments shows usage
+((tests++))
+echo "Testing: Hook with no arguments shows usage..."
+error_output=$(hook 2>&1 >/dev/null)
+if [[ "$error_output" == *"Usage:"* ]]; then
+	echo "✓ Test passed: Hook shows usage when called without arguments"
+else
+	echo "✗ Test failed: Hook doesn't show usage" >&2
+	((fails++))
+fi
+
+# Test 5: Hook can wrap existing functions
+((tests++))
+echo "Testing: Hook can wrap existing functions..."
+# Define a test function
+test_func() {
+	echo "Original function output"
+}
+# Try to hook it
+hook test_func >/dev/null 2>&1
+# The original should be backed up as _test_func_hook
+if declare -f _test_func_hook >/dev/null 2>&1; then
+	echo "✓ Test passed: Original function was backed up to _test_func_hook"
+else
+	echo "✗ Test failed: Original function was not backed up" >&2
+	((fails++))
+fi
+# Clean up
+unset -f test_func _test_func_hook 2>/dev/null
+
+# Test 6: Hooked function calls the original
+((tests++))
+echo "Testing: Hooked function calls the original..."
+# Define a test function
+test_func2() {
+	echo "Original output"
+	return 42
+}
+# Hook it
+hook test_func2 >/dev/null 2>&1
+# Call it and check output contains both hook messages and original output
+output=$(test_func2 2>&1)
+exit_code=$?
+if [[ "$output" == *"Calling: test_func2"* ]] && \
+   [[ "$output" == *"Original output"* ]] && \
+   [[ "$output" == *"Returned from: test_func2"* ]] && \
+   [[ $exit_code -eq 42 ]]; then
+	echo "✓ Test passed: Hooked function wraps original correctly"
+else
+	echo "✗ Test failed: Hooked function doesn't wrap original correctly" >&2
+	echo "  Output was: $output" >&2
+	echo "  Exit code was: $exit_code" >&2
+	((fails++))
+fi
+# Clean up
+unset -f test_func2 _test_func2_hook 2>/dev/null
+
+# Test 7: Hook prevents double hooking
+((tests++))
+echo "Testing: Hook prevents double hooking..."
+# Hook date command
+hook date >/dev/null 2>&1
+# Try to hook it again
+error_output=$(hook date 2>&1 >/dev/null)
+if [[ "$error_output" == *"already hooked"* ]]; then
+	echo "✓ Test passed: Hook prevents double hooking"
+else
+	echo "✗ Test failed: Hook doesn't prevent double hooking" >&2
+	echo "  Output was: $error_output" >&2
+	((fails++))
+fi
+# Clean up
+unhook date 2>/dev/null
+
+# Test 8: Hooked command works in subshells
+((tests++))
+echo "Testing: Hooked command works in subshells..."
+hook date >/dev/null 2>&1
+# Test in a subshell
+output=$(bash -c 'date 2>&1')
+if [[ "$output" == *"Calling: date"* ]] && [[ "$output" == *"Returned from: date"* ]]; then
+	echo "✓ Test passed: Hooked command works in subshells"
+else
+	echo "✗ Test failed: Hooked command doesn't work in subshells" >&2
+	echo "  Output was: $output" >&2
+	((fails++))
+fi
+unhook date 2>/dev/null
+
+# Test 9: Hooked function works in subshells
+((tests++))
+echo "Testing: Hooked function works in subshells..."
+# Define and export a test function
+test_exported() {
+	echo "Exported function"
+}
+export -f test_exported
+# Hook it
+hook test_exported >/dev/null 2>&1
+# Test in a subshell
+output=$(bash -c 'test_exported 2>&1')
+if [[ "$output" == *"Calling: test_exported"* ]] && [[ "$output" == *"Exported function"* ]] && [[ "$output" == *"Returned from: test_exported"* ]]; then
+	echo "✓ Test passed: Hooked exported function works in subshells"
+else
+	echo "✗ Test failed: Hooked exported function doesn't work in subshells" >&2
+	echo "  Output was: $output" >&2
+	((fails++))
+fi
+unhook test_exported 2>/dev/null
+unset -f test_exported
+
+# Test 10: Hook with custom -en entry command
+((tests++))
+echo "Testing: Hook with custom -en entry command..."
+# Create a temp log file
+logfile=$(mktemp)
+# Hook date with custom entry logging
+hook -en "echo 'ENTRY: __cmd__ called with: __args__' >> $logfile" date >/dev/null 2>&1
+# Call the hooked command
+date +%Y >/dev/null 2>&1
+# Check the log file
+if grep -q "ENTRY: date called with: +%Y" "$logfile"; then
+	echo "✓ Test passed: Custom entry command executed with template substitution"
+else
+	echo "✗ Test failed: Custom entry command not working" >&2
+	echo "  Log file contents: $(cat "$logfile")" >&2
+	((fails++))
+fi
+rm -f "$logfile"
+unhook date 2>/dev/null
+
+# Test 11: Hook with custom -ex exit command
+((tests++))
+echo "Testing: Hook with custom -ex exit command..."
+# Create a temp log file
+logfile=$(mktemp)
+# Hook false with custom exit logging
+hook -ex "echo 'EXIT: __cmd__ returned __exitcode__' >> $logfile" false >/dev/null 2>&1
+# Call the hooked command (should return 1)
+false 2>/dev/null
+# Check the log file
+if grep -q "EXIT: false returned 1" "$logfile"; then
+	echo "✓ Test passed: Custom exit command executed with exitcode substitution"
+else
+	echo "✗ Test failed: Custom exit command not working" >&2
+	echo "  Log file contents: $(cat "$logfile")" >&2
+	((fails++))
+fi
+rm -f "$logfile"
+unhook false 2>/dev/null
+
+# Test 12: Hook with both -en and -ex commands
+((tests++))
+echo "Testing: Hook with both -en and -ex commands..."
+# Create a temp log file
+logfile=$(mktemp)
+# Hook ls with both entry and exit logging
+hook -en "echo 'ENTER __cmd__' >> $logfile" -ex "echo 'EXIT __cmd__ code=__exitcode__' >> $logfile" ls >/dev/null 2>&1
+# Call the hooked command
+ls /dev/null >/dev/null 2>&1
+# Check the log file for both entries
+if grep -q "ENTER ls" "$logfile" && grep -q "EXIT ls code=0" "$logfile"; then
+	echo "✓ Test passed: Both entry and exit commands work together"
+else
+	echo "✗ Test failed: Entry/exit commands not working together" >&2
+	echo "  Log file contents: $(cat "$logfile")" >&2
+	((fails++))
+fi
+rm -f "$logfile"
+unhook ls 2>/dev/null
+
+# Test 13: Error when __exitcode__ used in -en
+((tests++))
+echo "Testing: Error when __exitcode__ used in -en..."
+error_output=$(hook -en "echo __exitcode__" date 2>&1 >/dev/null)
+if [[ "$error_output" == *"__exitcode__"* ]] && [[ "$error_output" == *"entry"* ]]; then
+	echo "✓ Test passed: Error shown for __exitcode__ in entry command"
+else
+	echo "✗ Test failed: No error for __exitcode__ in entry command" >&2
+	echo "  Output was: $error_output" >&2
+	((fails++))
+fi
+
+# Summary
+if [[ $fails -eq 0 ]]; then
+	echo "All $tests tests passed"
+else
+	echo "$fails of $tests tests failed" >&2
+fi
+
+exit $fails

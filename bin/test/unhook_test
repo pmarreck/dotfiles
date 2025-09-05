@@ -1,0 +1,179 @@
+#!/usr/bin/env bash
+
+# Test for unhook functionality
+# Exit code should be number of failed tests
+
+source "$HOME/dotfiles/bin/src/truthy.sh"
+source "$HOME/dotfiles/bin/src/hook.sh"
+source "$HOME/dotfiles/bin/src/unhook.sh"
+
+# Helper function for yellow text (mock if not available)
+if ! declare -f yellow_text >/dev/null 2>&1; then
+	yellow_text() {
+		echo -e "\033[93m$*\033[0m"
+	}
+fi
+
+fails=0
+tests=0
+
+# Test 1: Unhook removes a hooked command
+((tests++))
+echo "Testing: Unhook removes a hooked command..."
+hook date >/dev/null 2>&1
+unhook date >/dev/null 2>&1
+if ! declare -f date >/dev/null 2>&1; then
+	echo "✓ Test passed: date hook was removed"
+else
+	echo "✗ Test failed: date hook was not removed" >&2
+	((fails++))
+	unhook date >/dev/null 2>&1  # cleanup
+fi
+
+# Test 2: Unhook returns error for non-hooked command
+((tests++))
+echo "Testing: Unhook returns error for non-hooked command..."
+unhook nonexistent 2>/dev/null
+exit_code=$?
+if [[ $exit_code -ne 0 ]]; then
+	echo "✓ Test passed: Unhook returns error for non-hooked command"
+else
+	echo "✗ Test failed: Unhook didn't return error for non-hooked command" >&2
+	((fails++))
+fi
+
+# Test 3: Unhook shows appropriate message for non-hooked command
+((tests++))
+echo "Testing: Unhook shows message for non-hooked command..."
+error_output=$(unhook nonexistent 2>&1 >/dev/null)
+if [[ "$error_output" == *"No hook found"* ]]; then
+	echo "✓ Test passed: Unhook shows 'No hook found' message"
+else
+	echo "✗ Test failed: Unhook doesn't show expected message" >&2
+	echo "  Output was: $error_output" >&2
+	((fails++))
+fi
+
+# Test 4: Unhook with no arguments shows usage
+((tests++))
+echo "Testing: Unhook with no arguments shows usage..."
+error_output=$(unhook 2>&1 >/dev/null)
+if [[ "$error_output" == *"Usage:"* ]]; then
+	echo "✓ Test passed: Unhook shows usage when called without arguments"
+else
+	echo "✗ Test failed: Unhook doesn't show usage" >&2
+	((fails++))
+fi
+
+# Test 5: Unhook shows success message
+((tests++))
+echo "Testing: Unhook shows success message..."
+hook date >/dev/null 2>&1
+output=$(unhook date 2>&1)
+if [[ "$output" == *"Unhooked: date"* ]]; then
+	echo "✓ Test passed: Unhook shows success message"
+else
+	echo "✗ Test failed: Unhook doesn't show success message" >&2
+	echo "  Output was: $output" >&2
+	((fails++))
+fi
+
+# Test 6: Unhook restores original function
+((tests++))
+echo "Testing: Unhook restores original function..."
+# Define a test function
+test_func() {
+	echo "Original function"
+	return 99
+}
+# Hook it
+hook test_func >/dev/null 2>&1
+# Unhook it
+unhook test_func >/dev/null 2>&1
+# Call it and verify it's the original
+output=$(test_func 2>&1)
+exit_code=$?
+if [[ "$output" == "Original function" ]] && [[ $exit_code -eq 99 ]] && \
+   [[ "$output" != *"Calling:"* ]] && [[ "$output" != *"Returned from:"* ]]; then
+	echo "✓ Test passed: Original function was restored"
+else
+	echo "✗ Test failed: Original function was not restored correctly" >&2
+	echo "  Output was: $output" >&2
+	echo "  Exit code was: $exit_code" >&2
+	((fails++))
+fi
+# Clean up
+unset -f test_func _test_func_hook 2>/dev/null
+
+# Test 7: Unhook removes backup function
+((tests++))
+echo "Testing: Unhook removes backup function..."
+# Define a test function
+test_func2() {
+	echo "Test"
+}
+# Hook and unhook it
+hook test_func2 >/dev/null 2>&1
+unhook test_func2 >/dev/null 2>&1
+# Check that backup is gone
+if ! declare -f _test_func2_hook >/dev/null 2>&1; then
+	echo "✓ Test passed: Backup function was removed"
+else
+	echo "✗ Test failed: Backup function still exists" >&2
+	((fails++))
+fi
+# Clean up
+unset -f test_func2 _test_func2_hook 2>/dev/null
+
+# Test 8: Unhook preserves export status of original function
+((tests++))
+echo "Testing: Unhook preserves export status of original function..."
+# Define and export a test function
+test_export_func() {
+	echo "Original exported"
+}
+export -f test_export_func
+# Hook and unhook it
+hook test_export_func >/dev/null 2>&1
+unhook test_export_func >/dev/null 2>&1
+# Check if it's still exported by testing in subshell
+output=$(bash -c 'test_export_func 2>&1')
+if [[ "$output" == "Original exported" ]]; then
+	echo "✓ Test passed: Export status preserved after unhook"
+else
+	echo "✗ Test failed: Export status not preserved after unhook" >&2
+	echo "  Output was: $output" >&2
+	((fails++))
+fi
+unset -f test_export_func
+
+# Test 9: Unhook doesn't export non-exported function
+((tests++))
+echo "Testing: Unhook doesn't export non-exported function..."
+# Define a non-exported function
+test_no_export() {
+	echo "Not exported"
+}
+# Don't export it
+# Hook and unhook it
+hook test_no_export >/dev/null 2>&1
+unhook test_no_export >/dev/null 2>&1
+# Check it's NOT exported by testing in subshell (should fail)
+output=$(bash -c 'test_no_export 2>&1' 2>&1)
+if [[ "$output" == *"command not found"* ]]; then
+	echo "✓ Test passed: Non-exported function remains non-exported"
+else
+	echo "✗ Test failed: Non-exported function was incorrectly exported" >&2
+	echo "  Output was: $output" >&2
+	((fails++))
+fi
+unset -f test_no_export
+
+# Summary
+if [[ $fails -eq 0 ]]; then
+	echo "All $tests tests passed"
+else
+	echo "$fails of $tests tests failed" >&2
+fi
+
+exit $fails
