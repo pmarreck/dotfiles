@@ -81,7 +81,12 @@ if ! (return 0 2>/dev/null); then
 			echo ""
 			echo "Options:"
 			echo "  -h, --help    Show this help message"
+			echo "  -a, --about   Show brief description"
 			echo "  --test        Run tests"
+			exit 0
+			;;
+		-a|--about)
+			echo "Do simple math calculations in the shell using bc"
 			exit 0
 			;;
 		--test)

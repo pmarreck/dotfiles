@@ -58,6 +58,7 @@ A clipboard utility that works across macOS, X11, and Wayland environments.
 
 Options:
   -h, --help     Display this help message and exit
+  -a, --about    Show brief description  
   -q, --quiet    Suppress output when copying to clipboard
   --clear        Clear the clipboard
   --save         Save clipboard contents to temporary file
@@ -97,6 +98,10 @@ clip() {
 		case "$1" in
 			-h|--help)
 				clip_usage
+				return 0
+				;;
+			-a|--about)
+				echo "Cross-platform clipboard utility for copy/paste operations"
 				return 0
 				;;
 			-q|--quiet)

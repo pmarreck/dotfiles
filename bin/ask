@@ -119,11 +119,17 @@ ask() {
 	needs jq
 	needs glow see https://github.com/charmbracelet/glow
 
+	# Validate API key is present
+	if [[ -z "$OPENAI_API_KEY" ]]; then
+		warn "Error: OPENAI_API_KEY environment variable is not set"
+		return 1
+	fi
+
 	local model request response timeout temp_json temp_json_out http_status \
 		openai_host openai_path openai_protocol openai_url local_llm \
 		top_k top_p temperature system_prompt user_prompt repeat_penalty num_ctx \
 		history_file history_temp timestamp continue_conversation discard_history
-	model=${OPENAI_MODEL:-gpt-5-mini} # see openai docs for other models
+	model=${OPENAI_MODEL:-gpt-5} # see openai docs for other models
 	timeout=${OPENAI_TIMEOUT:-60}
 	openai_host=${OPENAI_HOST:-api.openai.com}
 	openai_path=${OPENAI_PATH:-/v1/chat/completions}
@@ -223,7 +229,7 @@ ask() {
 			model: $model,
 			messages: $messages[0].messages,
 			temperature: $temperature,
-			max_completion_tokens: 1000,
+			max_completion_tokens: 4000,
 			tools: $tools,
 			stream: false
 		}' > "$temp_json"
@@ -235,10 +241,15 @@ ask() {
 			model: $model,
 			messages: $messages[0].messages,
 			temperature: $temperature,
-			max_completion_tokens: 1000,
+			max_completion_tokens: 4000,
 			stream: false
 		}' > "$temp_json"
 	fi
+
+	# Add debugging for the request
+	debug "Making API request to: $openai_url"
+	debug "Using model: $model"
+	debug "Request payload: $(cat "$temp_json")"
 
 	http_status=$($curl -w "%{http_code}" -s -o "$temp_json_out" -X POST $openai_url \
 		-H "Content-Type: application/json" \
@@ -247,10 +258,17 @@ ask() {
 		--max-time $timeout \
 		-d "@$temp_json")
 
+	debug "HTTP status: $http_status"
+	debug "Response: $(cat "$temp_json_out")"
+
 	if [[ "$http_status" -ne 200 ]]; then
 		warn "Error: API request failed with status code $http_status."
+		warn "API URL: $openai_url"
+		warn "Model: $model"
 		warn "Response:"
 		cat "$temp_json_out" >&2
+		# Clean up temp files before returning
+		rm -f "$temp_json" "$temp_json_out"
 		return 1
 	fi
 
@@ -337,7 +355,7 @@ ask() {
 				'{
 					model: $model,
 					messages: (($messages[0].messages // []) + $results),
-					max_completion_tokens: 1000,
+					max_completion_tokens: 4000,
 					stream: false
 				}' > "$temp_json"
 
@@ -359,17 +377,36 @@ ask() {
 		else
 			# No tool call, just process the response
 			debug "temp_json_out=$(cat $temp_json_out)"
+			# Attempt to parse JSON response with better error handling
+			if ! jq empty < "$temp_json_out" 2>/dev/null; then
+				warn "Error: Invalid JSON response from API"
+				warn "Response content:"
+				cat "$temp_json_out" >&2
+				rm -f "$temp_json" "$temp_json_out"
+				return 1
+			fi
 			response=$(jq -r '.choices[0].message.content // .message.content' < "$temp_json_out" 2>/dev/null | $SED 's/^[ \t]*//;s/[ \t]*$//')
 		fi
 	else
 		# Non-tooling-capable LLM, just process the response directly
 		debug "temp_json_out=$(cat $temp_json_out)"
+		# Attempt to parse JSON response with better error handling
+		if ! jq empty < "$temp_json_out" 2>/dev/null; then
+			warn "Error: Invalid JSON response from API"
+			warn "Response content:"
+			cat "$temp_json_out" >&2
+			rm -f "$temp_json" "$temp_json_out"
+			return 1
+		fi
 		response=$(jq -r '.choices[0].message.content // .message.content' < "$temp_json_out" 2>/dev/null | $SED 's/^[ \t]*//;s/[ \t]*$//')
 	fi
 
-	if [[ "$response" == "null" || "$?" != "0" ]]; then
-		warn "Error:"
-		printf "%b" "$response" >&2
+	if [[ "$response" == "null" || "$response" == "" ]]; then
+		warn "Error: Empty or null response from API"
+		warn "Raw API response:"
+		cat "$temp_json_out" >&2
+		rm -f "$temp_json" "$temp_json_out"
+		return 1
 	else
 		printf "%s" "$response" | $SED -e 's/^[\\n]\+//' -e 's/^[\n]\+//' | glow -
 
@@ -378,6 +415,9 @@ ask() {
 			'.messages += [{"role": "assistant", "content": $response}]' "$history_file" > "$history_temp"
 		mv "$history_temp" "$history_file"
 	fi
+
+	# Clean up temp files
+	rm -f "$temp_json" "$temp_json_out"
 }
 
 if truthy RUN_DOTFILE_TESTS; then
@@ -456,8 +496,42 @@ fi
 
 # Run the function if this script is executed directly
 if ! (return 0 2>/dev/null); then
+	# Check for diagnostic flag
+	if [ "$1" = "--diagnose" ]; then
+		echo "=== ask command diagnostic ==="
+		echo "Platform: $(uname -s)"
+		echo "Platform version: $(uname -r)"
+		echo "Shell: $SHELL"
+		echo "Bash version: $BASH_VERSION"
+		echo "Current directory: $PWD"
+		echo "PATH: $PATH"
+		echo ""
+		echo "Environment variables:"
+		env | grep -E "(OPENAI|LLM|API)" | sort | sed 's/=.*/=<redacted>/'
+		echo ""
+		echo "Dependencies:"
+		echo "curl: $(command -v curl || echo 'NOT FOUND')"
+		echo "jq: $(command -v jq || echo 'NOT FOUND')"
+		echo "glow: $(command -v glow || echo 'NOT FOUND')"
+		echo ""
+		echo "Network connectivity test:"
+		if curl -s --max-time 5 https://api.openai.com > /dev/null 2>&1; then
+			echo "✓ Can reach api.openai.com"
+		else
+			echo "✗ Cannot reach api.openai.com"
+		fi
+		echo ""
+		echo "API key validation (first 10 chars):"
+		if [[ -n "$OPENAI_API_KEY" ]]; then
+			echo "${OPENAI_API_KEY:0:10}..."
+		else
+			echo "NOT SET"
+		fi
+		echo ""
+		echo "Testing with DEBUG=1:"
+		DEBUG=1 ask "diagnostic test: respond with 'OK'" 2>&1 | head -20
 	# Check if we are running tests
-	if [ "$1" = "--test" ]; then
+	elif [ "$1" = "--test" ]; then
 		# Run tests from the test file
 		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
 	else

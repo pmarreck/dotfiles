@@ -278,7 +278,11 @@ case "$1" in
 		echo ""
 		echo "Options:"
 		echo "  -h, --help    Show this help message"
+		echo "  -a, --about   Show brief description"
 		echo "  --test        Run tests"
+		;;
+	-a|--about)
+		echo "Display ANSI color charts for the current terminal"
 		;;
 	--test)
 		if [[ -f "$HOME/dotfiles/bin/test/ansi-chart_test" ]]; then

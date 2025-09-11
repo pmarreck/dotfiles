@@ -20,6 +20,14 @@ function determine_language_from_source() {
 	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	local file="$1"
 	if [ -f "$file" ]; then
+		# Check shebang first for accurate Lua/LuaJIT detection
+		local shebang=$(head -1 "$file" 2>/dev/null)
+		if [[ "$shebang" =~ ^#!/.*lua(jit)?$ ]] || [[ "$shebang" =~ ^#!/usr/bin/env[[:space:]]+(lua|luajit)$ ]]; then
+			note "file '$file' is a Lua/LuaJIT script (detected from shebang)"
+			echo "lua"
+			return 0
+		fi
+		
 		local filename=$(basename "$file")
 		local file_ext=""
 		if [[ "$filename" == *.* ]]; then
@@ -46,6 +54,17 @@ function determine_language_from_source() {
 		debug "file_cmd_output after path: '$file_cmd_output'"
 		local lang_orig=$(echo "$file_cmd_output" | cut -d' ' -f1)
 		local lang=${lang_orig,,}
+		
+		# Handle JavaScript misidentification - check for Lua patterns
+		if [[ "$lang" == "javascript" ]]; then
+			# Check for common Lua patterns
+			if grep -q "^local\|^require\|^ffi\.cdef\|^bit\." "$file" 2>/dev/null; then
+				note "file '$file' is a Lua script (detected from content patterns)"
+				echo "lua"
+				return 0
+			fi
+		fi
+		
 		lang=$(truncate_run "$lang")
 		debug "lang after truncate_run: '$lang'"
 		# add exceptions/overrides here
@@ -57,6 +76,14 @@ function determine_language_from_source() {
 			posix*)
 				lang_orig="POSIX shell script"
 				lang="sh"
+				;;
+			lua*)
+				lang_orig="Lua script"
+				lang="lua"
+				;;
+			javascript*)
+				lang_orig="JavaScript"
+				lang="js"
 				;;
 			yue)
 				lang_orig="YueScript"

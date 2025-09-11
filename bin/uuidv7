@@ -1,57 +1,524 @@
-#!/usr/bin/env bash
+#!/usr/bin/env luajit
 
-uuidv7() {
-		# random bytes
-		rand_bytes=$(dd if=/dev/urandom bs=1 count=16 2>/dev/null | od -An -tx1 | tr -d ' \n')
+local ffi = require("ffi")
+local bit = require("bit")
 
-		# current timestamp in ms
-		timestamp=$(date +%s%3N)
-		t_hex=$(printf "%012x" "$timestamp")
+--[[
+UUIDv7 Generator - RFC 9562 compliant
 
-		# timestamp
-		value_0=${t_hex:0:2}
-		value_1=${t_hex:2:2}
-		value_2=${t_hex:4:2}
-		value_3=${t_hex:6:2}
-		value_4=${t_hex:8:2}
-		value_5=${t_hex:10:2}
+Generates time-ordered UUIDs with monotonic sequence handling.
+Uses filesystem-based counter on macOS and System V IPC on Linux for
+sequence management when generating multiple UUIDs within the same timestamp.
 
-		_uuidv7_sequence_counter=$(_uuidv7_sequencer)
+RFC 9562 UUIDv7 Bit Layout (128 bits total):
 
-		# version / sequence bits
-		value_6=$(printf "%02x" $((0x70 | ((sequence_counter >> 12) & 0x0F)))) # Version 7 in the high 4 bits
-		value_7=$(printf "%02x" $((sequence_counter >> 4 & 0xFF))) # Next 8 bits of sequence counter
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                           unix_ts_ms                          |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|          unix_ts_ms           |  ver  |       rand_a          |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|var|                        rand_b                             |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                            rand_b                             |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
-		# variant and sequence bits
-		value_8=$(printf "%02x" $((0x80 | ((sequence_counter & 0x0F))))) # Variant 10xx and last 4 bits of sequence counter
+Field Breakdown:
+- unix_ts_ms (bits 0-47):   48-bit Unix timestamp in milliseconds (big-endian)
+- ver (bits 48-51):         4-bit version field = 0111 (7)
+- rand_a (bits 52-63):      12-bit monotonic counter or random data  
+- var (bits 64-65):         2-bit variant field = 10
+- rand_b (bits 66-127):     62-bit random data
 
-		# rand_b
-		value_9=${rand_bytes:18:2}
-		value_10=${rand_bytes:20:2}
-		value_11=${rand_bytes:22:2}
-		value_12=${rand_bytes:24:2}
-		value_13=${rand_bytes:26:2}
-		value_14=${rand_bytes:28:2}
-		value_15=${rand_bytes:30:2}
+Implementation Notes:
+- We use rand_a as a 12-bit monotonic counter (0-4095) when same timestamp
+- Counter resets to random value in lower half (0-2047) on new timestamp
+- This ensures both uniqueness and time-based ordering for database performance
+--]]
 
-		case "$1" in
-			--hyphen|--hyphens|-)
-				echo "$value_0$value_1$value_2$value_3-$value_4$value_5-$value_6$value_7-$value_8$value_9-$value_10$value_11$value_12$value_13$value_14$value_15"
-				;;
-			*)
-				echo "$value_0$value_1$value_2$value_3$value_4$value_5$value_6$value_7$value_8$value_9$value_10$value_11$value_12$value_13$value_14$value_15"
-				;;
-		esac
-}
+-- FFI declarations for time, random, and file operations
+ffi.cdef[[
+	// Standard types
+	typedef long long int64_t;
+	typedef int int32_t;
+	
+	// Time structures and functions
+	struct timeval {
+		long tv_sec;
+		long tv_usec;
+	};
+	
+	struct timespec {
+		long tv_sec;
+		long tv_nsec;
+	};
+	
+	int gettimeofday(struct timeval *tv, void *tz);
+	int clock_gettime(int clk_id, struct timespec *tp);
+	
+	// Random number generation
+	int getrandom(void *buf, size_t buflen, unsigned int flags);
+	int getentropy(void *buf, size_t buflen);
+	
+	// File operations for filesystem counter (macOS)
+	typedef int mode_t;
+	typedef long off_t;
+	typedef unsigned long size_t;
+	typedef long ssize_t;
+	
+	int open(const char *pathname, int flags, mode_t mode);
+	int close(int fd);
+	ssize_t read(int fd, void *buf, size_t count);
+	ssize_t write(int fd, const void *buf, size_t count);
+	int unlink(const char *pathname);
+	off_t lseek(int fd, off_t offset, int whence);
+	int ftruncate(int fd, off_t length);
+	int flock(int fd, int operation);
+	int mkdir(const char *pathname, mode_t mode);
+	
+	// Memory mapping
+	void *mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset);
+	int munmap(void *addr, size_t length);
+	
+	// System V shared memory (more reliable on Linux)
+	typedef int key_t;
+	key_t ftok(const char *pathname, int proj_id);
+	int shmget(key_t key, size_t size, int shmflg);
+	void *shmat(int shmid, const void *shmaddr, int shmflg);
+	int shmdt(const void *shmaddr);
+	int shmctl(int shmid, int cmd, void *buf);
+	
+	// Error handling
+	char *strerror(int errnum);
+	int *__error(void);        // macOS errno location
+	int *__errno_location(void); // Linux errno location
+	
+	// Constants
+	static const int O_CREAT = 0x0200;
+	static const int O_RDWR = 0x0002;
+	static const int O_EXCL = 0x0800;
+	
+	static const int LOCK_EX = 2;   // Exclusive lock
+	static const int LOCK_UN = 8;   // Unlock
+	
+	static const int SEEK_SET = 0;
+	
+	static const int PROT_READ = 0x01;
+	static const int PROT_WRITE = 0x02;
+	static const int MAP_SHARED = 0x0001;
+	static const int MAP_FAILED = -1;
+	
+	static const int CLOCK_REALTIME = 0;
+	
+	// System V IPC constants
+	static const int IPC_CREAT = 01000;
+	static const int IPC_EXCL = 02000;
+	static const int IPC_RMID = 0;
+]]
 
-# Run the function if this script is executed directly
-if ! (return 0 2>/dev/null); then
-	# Check if we are running tests
-	if [ "$1" = "--test" ]; then
-		# Run tests from the test file
-		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+local C = ffi.C
+
+-- Detect OS
+local is_macos = jit.os == "OSX"
+local is_linux = jit.os == "Linux"
+
+-- Get errno in cross-platform way
+local function get_errno()
+	if is_macos then
+		return C.__error()[0]
 	else
-		# If called directly, pass all arguments to the function
-		$(basename "${0##\-}") "$@"
-	fi
-fi
+		return C.__errno_location()[0]
+	end
+end
+
+-- Get current time in nanoseconds since epoch
+local function get_nanotime()
+	if is_linux then
+		-- Use clock_gettime on Linux for nanosecond precision
+		local ts = ffi.new("struct timespec")
+		if C.clock_gettime(C.CLOCK_REALTIME, ts) == 0 then
+			return tonumber(ts.tv_sec) * 1000000000LL + tonumber(ts.tv_nsec)
+		end
+	end
+	-- Fall back to gettimeofday (microsecond precision)
+	local tv = ffi.new("struct timeval")
+	if C.gettimeofday(tv, nil) == 0 then
+		return tonumber(tv.tv_sec) * 1000000000LL + tonumber(tv.tv_usec) * 1000LL
+	end
+	-- Last resort: use Lua's os.time (second precision)
+	return os.time() * 1000000000LL
+end
+
+-- Get cryptographically secure random bytes
+local function get_random_bytes(count)
+	local buf = ffi.new("uint8_t[?]", count)
+	
+	-- Try getrandom (Linux)
+	if is_linux then
+		local success = pcall(function()
+			if C.getrandom(buf, count, 0) == count then
+				return true
+			end
+		end)
+		if success then
+			return buf
+		end
+	end
+	
+	-- Try getentropy (OpenBSD, newer macOS)
+	if count <= 256 then
+		local success = pcall(function()
+			if C.getentropy(buf, count) == 0 then
+				return true
+			end
+		end)
+		if success then
+			return buf
+		end
+	end
+	
+	-- Fall back to /dev/urandom
+	local f = io.open("/dev/urandom", "rb")
+	if f then
+		local data = f:read(count)
+		f:close()
+		if data and #data == count then
+			ffi.copy(buf, data, count)
+			return buf
+		end
+	end
+	
+	-- Last resort: use math.random (NOT cryptographically secure!)
+	math.randomseed(tonumber(get_nanotime()))
+	for i = 0, count - 1 do
+		buf[i] = math.random(0, 255)
+	end
+	return buf
+end
+
+-- Counter implementation
+local Counter = {}
+
+-- Filesystem-based counter for macOS
+-- Implements RFC 9562 monotonic counter using file locking in /tmp
+-- Stores timestamp:counter pairs to maintain sequence across process invocations
+local FsCounter = {}
+function FsCounter:new()
+	local obj = {
+		filepath = "/tmp/uuidv7-sequence",
+		fd = nil,
+		last_nanotime = 0,
+		sequence = 0  -- 12-bit counter (0-4095) stored in rand_a field
+	}
+	setmetatable(obj, {__index = self})
+	-- Ensure directory exists
+	C.mkdir("/tmp", 493)  -- 0755
+	return obj
+end
+
+function FsCounter:get_next(current_nanotime)
+	-- Check if we need to use persistent counter
+	-- Either time hasn't changed OR we have a static timestamp that might repeat
+	local use_persistent = false
+	
+	if current_nanotime == self.last_nanotime then
+		use_persistent = true
+	else
+		-- For new timestamps, check if the timestamp matches what's in the file
+		-- This handles the case where static timestamps are used across processes
+		self.fd = C.open(self.filepath, C.O_RDWR, 0)
+		if self.fd >= 0 then
+			C.flock(self.fd, C.LOCK_EX)
+			-- Read stored timestamp (we'll store both timestamp and counter)
+			C.lseek(self.fd, 0, C.SEEK_SET)
+			local buf = ffi.new("char[64]")
+			local bytes_read = C.read(self.fd, buf, 63)
+			if bytes_read > 0 then
+				buf[bytes_read] = 0
+				local content = ffi.string(buf)
+				local stored_nanotime, stored_sequence = content:match("(%d+):(%d+)")
+				if stored_nanotime and tonumber(stored_nanotime) == current_nanotime then
+					use_persistent = true
+					self.sequence = tonumber(stored_sequence) or 0
+				end
+			end
+			C.flock(self.fd, C.LOCK_UN)
+			C.close(self.fd)
+			self.fd = nil
+		end
+	end
+	
+	if use_persistent then
+		-- Open, lock, read, increment, write, unlock, close
+		self.fd = C.open(self.filepath, bit.bor(C.O_CREAT, C.O_RDWR), 438)  -- 0666
+		if self.fd < 0 then
+			-- Can't open file, just increment in-memory counter
+			self.sequence = (self.sequence + 1) % 4096
+			return self.sequence
+		end
+		
+		C.flock(self.fd, C.LOCK_EX)
+		
+		-- Read current value (format: timestamp:sequence)
+		C.lseek(self.fd, 0, C.SEEK_SET)
+		local buf = ffi.new("char[64]")
+		local bytes_read = C.read(self.fd, buf, 63)
+		local current_val = self.sequence
+		if bytes_read > 0 then
+			buf[bytes_read] = 0
+			local content = ffi.string(buf)
+			local stored_nanotime, stored_sequence = content:match("(%d+):(%d+)")
+			if stored_nanotime and stored_sequence then
+				if tonumber(stored_nanotime) == current_nanotime then
+					current_val = tonumber(stored_sequence) or 0
+				else
+					-- Different timestamp, reset sequence
+					current_val = 0
+				end
+			end
+		end
+		
+		-- Increment and write back with timestamp (12-bit counter)
+		current_val = (current_val + 1) % 4096
+		C.lseek(self.fd, 0, C.SEEK_SET)
+		C.ftruncate(self.fd, 0)
+		local content_str = tostring(current_nanotime) .. ":" .. tostring(current_val)
+		C.write(self.fd, content_str, #content_str)
+		
+		C.flock(self.fd, C.LOCK_UN)
+		C.close(self.fd)
+		self.fd = nil
+		
+		self.sequence = current_val
+	else
+		-- New time window, reset sequence with random start and store to file
+		local rand = get_random_bytes(2)
+		-- Start in first quarter of 12-bit space (0-1023)
+		self.sequence = bit.bor(rand[0], bit.lshift(rand[1], 8)) % 1024
+		self.last_nanotime = current_nanotime
+		
+		-- Store the new timestamp and sequence to file for future invocations
+		self.fd = C.open(self.filepath, bit.bor(C.O_CREAT, C.O_RDWR), 438)  -- 0666
+		if self.fd >= 0 then
+			C.flock(self.fd, C.LOCK_EX)
+			C.ftruncate(self.fd, 0)
+			local content_str = tostring(current_nanotime) .. ":" .. tostring(self.sequence)
+			C.write(self.fd, content_str, #content_str)
+			C.flock(self.fd, C.LOCK_UN)
+			C.close(self.fd)
+			self.fd = nil
+		end
+	end
+	
+	return self.sequence
+end
+
+-- System V shared memory counter for Linux  
+-- Implements RFC 9562 monotonic counter using System V IPC
+-- Stores timestamp:counter pairs in shared memory for cross-process synchronization
+local SysVCounter = {}
+function SysVCounter:new()
+	local obj = {
+		key = 0x75756964,  -- 'uuid' in hex, as IPC key
+		shmid = nil,
+		shm_ptr = nil,
+		last_nanotime = 0,
+		sequence = 0  -- 12-bit counter (0-4095) stored in rand_a field
+	}
+	setmetatable(obj, {__index = self})
+	return obj
+end
+
+function SysVCounter:get_next(current_nanotime)
+	-- Structure: timestamp (64 bits) + counter (32 bits) = 12 bytes
+	local shm_size = 12
+	
+	-- Get or create shared memory segment (0666 = 438 decimal)
+	local shmid = C.shmget(self.key, shm_size, bit.bor(C.IPC_CREAT, 438))
+	if shmid == -1 then
+		-- Can't use shared memory, fall back to random
+		local rand = get_random_bytes(1)
+		self.sequence = rand[0] % 64
+		return self.sequence
+	end
+	
+	-- Attach to shared memory
+	local ptr = C.shmat(shmid, nil, 0)
+	if ffi.cast("intptr_t", ptr) == -1 then
+		-- Can't attach, fall back to random
+		local rand = get_random_bytes(1)
+		self.sequence = rand[0] % 64
+		return self.sequence
+	end
+	
+	-- Cast to our structure: [timestamp:int64][counter:int32]
+	local timestamp_ptr = ffi.cast("int64_t*", ptr)
+	local counter_ptr = ffi.cast("int32_t*", ffi.cast("char*", ptr) + 8)
+	
+	local stored_timestamp = tonumber(timestamp_ptr[0])
+	local stored_counter = tonumber(counter_ptr[0])
+	
+	if stored_timestamp == current_nanotime then
+		-- Same timestamp: increment counter to maintain monotonicity
+		-- RFC 9562: rand_a field used as 12-bit monotonic counter (0-4095)
+		self.sequence = (stored_counter + 1) % 4096
+		counter_ptr[0] = self.sequence
+	else
+		-- New timestamp: reset counter with random start in lower half
+		-- RFC 9562: Counter can start with random value for unpredictability
+		local rand = get_random_bytes(2)
+		-- Start in first quarter of 12-bit space (0-1023) to allow room for increments
+		self.sequence = bit.bor(rand[0], bit.lshift(rand[1], 8)) % 1024
+		timestamp_ptr[0] = current_nanotime
+		counter_ptr[0] = self.sequence
+	end
+	
+	self.last_nanotime = current_nanotime
+	
+	-- Detach from shared memory
+	C.shmdt(ptr)
+	
+	return self.sequence
+end
+
+-- Select appropriate counter based on OS
+local counter
+if is_macos then
+	counter = FsCounter:new()
+else
+	counter = SysVCounter:new()  -- Use System V IPC on Linux
+end
+
+-- Generate UUIDv7
+local function generate_uuidv7(static_nanotime)
+	-- Get current time or use provided static time
+	local nanotime = static_nanotime or get_nanotime()
+	local ms = tonumber(nanotime / 1000000LL)  -- Convert to milliseconds
+	
+	-- Get sequence number (12-bit counter)
+	local sequence = counter:get_next(nanotime)
+	
+	-- Get random bytes for the random portion
+	local rand_bytes = get_random_bytes(8)
+	
+	-- Build the UUID according to RFC 9562 specification
+	local uuid = {}
+	
+	-- FIELD 1: unix_ts_ms (bits 0-47) - 48-bit Unix timestamp in milliseconds (big-endian)
+	-- Split ms into high and low 32-bit parts to handle 64-bit arithmetic
+	local ms_high = math.floor(ms / 4294967296) -- ms >> 32
+	local ms_low = ms % 4294967296              -- ms & 0xFFFFFFFF
+	
+	uuid[1] = bit.band(bit.rshift(ms_high, 8), 0xFF)  -- bits 47-40 (octet 0)
+	uuid[2] = bit.band(ms_high, 0xFF)                 -- bits 39-32 (octet 1) 
+	uuid[3] = bit.band(bit.rshift(ms_low, 24), 0xFF)  -- bits 31-24 (octet 2)
+	uuid[4] = bit.band(bit.rshift(ms_low, 16), 0xFF)  -- bits 23-16 (octet 3)
+	uuid[5] = bit.band(bit.rshift(ms_low, 8), 0xFF)   -- bits 15-8  (octet 4)
+	uuid[6] = bit.band(ms_low, 0xFF)                  -- bits 7-0   (octet 5)
+	
+	-- FIELD 2: ver (bits 48-51) + FIELD 3: rand_a (bits 52-63) 
+	-- Version = 0111 (7) + 12-bit monotonic counter in rand_a field
+	uuid[7] = bit.bor(0x70, bit.rshift(sequence, 8))  -- ver=0111 + sequence[11:8] (octet 6)
+	uuid[8] = bit.band(sequence, 0xFF)                -- sequence[7:0] (octet 7)
+	
+	-- FIELD 4: var (bits 64-65) + FIELD 5: rand_b (bits 66-127)
+	-- Variant = 10 + 62 bits of random data
+	uuid[9] = bit.bor(0x80, bit.band(rand_bytes[0], 0x3F))  -- var=10 + 6 random bits (octet 8)
+	
+	-- Remaining 56 bits of rand_b (octets 9-15)
+	for i = 1, 7 do
+		uuid[9 + i] = rand_bytes[i]
+	end
+	
+	return uuid
+end
+
+-- Format UUID as string
+local function format_uuid(uuid_bytes, with_hyphens)
+	local hex = {}
+	for i = 1, 16 do
+		hex[i] = string.format("%02x", uuid_bytes[i])
+	end
+	
+	if with_hyphens then
+		return table.concat(hex, "", 1, 4) .. "-" ..
+		       table.concat(hex, "", 5, 6) .. "-" ..
+		       table.concat(hex, "", 7, 8) .. "-" ..
+		       table.concat(hex, "", 9, 10) .. "-" ..
+		       table.concat(hex, "", 11, 16)
+	else
+		return table.concat(hex)
+	end
+end
+
+-- Show help
+local function show_help()
+	print([[
+uuidv7 - Generate RFC 9562 compliant UUIDv7
+
+Usage: uuidv7 [options] [nanoseconds-from-epoch]
+
+Options:
+  --hyphen, --hyphens, -     Output with hyphens (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)
+  -h, --help                  Show this help message
+  --test                      Run tests
+  --about                     Show brief description
+
+Arguments:
+  nanoseconds-from-epoch      Optional static timestamp for testing (as integer)
+
+Examples:
+  uuidv7                      Generate UUID without hyphens
+  uuidv7 --hyphen             Generate UUID with hyphens
+  uuidv7 -                    Generate UUID with hyphens (short form)
+  uuidv7 1234567890123456789  Generate UUID with static timestamp
+  uuidv7 --hyphen 1234567890123456789  Generate hyphenated UUID with static timestamp
+
+UUIDv7 features nanosecond-precision timestamps and sequential generation
+within the same time window for optimal database indexing performance.]])
+end
+
+-- Main
+local function main(args)
+	if #args == 0 then
+		-- Generate UUID without hyphens
+		local uuid = generate_uuidv7()
+		print(format_uuid(uuid, false))
+		return
+	end
+	
+	local arg1 = args[1]
+	local arg2 = args[2]
+	
+	-- Parse static timestamp if provided (last argument that's a number)
+	local static_nanotime = nil
+	local last_arg = args[#args]
+	if last_arg and tonumber(last_arg) then
+		static_nanotime = tonumber(last_arg)
+	end
+	
+	if arg1 == "-h" or arg1 == "--help" then
+		show_help()
+	elseif arg1 == "--about" or arg1 == "-a" then
+		print("Generate RFC 9562 compliant UUIDv7 with nanosecond precision")
+	elseif arg1 == "--test" then
+		os.execute("exec " .. os.getenv("HOME") .. "/dotfiles/bin/test/uuidv7_test")
+	elseif arg1 == "--hyphen" or arg1 == "--hyphens" or arg1 == "-" then
+		local uuid = generate_uuidv7(static_nanotime)
+		print(format_uuid(uuid, true))
+	elseif tonumber(arg1) then
+		-- First argument is a number, treat as static timestamp
+		local uuid = generate_uuidv7(tonumber(arg1))
+		print(format_uuid(uuid, false))
+	else
+		-- Unknown option, generate without hyphens
+		local uuid = generate_uuidv7(static_nanotime)
+		print(format_uuid(uuid, false))
+	end
+end
+
+-- Run if executed directly
+if arg then
+	main(arg)
+end

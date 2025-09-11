@@ -19,6 +19,10 @@ executables() {
 				echo "OPTIONS:"
 				echo "  --scripts    Only show script files"
 				echo "  --help       Show this help message"
+				echo "  -a, --about  Show brief description"
+				return 0 ;;
+			-a|--about)
+				echo "Print out the names of all executables available in your PATH"
 				return 0 ;;
 			*) warn "Unknown option: $1" >&2 ; return 1 ;;
 		esac

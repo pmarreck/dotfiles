@@ -287,9 +287,7 @@ Note: Consider using 'fs-counter' instead - it provides the same functionality
 end
 
 local function print_about()
-    print("posix-counter version 1.0")
-    print("Copyright (c) 2025, Peter Marreck")
-    print("Licensed under the MIT License")
+    print("Atomic counter using POSIX shared memory")
 end
 
 -- Main CLI dispatch

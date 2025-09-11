@@ -23,6 +23,7 @@ usage() {
 	echo
 	echo "Options:"
 	echo "  --help          Show this help message and exit"
+	echo "  --about         Show brief description"
 	echo "  --noprogress    Don't show progress during scanning"
 	echo "  --scanonly      Only scan for duplicates, don't ask to deduplicate"
 	echo "  --preconfirm    Automatically confirm deduplication"
@@ -80,6 +81,10 @@ while [[ $# -gt 0 ]]; do
 	case "$1" in
 		--help)
 			usage
+			;;
+		--about)
+			echo "Deduplicate files using APFS cloning to save disk space"
+			exit 0
 			;;
 		--noprogress)
 			SHOW_PROGRESS=false

@@ -12,7 +12,7 @@ _uuidv7_sequencer() {
 				_uuidv7_sequence_counter=0
 		fi
 	fi
-	_uuidv7_last_time_ms=$current_time_ms
+	_uuidv7_last_time_ms=$_uuidv7_current_time_ms
 	echo $_uuidv7_sequence_counter
 }
 

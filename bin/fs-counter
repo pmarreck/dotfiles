@@ -254,9 +254,7 @@ Examples:
 end
 
 local function print_about()
-    print("fs-counter version 1.0")
-    print("Copyright (c) 2025, Peter Marreck")
-    print("Licensed under the MIT License")
+    print("Atomic counter using filesystem-based locking")
 end
 
 -- Main execution

@@ -1,0 +1,196 @@
+#!/usr/bin/env bash
+
+tests=0
+fails=0
+
+# Source the assert function
+. "${HOME}/dotfiles/bin/src/truthy.sh"
+
+echo "Testing ask command..."
+
+# Test 1: Basic functionality with mocked response
+test_basic_functionality() {
+	((tests++))
+	echo "Testing basic ask functionality..."
+	
+	# Create a mock curl that simulates a successful response
+	mock_curl() {
+		local output_file
+		local status_code=200
+		
+		# Parse arguments to find output file
+		while [[ $# -gt 0 ]]; do
+			case $1 in
+				-o)
+					output_file="$2"
+					shift 2
+					;;
+				-w)
+					# Status code format - we'll output this last
+					shift
+					;;
+				*)
+					shift
+					;;
+			esac
+		done
+		
+		# Write mock response to output file
+		cat > "$output_file" << 'EOF'
+{
+	"choices": [
+		{
+			"message": {
+				"content": "Test response from mock API"
+			}
+		}
+	]
+}
+EOF
+		echo "$status_code"
+	}
+	
+	# Test with mocked curl
+	local result
+	result=$(CURL=mock_curl ask "test question" 2>&1)
+	local exit_code=$?
+	
+	if [[ $exit_code -eq 0 && "$result" =~ "Test response from mock API" ]]; then
+		echo "✓ Basic functionality test passed"
+	else
+		echo "✗ Basic functionality test failed" >&2
+		echo "Exit code: $exit_code" >&2
+		echo "Output: $result" >&2
+		((fails++))
+	fi
+}
+
+# Test 2: API key validation
+test_api_key_validation() {
+	((tests++))
+	echo "Testing API key validation..."
+	
+	# Test with empty API key
+	local result
+	result=$(OPENAI_API_KEY="" ask "test" 2>&1)
+	local exit_code=$?
+	
+	if [[ $exit_code -ne 0 ]]; then
+		echo "✓ API key validation test passed (correctly failed with empty key)"
+	else
+		echo "✗ API key validation test failed (should fail with empty key)" >&2
+		echo "Output: $result" >&2
+		((fails++))
+	fi
+}
+
+# Test 3: HTTP error handling
+test_http_error_handling() {
+	((tests++))
+	echo "Testing HTTP error handling..."
+	
+	# Create a mock curl that returns an error status
+	mock_curl_error() {
+		local output_file
+		
+		# Parse arguments to find output file
+		while [[ $# -gt 0 ]]; do
+			case $1 in
+				-o)
+					output_file="$2"
+					shift 2
+					;;
+				-w)
+					shift
+					;;
+				*)
+					shift
+					;;
+			esac
+		done
+		
+		# Write error response
+		cat > "$output_file" << 'EOF'
+{
+	"error": {
+		"message": "Invalid API key",
+		"type": "invalid_request_error"
+	}
+}
+EOF
+		echo "401"  # Return error status
+	}
+	
+	local result
+	result=$(CURL=mock_curl_error ask "test" 2>&1)
+	local exit_code=$?
+	
+	if [[ $exit_code -ne 0 && "$result" =~ "401" ]]; then
+		echo "✓ HTTP error handling test passed"
+	else
+		echo "✗ HTTP error handling test failed" >&2
+		echo "Exit code: $exit_code" >&2
+		echo "Output: $result" >&2
+		((fails++))
+	fi
+}
+
+# Test 4: Silent failure detection
+test_silent_failure_detection() {
+	((tests++))
+	echo "Testing silent failure detection..."
+	
+	# Create a mock curl that returns invalid JSON
+	mock_curl_invalid() {
+		local output_file
+		
+		while [[ $# -gt 0 ]]; do
+			case $1 in
+				-o)
+					output_file="$2"
+					shift 2
+					;;
+				-w)
+					shift
+					;;
+				*)
+					shift
+					;;
+			esac
+		done
+		
+		# Write invalid JSON
+		echo "invalid json response" > "$output_file"
+		echo "200"  # Return success status but with bad content
+	}
+	
+	local result
+	result=$(CURL=mock_curl_invalid ask "test" 2>&1)
+	local exit_code=$?
+	
+	# Should fail when JSON parsing fails
+	if [[ $exit_code -ne 0 || "$result" =~ "Error" ]]; then
+		echo "✓ Silent failure detection test passed"
+	else
+		echo "✗ Silent failure detection test failed (should detect bad JSON)" >&2
+		echo "Exit code: $exit_code" >&2
+		echo "Output: $result" >&2
+		((fails++))
+	fi
+}
+
+# Run all tests
+test_basic_functionality
+test_api_key_validation
+test_http_error_handling
+test_silent_failure_detection
+
+# Report results
+echo
+if [[ $fails -eq 0 ]]; then
+	echo "All $tests tests passed"
+else
+	echo "$fails of $tests tests failed" >&2
+fi
+
+exit $fails

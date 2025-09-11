@@ -271,9 +271,7 @@ DESTROY OUTPUT:
 end
 
 local function print_about()
-    print("sysv-counter version 1.0")
-    print("Copyright (c) 2025, Peter Marreck")
-    print("Licensed under the MIT License")
+    print("Atomic counter using System V IPC shared memory")
 end
 
 local function main()

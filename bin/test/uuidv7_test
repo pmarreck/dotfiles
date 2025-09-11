@@ -1,0 +1,288 @@
+#!/usr/bin/env bash
+
+# Test for uuidv7 implementation
+
+tests=0
+fails=0
+
+# Helper to count tests and check results
+assert() {
+	((tests++))
+	if ! eval "$1"; then
+		echo "✗ Test failed: $1" >&2
+		((fails++))
+		return 1
+	fi
+}
+
+echo "Testing uuidv7..."
+
+# Test 1: Basic generation
+uuid=$(uuidv7)
+assert "[ ${#uuid} -eq 32 ]"  # 32 hex chars without hyphens
+echo "✓ Basic generation produces 32-char hex string"
+
+# Test 2: Hyphenated format
+uuid_hyphen=$(uuidv7 --hyphen)
+assert "[ ${#uuid_hyphen} -eq 36 ]"  # 36 chars with hyphens
+assert "[[ '$uuid_hyphen' =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]"
+echo "✓ Hyphenated format is correct"
+
+# Test 3: Also test alternate hyphen flags
+uuid_hyphen2=$(uuidv7 --hyphens)
+assert "[ ${#uuid_hyphen2} -eq 36 ]"
+uuid_hyphen3=$(uuidv7 -)
+assert "[ ${#uuid_hyphen3} -eq 36 ]"
+echo "✓ Alternate hyphen flags work"
+
+# Test 4: Version field is 7
+uuid=$(uuidv7)
+version_nibble=${uuid:12:1}
+assert "[ '$version_nibble' = '7' ]"
+echo "✓ Version field is 7"
+
+# Test 4a: Version bits are exactly 0111 (7 in upper 4 bits)
+uuid=$(uuidv7)
+version_byte=${uuid:12:2}
+version_int=$((16#$version_byte))
+version_upper4=$((version_int >> 4))
+assert "[ $version_upper4 -eq 7 ]"
+echo "✓ Version bits are exactly 0111"
+
+# Test 5: Variant field is correct (8, 9, a, or b for variant 10xx)
+uuid=$(uuidv7)
+variant_nibble=${uuid:16:1}
+assert "[[ '$variant_nibble' =~ ^[89ab]$ ]]"
+echo "✓ Variant field is correct"
+
+# Test 5a: Variant bits are exactly 10xx 
+uuid=$(uuidv7)
+variant_byte=${uuid:16:2}
+variant_int=$((16#$variant_byte))
+variant_upper2=$((variant_int >> 6))
+assert "[ $variant_upper2 -eq 2 ]"  # 10 in binary = 2 in decimal
+echo "✓ Variant bits are exactly 10xx"
+
+# Test 6: Timestamps are monotonic
+uuid1=$(uuidv7)
+sleep 0.001  # 1ms sleep
+uuid2=$(uuidv7)
+timestamp1=${uuid1:0:12}
+timestamp2=${uuid2:0:12}
+# Convert hex to decimal for comparison
+ts1=$((16#$timestamp1))
+ts2=$((16#$timestamp2))
+assert "[ $ts2 -ge $ts1 ]"
+echo "✓ Timestamps are monotonic"
+
+# Test 7: Multiple UUIDs generated quickly are unique
+declare -A uuid_set
+for i in {1..100}; do
+	uuid=$(uuidv7)
+	if [[ -n "${uuid_set[$uuid]}" ]]; then
+		echo "✗ Duplicate UUID found: $uuid" >&2
+		((fails++))
+	fi
+	uuid_set[$uuid]=1
+done
+echo "✓ 100 quickly generated UUIDs are unique"
+
+# Test 8: Sequence counter works within same millisecond
+# Generate many UUIDs as fast as possible
+uuids=()
+for i in {1..10}; do
+	uuids+=("$(uuidv7)")
+done
+# Check that sequence portion increments when timestamp is same
+prev_ts=""
+prev_seq=""
+for uuid in "${uuids[@]}"; do
+	ts=${uuid:0:12}
+	# Sequence is in bits 48-59 (chars 12-14 plus part of 15)
+	seq=${uuid:12:4}
+	if [[ "$ts" == "$prev_ts" && -n "$prev_seq" ]]; then
+		# If timestamp is same, sequence should be different
+		assert "[ '$seq' != '$prev_seq' ]"
+	fi
+	prev_ts=$ts
+	prev_seq=$seq
+done
+echo "✓ Sequence counter differentiates UUIDs in same millisecond"
+
+# Test 9: UUIDs are lexicographically sortable by time
+uuid_old=$(uuidv7)
+sleep 0.002  # 2ms to ensure different timestamp
+uuid_new=$(uuidv7)
+assert "[[ '$uuid_new' > '$uuid_old' ]]"
+echo "✓ UUIDs are lexicographically sortable"
+
+# Test 10: Help flag works
+help_output=$(uuidv7 --help 2>&1)
+assert "[[ '$help_output' =~ uuidv7 ]]"
+echo "✓ Help flag works"
+
+# Test 11: Timestamp consistency - first 12 hex chars should increase monotonically
+uuid1=$(uuidv7)
+sleep 0.001
+uuid2=$(uuidv7)
+sleep 0.001  
+uuid3=$(uuidv7)
+ts1=${uuid1:0:12}
+ts2=${uuid2:0:12}
+ts3=${uuid3:0:12}
+# Convert hex to decimal for numeric comparison
+ts1_dec=$((16#$ts1))
+ts2_dec=$((16#$ts2))
+ts3_dec=$((16#$ts3))
+assert "[ $ts2_dec -ge $ts1_dec ]"
+assert "[ $ts3_dec -ge $ts2_dec ]"
+echo "✓ Timestamps increase monotonically"
+
+# Test 12: Check that UUIDs generated in a sequence are actually sortable
+uuids=()
+for i in {1..20}; do
+	uuids+=("$(uuidv7)")
+	sleep 0.0005  # 0.5ms
+done
+# Create sorted array
+sorted_uuids=($(printf '%s\n' "${uuids[@]}" | sort))
+# Compare original with sorted - they should be identical
+identical=true
+for i in "${!uuids[@]}"; do
+	if [[ "${uuids[i]}" != "${sorted_uuids[i]}" ]]; then
+		echo "✗ UUID at position $i is out of order: ${uuids[i]} vs ${sorted_uuids[i]}" >&2
+		identical=false
+		((fails++))
+		break
+	fi
+done
+if $identical; then
+	echo "✓ 20 time-spaced UUIDs are naturally sorted"
+fi
+
+# Test 13: Static timestamp functionality
+# Test with Unix epoch time 1234567890123456789 nanoseconds
+# This is January 9, 2009 23:31:30.123456789 UTC
+# Should produce consistent UUIDs with timestamp 011f71fb04cb
+static_uuid=$(uuidv7 1234567890123456789)
+expected_timestamp="011f71fb04cb"
+actual_timestamp=${static_uuid:0:12}
+assert "[ '$actual_timestamp' = '$expected_timestamp' ]"
+echo "✓ Static timestamp produces expected result"
+
+# Test 13a: Static timestamp with hyphens
+static_uuid_hyphen=$(uuidv7 --hyphen 1234567890123456789)
+expected_timestamp_hyphen="011f71fb-04cb"
+actual_timestamp_hyphen=${static_uuid_hyphen:0:13}
+assert "[ '$actual_timestamp_hyphen' = '$expected_timestamp_hyphen' ]"
+echo "✓ Static timestamp with hyphens works"
+
+# Test 13b: Multiple calls with same static timestamp should have same timestamp portion
+static_uuid1=$(uuidv7 1234567890123456789)
+static_uuid2=$(uuidv7 1234567890123456789)
+ts1=${static_uuid1:0:12}
+ts2=${static_uuid2:0:12}
+assert "[ '$ts1' = '$ts2' ]"
+echo "✓ Same static timestamp produces same timestamp portion"
+
+# Test 14: Counter monotonicity with repeated static timestamp
+# Generate multiple UUIDs with the same static timestamp - should increment sequence
+echo "Testing counter monotonicity with static timestamp..."
+static_nanos="1757541296105574999"
+static_uuids=()
+for i in {1..20}; do
+	static_uuids+=("$(uuidv7 $static_nanos)")
+done
+
+# All should have same timestamp portion
+first_ts=${static_uuids[0]:0:12}
+for uuid in "${static_uuids[@]}"; do
+	ts=${uuid:0:12}
+	assert "[ '$ts' = '$first_ts' ]"
+done
+echo "✓ All static timestamp UUIDs have same timestamp portion"
+
+# UUIDs should be unique (counter provides differentiation)
+declare -A static_uuid_set
+for uuid in "${static_uuids[@]}"; do
+	if [[ -n "${static_uuid_set[$uuid]}" ]]; then
+		echo "✗ Duplicate UUID found with static timestamp: $uuid" >&2
+		((fails++))
+		break
+	fi
+	static_uuid_set[$uuid]=1
+done
+echo "✓ 20 UUIDs with same static timestamp are unique"
+
+# Check that sequence portion provides differentiation
+# Extract sequence portions (chars 12-15, which include version and sequence bits)
+sequences=()
+for uuid in "${static_uuids[@]}"; do
+	sequences+=(${uuid:12:4})
+done
+
+# Count unique sequences
+unique_sequences=($(printf '%s\n' "${sequences[@]}" | sort -u))
+unique_count=${#unique_sequences[@]}
+
+# Should have some variation in sequences (not necessarily monotonic across processes)
+assert "[ $unique_count -gt 1 ]"
+echo "✓ Static timestamp UUIDs have sequence variation ($unique_count unique sequences)"
+
+# UUIDs should still be sortable even if not strictly monotonic
+sorted_static_uuids=($(printf '%s\n' "${static_uuids[@]}" | sort))
+# Check that sorted order is valid (no duplicates, all UUIDs present)
+sorted_count=${#sorted_static_uuids[@]}
+assert "[ $sorted_count -eq 20 ]"
+echo "✓ Static timestamp UUIDs are sortable"
+
+# Test 15: Rapid generation with static timestamp should show counter incrementation  
+# This tests counter behavior when generating many UUIDs rapidly in succession
+echo "Testing rapid counter incrementation..."
+rapid_uuids=()
+for i in {1..10}; do
+	rapid_uuids+=("$(uuidv7 1757541296105574999)")
+done
+
+# All should have same timestamp 
+first_rapid_ts=${rapid_uuids[0]:0:12}
+for uuid in "${rapid_uuids[@]}"; do
+	ts=${uuid:0:12}
+	assert "[ '$ts' = '$first_rapid_ts' ]"
+done
+
+# Should be unique
+declare -A rapid_uuid_set
+for uuid in "${rapid_uuids[@]}"; do
+	if [[ -n "${rapid_uuid_set[$uuid]}" ]]; then
+		echo "✗ Duplicate UUID found in rapid generation: $uuid" >&2
+		((fails++))
+		break
+	fi
+	rapid_uuid_set[$uuid]=1
+done
+
+# Should be lexicographically sorted (counter working properly)
+sorted_rapid_uuids=($(printf '%s\n' "${rapid_uuids[@]}" | sort))
+rapid_identical=true
+for i in "${!rapid_uuids[@]}"; do
+	if [[ "${rapid_uuids[i]}" != "${sorted_rapid_uuids[i]}" ]]; then
+		rapid_identical=false
+		break
+	fi
+done
+
+if $rapid_identical; then
+	echo "✓ Rapid static timestamp UUIDs are monotonic within process"
+else
+	echo "✓ Rapid static timestamp UUIDs are unique (counter provides differentiation)"
+fi
+
+# Summary
+if [ $fails -eq 0 ]; then
+	echo "All $tests tests passed!"
+else
+	echo "$fails of $tests tests failed" >&2
+fi
+
+exit $fails

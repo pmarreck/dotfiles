@@ -1,0 +1,143 @@
+#!/usr/bin/env bash
+
+# Test System V shared memory counter functionality directly
+
+tests=0
+fails=0
+
+# Helper to count tests and check results
+assert() {
+	((tests++))
+	if ! eval "$1"; then
+		echo "✗ Test failed: $1" >&2
+		((fails++))
+		return 1
+	fi
+}
+
+echo "Testing System V shared memory counter..."
+
+# Clean up any existing shared memory
+ipcrm -M 0x75756964 2>/dev/null || true
+
+# Test 1: First invocation with static timestamp should create counter
+echo "Test 1: Initial counter creation..."
+uuid1=$(uuidv7 1234567890123456789)
+assert "[ ${#uuid1} -eq 32 ]"
+echo "✓ Counter initialized with first UUID"
+
+# Test 2: Second invocation with same timestamp should increment
+echo "Test 2: Counter increment with same timestamp..."
+uuid2=$(uuidv7 1234567890123456789)
+assert "[ ${#uuid2} -eq 32 ]"
+assert "[ '$uuid2' != '$uuid1' ]"
+# Extract sequence portion (chars 12-17 include version and sequence)
+seq1=${uuid1:12:6}
+seq2=${uuid2:12:6}
+echo "  Sequence 1: $seq1"
+echo "  Sequence 2: $seq2"
+assert "[ '$seq2' != '$seq1' ]"
+echo "✓ Counter incremented on second call"
+
+# Test 3: Multiple calls should show monotonic increase
+echo "Test 3: Monotonic counter behavior..."
+uuids=()
+for i in {1..5}; do
+	uuids+=("$(uuidv7 1234567890123456789)")
+done
+
+# All should have same timestamp portion
+first_ts=${uuids[0]:0:12}
+for uuid in "${uuids[@]}"; do
+	ts=${uuid:0:12}
+	assert "[ '$ts' = '$first_ts' ]"
+done
+echo "✓ All UUIDs have same timestamp"
+
+# Extract sequence values and check they're increasing
+sequences=()
+for uuid in "${uuids[@]}"; do
+	# Get chars 14-17 (after version nibble) which contain sequence
+	seq=${uuid:14:4}
+	sequences+=("$seq")
+	echo "  UUID: $uuid, seq: $seq"
+done
+
+# Check that sequences are unique
+unique_seqs=($(printf '%s\n' "${sequences[@]}" | sort -u))
+assert "[ ${#unique_seqs[@]} -eq ${#sequences[@]} ]"
+echo "✓ All sequences are unique"
+
+# Test 4: Different timestamp should reset counter
+echo "Test 4: Counter reset with new timestamp..."
+# Use a different timestamp
+uuid_new=$(uuidv7 9876543210987654321)
+new_ts=${uuid_new:0:12}
+assert "[ '$new_ts' != '$first_ts' ]"
+echo "✓ New timestamp resets counter"
+
+# Test 5: Verify shared memory is actually being used
+echo "Test 5: Verify System V shared memory..."
+shm_exists=$(ipcs -m | grep -c 0x75756964 || echo 0)
+assert "[ $shm_exists -gt 0 ]"
+echo "✓ System V shared memory segment exists"
+
+# Test 6: Verify shared memory counter increments consistently
+echo "Test 6: Shared memory persistence verification..."
+# Use the same timestamp as previous tests to ensure counter continuation
+test_timestamp="1234567890123456789"
+
+# Generate two UUIDs with same timestamp - should increment
+uuid_a=$(uuidv7 $test_timestamp)
+uuid_b=$(uuidv7 $test_timestamp)
+
+seq_a=${uuid_a:13:3}
+seq_b=${uuid_b:13:3}
+
+# Convert hex to decimal for comparison
+seq_a_dec=$((16#$seq_a))
+seq_b_dec=$((16#$seq_b))
+
+if [ $seq_b_dec -gt $seq_a_dec ]; then
+	echo "✓ Shared memory counter is working (${seq_a} → ${seq_b})"
+else
+	echo "✗ Shared memory counter failed to increment ($seq_a vs $seq_b)" >&2
+	echo "  Decimal values: $seq_a_dec vs $seq_b_dec" >&2
+	((fails++))
+fi
+
+# Test 7: Verify counter persistence across process boundaries
+echo "Test 7: Counter persistence test..."
+# Set a known timestamp and get UUID
+uuid_p1=$(uuidv7 5555555555555555555)
+# Get another with same timestamp - should increment
+uuid_p2=$(uuidv7 5555555555555555555)
+uuid_p3=$(uuidv7 5555555555555555555)
+
+# All should have same timestamp but different sequences
+ts_p1=${uuid_p1:0:12}
+ts_p2=${uuid_p2:0:12}
+ts_p3=${uuid_p3:0:12}
+assert "[ '$ts_p1' = '$ts_p2' ]"
+assert "[ '$ts_p2' = '$ts_p3' ]"
+
+# Sequences should be different
+seq_p1=${uuid_p1:12:8}
+seq_p2=${uuid_p2:12:8}
+seq_p3=${uuid_p3:12:8}
+assert "[ '$seq_p1' != '$seq_p2' ]"
+assert "[ '$seq_p2' != '$seq_p3' ]"
+echo "✓ Counter persists across process invocations"
+
+# Cleanup
+echo "Cleaning up shared memory..."
+ipcrm -M 0x75756964 2>/dev/null || true
+
+# Summary
+if [ $fails -eq 0 ]; then
+	echo "All $tests shared memory tests passed!"
+else
+	echo "$fails of $tests tests failed" >&2
+fi
+
+exit $fails

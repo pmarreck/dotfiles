@@ -19,7 +19,12 @@ case "$1" in
 		echo ""
 		echo "Options:"
 		echo "  -h, --help    Show this help message"
+		echo "  -a, --about   Show brief description"
 		echo "  --test        Run tests"
+		exit 0
+		;;
+	-a|--about)
+		echo "Align text on equal signs for configuration-style output"
 		exit 0
 		;;
 	--test)
