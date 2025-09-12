@@ -76,7 +76,7 @@ if truthy RUN_DOTFILE_TESTS; then
   else
     echo "Running dotfile tests silently..."
     export TEST_VERBOSE=false
-    export EXPAND_TEST_VERBOSE=false
+    export GLOB_TEST_VERBOSE=false
   fi
 else
   if truthy DEBUG_SHELLCONFIG; then

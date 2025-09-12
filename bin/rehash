@@ -5,7 +5,7 @@ rehash() {
 	# Skip all tests and hooks during rehash
 	export SKIP_DOTFILE_TESTS=true
 	export TEST_VERBOSE=false
-	export EXPAND_TEST_VERBOSE=false
+	export GLOB_TEST_VERBOSE=false
 	
 	# Save current environment settings
 	local OLD_LAST_DOTFILE_RUN="${LAST_DOTFILE_RUN:-}"

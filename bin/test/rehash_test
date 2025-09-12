@@ -5,7 +5,7 @@ test_rehash() {
   # Save the current environment state
   local old_skip_dotfile_tests="$SKIP_DOTFILE_TESTS"
   local old_test_verbose="$TEST_VERBOSE"
-  local old_expand_test_verbose="$EXPAND_TEST_VERBOSE"
+  local old_expand_test_verbose="$GLOB_TEST_VERBOSE"
   local old_last_dotfile_run="$LAST_DOTFILE_RUN"
   
   # Set a test value for LAST_DOTFILE_RUN
@@ -23,7 +23,7 @@ test_rehash() {
   # Restore the environment
   export SKIP_DOTFILE_TESTS="$old_skip_dotfile_tests"
   export TEST_VERBOSE="$old_test_verbose"
-  export EXPAND_TEST_VERBOSE="$old_expand_test_verbose"
+  export GLOB_TEST_VERBOSE="$old_expand_test_verbose"
   export LAST_DOTFILE_RUN="$old_last_dotfile_run"
 }
 

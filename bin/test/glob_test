@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 
-source $HOME/dotfiles/bin/expand
+source $HOME/dotfiles/bin/glob
 
-test_expand() {
+test_glob() {
   local fails=0
   local tests=0
   local output
@@ -14,9 +14,9 @@ test_expand() {
   (( tests++ ))
   # Create test files for this test
   touch test1.jpg test2.jpg "test with spaces.jpg"
-  output=$(expand "test*.jpg" 2>/dev/null)
+  output=$(glob "test*.jpg" 2>/dev/null)
   expected_files=$'test with spaces.jpg\ntest1.jpg\ntest2.jpg'
-  assert "$output" == "$expected_files" "expand should expand glob patterns correctly"
+  assert "$output" == "$expected_files" "glob should glob glob patterns correctly"
   (( fails += $? ))
   # Clean up test files
   rm -f test1.jpg test2.jpg "test with spaces.jpg"
@@ -25,9 +25,9 @@ test_expand() {
   (( tests++ ))
   # Create test files for this test
   touch test1.jpg test2.jpg "test with spaces.jpg"
-  output=$(expand echo "test*.jpg" 2>/dev/null)
+  output=$(glob echo "test*.jpg" 2>/dev/null)
   expected_files="test with spaces.jpg test1.jpg test2.jpg"
-  assert "$output" == "$expected_files" "expand should execute commands with expanded arguments"
+  assert "$output" == "$expected_files" "glob should execute commands with globed arguments"
   (( fails += $? ))
   # Clean up test files
   rm -f test1.jpg test2.jpg "test with spaces.jpg"
@@ -37,10 +37,10 @@ test_expand() {
   # Create test files for this test
   touch test1.jpg test2.jpg "test with spaces.jpg"
   # For this test, we expect test1.jpg to appear twice, once from direct arg and once from expansion
-  output=$(expand echo "test1.jpg" "test*.jpg" 2>/dev/null)
+  output=$(glob echo "test1.jpg" "test*.jpg" 2>/dev/null)
   # Expected output is the sorted list of files with test1.jpg appearing twice
   expected_files="test with spaces.jpg test1.jpg test1.jpg test2.jpg"
-  assert "$output" == "$expected_files" "expand should handle multiple arguments correctly"
+  assert "$output" == "$expected_files" "glob should handle multiple arguments correctly"
   (( fails += $? ))
   # Clean up test files
   rm -f test1.jpg test2.jpg "test with spaces.jpg"
@@ -49,39 +49,39 @@ test_expand() {
   (( tests++ ))
   # Create test file for this test
   touch "test with spaces.jpg"
-  output=$(expand "test with*.jpg" 2>/dev/null)
-  assert "$output" == "test with spaces.jpg" "expand should handle patterns with spaces"
+  output=$(glob "test with*.jpg" 2>/dev/null)
+  assert "$output" == "test with spaces.jpg" "glob should handle patterns with spaces"
   (( fails += $? ))
   # Clean up test file
   rm -f "test with spaces.jpg"
 
   # Test 5: Non-matching pattern (new behavior: empty result)
   (( tests++ ))
-  output=$(expand "nonexistent*.jpg" 2>/dev/null)
-  assert "$output" == "" "expand should return empty result when no matches are found"
+  output=$(glob "nonexistent*.jpg" 2>/dev/null)
+  assert "$output" == "" "glob should return empty result when no matches are found"
   (( fails += $? ))
 
   # Test 5b: Non-matching pattern exit code
   (( tests++ ))
-  expand "nonexistent*.jpg" >/dev/null 2>&1
+  glob "nonexistent*.jpg" >/dev/null 2>&1
   exit_code=$?
-  assert "$exit_code" == "1" "expand should return exit code 1 when no matches are found"
+  assert "$exit_code" == "1" "glob should return exit code 1 when no matches are found"
   (( fails += $? ))
 
   # Test 6: Command with non-matching pattern (should execute command with no args)
   (( tests++ ))
-  output=$(expand echo "nonexistent*.jpg" 2>/dev/null)
-  assert "$output" == "" "expand should execute command with no arguments when no patterns match"
+  output=$(glob echo "nonexistent*.jpg" 2>/dev/null)
+  assert "$output" == "" "glob should execute command with no arguments when no patterns match"
   (( fails += $? ))
 
   # Test 7: Command with options
   (( tests++ ))
   # Create test files for this test
   touch test1.jpg test2.jpg "test with spaces.jpg"
-  output=$(expand echo -n "test*.jpg" 2>/dev/null)
+  output=$(glob echo -n "test*.jpg" 2>/dev/null)
   # The -n option should be passed through
   expected_files="test with spaces.jpg test1.jpg test2.jpg"
-  assert "$output" == "$expected_files" "expand should pass options to commands"
+  assert "$output" == "$expected_files" "glob should pass options to commands"
   (( fails += $? ))
   # Clean up test files
   rm -f test1.jpg test2.jpg "test with spaces.jpg"
@@ -90,9 +90,9 @@ test_expand() {
   (( tests++ ))
   # Create diverse files to test sorting
   touch aafirst.jpg "test with spaces.jpg" test1.jpg test2.jpg zzlast.jpg
-  output=$(expand "*.jpg" 2>/dev/null)
+  output=$(glob "*.jpg" 2>/dev/null)
   expected_files=$'aafirst.jpg\ntest with spaces.jpg\ntest1.jpg\ntest2.jpg\nzzlast.jpg'
-  assert "$output" == "$expected_files" "expand should sort filenames correctly"
+  assert "$output" == "$expected_files" "glob should sort filenames correctly"
   (( fails += $? ))
   # Clean up test files
   rm -f aafirst.jpg "test with spaces.jpg" test1.jpg test2.jpg zzlast.jpg
@@ -101,9 +101,9 @@ test_expand() {
   (( tests++ ))
   # Create diverse files to test sorting with multiple patterns
   touch aafirst.jpg "test with spaces.jpg" test1.jpg test2.jpg zzlast.jpg
-  output=$(expand echo "a*.jpg" "t*.jpg" "z*.jpg" 2>/dev/null)
+  output=$(glob echo "a*.jpg" "t*.jpg" "z*.jpg" 2>/dev/null)
   expected_files="aafirst.jpg test with spaces.jpg test1.jpg test2.jpg zzlast.jpg"
-  assert "$output" == "$expected_files" "expand should handle multiple patterns and sort correctly"
+  assert "$output" == "$expected_files" "glob should handle multiple patterns and sort correctly"
   (( fails += $? ))
   # Clean up test files
   rm -f aafirst.jpg "test with spaces.jpg" test1.jpg test2.jpg zzlast.jpg
@@ -121,10 +121,10 @@ test_expand() {
   
   # Test with ls command and nullglob enabled
   # When nullglob is set, non-matching patterns should be removed completely
-  output=$(expand ls "nonexistent*.jpg" "a*.jpg" 2>/dev/null)
+  output=$(glob ls "nonexistent*.jpg" "a*.jpg" 2>/dev/null)
   # Should only include aafirst.jpg, not the nonexistent pattern
   expected_files="aafirst.jpg"
-  assert "$output" == "$expected_files" "expand should respect nullglob setting (enabled)"
+  assert "$output" == "$expected_files" "glob should respect nullglob setting (enabled)"
   (( fails += $? ))
   
   # Restore original nullglob setting
@@ -143,18 +143,18 @@ test_expand() {
   
   # Enable dotglob
   shopt -s dotglob
-  output=$(expand "*.jpg" 2>/dev/null)
+  output=$(glob "*.jpg" 2>/dev/null)
   # Should include the hidden file
   expected_files=$'.hidden.jpg\naafirst.jpg\ntest with spaces.jpg\ntest1.jpg\ntest2.jpg\nzzlast.jpg'
-  assert "$output" == "$expected_files" "expand should respect dotglob setting (enabled)"
+  assert "$output" == "$expected_files" "glob should respect dotglob setting (enabled)"
   (( fails += $? ))
   
   # Disable dotglob
   shopt -u dotglob
-  output=$(expand "*.jpg" 2>/dev/null)
+  output=$(glob "*.jpg" 2>/dev/null)
   # Should NOT include the hidden file
   expected_files=$'aafirst.jpg\ntest with spaces.jpg\ntest1.jpg\ntest2.jpg\nzzlast.jpg'
-  assert "$output" == "$expected_files" "expand should respect dotglob setting (disabled)"
+  assert "$output" == "$expected_files" "glob should respect dotglob setting (disabled)"
   (( fails += $? ))
   
   # Restore original dotglob setting
@@ -171,9 +171,9 @@ test_expand() {
   touch subdir1/nested1.jpg subdir1/subdir2/nested2.jpg
   
   # Test recursive globbing
-  output=$(expand "**/*.jpg" 2>/dev/null)
+  output=$(glob "**/*.jpg" 2>/dev/null)
   expected_files=$'aafirst.jpg\nsubdir1/nested1.jpg\nsubdir1/subdir2/nested2.jpg\ntest with spaces.jpg\ntest1.jpg\ntest2.jpg\nzzlast.jpg'
-  assert "$output" == "$expected_files" "expand should handle recursive ** patterns"
+  assert "$output" == "$expected_files" "glob should handle recursive ** patterns"
   (( fails += $? ))
   # Clean up test files and directories
   rm -f aafirst.jpg "test with spaces.jpg" test1.jpg test2.jpg zzlast.jpg
@@ -191,9 +191,9 @@ test_expand() {
   
   # Disable globbing
   set -f
-  output=$(expand "**/*.jpg" 2>/dev/null)
+  output=$(glob "**/*.jpg" 2>/dev/null)
   expected_files=$'aafirst.jpg\nsubdir1/nested1.jpg\nsubdir1/subdir2/nested2.jpg\ntest with spaces.jpg\ntest1.jpg\ntest2.jpg\nzzlast.jpg'
-  assert "$output" == "$expected_files" "expand should handle recursive ** patterns with globbing disabled"
+  assert "$output" == "$expected_files" "glob should handle recursive ** patterns with globbing disabled"
   (( fails += $? ))
   
   # Restore original noglob setting
@@ -208,9 +208,9 @@ test_expand() {
   mkdir -p subdir1/subdir2
   touch aafirst.jpg "test with spaces.jpg" test1.jpg test2.jpg zzlast.jpg
   touch subdir1/nested1.jpg subdir1/subdir2/nested2.jpg
-  output=$(expand echo "**/*.jpg" 2>/dev/null)
+  output=$(glob echo "**/*.jpg" 2>/dev/null)
   expected_files="aafirst.jpg subdir1/nested1.jpg subdir1/subdir2/nested2.jpg test with spaces.jpg test1.jpg test2.jpg zzlast.jpg"
-  assert "$output" == "$expected_files" "expand should execute commands with recursive ** patterns"
+  assert "$output" == "$expected_files" "glob should execute commands with recursive ** patterns"
   (( fails += $? ))
   # Clean up test files and directories
   rm -f aafirst.jpg "test with spaces.jpg" test1.jpg test2.jpg zzlast.jpg
@@ -226,10 +226,10 @@ test_expand() {
   shopt -s nullglob
   # Test with a non-matching recursive pattern and command mode
   # When nullglob is set, non-matching patterns should be removed completely
-  output=$(expand ls "**/nonexistent*.jpg" 2>/dev/null)
+  output=$(glob ls "**/nonexistent*.jpg" 2>/dev/null)
   # Should be empty with nullglob
   expected_files=""
-  assert "$output" == "$expected_files" "expand should respect nullglob with recursive patterns"
+  assert "$output" == "$expected_files" "glob should respect nullglob with recursive patterns"
   (( fails += $? ))
   
   # Restore original nullglob setting
@@ -241,30 +241,30 @@ test_expand() {
   touch "Test.JPG" "test.Jpg" "TEST.jpg" "other.png" "test with spaces.jpg" "test1.jpg" "test2.jpg"
   
   # Test without ignore-case flag (should only match exact case)
-  output=$(expand "test*.jpg" 2>/dev/null)
+  output=$(glob "test*.jpg" 2>/dev/null)
   expected_files=$'test with spaces.jpg\ntest1.jpg\ntest2.jpg'
-  assert "$output" == "$expected_files" "expand should be case-sensitive by default"
+  assert "$output" == "$expected_files" "glob should be case-sensitive by default"
   (( fails += $? ))
   
   # Test with --ignore-case flag (should match all case variations)
   (( tests++ ))
-  output=$(expand --ignore-case "test*.jpg" 2>/dev/null)
+  output=$(glob --ignore-case "test*.jpg" 2>/dev/null)
   expected_files=$'TEST.jpg\nTest.JPG\ntest with spaces.jpg\ntest.Jpg\ntest1.jpg\ntest2.jpg'
-  assert "$output" == "$expected_files" "expand should match case-insensitively with --ignore-case"
+  assert "$output" == "$expected_files" "glob should match case-insensitively with --ignore-case"
   (( fails += $? ))
   
   # Test 18: Case-insensitive matching with -i (shorthand)
   (( tests++ ))
-  output=$(expand -i "test*.jpg" 2>/dev/null)
+  output=$(glob -i "test*.jpg" 2>/dev/null)
   expected_files=$'TEST.jpg\nTest.JPG\ntest with spaces.jpg\ntest.Jpg\ntest1.jpg\ntest2.jpg'
-  assert "$output" == "$expected_files" "expand should match case-insensitively with -i shorthand"
+  assert "$output" == "$expected_files" "glob should match case-insensitively with -i shorthand"
   (( fails += $? ))
   
   # Test 19: Case-insensitive with command execution
   (( tests++ ))
-  output=$(expand -i echo "test*.jpg" 2>/dev/null)
+  output=$(glob -i echo "test*.jpg" 2>/dev/null)
   expected_files="TEST.jpg Test.JPG test with spaces.jpg test.Jpg test1.jpg test2.jpg"
-  assert "$output" == "$expected_files" "expand should execute commands with case-insensitive matching"
+  assert "$output" == "$expected_files" "glob should execute commands with case-insensitive matching"
   (( fails += $? ))
   
   # Clean up case-insensitive test files
@@ -274,27 +274,27 @@ test_expand() {
   (( tests++ ))
   # Create test files for this test
   touch test1.jpg test2.jpg
-  output=$(expand "test1.jpg" "nonexistent*.jpg" "test2.jpg" 2>/dev/null)
+  output=$(glob "test1.jpg" "nonexistent*.jpg" "test2.jpg" 2>/dev/null)
   expected_files=$'test1.jpg\\ntest2.jpg'
-  assert "$output" == "$expected_files" "expand should include only matching patterns, skip non-matching ones"
+  assert "$output" == "$expected_files" "glob should include only matching patterns, skip non-matching ones"
   (( fails += $? ))
   # Clean up test files
   rm -f test1.jpg test2.jpg
   
   # Test 21: All patterns non-matching should return empty and exit 1
   (( tests++ ))
-  expand "nonexistent1*.jpg" "nonexistent2*.png" >/dev/null 2>&1
+  glob "nonexistent1*.jpg" "nonexistent2*.png" >/dev/null 2>&1
   exit_code=$?
-  assert "$exit_code" == "1" "expand should return exit code 1 when no patterns match"
+  assert "$exit_code" == "1" "glob should return exit code 1 when no patterns match"
   (( fails += $? ))
   
   # Test 22: Mixed patterns with command execution
   (( tests++ ))
   # Create test files for this test
   touch test1.jpg test2.jpg
-  output=$(expand echo "test1.jpg" "nonexistent*.jpg" "test2.jpg" 2>/dev/null)
+  output=$(glob echo "test1.jpg" "nonexistent*.jpg" "test2.jpg" 2>/dev/null)
   expected_files="test1.jpg test2.jpg"
-  assert "$output" == "$expected_files" "expand should pass only matching patterns to commands"
+  assert "$output" == "$expected_files" "glob should pass only matching patterns to commands"
   (( fails += $? ))
   # Clean up test files
   rm -f test1.jpg test2.jpg
@@ -303,9 +303,9 @@ test_expand() {
   (( tests++ ))
   # Create test files for brace expansion
   touch test1.jpg test2.jpg test.png
-  output=$(expand "*.{jpg,png}" 2>/dev/null)
+  output=$(glob "*.{jpg,png}" 2>/dev/null)
   expected_files=$'test.png\\ntest1.jpg\\ntest2.jpg'
-  assert "$output" == "$expected_files" "expand should handle quoted brace expansion"
+  assert "$output" == "$expected_files" "glob should handle quoted brace expansion"
   (( fails += $? ))
   # Clean up test files
   rm -f test1.jpg test2.jpg test.png
@@ -315,9 +315,9 @@ test_expand() {
   # Create directory and files with spaces for this test
   mkdir -p "dir with spaces"
   touch "dir with spaces/file.jpg" "dir with spaces/file.png"
-  output=$(expand "dir with spaces/*.{jpg,png}" 2>/dev/null)
+  output=$(glob "dir with spaces/*.{jpg,png}" 2>/dev/null)
   expected_files=$'dir with spaces/file.jpg\ndir with spaces/file.png'
-  assert "$output" == "$expected_files" "expand should handle quoted brace expansion with spaces in paths"
+  assert "$output" == "$expected_files" "glob should handle quoted brace expansion with spaces in paths"
   (( fails += $? ))
   # Clean up test files and directory
   rm -rf "dir with spaces"
@@ -326,9 +326,9 @@ test_expand() {
   (( tests++ ))
   # Create test files for command mode brace expansion
   touch test1.jpg test2.jpg test.png
-  output=$(expand echo "*.{jpg,png}" 2>/dev/null)
+  output=$(glob echo "*.{jpg,png}" 2>/dev/null)
   expected_files="test.png test1.jpg test2.jpg"
-  assert "$output" == "$expected_files" "expand should handle quoted brace expansion in command mode"
+  assert "$output" == "$expected_files" "glob should handle quoted brace expansion in command mode"
   (( fails += $? ))
   # Clean up test files
   rm -f test1.jpg test2.jpg test.png
@@ -336,9 +336,9 @@ test_expand() {
   # Test 26: Complex brace expansion with multiple braces
   (( tests++ ))
   touch "a.txt" "b.txt" "c.log" "d.log"
-  output=$(expand "*.{txt,log}" 2>/dev/null)
+  output=$(glob "*.{txt,log}" 2>/dev/null)
   expected_files=$'a.txt\nb.txt\nc.log\nd.log'
-  assert "$output" == "$expected_files" "expand should handle multiple files with brace expansion"
+  assert "$output" == "$expected_files" "glob should handle multiple files with brace expansion"
   (( fails += $? ))
   # Clean up test files
   rm -f "a.txt" "b.txt" "c.log" "d.log"
@@ -346,9 +346,9 @@ test_expand() {
   # Test 27: Nested brace expansion (if supported by bash)
   (( tests++ ))
   touch "file1.jpg" "file2.jpg" "file1.png" "file2.png"
-  output=$(expand "file{1,2}.{jpg,png}" 2>/dev/null)
+  output=$(glob "file{1,2}.{jpg,png}" 2>/dev/null)
   expected_files=$'file1.jpg\nfile1.png\nfile2.jpg\nfile2.png'
-  assert "$output" == "$expected_files" "expand should handle nested brace expansion"
+  assert "$output" == "$expected_files" "glob should handle nested brace expansion"
   (( fails += $? ))
   # Clean up test files
   rm -f "file1.jpg" "file2.jpg" "file1.png" "file2.png"
@@ -356,9 +356,9 @@ test_expand() {
   # Test 28: Case-insensitive with quoted brace expansion and wildcards
   (( tests++ ))
   touch "CaseTest.jpg" "CaseTest.png"
-  output=$(expand -i "casetest*.{jpg,png}" 2>/dev/null)
+  output=$(glob -i "casetest*.{jpg,png}" 2>/dev/null)
   expected_files=$'CaseTest.jpg\nCaseTest.png'
-  assert "$output" == "$expected_files" "expand should handle case-insensitive quoted brace expansion"
+  assert "$output" == "$expected_files" "glob should handle case-insensitive quoted brace expansion"
   (( fails += $? ))
   # Clean up test files
   rm -f "CaseTest.jpg" "CaseTest.png"
@@ -368,9 +368,9 @@ test_expand() {
   # Create test files in subdirectories (recursive patterns only match subdirectories)
   mkdir -p "subdir with spaces"
   touch "subdir with spaces/image.jpg" "subdir with spaces/image.png"
-  output=$(expand -i "**/*.{jpg,png}" 2>/dev/null)
+  output=$(glob -i "**/*.{jpg,png}" 2>/dev/null)
   expected_files=$'subdir with spaces/image.jpg\nsubdir with spaces/image.png'
-  assert "$output" == "$expected_files" "expand should not treat first match as command in direct mode"
+  assert "$output" == "$expected_files" "glob should not treat first match as command in direct mode"
   (( fails += $? ))
   # Clean up test files
   rm -rf "subdir with spaces"
@@ -380,16 +380,16 @@ test_expand() {
   # Create a substantial executable script that file will recognize
   cat > my-script << 'EOF'
 #!/usr/bin/env bash
-# A test script for expand testing
+# A test script for glob testing
 # This needs to be substantial enough for file to recognize it as a shell script
 
 echo "script output: $*"
 EOF
   chmod +x my-script
   touch test.txt other.txt
-  output=$(expand ./my-script "*.txt" 2>/dev/null)
+  output=$(glob ./my-script "*.txt" 2>/dev/null)
   expected_output="script output: other.txt test.txt"
-  assert "$output" == "$expected_output" "expand should treat relative path to executable as command"
+  assert "$output" == "$expected_output" "glob should treat relative path to executable as command"
   (( fails += $? ))
   # Clean up
   rm -f my-script test.txt other.txt
@@ -399,9 +399,9 @@ EOF
   touch test.txt other.txt
   # Use the actual path to echo on this system
   local echo_path=$(which echo)
-  output=$(expand "$echo_path" "*.txt" 2>/dev/null)
+  output=$(glob "$echo_path" "*.txt" 2>/dev/null)
   expected_output="other.txt test.txt"
-  assert "$output" == "$expected_output" "expand should treat absolute path to executable as command"
+  assert "$output" == "$expected_output" "glob should treat absolute path to executable as command"
   (( fails += $? ))
   # Clean up
   rm -f test.txt other.txt
@@ -410,9 +410,9 @@ EOF
   (( tests++ ))
   echo "not a script" > not-executable
   touch test.txt
-  output=$(expand "not-executable" "*.txt" 2>/dev/null)
+  output=$(glob "not-executable" "*.txt" 2>/dev/null)
   expected_files=$'not-executable\ntest.txt'
-  assert "$output" == "$expected_files" "expand should treat non-executable file as pattern in direct mode"
+  assert "$output" == "$expected_files" "glob should treat non-executable file as pattern in direct mode"
   (( fails += $? ))
   # Clean up
   rm -f not-executable test.txt
@@ -420,9 +420,9 @@ EOF
   # Test 33: File path with spaces should be direct mode (not treated as command)
   (( tests++ ))
   touch "file with spaces.jpg" "other.txt"
-  output=$(expand "file with spaces.jpg" "*.txt" 2>/dev/null)
+  output=$(glob "file with spaces.jpg" "*.txt" 2>/dev/null)
   expected_files=$'file with spaces.jpg\\nother.txt'
-  assert "$output" == "$expected_files" "expand should treat file paths as patterns in direct mode"
+  assert "$output" == "$expected_files" "glob should treat file paths as patterns in direct mode"
   (( fails += $? ))
   # Clean up
   rm -f "file with spaces.jpg" "other.txt"
@@ -440,27 +440,27 @@ echo "should not execute"
 EOF
   chmod +x "subdir/fake-command.jpg"
   touch test.txt
-  output=$(expand "subdir/fake-command.jpg" "*.txt" 2>/dev/null)
+  output=$(glob "subdir/fake-command.jpg" "*.txt" 2>/dev/null)
   expected_files=$'subdir/fake-command.jpg\ntest.txt'
-  assert "$output" == "$expected_files" "expand should treat executable files that look like data files as patterns"
+  assert "$output" == "$expected_files" "glob should treat executable files that look like data files as patterns"
   (( fails += $? ))
   # Clean up
   rm -rf subdir test.txt
   
-  # Test 35: Relative pattern with spaces and slashes expands correctly (direct mode)
+  # Test 35: Relative pattern with spaces and slashes globs correctly (direct mode)
   (( tests++ ))
   mkdir -p "sys (twserver)/system/SAGA"
   touch "sys (twserver)/system/SAGA/A.md" "sys (twserver)/system/SAGA/B.txt" "sys (twserver)/system/SAGA/C.MD"
-  output=$(expand "sys (twserver)/system/SAGA/*.md" 2>/dev/null)
+  output=$(glob "sys (twserver)/system/SAGA/*.md" 2>/dev/null)
   expected_files="sys (twserver)/system/SAGA/A.md"
-  assert "$output" == "$expected_files" "expand should expand relative pattern with spaces and slashes (case-sensitive)"
+  assert "$output" == "$expected_files" "glob should glob relative pattern with spaces and slashes (case-sensitive)"
   (( fails += $? ))
   
   # Test 36: Relative pattern with spaces and slashes with --ignore-case (direct mode)
   (( tests++ ))
-  output=$(expand --ignore-case "sys (twserver)/system/SAGA/*.md" 2>/dev/null)
+  output=$(glob --ignore-case "sys (twserver)/system/SAGA/*.md" 2>/dev/null)
   expected_files=$'sys (twserver)/system/SAGA/A.md\nsys (twserver)/system/SAGA/C.MD'
-  assert "$output" == "$expected_files" "expand should expand relative pattern with spaces and slashes (case-insensitive)"
+  assert "$output" == "$expected_files" "glob should glob relative pattern with spaces and slashes (case-insensitive)"
   (( fails += $? ))
   
   # Cleanup for tests 35/36
@@ -469,45 +469,45 @@ EOF
   # Test 37: Default output format should be newline-separated without escaping
   (( tests++ ))
   touch "test with spaces.jpg" "other.txt"
-  output=$(expand "*.jpg" "*.txt" 2>/dev/null)
+  output=$(glob "*.jpg" "*.txt" 2>/dev/null)
   expected_output=$'other.txt\ntest with spaces.jpg'
-  assert "$output" == "$expected_output" "expand should use newline-separated output by default without escaping spaces"
+  assert "$output" == "$expected_output" "glob should use newline-separated output by default without escaping spaces"
   (( fails += $? ))
   rm -f "test with spaces.jpg" "other.txt"
   
   # Test 38: -n flag should produce space-separated output with escaping (old behavior)
   (( tests++ ))
   touch "test with spaces.jpg" "other.txt"
-  output=$(expand -n "*.jpg" "*.txt" 2>/dev/null)
+  output=$(glob -n "*.jpg" "*.txt" 2>/dev/null)
   expected_output="other.txt test\\ with\\ spaces.jpg "
-  assert "$output" == "$expected_output" "expand -n should use space-separated output with escaping"
+  assert "$output" == "$expected_output" "glob -n should use space-separated output with escaping"
   (( fails += $? ))
   rm -f "test with spaces.jpg" "other.txt"
   
   # Test 39: -0 flag should produce null-separated output without escaping
   (( tests++ ))
   touch "test with spaces.jpg" "other.txt"
-  output=$(expand -0 "*.jpg" "*.txt" 2>/dev/null | tr '\0' '|')
+  output=$(glob -0 "*.jpg" "*.txt" 2>/dev/null | tr '\0' '|')
   expected_output="other.txt|test with spaces.jpg|"
-  assert "$output" == "$expected_output" "expand -0 should use null-separated output without escaping"
+  assert "$output" == "$expected_output" "glob -0 should use null-separated output without escaping"
   (( fails += $? ))
   rm -f "test with spaces.jpg" "other.txt"
   
   # Test 40: Last flag wins (-0 after -n)
   (( tests++ ))
   touch "test with spaces.jpg" "other.txt"
-  output=$(expand -n -0 "*.jpg" "*.txt" 2>/dev/null | tr '\0' '|')
+  output=$(glob -n -0 "*.jpg" "*.txt" 2>/dev/null | tr '\0' '|')
   expected_output="other.txt|test with spaces.jpg|"
-  assert "$output" == "$expected_output" "expand -n -0 should use null-separated output (last flag wins)"
+  assert "$output" == "$expected_output" "glob -n -0 should use null-separated output (last flag wins)"
   (( fails += $? ))
   rm -f "test with spaces.jpg" "other.txt"
   
   # Test 41: Last flag wins (-n after -0)
   (( tests++ ))
   touch "test with spaces.jpg" "other.txt"  
-  output=$(expand -0 -n "*.jpg" "*.txt" 2>/dev/null)
+  output=$(glob -0 -n "*.jpg" "*.txt" 2>/dev/null)
   expected_output="other.txt test\\ with\\ spaces.jpg "
-  assert "$output" == "$expected_output" "expand -0 -n should use space-separated output (last flag wins)"
+  assert "$output" == "$expected_output" "glob -0 -n should use space-separated output (last flag wins)"
   (( fails += $? ))
   rm -f "test with spaces.jpg" "other.txt"
   
@@ -516,14 +516,14 @@ EOF
 
   # Final summary
   if [ $fails -gt 0 ]; then
-    red_text "$fails of $tests expand tests failed!\n" >&2
+    red_text "$fails of $tests glob tests failed!\n" >&2
   else
-    green_text "All $tests expand tests passed!\n" >&2
+    green_text "All $tests glob tests passed!\n" >&2
   fi
   return $fails
 }
 
 # Run the test if this script is executed directly
 if ! (return 0 2>/dev/null); then
-  test_expand
+  test_glob
 fi

@@ -9,17 +9,17 @@ silence() {
 	"$@" >/dev/null 2>&1
 }
 
-expand() {
+glob() {
 	# Help function
 	_show_help() {
 		cat << EOF
-expand: A utility for controlled glob expansion
+glob: A utility for controlled glob expansion
 
 USAGE:
-	expand [OPTIONS] PATTERN                   Expand a glob pattern and print results
-	expand [OPTIONS] COMMAND [ARG...]          Run a command with expanded arguments
-	expand --test                              Run self-tests
-	expand -h, --help                          Show this help message
+	glob [OPTIONS] PATTERN                   glob a glob pattern and print results
+	glob [OPTIONS] COMMAND [ARG...]          Run a command with globbed arguments
+	glob --test                              Run self-tests
+	glob -h, --help                          Show this help message
 
 OPTIONS:
 	-i, --ignore-case                Case-insensitive pattern matching
@@ -27,41 +27,41 @@ OPTIONS:
 	-0                               Null-separated output without escaping
 
 EXAMPLES:
-	expand "*.jpg"                   Expand and print all jpg files (newline-separated)
-	expand -n "*.jpg"                Expand jpg files (space-separated with escaping)
-	expand -0 "*.jpg"                Expand jpg files (null-separated)
-	expand -i "*.JPG"                Expand jpg files ignoring case
-	expand ls -la "*.jpg"            Run ls -la with expanded jpg files
-	expand --ignore-case ls "*.JPG"  Run ls with case-insensitive matching
-	expand jpegxl --lossless "*.jpg" Run jpegxl with expanded jpg files
+	glob "*.jpg"                   glob and print all jpg files (newline-separated)
+	glob -n "*.jpg"                glob jpg files (space-separated with escaping)
+	glob -0 "*.jpg"                glob jpg files (null-separated)
+	glob -i "*.JPG"                glob jpg files ignoring case
+	glob ls -la "*.jpg"            Run ls -la with globbed jpg files
+	glob --ignore-case ls "*.JPG"  Run ls with case-insensitive matching
+	glob jpegxl --lossless "*.jpg" Run jpegxl with globbed jpg files
 	
 	# Multiple file types (quoted brace expansion):
-	expand "*.{png,jpg,gif}"         Find png, jpg, and gif files
-	expand -i "*.{png,jpg,gif}"      Case-insensitive multiple types
+	glob "*.{png,jpg,gif}"         Find png, jpg, and gif files
+	glob -i "*.{png,jpg,gif}"      Case-insensitive multiple types
 	
 	# Multiple patterns (alternative to brace expansion):
-	expand "*.png" "*.jpg" "*.gif"   Find png, jpg, and gif files
+	glob "*.png" "*.jpg" "*.gif"   Find png, jpg, and gif files
 	
 	# Recursive patterns:
-	expand "**/*.jpg"                Find all jpg files in subdirectories
-	expand -i "**/*.{png,jpg}"       Case-insensitive recursive search
+	glob "**/*.jpg"                Find all jpg files in subdirectories
+	glob -i "**/*.{png,jpg}"       Case-insensitive recursive search
 	
 	# Dotfiles (hidden files):
-	expand ".*"                      Find dotfiles in current directory
-	expand "**/.git"                 Find all .git directories recursively
+	glob ".*"                      Find dotfiles in current directory
+	glob "**/.git"                 Find all .git directories recursively
 	
 	# Non-matching pattern behavior:
-	expand "*.nonexistent"           Empty output, exit code 1
-	expand "*.txt" "*.nonexistent"   Only shows *.txt files (skips non-matching)
-	expand ls "*.txt" "*.missing"    ls only gets the *.txt arguments
+	glob "*.nonexistent"           Empty output, exit code 1
+	glob "*.txt" "*.nonexistent"   Only shows *.txt files (skips non-matching)
+	glob ls "*.txt" "*.missing"    ls only gets the *.txt arguments
 
 DESCRIPTION:
-	The expand function provides controlled glob expansion even when
+	The glob function provides controlled glob expansion even when
 	globbing is disabled (set -f). By default, output is newline-separated
 	without shell escaping. Use -n for space-separated output with escaping,
 	or -0 for null-separated output.
 
-	When used with a command, it expands any glob patterns in the arguments
+	When used with a command, it globs any glob patterns in the arguments
 	before passing them to the command. Non-matching patterns are skipped
 	entirely.
 
@@ -73,13 +73,13 @@ DESCRIPTION:
 	- Brace expansion: Use quoted patterns like "*.{png,jpg}" for multiple types
 	
 	BRACE EXPANSION:
-	The expand function supports quoted brace expansion, allowing you to match
+	The glob function supports quoted brace expansion, allowing you to match
 	multiple file types or patterns in a single argument:
 	
-	expand "*.{jpg,png,gif}"         # Match all image files
-	expand "file.{txt,log,bak}"      # Match specific file with different extensions
-	expand "**/*.{js,ts,jsx,tsx}"    # Recursive search for JavaScript/TypeScript files
-	expand -i "**/*.{JPG,PNG}"       # Case-insensitive recursive image search
+	glob "*.{jpg,png,gif}"         # Match all image files
+	glob "file.{txt,log,bak}"      # Match specific file with different extensions
+	glob "**/*.{js,ts,jsx,tsx}"    # Recursive search for JavaScript/TypeScript files
+	glob -i "**/*.{JPG,PNG}"       # Case-insensitive recursive image search
 
 	NON-MATCHING PATTERNS:
 	When a glob pattern matches no files, it is SKIPPED entirely:
@@ -144,7 +144,7 @@ EOF
 	fi
 
 	# Preprocess arguments for brace expansion
-	local brace_expanded_argv=()
+	local brace_globbed_argv=()
 	local arg
 	
 	for arg in "$@"; do
@@ -154,30 +154,30 @@ EOF
 		if [[ "$arg" =~ \{[^}]*,[^}]*\} ]]; then
 			debug "Detected brace expansion in: $arg"
 			
-			# Use bash to expand the braces 
+			# Use bash to glob the braces 
 			# First escape spaces in the argument so bash treats it as one argument
 			local escaped_arg="${arg// /\\ }"
-			local expanded_items
-			expanded_items=$(bash -c "printf '%s\\n' $escaped_arg" 2>/dev/null) || {
+			local globbed_items
+			globbed_items=$(bash -c "printf '%s\\n' $escaped_arg" 2>/dev/null) || {
 				debug "Brace expansion failed, using original: $arg"
-				brace_expanded_argv+=("$arg")
+				brace_globbed_argv+=("$arg")
 				continue
 			}
 			
-			# Add each expanded item to the array
-			while IFS= read -r expanded_item; do
-				[[ -n "$expanded_item" ]] && brace_expanded_argv+=("$expanded_item")
-			done <<< "$expanded_items"
+			# Add each globbed item to the array
+			while IFS= read -r globbed_item; do
+				[[ -n "$globbed_item" ]] && brace_globbed_argv+=("$globbed_item")
+			done <<< "$globbed_items"
 			
-			debug "Brace expansion result: ${brace_expanded_argv[*]}"
+			debug "Brace expansion result: ${brace_globbed_argv[*]}"
 		else
 			# No brace expansion needed
-			brace_expanded_argv+=("$arg")
+			brace_globbed_argv+=("$arg")
 		fi
 	done
 	
-	# Replace the original arguments with brace-expanded ones
-	set -- "${brace_expanded_argv[@]}"
+	# Replace the original arguments with brace-globbed ones
+	set -- "${brace_globbed_argv[@]}"
 	
 	debug "Final arguments after brace expansion: $*"
 
@@ -667,7 +667,7 @@ if ! (return 0 2>/dev/null); then
 		# Run tests from the test file
 		test_file="$(dirname "${BASH_SOURCE[0]}")/test/$(basename "${0##\-}")_test"
 		if [ -f "$test_file" ]; then
-			EXPAND_TEST_VERBOSE=true "$test_file"
+			GLOB_TEST_VERBOSE=true "$test_file"
 		else
 			echo "Error: Test file not found: $test_file" >&2
 			exit 1
