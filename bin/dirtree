@@ -211,7 +211,7 @@ while [[ $# -gt 0 ]]; do
       exit 0
       ;;
     -a|--about)
-      echo "dirtree outputs a stateful directory tree using eza (icons, colors, hyperlinks, git); supports --simple/--llm mode for LLM-friendly output, .dirtree-state with default opened/closed and open/close lists, decorated view that collapses closed subtrees and adds trailing slashes (/* when collapsed), strips only leading branch glyphs; env overrides: DIRTREE_SIMPLE, DIRTREE_DECORATED, DIRTREE_AUTO_SIMPLE."
+      echo "Stateful eza tree (icons/colors/links); --simple for LLMs; persists .dirtree-state (default/open/close); env: DIRTREE_{SIMPLE,DECORATED,AUTO_SIMPLE}."
       exit 0
       ;;
     -d|--depth)
