@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# mosh-cleanup: kill all mosh-server processes except the one you're using
+
+# Get all mosh-server PIDs
+all=$(pgrep mosh-server)
+
+# List number of mosh-server PIDs found
+num=$(echo "$all" | wc -w)
+
+if [ "$num" -eq 0 ]; then
+  echo "No mosh-server processes found."
+  exit 0
+else
+  ext="es"
+  if [ "$num" -eq 1 ]; then
+    ext=""
+  fi
+  echo "$num mosh-server process$ext found."
+fi
+
+if [ "$1" = "--killall" ]; then
+  echo "Killing 'em all..."
+  pkill mosh-server
+  exit 0
+fi
+
+# Try to discover the mosh-server for *this* session (if any)
+# Walk up the process tree looking for mosh-server
+current_pid=$$
+keep=""
+max_depth=10  # Prevent infinite loops
+
+while [ $max_depth -gt 0 ] && [ -n "$current_pid" ] && [ "$current_pid" != "1" ]; do
+  # Check if current_pid is a mosh-server
+  if ps -p "$current_pid" -o comm= 2>/dev/null | grep -q "mosh-server"; then
+    keep="$current_pid"
+    break
+  fi
+  
+  # Move up to parent process
+  current_pid=$(ps -o ppid= -p "$current_pid" 2>/dev/null | awk '{print $1}')
+  max_depth=$((max_depth - 1))
+done
+
+if [ -n "$keep" ]; then
+  echo "Keeping current mosh-server PID $keep"
+else
+  echo "No current mosh-server tied to this shell; doing nothing."
+  echo "If you want to kill all mosh-servers, use 'pkill mosh-server' or rerun '${0##*/}' with --killall."
+  exit 0
+fi
+
+
+if [ -z "$all" ]; then
+  echo "No mosh-server processes found."
+  exit 0
+fi
+
+for pid in $all; do
+  if [ "$pid" != "$keep" ]; then
+    kill "$pid" && echo "Killed stray mosh-server PID $pid"
+  fi
+done
