@@ -344,6 +344,18 @@ if ! command -v eza >/dev/null 2>&1; then
   exit 1
 fi
 
+# Decide eza presentation based on TTY. When stdout is not a TTY (e.g. piped to
+# a pager like `more`), disable color/icons/hyperlinks to avoid line wrapping or
+# truncation issues in basic pagers.
+eza_color="always"
+eza_icons="always"
+strip_osc8=false
+if [[ ! -t 1 && "$force_decorated" == false && "$simple_mode" != true ]]; then
+  eza_color="never"
+  eza_icons="never"
+  strip_osc8=true
+fi
+
 # Run eza with the specified options; if there are explicitly closed paths,
 # filter out their descendants in decorated output.
 
@@ -362,7 +374,7 @@ if [[ ${#close_set[@]} -gt 0 ]]; then
     if dir_has_children "$abs_dir/$k"; then closed_star["$abs_dir/$k"]=1; fi
   done
   # Render and filter lines containing hyperlinks under any closed prefix
-  eza --tree --hyperlink --icons=always --color=always --git --sort modified --reverse --level "$depth" --all "$dir" | \
+  eza --tree --hyperlink --icons="${eza_icons}" --color="${eza_color}" --git --sort modified --reverse --level "$depth" --all "$dir" | \
   while IFS= read -r line; do
     skip=0
     for p in "${closed_prefixes[@]}"; do
@@ -411,11 +423,15 @@ if [[ ${#close_set[@]} -gt 0 ]]; then
   done |
   {
     ESC=$'\e'
-    sed -E "s/^(${ESC}\\[[0-9;]*m)*(├──|└──)[[:space:]]+//; s/^(${ESC}\\[[0-9;]*m)*│[[:space:]][[:space:]][[:space:]]//"
+    if $strip_osc8; then
+      sed -E "s/${ESC}]8;;[^${ESC}]*${ESC}\\\\//g; s/^(${ESC}\\[[0-9;]*m)*(├──|└──)[[:space:]]+//; s/^(${ESC}\\[[0-9;]*m)*│[[:space:]][[:space:]][[:space:]]//"
+    else
+      sed -E "s/^(${ESC}\\[[0-9;]*m)*(├──|└──)[[:space:]]+//; s/^(${ESC}\\[[0-9;]*m)*│[[:space:]][[:space:]][[:space:]]//"
+    fi
   }
 else
   # No explicit closures; still append '/' to directories by post-processing
-  eza --tree --hyperlink --icons=always --color=always --git --sort modified --reverse --level "$depth" --all "$dir" | \
+  eza --tree --hyperlink --icons="${eza_icons}" --color="${eza_color}" --git --sort modified --reverse --level "$depth" --all "$dir" | \
   while IFS= read -r line; do
     hp=$'\e]8;;file://'
     st=$'\e\\'
@@ -435,6 +451,10 @@ else
   done |
   {
     ESC=$'\e'
-    sed -E "s/^(${ESC}\\[[0-9;]*m)*(├──|└──)[[:space:]]+//; s/^(${ESC}\\[[0-9;]*m)*│[[:space:]][[:space:]][[:space:]]//"
+    if $strip_osc8; then
+      sed -E "s/${ESC}]8;;[^${ESC}]*${ESC}\\\\//g; s/^(${ESC}\\[[0-9;]*m)*(├──|└──)[[:space:]]+//; s/^(${ESC}\\[[0-9;]*m)*│[[:space:]][[:space:]][[:space:]]//"
+    else
+      sed -E "s/^(${ESC}\\[[0-9;]*m)*(├──|└──)[[:space:]]+//; s/^(${ESC}\\[[0-9;]*m)*│[[:space:]][[:space:]][[:space:]]//"
+    fi
   }
 fi
