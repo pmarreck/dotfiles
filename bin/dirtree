@@ -11,6 +11,12 @@ show_help() {
   echo "  -h, --help     Show this help message"
   echo "  -a, --about    Show detailed description"
   echo "  -d, --depth N  Set maximum depth (default: 2)"
+  echo "  --simple       Output a simple, LLM-friendly stateful tree"
+  echo "  --llm          Alias for --simple"
+  echo "  --decorated    Force decorated eza output"
+  echo "  --default X    Persist default state: opened|closed"
+  echo "  -o, --open L   Semicolon list of subdirs to open"
+  echo "  -c, --close L  Semicolon list of subdirs to close"
   echo "  --test         Run associated tests"
   echo ""
   echo "Examples:"
@@ -22,6 +28,180 @@ show_help() {
 # Default values
 depth=2
 dir="."
+simple_mode=false
+force_decorated=false
+default_state=""
+open_arg=""
+close_arg=""
+state_modified=false
+
+# Normalize path to a relative, trimmed form
+normalize_rel() {
+  local base="$1" p="$2"
+  # remove leading ./
+  p="${p#./}"
+  # strip leading base if absolute within base
+  case "$p" in
+    "$base"/*) p="${p#"$base"/}" ;;
+  esac
+  # strip leading slash if any
+  p="${p#/}"
+  # strip trailing slash
+  p="${p%/}"
+  printf '%s' "$p"
+}
+
+# Read state file into variables: default_state, open_set[], close_set[]
+declare -A open_set
+declare -A close_set
+
+read_state() {
+  local state_file="$1/.dirtree-state"
+  default_state=""
+  open_set=()
+  close_set=()
+  if [[ -f "$state_file" ]]; then
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      case "$line" in
+        default=*) default_state="${line#default=}" ;;
+        open=*)
+          IFS=';' read -r -a arr <<< "${line#open=}"
+          for e in "${arr[@]}"; do [[ -n "$e" ]] && open_set["$e"]=1; done
+          ;;
+        close=*)
+          IFS=';' read -r -a arr <<< "${line#close=}"
+          for e in "${arr[@]}"; do [[ -n "$e" ]] && close_set["$e"]=1; done
+          ;;
+      esac
+    done < "$state_file"
+  fi
+}
+
+persist_state() {
+  local target_dir="$1"; shift
+  local state_file="$target_dir/.dirtree-state"
+  local tmp_file
+  tmp_file=$(mktemp "${state_file}.XXXXXX")
+  # Preserve unknown keys
+  if [[ -f "$state_file" ]]; then
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      case "$line" in
+        default=*|open=*|close=*) ;;
+        *) echo "$line" >>"$tmp_file" ;;
+      esac
+    done < "$state_file"
+  fi
+  # Write managed keys
+  if [[ -n "$default_state" ]]; then
+    echo "default=$default_state" >>"$tmp_file"
+  fi
+  # Join open_set
+  local k out
+  out=""
+  for k in "${!open_set[@]}"; do
+    [[ -n "$out" ]] && out+=";"
+    out+="$k"
+  done
+  echo "open=$out" >>"$tmp_file"
+  out=""
+  for k in "${!close_set[@]}"; do
+    [[ -n "$out" ]] && out+=";"
+    out+="$k"
+  done
+  echo "close=$out" >>"$tmp_file"
+  mv -f "$tmp_file" "$state_file"
+}
+
+in_open_set() { [[ -n "${open_set[$1]:-}" ]]; }
+in_close_set() { [[ -n "${close_set[$1]:-}" ]]; }
+
+# Decide if a directory should expand under simple mode
+should_expand() {
+  local rel="$1" parent_closed="$2"
+  # If an ancestor is closed, remain closed
+  [[ "$parent_closed" == "1" ]] && return 1
+  # Explicit close always wins
+  if in_close_set "$rel"; then return 1; fi
+  # If explicitly opened, expand
+  if in_open_set "$rel"; then return 0; fi
+  # If any open path is a descendant, we need to expand down to it
+  local k
+  for k in "${!open_set[@]}"; do
+    if [[ "$k" == "$rel"/* ]]; then return 0; fi
+  done
+  # Default behavior
+  if [[ "$default_state" == "closed" ]]; then
+    return 1
+  fi
+  return 0
+}
+
+# Determine if a directory has children (non-empty)
+dir_has_children() {
+  local abs="$1"
+  shopt -s nullglob dotglob
+  local arr=("$abs"/*)
+  shopt -u nullglob dotglob
+  [[ ${#arr[@]} -gt 0 ]]
+}
+
+# Recursively print a simple tree
+print_simple_tree() {
+  local base="$1" rel="$2" prefix="$3" depth_left="$4" parent_closed="$5"
+  local abs
+  if [[ -z "$rel" ]]; then abs="$base"; else abs="$base/$rel"; fi
+
+  # List children sorted by name (including dotfiles, excluding . and ..)
+  shopt -s dotglob nullglob
+  local children=("$abs"/*)
+  shopt -u dotglob
+  # Convert to relative names
+  local names=()
+  local c
+  for c in "${children[@]}"; do
+    local name
+    name=$(basename "$c")
+    names+=("$name")
+  done
+  IFS=$'\n' names=($(printf '%s\n' "${names[@]}" | sort))
+  unset IFS
+
+  local count=${#names[@]}
+  local i
+  for ((i=0; i<count; i++)); do
+    local name="${names[$i]}"
+    local child_rel
+    if [[ -n "$rel" ]]; then child_rel="$rel/$name"; else child_rel="$name"; fi
+    local child_abs="$abs/$name"
+    local is_last=$(( i == count-1 ))
+    local connector="├── "
+    local next_prefix="$prefix│   "
+    if [[ $is_last -eq 1 ]]; then
+      connector="└── "
+      next_prefix="$prefix    "
+    fi
+    if [[ -d "$child_abs" ]]; then
+      local exp
+      should_expand "$child_rel" "$parent_closed"
+      exp=$?
+      local marker="/"
+      local show_star=""
+      # Decide star: star if not expanding OR depth limit reached, and dir has children
+      if [[ $exp -ne 0 || $depth_left -le 1 ]]; then
+        if dir_has_children "$child_abs"; then show_star="*"; fi
+      fi
+      echo "${prefix}${connector}${name}${marker}${show_star}"
+      if [[ $exp -eq 0 && $depth_left -gt 1 ]]; then
+        print_simple_tree "$base" "$child_rel" "$next_prefix" $((depth_left-1)) 0
+      else
+        # Child is effectively closed for descendants
+        :
+      fi
+    else
+      echo "${prefix}${connector}${name}"
+    fi
+  done
+}
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -31,7 +211,7 @@ while [[ $# -gt 0 ]]; do
       exit 0
       ;;
     -a|--about)
-      echo "dirtree outputs a nice directory tree using eza with icons, git status, and hyperlinks."
+      echo "dirtree outputs a stateful directory tree using eza (icons, colors, hyperlinks, git); supports --simple/--llm mode for LLM-friendly output, .dirtree-state with default opened/closed and open/close lists, decorated view that collapses closed subtrees and adds trailing slashes (/* when collapsed), strips only leading branch glyphs; env overrides: DIRTREE_SIMPLE, DIRTREE_DECORATED, DIRTREE_AUTO_SIMPLE."
       exit 0
       ;;
     -d|--depth)
@@ -42,6 +222,30 @@ while [[ $# -gt 0 ]]; do
         echo "Error: --depth requires a numeric argument" >&2
         exit 1
       fi
+      ;;
+    --simple)
+      simple_mode=true
+      ;;
+    --llm)
+      simple_mode=true
+      ;;
+    --decorated)
+      force_decorated=true
+      ;;
+    --default)
+      shift
+      case "$1" in
+        opened|closed) default_state="$1"; state_modified=true ;;
+        *) echo "Error: --default requires 'opened' or 'closed'" >&2; exit 1 ;;
+      esac
+      ;;
+    -o|--open)
+      shift
+      open_arg="$1"; state_modified=true
+      ;;
+    -c|--close)
+      shift
+      close_arg="$1"; state_modified=true
       ;;
     --test)
       if [[ -x "$(dirname "$0")/test/dirtree_test" ]]; then
@@ -65,17 +269,172 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
-# Check if eza is available
-if ! command -v eza >/dev/null 2>&1; then
-  echo "Error: eza is not installed. Please install eza first." >&2
-  exit 1
-fi
-
 # Validate directory exists
 if [[ ! -d "$dir" ]]; then
   echo "Error: '$dir' is not a directory" >&2
   exit 1
 fi
 
-# Run eza with the specified options
-eza --tree --hyperlink --icons --git --sort modified --reverse --level "$depth" --all "$dir"
+# Load and possibly update state
+read_state "$dir"
+
+# Apply CLI open/close mutations if any
+if [[ -n "$open_arg" ]]; then
+  IFS=';' read -r -a arr <<< "$open_arg"
+  for p in "${arr[@]}"; do
+    p=$(normalize_rel "$dir" "$p")
+    [[ -z "$p" ]] && continue
+    if [[ -d "$dir/$p" ]]; then
+      open_set["$p"]=1
+      unset 'close_set[$p]'
+    else
+      echo "Warning: open target not a directory: $p" >&2
+    fi
+  done
+fi
+if [[ -n "$close_arg" ]]; then
+  IFS=';' read -r -a arr <<< "$close_arg"
+  for p in "${arr[@]}"; do
+    p=$(normalize_rel "$dir" "$p")
+    [[ -z "$p" ]] && continue
+    if [[ -d "$dir/$p" ]]; then
+      close_set["$p"]=1
+      unset 'open_set[$p]'
+    else
+      echo "Warning: close target not a directory: $p" >&2
+    fi
+  done
+fi
+
+if [[ "$state_modified" == true ]]; then
+  persist_state "$dir"
+fi
+
+# Determine mode if not explicitly forced
+if [[ "$force_decorated" == false ]]; then
+  if [[ "$simple_mode" != true ]]; then
+    if [[ -n "${DIRTREE_SIMPLE:-}" ]]; then
+      simple_mode=true
+    elif [[ -n "${DIRTREE_DECORATED:-}" ]]; then
+      simple_mode=false
+    elif [[ -n "${DIRTREE_AUTO_SIMPLE:-}" ]]; then
+      # Auto: enable simple when stdout is not a TTY
+      if [[ ! -t 1 ]]; then
+        simple_mode=true
+      fi
+    fi
+  fi
+fi
+
+if [[ "$simple_mode" == true ]]; then
+  # Print stateful simple tree without leading top-level connectors or root line
+  {
+    print_simple_tree "$dir" "" "" "$depth" 0
+  } |
+  {
+    ESC=$'\e'
+    sed -E "s/^(${ESC}\\[[0-9;]*m)*(├──|└──)[[:space:]]+//; s/^(${ESC}\\[[0-9;]*m)*│[[:space:]][[:space:]][[:space:]]//"
+  }
+  exit 0
+fi
+
+# For decorated mode, ensure eza is available
+if ! command -v eza >/dev/null 2>&1; then
+  echo "Error: eza is not installed. Please install eza first." >&2
+  exit 1
+fi
+
+# Run eza with the specified options; if there are explicitly closed paths,
+# filter out their descendants in decorated output.
+
+# Compute absolute base for hyperlink filtering
+abs_dir=$(cd "$dir" && pwd -P)
+
+if [[ ${#close_set[@]} -gt 0 ]]; then
+  # Build array of absolute closed prefixes
+  closed_prefixes=()
+  closed_exact=()
+  declare -A closed_star
+  for k in "${!close_set[@]}"; do
+    [[ -z "$k" ]] && continue
+    closed_prefixes+=("$abs_dir/$k/")
+    closed_exact+=("$abs_dir/$k")
+    if dir_has_children "$abs_dir/$k"; then closed_star["$abs_dir/$k"]=1; fi
+  done
+  # Render and filter lines containing hyperlinks under any closed prefix
+  eza --tree --hyperlink --icons=always --color=always --git --sort modified --reverse --level "$depth" --all "$dir" | \
+  while IFS= read -r line; do
+    skip=0
+    for p in "${closed_prefixes[@]}"; do
+      # OSC8 hyperlink prefix
+      hp=$'\e]8;;file://'
+      if [[ "$line" == *"${hp}${p}"* ]]; then
+        skip=1; break
+      fi
+    done
+    [[ $skip -eq 1 ]] && continue
+    # If this is the closed directory line itself, append '/' or '/*' depending on children
+    star_added=0
+    st=$'\e\\'
+    for p in "${closed_exact[@]}"; do
+      hp=$'\e]8;;file://'
+      if [[ "$line" == *"${hp}${p}${st}"* ]]; then
+        if [[ -n "${closed_star[$p]:-}" ]]; then
+          echo "${line}/*"
+        else
+          echo "${line}/"
+        fi
+        star_added=1
+        break
+      fi
+    done
+    [[ $star_added -eq 1 ]] && continue
+    # For any directory lines (not just closed), append '/' suffix if missing
+    # Extract hyperlink path between hp and ST
+    hp=$'\e]8;;file://'
+    st=$'\e\\'
+    if [[ "$line" == *"$hp"* ]]; then
+      rest="${line#*"$hp"}"
+      target="${rest%%"$st"*}"
+      if [[ -n "$target" && -d "$target" ]]; then
+        # Avoid double-appending if already has '/' or '/*'
+        if [[ "$line" != */ && "$line" != *'/*' ]]; then
+          line="${line}/"
+        fi
+      fi
+      # Drop the root line entirely
+      if [[ -n "$target" && "$target" == "$abs_dir" ]]; then
+        continue
+      fi
+    fi
+    echo "$line"
+  done |
+  {
+    ESC=$'\e'
+    sed -E "s/^(${ESC}\\[[0-9;]*m)*(├──|└──)[[:space:]]+//; s/^(${ESC}\\[[0-9;]*m)*│[[:space:]][[:space:]][[:space:]]//"
+  }
+else
+  # No explicit closures; still append '/' to directories by post-processing
+  eza --tree --hyperlink --icons=always --color=always --git --sort modified --reverse --level "$depth" --all "$dir" | \
+  while IFS= read -r line; do
+    hp=$'\e]8;;file://'
+    st=$'\e\\'
+    if [[ "$line" == *"$hp"* ]]; then
+      rest="${line#*"$hp"}"
+      target="${rest%%"$st"*}"
+      if [[ -n "$target" && -d "$target" ]]; then
+        if [[ "$line" != */ && "$line" != *'/*' ]]; then
+          line="${line}/"
+        fi
+      fi
+      if [[ -n "$target" && "$target" == "$abs_dir" ]]; then
+        continue
+      fi
+    fi
+    echo "$line"
+  done |
+  {
+    ESC=$'\e'
+    sed -E "s/^(${ESC}\\[[0-9;]*m)*(├──|└──)[[:space:]]+//; s/^(${ESC}\\[[0-9;]*m)*│[[:space:]][[:space:]][[:space:]]//"
+  }
+fi

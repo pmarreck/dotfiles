@@ -91,9 +91,9 @@ test_function "files and directories both listed" \
     "dirtree -d 2 '$tmpdir/testdir' | grep -E '(file1.txt|subdir)' | wc -l | grep -E '^[2-9]$' && echo 'PASS'" \
     "PASS"
 
-# Test eza-specific features
-test_function "tree structure with unicode" \
-    "dirtree '$tmpdir/testdir'" \
+testdir" \
+s*"├──\\|└──"
+'$tmpdir/testdir'" \
     "├──\|└──"
 
 # Test hyperlinks are present (eza hyperlink format)
@@ -118,10 +118,134 @@ test_function "directory validation" \
     "dirtree /nonexistent/path 2>&1 | grep 'not a directory' && echo 'VALIDATED'" \
     "VALIDATED"
 
-# Clean up
+# Clean up first tmpdir
 rm -rf "$tmpdir"
 
-# Report results
+# --- Additional tests for --simple (LLM) mode with state ---
+
+# Recreate temp dir for stateful tests
+tmpdir=$(mktemp -d)
+basedir="$tmpdir/proj"
+mkdir -p "$basedir/src/lib" "$basedir/node_modules/pkg" "$basedir/docs"
+touch "$basedir/README.md" "$basedir/src/main.sh" "$basedir/src/lib/util.sh" "$basedir/node_modules/pkg/index.js" "$basedir/docs/guide.md"
+
+# Ensure no preexisting state
+rm -f "$basedir/.dirtree-state"
+
+# 1) simple mode default opened, then close src
+test_function "--simple default opened then close src" \
+    "dirtree --simple --default opened -c src '$basedir' && dirtree --simple '$basedir' | sed -n '1,120p'" \
+    "src/*"
+
+# 2) simple mode reopen src, should show src/lib and files
+test_function "--simple reopen src shows contents" \
+    "dirtree --simple -o src '$basedir' && dirtree --simple -d 3 '$basedir' | grep -E 'src/lib|main.sh' && echo PASS" \
+    "PASS"
+
+# 3) default closed: only top-level items shown collapsed; then open docs
+test_function "--simple set default closed and open docs" \
+    "dirtree --simple --default closed -o docs '$basedir' && dirtree --simple -d 3 '$basedir' | grep -E 'docs/|docs/guide.md' && echo PASS" \
+    "PASS"
+
+# 4) state file persisted and preserves unknown keys
+echo 'custom=keepme' > "$basedir/.dirtree-state"
+test_function "--simple preserves unknown keys in state" \
+    "dirtree --simple -o src '$basedir' && grep -q '^custom=keepme$' '$basedir/.dirtree-state' && echo OK" \
+    "OK"
+
+# 5) closed marker shows '/' for empty dir, '/*' for non-empty
+mkdir -p "$basedir/emptydir"
+test_function "--simple closed marker variants" \
+    "dirtree --simple --default opened -c emptydir -c src '$basedir' && dirtree --simple '$basedir' | awk '/emptydir\/$|emptydir\/\*|src\/\*/{print}' | wc -l | grep -E '^[2-9]$' && echo PASS" \
+    "PASS"
+
+# Cleanup temp dir for stateful tests
+rm -rf "$tmpdir"
+
+# --- Auto simple mode tests (via env var + non-TTY) ---
+tmpdir=$(mktemp -d)
+basedir="$tmpdir/proj"
+mkdir -p "$basedir/src" "$basedir/docs"
+touch "$basedir/src/a" "$basedir/docs/b"
+
+# Seed state: default opened, close src
+dirtree --simple --default opened -c src "$basedir" >/dev/null
+
+test_function "auto simple via DIRTREE_AUTO_SIMPLE when not TTY" \
+  "DIRTREE_AUTO_SIMPLE=1 dirtree '$basedir' | grep -q 'src/\*' && echo OK" \
+  "OK"
+
+rm -rf "$tmpdir"
+
+# --- Simple mode: no leading connectors ---
+tmpdir=$(mktemp -d)
+basedir="$tmpdir/proj"
+mkdir -p "$basedir/a/b"
+touch "$basedir/a/b/file"
+
+test_function "simple: no leading '├──', '└──', or '│   '" \
+  "out=\"$(dirtree --simple '$basedir')\"; ! echo \"$out\" | grep -q '^├──' && ! echo \"$out\" | grep -q '^└──' && ! echo \"$out\" | grep -q '^│   ' && echo OK" \
+  "OK"
+
+rm -rf "$tmpdir"
+
+# --- Decorated mode respects closed subtrees ---
+tmpdir=$(mktemp -d)
+basedir="$tmpdir/proj"
+mkdir -p "$basedir/.git/inner"
+touch "$basedir/.git/inner/file"
+
+test_function "decorated mode collapses explicitly closed .git" \
+  "dirtree -c .git '$basedir' | grep -q '/.git/\*' || echo PASS" \
+  "PASS"
+
+rm -rf "$tmpdir"
+
+# --- Decorated mode keeps colors and doesn't star plain files ---
+tmpdir=$(mktemp -d)
+basedir="$tmpdir/proj"
+mkdir -p "$basedir/sub"
+touch "$basedir/plain" "$basedir/sub/file"
+
+test_function "decorated output retains ANSI colors when piped" \
+  "dirtree '$basedir' | grep -q $'\033\[' && echo OK" \
+  "OK"
+
+test_function "decorated output does not star non-executable plain files" \
+  "dirtree '$basedir' | grep -q 'plain\*' && echo BAD || echo OK" \
+  "OK"
+
+rm -rf "$tmpdir"
+
+# --- Decorated mode adds trailing slashes to dirs, not files ---
+tmpdir=$(mktemp -d)
+basedir="$tmpdir/proj"
+mkdir -p "$basedir/dirA" "$basedir/.git" "$basedir/dirB"
+touch "$basedir/fileA" "$basedir/.gitignore"
+
+test_function "decorated: dirs end with '/', files do not" \
+  "out=\"$(dirtree '$basedir')\"; echo \"$out\" | awk '/dirA/{exit !(/\/$/)}'; echo \"$out\" | awk '/dirB/{exit !(/\/$/)}'; echo \"$out\" | awk '/fileA/{exit (/\/$/)}'; echo OK" \
+  "OK"
+
+test_function "decorated: closing .git does not tag .gitignore" \
+  "dirtree -c .git '$basedir' | grep -q '.gitignore/\\*' && echo BAD || echo OK" \
+  "OK"
+
+rm -rf "$tmpdir"
+
+# --- Decorated mode flush-left: no tree connector glyphs ---
+tmpdir=$(mktemp -d)
+basedir="$tmpdir/proj"
+mkdir -p "$basedir/a/b"
+touch "$basedir/a/b/file"
+
+test_function "decorated: no leading '├──', '└──', or '│   '" \
+  "out=\"$(dirtree '$basedir')\"; ! echo \"$out\" | grep -q '^├──' && ! echo \"$out\" | grep -q '^└──' && ! echo \"$out\" | grep -q '^│   ' && echo OK" \
+  "OK"
+
+rm -rf "$tmpdir"
+
+# Final report
 echo
 if [[ $failed_count -eq 0 ]]; then
     echo "All $test_count tests passed"
