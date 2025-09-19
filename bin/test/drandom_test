@@ -4,7 +4,13 @@
 test_drandom() {
 	local fails=0
 	local tests=0
-	local sample_size=1000
+	# Sample sizes (FAST mode reduces iterations for quick --test runs)
+	local sample_size=${DRANDOM_TEST_SAMPLE_SIZE:-1000}
+	local binary_sample_size=${DRANDOM_TEST_BINARY_SIZE:-1000}
+	if [ -n "$FAST" ]; then
+		sample_size=40
+		binary_sample_size=60
+	fi
 	local range_start=0
 	local range_end=100
 	local expected_mean=50
@@ -144,8 +150,6 @@ test_drandom() {
 	(( tests++ ))
 	echo "Testing binary range for quality..."
 
-	# Generate a larger sample for statistical analysis
-	local binary_sample_size=1000
 	local binary_data=$(for ((i=0; i<binary_sample_size; i++)); do
 		DRANDOM_SEED=$((5000 + i)) drandom 0 1 2>/dev/null
 	done)
@@ -210,15 +214,68 @@ test_drandom() {
 	(( tests++ ))
 	echo "Testing hex seed support..."
 
+	# 6a: Raw hex (no 0x) should be deterministic and produce same sequence twice
 	local hex_seq1=$(DRANDOM_SEED="DEADBEEF" bash -c 'for i in {1..5}; do drandom; done' 2>/dev/null | tr '\n' ' ')
 	local hex_seq2=$(DRANDOM_SEED="DEADBEEF" bash -c 'for i in {1..5}; do drandom; done' 2>/dev/null | tr '\n' ' ')
 
 	if [ "$hex_seq1" = "$hex_seq2" ]; then
-		echo "✓ Hex seed test passed: hex seeds work deterministically"
+		echo "✓ Hex seed test (raw) passed: raw hex works deterministically"
 	else
 		echo "✗ Hex seed test failed: hex seed not deterministic" >&2
 		echo "  Sequence 1: $hex_seq1" >&2
 		echo "  Sequence 2: $hex_seq2" >&2
+		(( fails++ ))
+	fi
+
+	# 6b: 0x-prefixed hex should match raw-hex interpretation (aside from warning)
+	local hex_seq_pref=$(DRANDOM_SEED="0xDEADBEEF" bash -c 'for i in {1..5}; do drandom; done' 2>/dev/null | tr '\n' ' ')
+	if [ "$hex_seq_pref" = "$hex_seq1" ]; then
+		echo "✓ Hex seed test (0x) passed: 0x-prefixed hex matches raw-hex interpretation"
+	else
+		echo "✗ Hex seed 0x test failed: sequences differ" >&2
+		echo "  Raw hex: $hex_seq1" >&2
+		echo "  0x hex: $hex_seq_pref" >&2
+		(( fails++ ))
+	fi
+
+	# 6c: Raw hex without 0x should emit a warning on stderr
+	local warn_ctx="warnctx-$$-$RANDOM"
+	local warn_output=$(DRANDOM_STATE_HOME="$HOME/dotfiles/.state" DRANDOM_CONTEXT="$warn_ctx" DRANDOM_SEED="DEADBEEF" drandom 2>&1 >/dev/null)
+	if echo "$warn_output" | grep -qi "warning.*hex.*0x"; then
+		echo "✓ Hex seed warning test passed: warning emitted for raw hex without 0x"
+	else
+		echo "✗ Hex seed warning test failed: no warning emitted" >&2
+		(( fails++ ))
+	fi
+
+	# Test 7: Cross-invocation determinism when seeding once per terminal
+	(( tests++ ))
+	echo "Testing cross-invocation determinism (seed once, then call again)..."
+
+	# Use a unique context per test run to avoid interference
+	local ctx="testctx-$$-$RANDOM"
+	local state_home="$HOME/dotfiles/.state"
+
+	# First pair: seed, then call again (two separate invocations)
+	DRANDOM_STATE_HOME="$state_home" DRANDOM_CONTEXT="$ctx" DRANDOM_SEED=12345 drandom >/dev/null 2>/dev/null
+	local second1=$(DRANDOM_STATE_HOME="$state_home" DRANDOM_CONTEXT="$ctx" drandom 2>/dev/null)
+
+	# Small delay to ensure time-based seeding would differ if persistence is broken
+	sleep 0.02
+
+	# Second pair: repeat the above; with proper persistence, the second value should match
+	DRANDOM_STATE_HOME="$state_home" DRANDOM_CONTEXT="$ctx" DRANDOM_SEED=12345 drandom >/dev/null 2>/dev/null
+	local second2=$(DRANDOM_STATE_HOME="$state_home" DRANDOM_CONTEXT="$ctx" drandom 2>/dev/null)
+
+	# Cleanup test seed file
+	rm -f "$state_home/drandom/$USER/${ctx}.seed" 2>/dev/null || true
+
+	if [ "$second1" = "$second2" ]; then
+		echo "✓ Cross-invocation determinism test passed"
+	else
+		echo "✗ Cross-invocation determinism test failed: second values differ across pairs" >&2
+		echo "  Second1: $second1" >&2
+		echo "  Second2: $second2" >&2
 		(( fails++ ))
 	fi
 

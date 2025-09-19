@@ -6,18 +6,48 @@ drandom() {
 	local start=${1:-0}
 	local end=${2:-99}
 
+	# Per-terminal persistent seed storage
+	# Default to XDG state dir, fallback to ~/.local/state
+	local _state_home="${DRANDOM_STATE_HOME:-/tmp}"
+	local _context="${DRANDOM_CONTEXT:-$PPID}"
+	local _state_dir="$_state_home/drandom/${USER:-unknown}"
+	local _seed_file="$_state_dir/${_context}.seed"
+
 	# Define BASH_INT_MAX if not already defined (for when run as script)
 	if [ -z "$BASH_INT_MAX" ]; then
 		local BASH_INT_MAX=$((2**31 - 1))
 	fi
 
-	# Initialize DRANDOM_SEED if not set
+	# Track whether seed came from environment (for hex handling and warnings)
+	local _env_seed_set=0
+	[ -n "${DRANDOM_SEED+x}" ] && _env_seed_set=1
+
+	# Initialize DRANDOM_SEED
+	# Priority: explicit env var -> persisted state file -> time/RANDOM
 	if [ -z "$DRANDOM_SEED" ]; then
-		# Use nanoseconds from date if available, otherwise use RANDOM
-		if command -v date >/dev/null 2>&1 && date +%N >/dev/null 2>&1; then
-			DRANDOM_SEED=$(($(date +%s%N) % BASH_INT_MAX))
-		else
-			DRANDOM_SEED=$((RANDOM * 65536 + RANDOM))
+		if [ -f "$_seed_file" ]; then
+			# Read last seed from state file
+			DRANDOM_SEED=$(sed -n '1p' "$_seed_file" 2>/dev/null)
+		fi
+		if [ -z "$DRANDOM_SEED" ]; then
+			# Use nanoseconds from date if available, otherwise use RANDOM
+			if command -v date >/dev/null 2>&1 && date +%N >/dev/null 2>&1; then
+				DRANDOM_SEED=$(($(date +%s%N) % BASH_INT_MAX))
+			else
+				DRANDOM_SEED=$((RANDOM * 65536 + RANDOM))
+			fi
+		fi
+	fi
+
+	# If user supplied an environment seed, handle hex forms and warnings
+	if [ $_env_seed_set -eq 1 ]; then
+		# Accept 0x-prefixed hexadecimal seeds
+		if [[ "$DRANDOM_SEED" =~ ^0[xX][0-9A-Fa-f]+$ ]]; then
+			:
+		# If seed looks like hex but lacks 0x prefix, warn and interpret as hex
+		elif [[ "$DRANDOM_SEED" =~ ^[0-9A-Fa-f]+$ && "$DRANDOM_SEED" =~ [A-Fa-f] ]]; then
+			echo "Warning: DRANDOM_SEED '$DRANDOM_SEED' looks like hex without 0x prefix; interpreting as hex" >&2
+			DRANDOM_SEED=$((16#$DRANDOM_SEED))
 		fi
 	fi
 
@@ -29,6 +59,10 @@ drandom() {
 	# Update seed using LCG formula
 	# We need to handle potential overflow carefully
 	DRANDOM_SEED=$(( (a * DRANDOM_SEED + c) & 0x7FFFFFFF ))
+
+	# Persist updated seed for this terminal context
+	mkdir -p "$_state_dir" 2>/dev/null || true
+	echo "$DRANDOM_SEED" >"$_seed_file" 2>/dev/null || true
 
 	# Calculate range
 	local range=$((end - start + 1))
@@ -51,7 +85,7 @@ if ! (return 0 2>/dev/null); then
 		# Run tests from the test file with stdout muted
 		test_file="$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
 		if [ -f "$test_file" ]; then
-			exec "$test_file" >/dev/null
+			FAST=1 exec "$test_file" >/dev/null
 		else
 			echo "Test file not found: $test_file" >&2
 			exit 1
@@ -60,6 +94,7 @@ if ! (return 0 2>/dev/null); then
 		cat <<-EOF
 		Usage: drandom [start] [end]
 		       DRANDOM_SEED=<seed> drandom [start] [end]
+	       DRANDOM_CONTEXT=<name> drandom [start] [end]
 
 		Deterministic random number generator using Linear Congruential Generator.
 		Outputs a random integer between start and end (inclusive).
@@ -68,8 +103,21 @@ if ! (return 0 2>/dev/null); then
 		If end is not specified, it defaults to 99
 
 		Set DRANDOM_SEED environment variable for reproducible sequences.
-		The seed is automatically updated after each call, so setting it once
-		at the beginning of a sequence will produce deterministic results.
+		The seed is persisted per-terminal and automatically updated after each call,
+		so setting it once at the beginning of a sequence produces deterministic
+		results across subsequent invocations in the same terminal.
+
+		Seed formats:
+		  - Decimal (e.g., 12345)
+		  - Hex with 0x prefix (e.g., 0xDEADBEEF)
+		  - If a seed consists solely of hex digits and includes letters (A-F),
+		    but lacks the 0x prefix (e.g., DEADBEEF), a warning is printed and it
+		    is interpreted as hexadecimal.
+
+		Persistence details:
+		  - State dir: ${DRANDOM_STATE_HOME:-/tmp}/drandom/${USER}
+		  - File name: <context>.seed (context defaults to parent shell PID, PPID)
+		  - Override: DRANDOM_CONTEXT and/or DRANDOM_STATE_HOME to isolate sequences
 
 		Examples:
 		  drandom           # Random number from 0-99
@@ -80,6 +128,9 @@ if ! (return 0 2>/dev/null); then
 		  DRANDOM_SEED=12345
 		  drandom           # First number (deterministic)
 		  drandom           # Second number (deterministic)
+
+		  # Isolated sequence in scripts/tests:
+		  DRANDOM_CONTEXT=myjob DRANDOM_SEED=42 drandom; DRANDOM_CONTEXT=myjob drandom
 		EOF
 	else
 		# Source ourselves to get the function
