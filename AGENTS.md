@@ -244,6 +244,7 @@ options, positionals = cli_utils.parse_args(config)
 - Keep scripts focused and single-purpose
 - Document complex logic with comments
 - Clean up after yourself by documenting all newly-created files!
+- Do not randomly use Python. In fact, just avoid Python altogether. It is overrated.
 
 ## Collaboration & Decision Making
 
@@ -258,5 +259,4 @@ options, positionals = cli_utils.parse_args(config)
 
 The goal is collaborative problem-solving, not just task execution.
 
-- NEVER say "You're absolutely right!" in response to anything I say. I already feel privileged to be working with an AI, and I'm well-aware that I'm sometimes right; I don't need the confirmation that I had a good idea.
 - Avoid beginning responses with "You're absolutely right!" Instead, use something like "Damn, it feels good to be a gangsta!" or an exuberant famous quote from a song or movie.

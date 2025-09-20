@@ -6,36 +6,36 @@ test_count=0
 failed_count=0
 
 test_function() {
-    local description="$1"
-    local command="$2"
-    local expected_pattern="$3"
-    
-    ((test_count++))
-    echo "Testing $description..."
-    
-    local output
-    output=$(eval "$command" 2>&1)
-    local exit_code=$?
-    
-    if [[ $exit_code -ne 0 ]]; then
-        echo "✗ Test failed: $description (exit code $exit_code)" >&2
-        echo "  Command: $command" >&2
-        echo "  Output: $output" >&2
-        ((failed_count++))
-        return 1
-    fi
-    
-    if [[ -n "$expected_pattern" ]] && ! echo "$output" | grep -q "$expected_pattern"; then
-        echo "✗ Test failed: $description (pattern not found)" >&2
-        echo "  Command: $command" >&2
-        echo "  Expected pattern: $expected_pattern" >&2
-        echo "  Actual output: $output" >&2
-        ((failed_count++))
-        return 1
-    fi
-    
-    echo "✓ Test passed"
-    return 0
+	local description="$1"
+	local command="$2"
+	local expected_pattern="$3"
+	
+	((test_count++))
+	echo "Testing $description..."
+	
+	local output
+	output=$(eval "$command" 2>&1)
+	local exit_code=$?
+	
+	if [[ $exit_code -ne 0 ]]; then
+		echo "✗ Test failed: $description (exit code $exit_code)" >&2
+		echo "  Command: $command" >&2
+		echo "  Output: $output" >&2
+		((failed_count++))
+		return 1
+	fi
+	
+	if [[ -n "$expected_pattern" ]] && ! echo "$output" | grep -q "$expected_pattern"; then
+		echo "✗ Test failed: $description (pattern not found)" >&2
+		echo "  Command: $command" >&2
+		echo "  Expected pattern: $expected_pattern" >&2
+		echo "  Actual output: $output" >&2
+		((failed_count++))
+		return 1
+	fi
+	
+	echo "✓ Test passed"
+	return 0
 }
 
 # Create a temporary test directory structure
@@ -46,79 +46,196 @@ touch "$tmpdir/testdir/.hidden"
 mkdir -p "$tmpdir/testdir/subdir"
 touch "$tmpdir/testdir/subdir/file2.txt"
 
-# Test basic directory tree (eza shows directory name)
-test_function "basic directory tree" \
-    "dirtree '$tmpdir/testdir'" \
-    "testdir"
+# Basic listing: no root line in output by default (non-TTY)
+test_function "basic listing omits root line by default" \
+	"dirtree '$tmpdir/testdir' | grep -q 'testdir' && echo BAD || echo OK" \
+	"OK"
 
 # Test dotfiles visibility (eza shows hidden files with --all)
 test_function "dotfiles visibility" \
-    "dirtree '$tmpdir/testdir'" \
-    "\.hidden"
+	"dirtree '$tmpdir/testdir'" \
+	"\.hidden"
 
 # Test depth limiting (default depth is 2)
 test_function "depth limiting" \
-    "dirtree -d 1 '$tmpdir/testdir'" \
-    "subdir"
+	"dirtree -d 1 '$tmpdir/testdir'" \
+	"subdir"
 
 # Test that subdirectory contents are not shown with depth 1
 test_function "depth limiting effectiveness" \
-    "dirtree -d 1 '$tmpdir/testdir' | grep -v file2.txt && echo 'PASS'" \
-    "PASS"
+	"dirtree -d 1 '$tmpdir/testdir' | grep -v file2.txt && echo 'PASS'" \
+	"PASS"
 
 # Test help option
 test_function "help option" \
-    "dirtree --help" \
-    "Usage:"
+	"dirtree --help" \
+	"Usage:"
 
-# Test current directory default
-test_function "current directory default" \
-    "cd '$tmpdir/testdir' && dirtree" \
-    "testdir"
+# Test current directory default produces entries (no root)
+test_function "current directory listing shows entries" \
+	"cd '$tmpdir/testdir' && dirtree | grep -q 'file1.txt' && echo OK" \
+	"OK"
 
-# Test for directory self-nesting bug (should not occur with eza)
-test_function "no directory self-nesting" \
-    "dirtree '$tmpdir/testdir' | grep -c 'testdir' | grep -E '^[1-9][0-9]*$' && echo 'PASS'" \
-    "PASS"
+# Ensure directory name does not appear (no self-nesting/root line)
+test_function "no directory self-nesting or root line" \
+	"dirtree '$tmpdir/testdir' | grep -c 'testdir' | grep -q '^0$' && echo PASS" \
+	"PASS"
 
 # Test that files are visible at depth 2
 test_function "files visible at depth 2" \
-    "dirtree -d 2 '$tmpdir/testdir' | grep -c 'file1.txt' | grep -E '^1$' && echo 'PASS'" \
-    "PASS"
+	"dirtree -d 2 '$tmpdir/testdir' | grep -c 'file1.txt' | grep -E '^1$' && echo 'PASS'" \
+	"PASS"
 
 # Test that both files and directories are listed
 test_function "files and directories both listed" \
-    "dirtree -d 2 '$tmpdir/testdir' | grep -E '(file1.txt|subdir)' | wc -l | grep -E '^[2-9]$' && echo 'PASS'" \
-    "PASS"
+	"dirtree -d 2 '$tmpdir/testdir' | grep -E '(file1.txt|subdir)' | wc -l | grep -E '^[2-9]$' && echo 'PASS'" \
+	"PASS"
 
-testdir" \
-s*"├──\\|└──"
-'$tmpdir/testdir'" \
-    "├──\|└──"
 
-# Test hyperlinks are present (eza hyperlink format)
-test_function "hyperlinks present" \
-    "dirtree '$tmpdir/testdir'" \
-    "]8;;"
+# Hyperlinks behavior when stdout is not a TTY
+test_function "no hyperlinks by default when not TTY" \
+	"dirtree '$tmpdir/testdir' | grep -q ']8;;' && echo BAD || echo OK" \
+	"OK"
+
+test_function "hyperlinks present when forced with --decorated" \
+	"dirtree --decorated '$tmpdir/testdir' | grep -q ']8;;' && echo OK" \
+	"OK"
 
 # Test that eza is available
 test_function "eza availability" \
-    "command -v eza >/dev/null && echo 'EZA_FOUND'" \
-    "EZA_FOUND"
+	"command -v eza >/dev/null && echo 'EZA_FOUND'" \
+	"EZA_FOUND"
 
 # Skip error handling test - eza availability checking is tested elsewhere
 
 # Test depth parameter validation
 test_function "depth parameter validation" \
-    "dirtree -d abc 2>&1 | grep 'numeric argument' && echo 'VALIDATED'" \
-    "VALIDATED"
+	"dirtree -d abc 2>&1 | grep 'numeric argument' && echo 'VALIDATED'" \
+	"VALIDATED"
 
 # Test directory validation
 test_function "directory validation" \
-    "dirtree /nonexistent/path 2>&1 | grep 'not a directory' && echo 'VALIDATED'" \
-    "VALIDATED"
+	"dirtree /nonexistent/path 2>&1 | grep 'not a directory' && echo 'VALIDATED'" \
+	"VALIDATED"
+
+# Persisting default state via --default only (no --simple)
+tmpdir=$(mktemp -d)
+basedir="$tmpdir/proj"
+mkdir -p "$basedir"
+rm -f "$basedir/.dirtree-state"
+basedir_q=$(printf '%q' "$basedir")
+state_q=$(printf '%q' "$basedir/.dirtree-state")
+
+test_function "persist default via --default only" \
+	"(cd $basedir_q && dirtree --default closed >/dev/null && grep -q '^default=closed$' $state_q && echo OK)" \
+	"OK"
 
 # Clean up first tmpdir
+rm -rf "$tmpdir"
+
+# Decorated mode should honor persisted default=closed
+tmpdir=$(mktemp -d)
+basedir="$tmpdir/closed"
+mkdir -p "$basedir/parent/child/grandchild"
+
+test_function "decorated mode honors default=closed" \
+	"(\
+		cd \"$basedir\" && \
+		printf 'default=closed\n' > .dirtree-state && \
+		tmp=\$(mktemp) && \
+		trap 'rm -f \"\$tmp\"' EXIT && \
+		dirtree > \"\$tmp\" && \
+		if grep -Fqx 'parent/*' \"\$tmp\" && ! grep -q 'child' \"\$tmp\"; then \
+			echo OK; \
+		else \
+			echo BAD; \
+		fi \
+	)" \
+	"OK"
+
+rm -rf "$tmpdir"
+
+# Decorated mode expands explicitly opened directories even when default=closed
+tmpdir=$(mktemp -d)
+basedir="$tmpdir/closed"
+mkdir -p "$basedir/parent/child/grandchild"
+
+test_function "decorated mode honors explicit open over default" \
+	"(\
+		cd \"$basedir\" && \
+		printf 'default=closed\nopen=parent\n' > .dirtree-state && \
+		tmp=\$(mktemp) && \
+		trap 'rm -f \"\$tmp\"' EXIT && \
+		dirtree > \"\$tmp\" && \
+		if grep -Fqx 'parent/*' \"\$tmp\"; then \
+			echo BAD; \
+		elif grep -Fq 'child/' \"\$tmp\"; then \
+			echo OK; \
+		else \
+			echo BAD; \
+		fi \
+	)" \
+	"OK"
+
+rm -rf "$tmpdir"
+
+# --open should handle names with spaces/parentheses without hanging
+tmpdir=$(mktemp -d)
+basedir="$tmpdir/spaces"
+mkdir -p "$basedir/sys (server)/child"
+
+test_function "--open handles directories with spaces" \
+	"(\
+		cd \"$basedir\" && \
+		tmp=\$(mktemp) && \
+		timeout 5 dirtree --open 'sys (server)' > \"\$tmp\" && \
+		grep -Fq 'sys (server)' \"\$tmp\" && \
+		grep -Fq 'child/' \"\$tmp\" && \
+		echo OK && \
+		rm -f \"\$tmp\" \
+	)" \
+	"OK"
+
+rm -rf "$tmpdir"
+
+# Decorated mode should handle percent-encoded OSC8 hyperlinks
+tmpdir=$(mktemp -d)
+basedir="$tmpdir/spaces"
+mkdir -p "$basedir/sys (server)/child"
+printf 'default=closed\n' > "$basedir/.dirtree-state"
+
+stubdir=$(mktemp -d)
+cat >"$stubdir/eza" <<'EOS'
+#!/usr/bin/env bash
+path="${@: -1}"
+abs=$(cd "$path" && pwd -P)
+case "$abs" in
+*/sys\ \(server\))
+	base="${abs%/sys (server)}"
+	printf '\e]8;;file://%s/sys%%20(server)/child\e\\child\e]8;;\e\\\n' "$base"
+	;;
+*)
+	printf '\e]8;;file://%s/.dirtree-state\e\\.dirtree-state\e]8;;\e\\\n' "$abs"
+	printf '\e]8;;file://%s/sys%%20(server)\e\\sys (server)\e]8;;\e\\\n' "$abs"
+	;;
+esac
+EOS
+chmod +x "$stubdir/eza"
+
+test_function "decorated handles percent-encoded OSC8 hyperlinks" \
+	"(\
+		cd \"$basedir\" && \
+		tmp=\$(mktemp) && \
+		trap 'rm -f \"\$tmp\"' EXIT && \
+		PATH='$stubdir':\"\$PATH\" timeout 5 dirtree > \"\$tmp\" && \
+		grep -Fq 'sys (server)/*' \"\$tmp\" && \
+		! grep -Fq 'child/' \"\$tmp\" && \
+		! grep -Fq '//\*' \"\$tmp\" && \
+		echo OK \
+	)" \
+	"OK"
+
+rm -rf "$stubdir"
 rm -rf "$tmpdir"
 
 # --- Additional tests for --simple (LLM) mode with state ---
@@ -133,31 +250,33 @@ touch "$basedir/README.md" "$basedir/src/main.sh" "$basedir/src/lib/util.sh" "$b
 rm -f "$basedir/.dirtree-state"
 
 # 1) simple mode default opened, then close src
+basedir_q=$(printf '%q' "$basedir")
 test_function "--simple default opened then close src" \
-    "dirtree --simple --default opened -c src '$basedir' && dirtree --simple '$basedir' | sed -n '1,120p'" \
-    "src/*"
+	"dirtree --simple --default opened -c src $basedir_q && dirtree --simple $basedir_q | sed -n '1,120p'" \
+	"src/*"
 
 # 2) simple mode reopen src, should show src/lib and files
 test_function "--simple reopen src shows contents" \
-    "dirtree --simple -o src '$basedir' && dirtree --simple -d 3 '$basedir' | grep -E 'src/lib|main.sh' && echo PASS" \
-    "PASS"
+	"dirtree --simple -o src $basedir_q && dirtree --simple -d 3 $basedir_q | grep -E 'src/lib|main.sh' && echo PASS" \
+	"PASS"
 
 # 3) default closed: only top-level items shown collapsed; then open docs
 test_function "--simple set default closed and open docs" \
-    "dirtree --simple --default closed -o docs '$basedir' && dirtree --simple -d 3 '$basedir' | grep -E 'docs/|docs/guide.md' && echo PASS" \
-    "PASS"
+	"dirtree --simple --default closed -o docs $basedir_q && dirtree --simple -d 3 $basedir_q | grep -E 'docs/|docs/guide.md' && echo PASS" \
+	"PASS"
 
 # 4) state file persisted and preserves unknown keys
 echo 'custom=keepme' > "$basedir/.dirtree-state"
+state_q=$(printf '%q' "$basedir/.dirtree-state")
 test_function "--simple preserves unknown keys in state" \
-    "dirtree --simple -o src '$basedir' && grep -q '^custom=keepme$' '$basedir/.dirtree-state' && echo OK" \
-    "OK"
+	"dirtree --simple -o src $basedir_q && grep -q '^custom=keepme$' $state_q && echo OK" \
+	"OK"
 
 # 5) closed marker shows '/' for empty dir, '/*' for non-empty
 mkdir -p "$basedir/emptydir"
 test_function "--simple closed marker variants" \
-    "dirtree --simple --default opened -c emptydir -c src '$basedir' && dirtree --simple '$basedir' | awk '/emptydir\/$|emptydir\/\*|src\/\*/{print}' | wc -l | grep -E '^[2-9]$' && echo PASS" \
-    "PASS"
+	"dirtree --simple --default opened -c emptydir -c src $basedir_q && dirtree --simple $basedir_q | awk '/emptydir\/$|emptydir\/\*|src\/\*/{print}' | wc -l | grep -E '^[2-9]$' && echo PASS" \
+	"PASS"
 
 # Cleanup temp dir for stateful tests
 rm -rf "$tmpdir"
@@ -167,13 +286,14 @@ tmpdir=$(mktemp -d)
 basedir="$tmpdir/proj"
 mkdir -p "$basedir/src" "$basedir/docs"
 touch "$basedir/src/a" "$basedir/docs/b"
+basedir_q=$(printf '%q' "$basedir")
 
 # Seed state: default opened, close src
 dirtree --simple --default opened -c src "$basedir" >/dev/null
 
 test_function "auto simple via DIRTREE_AUTO_SIMPLE when not TTY" \
-  "DIRTREE_AUTO_SIMPLE=1 dirtree '$basedir' | grep -q 'src/\*' && echo OK" \
-  "OK"
+	"DIRTREE_AUTO_SIMPLE=1 dirtree $basedir_q | grep -q 'src/\*' && echo OK" \
+	"OK"
 
 rm -rf "$tmpdir"
 
@@ -182,10 +302,11 @@ tmpdir=$(mktemp -d)
 basedir="$tmpdir/proj"
 mkdir -p "$basedir/a/b"
 touch "$basedir/a/b/file"
+basedir_q=$(printf '%q' "$basedir")
 
 test_function "simple: no leading '├──', '└──', or '│   '" \
-  "out=\"$(dirtree --simple '$basedir')\"; ! echo \"$out\" | grep -q '^├──' && ! echo \"$out\" | grep -q '^└──' && ! echo \"$out\" | grep -q '^│   ' && echo OK" \
-  "OK"
+	"out=\"\$(dirtree --simple $basedir_q)\"; ! echo \"$out\" | grep -q '^├──' && ! echo \"$out\" | grep -q '^└──' && ! echo \"$out\" | grep -q '^│   ' && echo OK" \
+	"OK"
 
 rm -rf "$tmpdir"
 
@@ -194,10 +315,11 @@ tmpdir=$(mktemp -d)
 basedir="$tmpdir/proj"
 mkdir -p "$basedir/.git/inner"
 touch "$basedir/.git/inner/file"
+basedir_q=$(printf '%q' "$basedir")
 
 test_function "decorated mode collapses explicitly closed .git" \
-  "dirtree -c .git '$basedir' | grep -q '/.git/\*' || echo PASS" \
-  "PASS"
+	"dirtree -c .git $basedir_q | grep -q '/.git/\*' || echo PASS" \
+	"PASS"
 
 rm -rf "$tmpdir"
 
@@ -206,14 +328,19 @@ tmpdir=$(mktemp -d)
 basedir="$tmpdir/proj"
 mkdir -p "$basedir/sub"
 touch "$basedir/plain" "$basedir/sub/file"
+basedir_q=$(printf '%q' "$basedir")
 
-test_function "decorated output retains ANSI colors when piped" \
-  "dirtree '$basedir' | grep -q $'\033\[' && echo OK" \
-  "OK"
+test_function "no ANSI colors when piped by default" \
+	"dirtree $basedir_q | grep -q $'\033\[' && echo BAD || echo OK" \
+	"OK"
+
+test_function "ANSI colors retained when piped with --decorated" \
+	"dirtree --decorated $basedir_q | grep -q $'\033\[' && echo OK" \
+	"OK"
 
 test_function "decorated output does not star non-executable plain files" \
-  "dirtree '$basedir' | grep -q 'plain\*' && echo BAD || echo OK" \
-  "OK"
+	"dirtree $basedir_q | grep -q 'plain\*' && echo BAD || echo OK" \
+	"OK"
 
 rm -rf "$tmpdir"
 
@@ -222,14 +349,273 @@ tmpdir=$(mktemp -d)
 basedir="$tmpdir/proj"
 mkdir -p "$basedir/dirA" "$basedir/.git" "$basedir/dirB"
 touch "$basedir/fileA" "$basedir/.gitignore"
+basedir_q=$(printf '%q' "$basedir")
 
 test_function "decorated: dirs end with '/', files do not" \
-  "out=\"$(dirtree '$basedir')\"; echo \"$out\" | awk '/dirA/{exit !(/\/$/)}'; echo \"$out\" | awk '/dirB/{exit !(/\/$/)}'; echo \"$out\" | awk '/fileA/{exit (/\/$/)}'; echo OK" \
-  "OK"
+	"out=\"\$(dirtree $basedir_q)\"; echo \"$out\" | awk '/dirA/{exit !(/\/$/)}'; echo \"$out\" | awk '/dirB/{exit !(/\/$/)}'; echo \"$out\" | awk '/fileA/{exit (/\/$/)}'; echo OK" \
+	"OK"
 
 test_function "decorated: closing .git does not tag .gitignore" \
-  "dirtree -c .git '$basedir' | grep -q '.gitignore/\\*' && echo BAD || echo OK" \
-  "OK"
+	"dirtree -c .git $basedir_q | grep -q '.gitignore/\\*' && echo BAD || echo OK" \
+	"OK"
+
+rm -rf "$tmpdir"
+
+# --- Decorated indentation reflects hierarchy ---
+tmpdir=$(mktemp -d)
+basedir="$tmpdir/proj"
+mkdir -p "$basedir/parent/child"
+
+test_function "decorated indentation reflects hierarchy" \
+	"(\
+		tmpf=\$(mktemp) && \
+		dirtree \"$basedir\" > \"\$tmpf\" && \
+		grep -Eq '^[[:space:]]{4}child/' \"\$tmpf\" && \
+		echo OK && \
+		rm -f \"\$tmpf\" \
+	)" \
+	"OK"
+
+rm -rf "$tmpdir"
+
+# --- Sorting behaviour ---
+tmpdir=$(mktemp -d)
+basedir="$tmpdir/order"
+mkdir -p "$basedir"
+touch -t 202001010000 "$basedir/a"
+touch -t 202001020000 "$basedir/b"
+
+test_function "default sort is modified desc" \
+	"dirtree '$basedir' | sed -n '1p'" \
+	"^b$"
+
+test_function "--sort alpha --asc orders ascending" \
+	"dirtree --sort alpha --asc '$basedir' | sed -n '1p'" \
+	"^a$"
+
+test_function "--sort alpha --desc orders descending" \
+	"dirtree --sort alpha --desc '$basedir' | sed -n '1p'" \
+	"^b$"
+
+rm -rf "$tmpdir"
+
+# --- default closed + open parent keeps grandchildren collapsed ---
+tmpdir=$(mktemp -d)
+basedir="$tmpdir/proj"
+mkdir -p "$basedir/parent/child/grand"
+
+test_function "open parent does not expand grandchildren by default" \
+	"(\
+		cd '$basedir' && \
+		dirtree --default closed >/dev/null && \
+		tmpf=\$(mktemp) && \
+		dirtree --open parent > \"\$tmpf\" && \
+		strip_ansi < \"\$tmpf\" | grep -Fqx 'parent/' && \
+		strip_ansi < \"\$tmpf\" | grep -Fqx '    child/*' && \
+		! strip_ansi < \"\$tmpf\" | grep -F 'grand/' && \
+		echo OK && \
+		rm -f \"\$tmpf\" \
+	)" \
+	"OK"
+
+rm -rf "$tmpdir"
+
+# --- Regex open/close behavior and hide support ---
+tmpdir=$(mktemp -d)
+basedir="$tmpdir/proj"
+mkdir -p "$basedir/src/lib" "$basedir/tests"
+touch "$basedir/src/shortcut.lnk"
+touch "$basedir/src/config.json"
+touch "$basedir/src/configXjson"
+
+test_function "--open regex persists in state" \
+	"(\
+		cd '$basedir' && \
+		dirtree --default closed >/dev/null && \
+		dirtree --open re:^src >/dev/null && \
+		grep -q '^open_regex=\^src$' .dirtree-state && \
+		echo OK \
+	)" \
+	"OK"
+
+test_function "--open slash regex persists in state" \
+	"(\
+		cd '$basedir' && \
+		dirtree --default closed >/dev/null && \
+		dirtree --open '/^src/' >/dev/null && \
+		grep -q '^open_regex=\^src$' .dirtree-state && \
+		echo OK \
+	)" \
+	"OK"
+
+test_function "literal close beats regex open" \
+	"(\
+		cd '$basedir' && \
+		dirtree --default closed >/dev/null && \
+		dirtree --open re:^src >/dev/null && \
+		dirtree --close src >/dev/null && \
+		tmpf=\$(mktemp) && \
+		dirtree > \"\$tmpf\" && \
+		strip_ansi < \"\$tmpf\" | grep -Fqx 'src/*' && \
+		echo OK && \
+		rm -f \"\$tmpf\" \
+	)" \
+	"OK"
+
+test_function "--close slash regex persists in state" \
+	"(\
+		cd '$basedir' && \
+		dirtree --default closed >/dev/null && \
+		dirtree --close '/^src/' >/dev/null && \
+		grep -q '^close_regex=\^src$' .dirtree-state && \
+		echo OK \
+	)" \
+	"OK"
+
+# ensure fresh state before conflict scenario
+rm -f "$basedir/.dirtree-state"
+
+test_function "regex/open close conflict raises error" \
+	"(\
+		cd '$basedir' && \
+		cat <<'STATE' > .dirtree-state && \
+default=closed
+open=
+open_regex=^src
+close=
+close_regex=^src
+hide=
+hide_regex=
+STATE
+		dirtree > /tmp/out 2> /tmp/err; rc=\$?; rm -f /tmp/out; test \$rc -ne 0 && grep -q 'matches both open and close patterns' /tmp/err && echo OK && rm -f /tmp/err \
+	)" \
+	"OK"
+
+rm -f "$basedir/.dirtree-state"
+
+test_function "--hide literal suppresses node" \
+	"(\
+		cd '$basedir' && \
+		dirtree --hide tests >/dev/null && \
+		dirtree | strip_ansi | grep -q 'tests' && echo BAD || echo OK \
+	)" \
+	"OK"
+
+test_function "--hide regex suppresses matches" \
+	"(\
+		cd '$basedir' && \
+		dirtree --hide re:^src >/dev/null && \
+		dirtree | strip_ansi | grep -q 'src' && echo BAD || echo OK \
+	)" \
+	"OK"
+
+rm -f "$basedir/.dirtree-state"
+
+test_function "--hide slash regex persists and hides" \
+	"(\
+		cd '$basedir' && \
+		dirtree --hide '/\\.lnk$/' >/dev/null && \
+		grep -Fq '/\\.lnk$/' .dirtree-state && \
+		tmpf=\$(mktemp) && \
+		dirtree > \"\$tmpf\" && \
+		strip_ansi < \"\$tmpf\" | grep -q 'shortcut.lnk' && echo BAD || echo OK && \
+		rm -f \"\$tmpf\" \
+	)" \
+	"OK"
+
+test_function "--hide literal with dot stays literal" \
+	"(\
+		cd '$basedir' && \
+		dirtree --hide src/config.json >/dev/null && \
+		tmpf=\$(mktemp) && \
+		dirtree > \"\$tmpf\" && \
+		strip_ansi < \"\$tmpf\" | grep -Fq 'config.json' && echo BAD || ( \
+			sed -n 's/^hide=//p' .dirtree-state | grep -Fq 'src/config.json' && \
+			strip_ansi < \"\$tmpf\" | grep -Fq 'configXjson' && echo OK \
+		) && \
+		rm -f \"\$tmpf\" \
+	)" \
+	"OK"
+
+rm -f "$basedir/.dirtree-state"
+
+test_function "--show literal overrides hide regex" \
+	"(\
+		cd '$basedir' && \
+		dirtree --hide tests >/dev/null && \
+		dirtree --hide '/^src/' >/dev/null && \
+		dirtree --show src >/dev/null && \
+		tmpf=\$(mktemp) && \
+		dirtree > \"\$tmpf\" && \
+		strip_ansi < \"\$tmpf\" | grep -Fqx 'src/' && \
+		strip_ansi < \"\$tmpf\" | grep -Fq 'tests' && echo BAD || echo OK && \
+		rm -f \"\$tmpf\" \
+	)" \
+	"OK"
+
+rm -f "$basedir/.dirtree-state"
+
+test_function "hide literal beats show regex" \
+	"(\
+		cd '$basedir' && \
+		dirtree --hide tests >/dev/null && \
+		dirtree --show '/tests/' >/dev/null && \
+		dirtree | strip_ansi | grep -q 'tests' && echo BAD || echo OK \
+	)" \
+	"OK"
+
+rm -f "$basedir/.dirtree-state"
+
+test_function "--show slash regex persists" \
+	"(\
+		cd '$basedir' && \
+		dirtree --show '/shortcut/' >/dev/null && \
+		grep -Fq '/shortcut/' .dirtree-state && \
+		tmpf=\$(mktemp) && \
+		dirtree > \"\$tmpf\" && \
+		strip_ansi < \"\$tmpf\" | grep -Fq 'shortcut.lnk' && echo OK && \
+		rm -f \"\$tmpf\" \
+	)" \
+	"OK"
+
+rm -f "$basedir/.dirtree-state"
+
+test_function "--show rejects absolute paths" \
+	"(\
+		cd '$basedir' && \
+		err=\$(mktemp) && \
+		dirtree --show /absolute 1>/tmp/out 2>\"\$err\"; \
+		rc=\$?; \
+		rm -f /tmp/out; \
+		test \$rc -ne 0 && grep -q 'relative' \"\$err\" && echo OK && rm -f \"\$err\" \
+	)" \
+	"OK"
+
+rm -f "$basedir/.dirtree-state"
+
+test_function "open but hidden directory stays collapsed" \
+	"(\
+		cd '$basedir' && \
+		dirtree --default opened >/dev/null && \
+		dirtree --open src >/dev/null && \
+		dirtree --hide src >/dev/null && \
+		tmpf=\$(mktemp) && \
+		dirtree > \"\$tmpf\" && \
+		strip_ansi < \"\$tmpf\" | grep -Fq 'src/' && echo BAD || echo OK && \
+		rm -f \"\$tmpf\" \
+	)" \
+	"OK"
+
+test_function "--hide rejects absolute paths" \
+	"(\
+		cd '$basedir' && \
+		err=\$(mktemp) && \
+		dirtree --hide /absolute 1>/tmp/out 2>\"\$err\"; \
+		rc=\$?; \
+		rm -f /tmp/out; \
+		test \$rc -ne 0 && grep -q 'relative' \"\$err\" && echo OK && rm -f \"\$err\" \
+	)" \
+	"OK"
 
 rm -rf "$tmpdir"
 
@@ -238,19 +624,20 @@ tmpdir=$(mktemp -d)
 basedir="$tmpdir/proj"
 mkdir -p "$basedir/a/b"
 touch "$basedir/a/b/file"
+basedir_q=$(printf '%q' "$basedir")
 
 test_function "decorated: no leading '├──', '└──', or '│   '" \
-  "out=\"$(dirtree '$basedir')\"; ! echo \"$out\" | grep -q '^├──' && ! echo \"$out\" | grep -q '^└──' && ! echo \"$out\" | grep -q '^│   ' && echo OK" \
-  "OK"
+	"out=\"\$(dirtree $basedir_q)\"; ! echo \"$out\" | grep -q '^├──' && ! echo \"$out\" | grep -q '^└──' && ! echo \"$out\" | grep -q '^│   ' && echo OK" \
+	"OK"
 
 rm -rf "$tmpdir"
 
 # Final report
 echo
 if [[ $failed_count -eq 0 ]]; then
-    echo "All $test_count tests passed"
+	echo "All $test_count tests passed"
 else
-    echo "$failed_count of $test_count tests failed" >&2
+	echo "$failed_count of $test_count tests failed" >&2
 fi
 
 exit $failed_count

@@ -203,3 +203,4 @@ needs timeout 2>/dev/null || needs uutils-timeout "please install uutils-coreuti
 alias hn='clx --nerdfonts --no-less-verify --comment-width 120'
 alias variables='compgen -v'
 alias hi="echo \"Hello, ${USER}!\""
+alias lc='wc -l'

@@ -3,345 +3,913 @@
 # dirtree: A simple wrapper around eza for directory trees
 
 show_help() {
-  echo "dirtree - Display directory trees using eza"
-  echo ""
-  echo "Usage: dirtree [OPTIONS] [PATH]"
-  echo ""
-  echo "Options:"
-  echo "  -h, --help     Show this help message"
-  echo "  -a, --about    Show detailed description"
-  echo "  -d, --depth N  Set maximum depth (default: 2)"
-  echo "  --simple       Output a simple, LLM-friendly stateful tree"
-  echo "  --llm          Alias for --simple"
-  echo "  --decorated    Force decorated eza output"
-  echo "  --default X    Persist default state: opened|closed"
-  echo "  -o, --open L   Semicolon list of subdirs to open"
-  echo "  -c, --close L  Semicolon list of subdirs to close"
-  echo "  --test         Run associated tests"
-  echo ""
-  echo "Examples:"
-  echo "  dirtree              # Show tree of current directory"
-  echo "  dirtree /path/to/dir # Show tree of specified directory"
-  echo "  dirtree -d 3         # Set depth to 3 levels"
+	echo "dirtree - Display directory trees using eza"
+	echo ""
+	echo "Usage: dirtree [OPTIONS] [PATH]"
+	echo ""
+	echo "Options:"
+	echo "  -h, --help         Show this help message"
+	echo "  -a, --about        Show detailed description"
+	echo "  -d, --depth N      Set maximum depth (default: 2)"
+	echo "  --simple           Output a simple, LLM-friendly stateful tree"
+	echo "  --llm              Alias for --simple"
+	echo "  --decorated        Force decorated eza output (even when piped)"
+	echo "  --default X        Persist default state: opened|closed"
+	echo "  -o, --open DIR...  Open one or more subdirs (repeat flag to add more)"
+	echo "  -c, --close DIR... Close one or more subdirs (repeat flag to add more)"
+	echo "  --show PATH...     Force show relative paths; wrap regexes as /pattern/"
+	echo "  --hide PATH...     Hide relative paths; wrap regexes as /pattern/ (repeatable)"
+	echo "  --sort MODE        Sorting mode: modified|alpha (default: modified)"
+	echo "  --asc              Sort ascending"
+	echo "  --desc             Sort descending (default)"
+	echo "  --test             Run associated tests"
+	echo ""
+	echo "Use 're:pattern' or /pattern/ with --open/--close/--show to add regex rules; --hide expects /pattern/."
+	echo "Paths supplied to --show/--hide must be relative (no leading '/')."
+	echo ""
+	echo "Behavior: By default, when stdout is not a TTY (piped),"
+	echo "  colors/icons/hyperlinks are disabled unless --decorated is given."
+	echo ""
+	echo "Examples:"
+	echo "  dirtree                       # Show tree of current directory"
+	echo "  dirtree -d 3                  # Set depth to 3 levels"
+	echo "  dirtree --sort alpha --asc    # Sorted alphabetically ascending"
 }
 
 # Default values
-depth=2
+depth=10 # keep it deep but sane
 dir="."
 simple_mode=false
 force_decorated=false
 default_state=""
-open_arg=""
-close_arg=""
+cli_default_state=""
+open_args=()
+close_args=()
+show_args=()
+hide_args=()
+open_regex_args=()
+close_regex_args=()
+show_regex_args=()
+hide_regex_args=()
 state_modified=false
+sort_mode="modified"
+sort_reverse=1  # 1 => descending (default), 0 => ascending
+render_sort_field="modified"
+render_sort_reverse=1
+dir_pending=true
 
 # Normalize path to a relative, trimmed form
 normalize_rel() {
-  local base="$1" p="$2"
-  # remove leading ./
-  p="${p#./}"
-  # strip leading base if absolute within base
-  case "$p" in
-    "$base"/*) p="${p#"$base"/}" ;;
-  esac
-  # strip leading slash if any
-  p="${p#/}"
-  # strip trailing slash
-  p="${p%/}"
-  printf '%s' "$p"
+	local base="$1" p="$2"
+	# remove leading ./
+	p="${p#./}"
+	# strip leading base if absolute within base
+	case "$p" in
+		"$base"/*) p="${p#"$base"/}" ;;
+	esac
+	# strip leading slash if any
+	p="${p#/}"
+	# strip trailing slash
+	p="${p%/}"
+	printf '%s' "$p"
 }
 
-# Read state file into variables: default_state, open_set[], close_set[]
-declare -A open_set
-declare -A close_set
+osc8_decode_path() {
+	local path="$1" out="" char hex
+	local i len=${#path}
+	for ((i=0; i<len; i++)); do
+		char=${path:i:1}
+		if [[ "$char" == '%' && i+2 < len ]]; then
+			hex=${path:i+1:2}
+			if [[ "$hex" =~ ^[0-9A-Fa-f]{2}$ ]]; then
+				printf -v char '\\x%s' "$hex"
+				out+=$(printf '%b' "$char")
+				((i+=2))
+				continue
+			fi
+		fi
+		out+="${path:i:1}"
+	done
+	printf '%s' "$out"
+}
+
+declare -A open_literals
+declare -A close_literals
+declare -A show_literals
+declare -A hide_literals
+open_regexes=()
+close_regexes=()
+show_regexes=()
+hide_regexes=()
+
+open_match_type="none"
+open_match_pattern=""
+close_match_type="none"
+close_match_pattern=""
+show_match_type="none"
+show_match_pattern=""
+hide_match_type="none"
+hide_match_pattern=""
+
+append_unique_regex() {
+	local -n array_ref="$1"
+	local pattern="$2"
+	[[ -z "$pattern" ]] && return
+	for existing in "${array_ref[@]}"; do
+		if [[ "$existing" == "$pattern" ]]; then
+			return
+		fi
+	done
+	array_ref+=("$pattern")
+}
+
+load_literal_list() {
+	local base="$1" list="$2" literal_name="$3" regex_name="$4"
+	local -n literals_ref="$literal_name"
+	local -n regexes_ref="$regex_name"
+	IFS=';' read -r -a arr <<< "$list"
+	for entry in "${arr[@]}"; do
+		[[ -z "$entry" ]] && continue
+		if [[ "$entry" == re:* ]]; then
+			append_unique_regex regexes_ref "${entry#re:}"
+		else
+			local norm
+			norm=$(normalize_rel "$base" "$entry")
+			[[ -n "$norm" ]] && literals_ref["$norm"]=1
+		fi
+	done
+}
+
+load_regex_list() {
+	local list="$1" regex_name="$2"
+	local -n regexes_ref="$regex_name"
+	IFS=';' read -r -a arr <<< "$list"
+	for entry in "${arr[@]}"; do
+		[[ -z "$entry" ]] && continue
+		append_unique_regex regexes_ref "$entry"
+	done
+}
+
+load_hide_list() {
+	local base="$1" list="$2" pattern
+	IFS=';' read -r -a arr <<< "$list"
+	for entry in "${arr[@]}"; do
+		[[ -z "$entry" ]] && continue
+		if [[ "$entry" == re:* ]]; then
+			append_unique_regex hide_regexes "${entry#re:}"
+			continue
+		fi
+		if [[ "$entry" == /* && "$entry" == */ ]]; then
+			if (( ${#entry} <= 2 )); then
+				continue
+			fi
+			pattern="${entry:1:-1}"
+			append_unique_regex hide_regexes "$pattern"
+			continue
+		fi
+		local norm
+		norm=$(normalize_rel "$base" "$entry")
+		[[ -n "$norm" ]] && hide_literals["$norm"]=1
+	done
+}
+
+load_show_list() {
+	local base="$1" list="$2" pattern
+	IFS=';' read -r -a arr <<< "$list"
+	for entry in "${arr[@]}"; do
+		[[ -z "$entry" ]] && continue
+		if [[ "$entry" == re:* ]]; then
+			append_unique_regex show_regexes "${entry#re:}"
+			continue
+		fi
+		if [[ "$entry" == /* && "$entry" == */ ]]; then
+			if (( ${#entry} <= 2 )); then
+				continue
+			fi
+			pattern="${entry:1:-1}"
+			append_unique_regex show_regexes "$pattern"
+			continue
+		fi
+		local norm
+		norm=$(normalize_rel "$base" "$entry")
+		[[ -n "$norm" ]] && show_literals["$norm"]=1
+	done
+}
 
 read_state() {
-  local state_file="$1/.dirtree-state"
-  default_state=""
-  open_set=()
-  close_set=()
-  if [[ -f "$state_file" ]]; then
-    while IFS= read -r line || [[ -n "$line" ]]; do
-      case "$line" in
-        default=*) default_state="${line#default=}" ;;
-        open=*)
-          IFS=';' read -r -a arr <<< "${line#open=}"
-          for e in "${arr[@]}"; do [[ -n "$e" ]] && open_set["$e"]=1; done
-          ;;
-        close=*)
-          IFS=';' read -r -a arr <<< "${line#close=}"
-          for e in "${arr[@]}"; do [[ -n "$e" ]] && close_set["$e"]=1; done
-          ;;
-      esac
-    done < "$state_file"
-  fi
+	local state_file="$1/.dirtree-state"
+	default_state=""
+	open_literals=()
+	close_literals=()
+	show_literals=()
+	hide_literals=()
+	open_regexes=()
+	close_regexes=()
+	show_regexes=()
+	hide_regexes=()
+	if [[ -f "$state_file" ]]; then
+		while IFS= read -r line || [[ -n "$line" ]]; do
+			case "$line" in
+				default=*) default_state="${line#default=}" ;;
+				open_regex=*) load_regex_list "${line#open_regex=}" open_regexes ;;
+				close_regex=*) load_regex_list "${line#close_regex=}" close_regexes ;;
+				show_regex=*) load_regex_list "${line#show_regex=}" show_regexes ;;
+				hide_regex=*) load_regex_list "${line#hide_regex=}" hide_regexes ;;
+				open=*) load_literal_list "$1" "${line#open=}" open_literals open_regexes ;;
+				close=*) load_literal_list "$1" "${line#close=}" close_literals close_regexes ;;
+				show=*) load_show_list "$1" "${line#show=}" ;;
+				hide=*) load_hide_list "$1" "${line#hide=}" ;;
+				esac
+		done < "$state_file"
+	fi
 }
 
 persist_state() {
-  local target_dir="$1"; shift
-  local state_file="$target_dir/.dirtree-state"
-  local tmp_file
-  tmp_file=$(mktemp "${state_file}.XXXXXX")
-  # Preserve unknown keys
-  if [[ -f "$state_file" ]]; then
-    while IFS= read -r line || [[ -n "$line" ]]; do
-      case "$line" in
-        default=*|open=*|close=*) ;;
-        *) echo "$line" >>"$tmp_file" ;;
-      esac
-    done < "$state_file"
-  fi
-  # Write managed keys
-  if [[ -n "$default_state" ]]; then
-    echo "default=$default_state" >>"$tmp_file"
-  fi
-  # Join open_set
-  local k out
-  out=""
-  for k in "${!open_set[@]}"; do
-    [[ -n "$out" ]] && out+=";"
-    out+="$k"
-  done
-  echo "open=$out" >>"$tmp_file"
-  out=""
-  for k in "${!close_set[@]}"; do
-    [[ -n "$out" ]] && out+=";"
-    out+="$k"
-  done
-  echo "close=$out" >>"$tmp_file"
-  mv -f "$tmp_file" "$state_file"
+	local target_dir="$1"; shift
+	local state_file="$target_dir/.dirtree-state"
+	local tmp_file
+	tmp_file=$(mktemp "${state_file}.XXXXXX")
+
+	if [[ -f "$state_file" ]]; then
+		while IFS= read -r line || [[ -n "$line" ]]; do
+		case "$line" in
+			default=*|open=*|open_regex=*|close=*|close_regex=*|show=*|show_regex=*|hide=*|hide_regex=*) ;;
+				*) echo "$line" >>"$tmp_file" ;;
+			esac
+		done < "$state_file"
+	fi
+
+	sort_and_join() {
+		local items=("$@")
+		if [[ ${#items[@]} -eq 0 ]]; then
+			echo ""
+			return
+		fi
+		IFS=$'\n' items=($(printf '%s\n' "${items[@]}" | sort))
+		local IFS=';'
+		printf '%s' "${items[*]}"
+	}
+
+	local open_literal_list close_literal_list
+	open_literal_list=$(sort_and_join "${!open_literals[@]}")
+	close_literal_list=$(sort_and_join "${!close_literals[@]}")
+
+	sort_regex_array() {
+		local entries=("$@")
+		if [[ ${#entries[@]} -eq 0 ]]; then
+			echo ""
+			return
+		fi
+		IFS=$'\n' entries=($(printf '%s\n' "${entries[@]}" | sort))
+		local IFS=';'
+		printf '%s' "${entries[*]}"
+	}
+
+	local open_regex_list close_regex_list
+	open_regex_list=$(sort_regex_array "${open_regexes[@]}")
+	close_regex_list=$(sort_regex_array "${close_regexes[@]}")
+
+	[[ -n "$default_state" ]] && echo "default=$default_state" >>"$tmp_file"
+	echo "open=$open_literal_list" >>"$tmp_file"
+	echo "open_regex=$open_regex_list" >>"$tmp_file"
+	echo "close=$close_literal_list" >>"$tmp_file"
+	echo "close_regex=$close_regex_list" >>"$tmp_file"
+	local show_entries=()
+	local key
+	for key in "${!show_literals[@]}"; do
+		show_entries+=("$key")
+	done
+	for key in "${show_regexes[@]}"; do
+		show_entries+=("/$key/")
+	done
+	local show_joined
+	show_joined=$(sort_and_join "${show_entries[@]}")
+	echo "show=$show_joined" >>"$tmp_file"
+	local hide_entries=()
+	for key in "${!hide_literals[@]}"; do
+		hide_entries+=("$key")
+	done
+	for key in "${hide_regexes[@]}"; do
+		hide_entries+=("/$key/")
+	done
+	local hide_joined
+	hide_joined=$(sort_and_join "${hide_entries[@]}")
+	echo "hide=$hide_joined" >>"$tmp_file"
+
+	mv -f "$tmp_file" "$state_file"
 }
 
-in_open_set() { [[ -n "${open_set[$1]:-}" ]]; }
-in_close_set() { [[ -n "${close_set[$1]:-}" ]]; }
-
-# Decide if a directory should expand under simple mode
-should_expand() {
-  local rel="$1" parent_closed="$2"
-  # If an ancestor is closed, remain closed
-  [[ "$parent_closed" == "1" ]] && return 1
-  # Explicit close always wins
-  if in_close_set "$rel"; then return 1; fi
-  # If explicitly opened, expand
-  if in_open_set "$rel"; then return 0; fi
-  # If any open path is a descendant, we need to expand down to it
-  local k
-  for k in "${!open_set[@]}"; do
-    if [[ "$k" == "$rel"/* ]]; then return 0; fi
-  done
-  # Default behavior
-  if [[ "$default_state" == "closed" ]]; then
-    return 1
-  fi
-  return 0
-}
-
-# Determine if a directory has children (non-empty)
 dir_has_children() {
-  local abs="$1"
-  shopt -s nullglob dotglob
-  local arr=("$abs"/*)
-  shopt -u nullglob dotglob
-  [[ ${#arr[@]} -gt 0 ]]
+	local d=${1:-.}
+	find "$d" -mindepth 1 -maxdepth 1 -print -quit >/dev/null 2>&1
 }
 
-# Recursively print a simple tree
+path_state() {
+	local rel="$1"
+	open_match_type="none"
+	open_match_pattern=""
+	close_match_type="none"
+	close_match_pattern=""
+	show_match_type="none"
+	show_match_pattern=""
+	hide_match_type="none"
+	hide_match_pattern=""
+
+	if [[ -n "$rel" && -n "${open_literals[$rel]:-}" ]]; then
+		open_match_type="literal"
+		open_match_pattern="$rel"
+	else
+		for pattern in "${open_regexes[@]}"; do
+			[[ -z "$pattern" ]] && continue
+			if [[ "$rel" =~ $pattern ]]; then
+				open_match_type="regex"
+				open_match_pattern="$pattern"
+				break
+			fi
+		done
+	fi
+
+	if [[ -n "$rel" && -n "${close_literals[$rel]:-}" ]]; then
+		close_match_type="literal"
+		close_match_pattern="$rel"
+	else
+		for pattern in "${close_regexes[@]}"; do
+			[[ -z "$pattern" ]] && continue
+			if [[ "$rel" =~ $pattern ]]; then
+				close_match_type="regex"
+				close_match_pattern="$pattern"
+				break
+			fi
+		done
+	fi
+
+	if [[ -n "$rel" && -n "${show_literals[$rel]:-}" ]]; then
+		show_match_type="literal"
+		show_match_pattern="$rel"
+	else
+		for pattern in "${show_regexes[@]}"; do
+			[[ -z "$pattern" ]] && continue
+			if [[ "$rel" =~ $pattern ]]; then
+				show_match_type="regex"
+				show_match_pattern="$pattern"
+				break
+			fi
+		done
+	fi
+
+	if [[ -n "$rel" && -n "${hide_literals[$rel]:-}" ]]; then
+		hide_match_type="literal"
+		hide_match_pattern="$rel"
+	else
+		for pattern in "${hide_regexes[@]}"; do
+			[[ -z "$pattern" ]] && continue
+			if [[ "$rel" =~ $pattern ]]; then
+				hide_match_type="regex"
+				hide_match_pattern="$pattern"
+				break
+			fi
+		done
+	fi
+}
+
+evaluate_path() {
+	local rel="$1" parent_closed="$2"
+	path_state "$rel"
+	path_hidden=0
+
+	local open_type="$open_match_type"
+	local close_type="$close_match_type"
+	local open_pat="$open_match_pattern"
+	local close_pat="$close_match_pattern"
+	local show_type="$show_match_type"
+	local hide_type="$hide_match_type"
+	local show_pat="$show_match_pattern"
+	local hide_pat="$hide_match_pattern"
+
+	if [[ "$open_type" != "none" && "$close_type" != "none" ]]; then
+		if [[ "$open_type" == "literal" && "$close_type" == "regex" ]]; then
+			close_type="none"
+			close_pat=""
+		elif [[ "$open_type" == "regex" && "$close_type" == "literal" ]]; then
+			open_type="none"
+			open_pat=""
+		else
+			echo "Error: path '$rel' matches both open and close patterns" >&2
+			[[ -n "$open_pat" ]] && echo "  open pattern: $open_pat" >&2
+			[[ -n "$close_pat" ]] && echo "  close pattern: $close_pat" >&2
+			exit 1
+		fi
+	fi
+
+	if [[ "$show_type" != "none" && "$hide_type" != "none" ]]; then
+		if [[ "$show_type" == "literal" && "$hide_type" == "regex" ]]; then
+			hide_type="none"
+			hide_pat=""
+		elif [[ "$show_type" == "regex" && "$hide_type" == "literal" ]]; then
+			show_type="none"
+			show_pat=""
+		else
+			echo "Error: path '$rel' matches both show and hide patterns" >&2
+			[[ -n "$show_pat" ]] && echo "  show pattern: $show_pat" >&2
+			[[ -n "$hide_pat" ]] && echo "  hide pattern: $hide_pat" >&2
+			exit 1
+		fi
+	fi
+
+	if [[ "$hide_type" != "none" ]]; then
+		path_hidden=1
+	elif [[ "$show_type" != "none" ]]; then
+		path_hidden=0
+	else
+		path_hidden=0
+	fi
+
+	if [[ "$parent_closed" == "1" ]]; then
+		path_closed=1
+	elif [[ "$close_type" != "none" ]]; then
+		path_closed=1
+	elif [[ "$open_type" != "none" ]]; then
+		path_closed=0
+	elif [[ "$default_state" == "closed" ]]; then
+		path_closed=1
+	else
+		path_closed=0
+	fi
+}
+
+# Recursively print a simple tree (used for --simple mode)
 print_simple_tree() {
-  local base="$1" rel="$2" prefix="$3" depth_left="$4" parent_closed="$5"
-  local abs
-  if [[ -z "$rel" ]]; then abs="$base"; else abs="$base/$rel"; fi
+	local base="$1" rel="$2" prefix="$3" depth_left="$4" parent_closed="$5"
+	local abs
+	if [[ -z "$rel" ]]; then abs="$base"; else abs="$base/$rel"; fi
 
-  # List children sorted by name (including dotfiles, excluding . and ..)
-  shopt -s dotglob nullglob
-  local children=("$abs"/*)
-  shopt -u dotglob
-  # Convert to relative names
-  local names=()
-  local c
-  for c in "${children[@]}"; do
-    local name
-    name=$(basename "$c")
-    names+=("$name")
-  done
-  IFS=$'\n' names=($(printf '%s\n' "${names[@]}" | sort))
-  unset IFS
+	# List children sorted by name (including dotfiles, excluding . and ..)
+	shopt -s dotglob nullglob
+	local children=("$abs"/*)
+	shopt -u dotglob
+	# Convert to relative names
+	local names=()
+	local c
+	for c in "${children[@]}"; do
+		local name
+		name=$(basename "$c")
+		names+=("$name")
+	done
+	IFS=$'\n' names=($(printf '%s\n' "${names[@]}" | sort))
+	unset IFS
 
-  local count=${#names[@]}
-  local i
-  for ((i=0; i<count; i++)); do
-    local name="${names[$i]}"
-    local child_rel
-    if [[ -n "$rel" ]]; then child_rel="$rel/$name"; else child_rel="$name"; fi
-    local child_abs="$abs/$name"
-    local is_last=$(( i == count-1 ))
-    local connector="├── "
-    local next_prefix="$prefix│   "
-    if [[ $is_last -eq 1 ]]; then
-      connector="└── "
-      next_prefix="$prefix    "
-    fi
-    if [[ -d "$child_abs" ]]; then
-      local exp
-      should_expand "$child_rel" "$parent_closed"
-      exp=$?
-      local marker="/"
-      local show_star=""
-      # Decide star: star if not expanding OR depth limit reached, and dir has children
-      if [[ $exp -ne 0 || $depth_left -le 1 ]]; then
-        if dir_has_children "$child_abs"; then show_star="*"; fi
-      fi
-      echo "${prefix}${connector}${name}${marker}${show_star}"
-      if [[ $exp -eq 0 && $depth_left -gt 1 ]]; then
-        print_simple_tree "$base" "$child_rel" "$next_prefix" $((depth_left-1)) 0
-      else
-        # Child is effectively closed for descendants
-        :
-      fi
-    else
-      echo "${prefix}${connector}${name}"
-    fi
-  done
+	local count=${#names[@]}
+	local i
+	for ((i=0; i<count; i++)); do
+		local name="${names[$i]}"
+		local child_rel
+		if [[ -n "$rel" ]]; then child_rel="$rel/$name"; else child_rel="$name"; fi
+		local child_abs="$abs/$name"
+		local is_last=$(( i == count-1 ))
+		local connector="├── "
+		local next_prefix="$prefix│   "
+		if [[ $is_last -eq 1 ]]; then
+			connector="└── "
+			next_prefix="$prefix    "
+		fi
+		if [[ -d "$child_abs" ]]; then
+			evaluate_path "$child_rel" "$parent_closed"
+			if [[ $path_hidden -eq 1 ]]; then
+				continue
+			fi
+			local marker="/"
+			local show_star=""
+			if [[ $path_closed -eq 1 || $depth_left -le 1 ]]; then
+				if dir_has_children "$child_abs"; then show_star="*"; fi
+			fi
+			echo "${prefix}${connector}${name}${marker}${show_star}"
+			if [[ $path_closed -eq 0 && $depth_left -gt 1 ]]; then
+				print_simple_tree "$base" "$child_rel" "$next_prefix" $((depth_left-1)) 0
+			fi
+		else
+			evaluate_path "$child_rel" "$parent_closed"
+			if [[ $path_hidden -eq 1 ]]; then
+				continue
+			fi
+			echo "${prefix}${connector}${name}"
+		fi
+	done
+}
+
+# Append markers while preserving trailing ANSI resets and OSC8 terminators
+append_with_marker() {
+	local line="$1" marker="$2"
+	local osc_close=$'\e]8;;'
+	local st=$'\e\\'
+	local trailing_hyper=""
+	if [[ "$line" == *"$osc_close$st" ]]; then
+		trailing_hyper="$osc_close$st"
+		line="${line%$osc_close$st}"
+	elif [[ "$line" == *"$st" ]]; then
+		trailing_hyper="$st"
+		line="${line%$st}"
+	fi
+	local trailing_color=""
+	while [[ "$line" =~ (.*)(\x1b\[[0-9;]*m)$ ]]; do
+		line="${BASH_REMATCH[1]}"
+		trailing_color="${BASH_REMATCH[2]}${trailing_color}"
+	done
+	printf '%s' "${line}${marker}${trailing_color}${trailing_hyper}"
+}
+
+# Recursively render decorated output without traversing closed subtrees
+render_dir() {
+	local rel="$1" depth_left="$2" parent_closed="$3" prefix="$4"
+	local abs
+	if [[ -z "$rel" ]]; then abs="$abs_dir"; else abs="$abs_dir/$rel"; fi
+	local eza_args=(--hyperlink --icons="${eza_icons}" --color="${eza_color}" --git --sort "${render_sort_field}" --all -1)
+	if [[ "$render_sort_reverse" -eq 1 ]]; then
+		eza_args+=(--reverse)
+	fi
+	local hp=$'\e]8;;file://'
+	local st=$'\e\\'
+	local lines=()
+	local rels=()
+	local targets=()
+	local isdirs=()
+	while IFS= read -r line; do
+		local decoded_target=""
+		if [[ "$line" == *"$hp"* ]]; then
+			local rest="${line#*"$hp"}"
+			local target="${rest%%"$st"*}"
+			decoded_target=$(osc8_decode_path "$target")
+		fi
+		lines+=("$line")
+		if [[ -n "$decoded_target" ]]; then
+			local child_rel
+			child_rel=$(normalize_rel "$abs_dir" "$decoded_target")
+			rels+=("$child_rel")
+			targets+=("$decoded_target")
+			local is_dir_val=0
+			if [[ -d "$decoded_target" ]]; then
+				is_dir_val=1
+			fi
+			isdirs+=("$is_dir_val")
+		else
+			rels+=("")
+			targets+=("")
+			isdirs+=(0)
+		fi
+	done < <(eza "${eza_args[@]}" "$abs")
+
+	local count=${#lines[@]}
+	local idx
+	for ((idx=0; idx<count; idx++)); do
+		local line="${lines[$idx]}"
+		local child_rel="${rels[$idx]}"
+		local target="${targets[$idx]}"
+		if [[ -z "$child_rel" ]]; then
+			printf '%s%s\n' "$prefix" "$line"
+			continue
+		fi
+		if [[ "$child_rel" == "." || "$child_rel" == ".." ]]; then
+			printf '%s%s\n' "$prefix" "$line"
+			continue
+		fi
+		evaluate_path "$child_rel" "$parent_closed"
+		if [[ $path_hidden -eq 1 ]]; then
+			continue
+		fi
+		if [[ "${isdirs[$idx]}" -eq 1 ]]; then
+			local marker="/"
+			if [[ $path_closed -eq 1 ]]; then
+				if dir_has_children "$target"; then
+					marker="/*"
+				fi
+			fi
+			line=$(append_with_marker "$line" "$marker")
+			printf '%s%s\n' "$prefix" "$line"
+			if [[ $path_closed -eq 0 && $depth_left -gt 1 ]]; then
+				render_dir "$child_rel" $((depth_left-1)) "$path_closed" "${prefix}    "
+			fi
+		else
+			printf '%s%s\n' "$prefix" "$line"
+		fi
+	done
 }
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
-  case "$1" in
-    -h|--help)
-      show_help
-      exit 0
-      ;;
-    -a|--about)
-      echo "Stateful eza tree (icons/colors/links); --simple for LLMs; persists .dirtree-state (default/open/close); env: DIRTREE_{SIMPLE,DECORATED,AUTO_SIMPLE}."
-      exit 0
-      ;;
-    -d|--depth)
-      shift
-      if [[ -n "$1" && "$1" =~ ^[0-9]+$ ]]; then
-        depth="$1"
-      else
-        echo "Error: --depth requires a numeric argument" >&2
-        exit 1
-      fi
-      ;;
-    --simple)
-      simple_mode=true
-      ;;
-    --llm)
-      simple_mode=true
-      ;;
-    --decorated)
-      force_decorated=true
-      ;;
-    --default)
-      shift
-      case "$1" in
-        opened|closed) default_state="$1"; state_modified=true ;;
-        *) echo "Error: --default requires 'opened' or 'closed'" >&2; exit 1 ;;
-      esac
-      ;;
-    -o|--open)
-      shift
-      open_arg="$1"; state_modified=true
-      ;;
-    -c|--close)
-      shift
-      close_arg="$1"; state_modified=true
-      ;;
-    --test)
-      if [[ -x "$(dirname "$0")/test/dirtree_test" ]]; then
-        "$(dirname "$0")/test/dirtree_test" >/dev/null
-      else
-        echo "Error: dirtree_test not found or not executable." >&2
-        exit 1
-      fi
-      exit $?
-      ;;
-    -*)
-      echo "Unknown option: $1" >&2
-      exit 1
-      ;;
-    *)
-      # This is the directory argument
-      dir="$1"
-      break
-      ;;
-  esac
-  shift
+	case "$1" in
+		-h|--help)
+			show_help
+			exit 0
+			;;
+		-a|--about)
+			echo "Stateful eza tree (icons/colors/links); --simple for LLMs; persists .dirtree-state (default/open/close/show/hide); regex via /pattern/ or re:; literals must be relative; env: DIRTREE_{SIMPLE,DECORATED,AUTO_SIMPLE}."
+			exit 0
+			;;
+		-d|--depth)
+			shift
+			if [[ -n "$1" && "$1" =~ ^[0-9]+$ ]]; then
+				depth="$1"
+			else
+				echo "Error: --depth requires a numeric argument" >&2
+				exit 1
+			fi
+			;;
+		--simple)
+			simple_mode=true
+			;;
+		--llm)
+			simple_mode=true
+			;;
+		--decorated)
+			force_decorated=true
+			;;
+			--default)
+				shift
+				case "$1" in
+					opened|closed) cli_default_state="$1"; state_modified=true ;;
+					*) echo "Error: --default requires 'opened' or 'closed'" >&2; exit 1 ;;
+				esac
+				;;
+			--sort)
+				shift
+				case "$1" in
+					alpha|modified) sort_mode="$1" ;;
+					*) echo "Error: --sort requires 'modified' or 'alpha'" >&2; exit 1 ;;
+				esac
+				;;
+			--asc)
+				sort_reverse=0
+				;;
+			--desc)
+				sort_reverse=1
+				;;
+			-o|--open)
+				shift
+				collected=()
+				while [[ $# -gt 0 && "$1" != --* && "$1" != -* ]]; do
+					if [[ "$dir_pending" == true && $# -eq 1 && ${#collected[@]} -gt 0 ]]; then
+						break
+					fi
+					collected+=("$1")
+					shift
+				done
+				if [[ ${#collected[@]} -eq 0 ]]; then
+					echo "Error: --open requires at least one directory" >&2
+					exit 1
+				fi
+				for entry in "${collected[@]}"; do
+					if [[ "$entry" == re:* ]]; then
+						open_regex_args+=("${entry#re:}")
+					elif [[ "$entry" == /* && "$entry" == */ ]]; then
+						if (( ${#entry} <= 2 )); then
+							echo "Error: --open regex pattern must not be empty" >&2
+							exit 1
+						fi
+						pattern_val="${entry:1:-1}"
+						open_regex_args+=("$pattern_val")
+					else
+						open_args+=("$entry")
+					fi
+					done
+				state_modified=true
+				unset collected
+				continue
+				;;
+			-c|--close)
+				shift
+				collected=()
+				while [[ $# -gt 0 && "$1" != --* && "$1" != -* ]]; do
+					if [[ "$dir_pending" == true && $# -eq 1 && ${#collected[@]} -gt 0 ]]; then
+						break
+					fi
+					collected+=("$1")
+					shift
+				done
+				if [[ ${#collected[@]} -eq 0 ]]; then
+					echo "Error: --close requires at least one directory" >&2
+					exit 1
+				fi
+				for entry in "${collected[@]}"; do
+					if [[ "$entry" == re:* ]]; then
+						close_regex_args+=("${entry#re:}")
+					elif [[ "$entry" == /* && "$entry" == */ ]]; then
+						if (( ${#entry} <= 2 )); then
+							echo "Error: --close regex pattern must not be empty" >&2
+							exit 1
+						fi
+						pattern_val="${entry:1:-1}"
+						close_regex_args+=("$pattern_val")
+					else
+						close_args+=("$entry")
+					fi
+					done
+				state_modified=true
+				unset collected
+				continue
+				;;
+			--show)
+				shift
+				collected=()
+				while [[ $# -gt 0 && "$1" != --* && "$1" != -* ]]; do
+					if [[ "$dir_pending" == true && $# -eq 1 && ${#collected[@]} -gt 0 ]]; then
+						break
+					fi
+					collected+=("$1")
+					shift
+					done
+				if [[ ${#collected[@]} -eq 0 ]]; then
+					echo "Error: --show requires at least one path" >&2
+					exit 1
+				fi
+				for entry in "${collected[@]}"; do
+					if [[ "$entry" == re:* ]]; then
+						show_regex_args+=("${entry#re:}")
+					elif [[ "$entry" == /* && "$entry" == */ ]]; then
+						if (( ${#entry} <= 2 )); then
+							echo "Error: --show regex pattern must not be empty" >&2
+							exit 1
+						fi
+						pattern_val="${entry:1:-1}"
+						show_regex_args+=("$pattern_val")
+					else
+						if [[ "$entry" == /* ]]; then
+							echo "Error: --show paths must be relative (no leading '/'): $entry" >&2
+							exit 1
+						fi
+						show_args+=("$entry")
+					fi
+					done
+				state_modified=true
+				unset collected
+				continue
+				;;
+			--hide)
+				shift
+				collected=()
+				while [[ $# -gt 0 && "$1" != --* && "$1" != -* ]]; do
+					if [[ "$dir_pending" == true && $# -eq 1 && ${#collected[@]} -gt 0 ]]; then
+						break
+					fi
+					collected+=("$1")
+					shift
+				done
+				if [[ ${#collected[@]} -eq 0 ]]; then
+					echo "Error: --hide requires at least one path" >&2
+					exit 1
+				fi
+				for entry in "${collected[@]}"; do
+					if [[ "$entry" == re:* ]]; then
+						hide_regex_args+=("${entry#re:}")
+					elif [[ "$entry" == /* && "$entry" == */ ]]; then
+						if (( ${#entry} <= 2 )); then
+							echo "Error: --hide regex pattern must not be empty" >&2
+							exit 1
+						fi
+						pattern_val="${entry:1:-1}"
+						hide_regex_args+=("$pattern_val")
+					else
+						if [[ "$entry" == /* ]]; then
+							echo "Error: --hide paths must be relative (no leading '/'): $entry" >&2
+							exit 1
+						fi
+						hide_args+=("$entry")
+					fi
+					done
+				state_modified=true
+				unset collected
+				continue
+				;;
+		--test)
+			if [[ -x "$(dirname "$0")/test/dirtree_test" ]]; then
+				"$(dirname "$0")/test/dirtree_test" >/dev/null
+			else
+				echo "Error: dirtree_test not found or not executable." >&2
+				exit 1
+			fi
+			exit $?
+			;;
+		-*)
+			echo "Unknown option: $1" >&2
+			exit 1
+			;;
+		*)
+			# This is the directory argument
+			dir="$1"
+			dir_pending=false
+			break
+			;;
+	esac
+	shift
 done
 
 # Validate directory exists
 if [[ ! -d "$dir" ]]; then
-  echo "Error: '$dir' is not a directory" >&2
-  exit 1
+	echo "Error: '$dir' is not a directory" >&2
+	exit 1
 fi
+
+# Absolute path for rendering
+abs_dir=$(cd "$dir" && pwd -P)
 
 # Load and possibly update state
 read_state "$dir"
 
-# Apply CLI open/close mutations if any
-if [[ -n "$open_arg" ]]; then
-  IFS=';' read -r -a arr <<< "$open_arg"
-  for p in "${arr[@]}"; do
-    p=$(normalize_rel "$dir" "$p")
-    [[ -z "$p" ]] && continue
-    if [[ -d "$dir/$p" ]]; then
-      open_set["$p"]=1
-      unset 'close_set[$p]'
-    else
-      echo "Warning: open target not a directory: $p" >&2
-    fi
-  done
-fi
-if [[ -n "$close_arg" ]]; then
-  IFS=';' read -r -a arr <<< "$close_arg"
-  for p in "${arr[@]}"; do
-    p=$(normalize_rel "$dir" "$p")
-    [[ -z "$p" ]] && continue
-    if [[ -d "$dir/$p" ]]; then
-      close_set["$p"]=1
-      unset 'open_set[$p]'
-    else
-      echo "Warning: close target not a directory: $p" >&2
-    fi
-  done
+# Apply CLI default after loading persisted state so it isn't overwritten
+if [[ -n "$cli_default_state" ]]; then
+	default_state="$cli_default_state"
 fi
 
+# Apply CLI open/close mutations if any
+for pattern in "${open_regex_args[@]}"; do
+	append_unique_regex open_regexes "$pattern"
+done
+for pattern in "${close_regex_args[@]}"; do
+	append_unique_regex close_regexes "$pattern"
+done
+for pattern in "${show_regex_args[@]}"; do
+	append_unique_regex show_regexes "$pattern"
+done
+for pattern in "${hide_regex_args[@]}"; do
+	append_unique_regex hide_regexes "$pattern"
+done
+
+for p in "${open_args[@]}"; do
+	p=$(normalize_rel "$dir" "$p")
+	[[ -z "$p" ]] && continue
+	if [[ -d "$dir/$p" ]]; then
+		open_literals["$p"]=1
+		unset 'close_literals[$p]'
+	else
+		echo "Warning: open target not a directory: $p" >&2
+	fi
+done
+for p in "${close_args[@]}"; do
+	p=$(normalize_rel "$dir" "$p")
+	[[ -z "$p" ]] && continue
+	if [[ -d "$dir/$p" ]]; then
+		close_literals["$p"]=1
+		unset 'open_literals[$p]'
+	else
+		echo "Warning: close target not a directory: $p" >&2
+	fi
+done
+for p in "${show_args[@]}"; do
+	p=$(normalize_rel "$dir" "$p")
+	[[ -z "$p" ]] && continue
+	show_literals["$p"]=1
+	unset 'hide_literals[$p]'
+done
+for p in "${hide_args[@]}"; do
+	p=$(normalize_rel "$dir" "$p")
+	[[ -z "$p" ]] && continue
+	hide_literals["$p"]=1
+	unset 'show_literals[$p]'
+done
+
 if [[ "$state_modified" == true ]]; then
-  persist_state "$dir"
+	persist_state "$dir"
 fi
+
+case "$sort_mode" in
+	alpha) render_sort_field="name" ;;
+	*) render_sort_field="modified" ;;
+esac
+render_sort_reverse="$sort_reverse"
 
 # Determine mode if not explicitly forced
 if [[ "$force_decorated" == false ]]; then
-  if [[ "$simple_mode" != true ]]; then
-    if [[ -n "${DIRTREE_SIMPLE:-}" ]]; then
-      simple_mode=true
-    elif [[ -n "${DIRTREE_DECORATED:-}" ]]; then
-      simple_mode=false
-    elif [[ -n "${DIRTREE_AUTO_SIMPLE:-}" ]]; then
-      # Auto: enable simple when stdout is not a TTY
-      if [[ ! -t 1 ]]; then
-        simple_mode=true
-      fi
-    fi
-  fi
+	if [[ "$simple_mode" != true ]]; then
+		if [[ -n "${DIRTREE_SIMPLE:-}" ]]; then
+			simple_mode=true
+		elif [[ -n "${DIRTREE_DECORATED:-}" ]]; then
+			simple_mode=false
+		elif [[ -n "${DIRTREE_AUTO_SIMPLE:-}" ]]; then
+			# Auto: enable simple when stdout is not a TTY
+			if [[ ! -t 1 ]]; then
+				simple_mode=true
+			fi
+		fi
+	fi
 fi
 
 if [[ "$simple_mode" == true ]]; then
-  # Print stateful simple tree without leading top-level connectors or root line
-  {
-    print_simple_tree "$dir" "" "" "$depth" 0
-  } |
-  {
-    ESC=$'\e'
-    sed -E "s/^(${ESC}\\[[0-9;]*m)*(├──|└──)[[:space:]]+//; s/^(${ESC}\\[[0-9;]*m)*│[[:space:]][[:space:]][[:space:]]//"
-  }
-  exit 0
+	# Print stateful simple tree without leading top-level connectors or root line
+	(
+		set -o pipefail
+		{
+			print_simple_tree "$dir" "" "" "$depth" 0
+		} |
+		{
+			ESC=$'\e'
+			sed -E "s/^(${ESC}\\[[0-9;]*m)*(├──|└──)[[:space:]]+//; s/^(${ESC}\\[[0-9;]*m)*│[[:space:]][[:space:]][[:space:]]//"
+		}
+	)
+	exit $?
 fi
 
 # For decorated mode, ensure eza is available
 if ! command -v eza >/dev/null 2>&1; then
-  echo "Error: eza is not installed. Please install eza first." >&2
-  exit 1
+	echo "Error: eza is not installed. Please install eza first." >&2
+	exit 1
 fi
 
 # Decide eza presentation based on TTY. When stdout is not a TTY (e.g. piped to
@@ -351,110 +919,18 @@ eza_color="always"
 eza_icons="always"
 strip_osc8=false
 if [[ ! -t 1 && "$force_decorated" == false && "$simple_mode" != true ]]; then
-  eza_color="never"
-  eza_icons="never"
-  strip_osc8=true
+	eza_color="never"
+	eza_icons="never"
+	strip_osc8=true
 fi
 
-# Run eza with the specified options; if there are explicitly closed paths,
-# filter out their descendants in decorated output.
-
-# Compute absolute base for hyperlink filtering
-abs_dir=$(cd "$dir" && pwd -P)
-
-if [[ ${#close_set[@]} -gt 0 ]]; then
-  # Build array of absolute closed prefixes
-  closed_prefixes=()
-  closed_exact=()
-  declare -A closed_star
-  for k in "${!close_set[@]}"; do
-    [[ -z "$k" ]] && continue
-    closed_prefixes+=("$abs_dir/$k/")
-    closed_exact+=("$abs_dir/$k")
-    if dir_has_children "$abs_dir/$k"; then closed_star["$abs_dir/$k"]=1; fi
-  done
-  # Render and filter lines containing hyperlinks under any closed prefix
-  eza --tree --hyperlink --icons="${eza_icons}" --color="${eza_color}" --git --sort modified --reverse --level "$depth" --all "$dir" | \
-  while IFS= read -r line; do
-    skip=0
-    for p in "${closed_prefixes[@]}"; do
-      # OSC8 hyperlink prefix
-      hp=$'\e]8;;file://'
-      if [[ "$line" == *"${hp}${p}"* ]]; then
-        skip=1; break
-      fi
-    done
-    [[ $skip -eq 1 ]] && continue
-    # If this is the closed directory line itself, append '/' or '/*' depending on children
-    star_added=0
-    st=$'\e\\'
-    for p in "${closed_exact[@]}"; do
-      hp=$'\e]8;;file://'
-      if [[ "$line" == *"${hp}${p}${st}"* ]]; then
-        if [[ -n "${closed_star[$p]:-}" ]]; then
-          echo "${line}/*"
-        else
-          echo "${line}/"
-        fi
-        star_added=1
-        break
-      fi
-    done
-    [[ $star_added -eq 1 ]] && continue
-    # For any directory lines (not just closed), append '/' suffix if missing
-    # Extract hyperlink path between hp and ST
-    hp=$'\e]8;;file://'
-    st=$'\e\\'
-    if [[ "$line" == *"$hp"* ]]; then
-      rest="${line#*"$hp"}"
-      target="${rest%%"$st"*}"
-      if [[ -n "$target" && -d "$target" ]]; then
-        # Avoid double-appending if already has '/' or '/*'
-        if [[ "$line" != */ && "$line" != *'/*' ]]; then
-          line="${line}/"
-        fi
-      fi
-      # Drop the root line entirely
-      if [[ -n "$target" && "$target" == "$abs_dir" ]]; then
-        continue
-      fi
-    fi
-    echo "$line"
-  done |
-  {
-    ESC=$'\e'
-    if $strip_osc8; then
-      sed -E "s/${ESC}]8;;[^${ESC}]*${ESC}\\\\//g; s/^(${ESC}\\[[0-9;]*m)*(├──|└──)[[:space:]]+//; s/^(${ESC}\\[[0-9;]*m)*│[[:space:]][[:space:]][[:space:]]//"
-    else
-      sed -E "s/^(${ESC}\\[[0-9;]*m)*(├──|└──)[[:space:]]+//; s/^(${ESC}\\[[0-9;]*m)*│[[:space:]][[:space:]][[:space:]]//"
-    fi
-  }
+# Run renderer with optional OSC8 stripping
+if $strip_osc8; then
+	(
+		set -o pipefail
+		ESC=$'\e'
+		render_dir "" "$depth" 0 "" | sed -E "s/${ESC}]8;;[^${ESC}]*${ESC}\\\\//g"
+	)
 else
-  # No explicit closures; still append '/' to directories by post-processing
-  eza --tree --hyperlink --icons="${eza_icons}" --color="${eza_color}" --git --sort modified --reverse --level "$depth" --all "$dir" | \
-  while IFS= read -r line; do
-    hp=$'\e]8;;file://'
-    st=$'\e\\'
-    if [[ "$line" == *"$hp"* ]]; then
-      rest="${line#*"$hp"}"
-      target="${rest%%"$st"*}"
-      if [[ -n "$target" && -d "$target" ]]; then
-        if [[ "$line" != */ && "$line" != *'/*' ]]; then
-          line="${line}/"
-        fi
-      fi
-      if [[ -n "$target" && "$target" == "$abs_dir" ]]; then
-        continue
-      fi
-    fi
-    echo "$line"
-  done |
-  {
-    ESC=$'\e'
-    if $strip_osc8; then
-      sed -E "s/${ESC}]8;;[^${ESC}]*${ESC}\\\\//g; s/^(${ESC}\\[[0-9;]*m)*(├──|└──)[[:space:]]+//; s/^(${ESC}\\[[0-9;]*m)*│[[:space:]][[:space:]][[:space:]]//"
-    else
-      sed -E "s/^(${ESC}\\[[0-9;]*m)*(├──|└──)[[:space:]]+//; s/^(${ESC}\\[[0-9;]*m)*│[[:space:]][[:space:]][[:space:]]//"
-    fi
-  }
+	render_dir "" "$depth" 0 ""
 fi
