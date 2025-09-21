@@ -127,7 +127,7 @@ basedir_q=$(printf '%q' "$basedir")
 state_q=$(printf '%q' "$basedir/.dirtree-state")
 
 test_function "persist default via --default only" \
-	"(cd $basedir_q && dirtree --default closed >/dev/null && grep -q '^default=closed$' $state_q && echo OK)" \
+	"(cd $basedir_q && dirtree --default closed >/dev/null && head -n1 $state_q | grep -q '^ver=1\\.1$' && grep -q '^default=closed$' $state_q && echo OK)" \
 	"OK"
 
 # Clean up first tmpdir
@@ -141,7 +141,10 @@ mkdir -p "$basedir/parent/child/grandchild"
 test_function "decorated mode honors default=closed" \
 	"(\
 		cd \"$basedir\" && \
-		printf 'default=closed\n' > .dirtree-state && \
+		cat <<'STATE' > .dirtree-state
+ver=1.1
+default=closed
+STATE
 		tmp=\$(mktemp) && \
 		trap 'rm -f \"\$tmp\"' EXIT && \
 		dirtree > \"\$tmp\" && \
@@ -163,7 +166,13 @@ mkdir -p "$basedir/parent/child/grandchild"
 test_function "decorated mode honors explicit open over default" \
 	"(\
 		cd \"$basedir\" && \
-		printf 'default=closed\nopen=parent\n' > .dirtree-state && \
+		cat <<'STATE' > .dirtree-state
+ver=1.1
+default=closed
+open=[
+parent
+]
+STATE
 		tmp=\$(mktemp) && \
 		trap 'rm -f \"\$tmp\"' EXIT && \
 		dirtree > \"\$tmp\" && \
@@ -202,7 +211,10 @@ rm -rf "$tmpdir"
 tmpdir=$(mktemp -d)
 basedir="$tmpdir/spaces"
 mkdir -p "$basedir/sys (server)/child"
-printf 'default=closed\n' > "$basedir/.dirtree-state"
+cat <<'STATE' > "$basedir/.dirtree-state"
+ver=1.1
+default=closed
+STATE
 
 stubdir=$(mktemp -d)
 cat >"$stubdir/eza" <<'EOS'
@@ -238,6 +250,74 @@ test_function "decorated handles percent-encoded OSC8 hyperlinks" \
 rm -rf "$stubdir"
 rm -rf "$tmpdir"
 
+# --- INIMA format tests ---
+
+tmpdir_inima=$(mktemp -d)
+basedir="$tmpdir_inima/inima"
+mkdir -p "$basedir/src" "$basedir/docs" "$basedir/tmp" "$basedir/logs"
+
+test_function "state persists using INIMA arrays" \
+	"(\
+		cd \"$basedir\" && \
+		rm -f .dirtree-state && \
+		dirtree --default opened >/dev/null && \
+		dirtree --open src >/dev/null && \
+		dirtree --open re:^docs >/dev/null && \
+		dirtree --close tmp >/dev/null && \
+		dirtree --close '/^tmp/' >/dev/null && \
+		dirtree --show docs >/dev/null && \
+		dirtree --show '/^src/' >/dev/null && \
+		dirtree --hide logs >/dev/null && \
+		dirtree --hide '/\\.lnk$/' >/dev/null && \
+		head -n1 .dirtree-state | grep -q '^ver=1\\.1$' && \
+		! grep -q '_regex=' .dirtree-state && \
+		awk '/^open=\[/{flag=1;next} flag && /^]/{flag=0;next} flag {print}' .dirtree-state | grep -Fxq $'\tsrc' && \
+		awk '/^open=\[/{flag=1;next} flag && /^]/{flag=0;next} flag {print}' .dirtree-state | grep -Fxq $'\t/^docs/' && \
+		awk '/^close=\[/{flag=1;next} flag && /^]/{flag=0;next} flag {print}' .dirtree-state | grep -Fxq $'\ttmp' && \
+		awk '/^close=\[/{flag=1;next} flag && /^]/{flag=0;next} flag {print}' .dirtree-state | grep -Fxq $'\t/^tmp/' && \
+		awk '/^show=\[/{flag=1;next} flag && /^]/{flag=0;next} flag {print}' .dirtree-state | grep -Fxq $'\tdocs' && \
+		awk '/^show=\[/{flag=1;next} flag && /^]/{flag=0;next} flag {print}' .dirtree-state | grep -Fxq $'\t/^src/' && \
+		awk '/^hide=\[/{flag=1;next} flag && /^]/{flag=0;next} flag {print}' .dirtree-state | grep -Fxq $'\tlogs' && \
+		awk '/^hide=\[/{flag=1;next} flag && /^]/{flag=0;next} flag {print}' .dirtree-state | grep -Fxq $'\t/\\.lnk$/' && \
+		echo OK \
+	)" \
+	"OK"
+
+test_function "legacy state migrates to INIMA" \
+	"(\
+		cd \"$basedir\" && \
+		rm -f .dirtree-state && \
+		cat <<'LEGACY' > .dirtree-state
+default=closed
+open=src;docs
+open_regex=^lib
+close=tmp
+close_regex=^build
+show=docs
+show_regex=^bin
+hide=logs
+hide_regex=^node
+LEGACY
+		tmpf=\$(mktemp) && \
+		dirtree --simple > \"\$tmpf\" && \
+		rm -f \"\$tmpf\" && \
+		head -n1 .dirtree-state | grep -q '^ver=1\\.1$' && \
+		! grep -q '_regex=' .dirtree-state && \
+		awk '/^open=\[/{flag=1;next} flag && /^]/{flag=0;next} flag {print}' .dirtree-state | grep -Fxq $'\tsrc' && \
+		awk '/^open=\[/{flag=1;next} flag && /^]/{flag=0;next} flag {print}' .dirtree-state | grep -Fxq $'\tdocs' && \
+		awk '/^open=\[/{flag=1;next} flag && /^]/{flag=0;next} flag {print}' .dirtree-state | grep -Fxq $'\t/^lib/' && \
+		awk '/^close=\[/{flag=1;next} flag && /^]/{flag=0;next} flag {print}' .dirtree-state | grep -Fxq $'\ttmp' && \
+		awk '/^close=\[/{flag=1;next} flag && /^]/{flag=0;next} flag {print}' .dirtree-state | grep -Fxq $'\t/^build/' && \
+		awk '/^show=\[/{flag=1;next} flag && /^]/{flag=0;next} flag {print}' .dirtree-state | grep -Fxq $'\tdocs' && \
+		awk '/^show=\[/{flag=1;next} flag && /^]/{flag=0;next} flag {print}' .dirtree-state | grep -Fxq $'\t/^bin/' && \
+		awk '/^hide=\[/{flag=1;next} flag && /^]/{flag=0;next} flag {print}' .dirtree-state | grep -Fxq $'\tlogs' && \
+		awk '/^hide=\[/{flag=1;next} flag && /^]/{flag=0;next} flag {print}' .dirtree-state | grep -Fxq $'\t/^node/' && \
+		echo OK \
+	)" \
+	"OK"
+
+rm -rf "$tmpdir_inima"
+
 # --- Additional tests for --simple (LLM) mode with state ---
 
 # Recreate temp dir for stateful tests
@@ -266,10 +346,13 @@ test_function "--simple set default closed and open docs" \
 	"PASS"
 
 # 4) state file persisted and preserves unknown keys
-echo 'custom=keepme' > "$basedir/.dirtree-state"
+cat <<'STATE' > "$basedir/.dirtree-state"
+ver=1.1
+custom=keepme
+STATE
 state_q=$(printf '%q' "$basedir/.dirtree-state")
 test_function "--simple preserves unknown keys in state" \
-	"dirtree --simple -o src $basedir_q && grep -q '^custom=keepme$' $state_q && echo OK" \
+	"dirtree --simple -o src $basedir_q && grep -q '^custom=keepme$' $state_q && head -n1 $state_q | grep -q '^ver=1\\.1$' && echo OK" \
 	"OK"
 
 # 5) closed marker shows '/' for empty dir, '/*' for non-empty
@@ -433,7 +516,7 @@ test_function "--open regex persists in state" \
 		cd '$basedir' && \
 		dirtree --default closed >/dev/null && \
 		dirtree --open re:^src >/dev/null && \
-		grep -q '^open_regex=\^src$' .dirtree-state && \
+		awk '/^open=\[/{flag=1;next}/^]/{flag=0} flag && /\/\^src\//{found=1} END{exit found?0:1}' .dirtree-state && \
 		echo OK \
 	)" \
 	"OK"
@@ -443,7 +526,7 @@ test_function "--open slash regex persists in state" \
 		cd '$basedir' && \
 		dirtree --default closed >/dev/null && \
 		dirtree --open '/^src/' >/dev/null && \
-		grep -q '^open_regex=\^src$' .dirtree-state && \
+		awk '/^open=\[/{flag=1;next}/^]/{flag=0} flag && /\/\^src\//{found=1} END{exit found?0:1}' .dirtree-state && \
 		echo OK \
 	)" \
 	"OK"
@@ -467,7 +550,7 @@ test_function "--close slash regex persists in state" \
 		cd '$basedir' && \
 		dirtree --default closed >/dev/null && \
 		dirtree --close '/^src/' >/dev/null && \
-		grep -q '^close_regex=\^src$' .dirtree-state && \
+		awk '/^close=\[/{flag=1;next}/^]/{flag=0} flag && /\/\^src\//{found=1} END{exit found?0:1}' .dirtree-state && \
 		echo OK \
 	)" \
 	"OK"
@@ -478,14 +561,15 @@ rm -f "$basedir/.dirtree-state"
 test_function "regex/open close conflict raises error" \
 	"(\
 		cd '$basedir' && \
-		cat <<'STATE' > .dirtree-state && \
+		cat <<'STATE' > .dirtree-state
+ver=1.1
 default=closed
-open=
-open_regex=^src
-close=
-close_regex=^src
-hide=
-hide_regex=
+open=[
+/^src/
+]
+close=[
+/^src/
+]
 STATE
 		dirtree > /tmp/out 2> /tmp/err; rc=\$?; rm -f /tmp/out; test \$rc -ne 0 && grep -q 'matches both open and close patterns' /tmp/err && echo OK && rm -f /tmp/err \
 	)" \
@@ -530,10 +614,53 @@ test_function "--hide literal with dot stays literal" \
 		tmpf=\$(mktemp) && \
 		dirtree > \"\$tmpf\" && \
 		strip_ansi < \"\$tmpf\" | grep -Fq 'config.json' && echo BAD || ( \
-			sed -n 's/^hide=//p' .dirtree-state | grep -Fq 'src/config.json' && \
+			awk '/^hide=\[/{flag=1;next} flag && /^]/{flag=0;next} flag {print}' .dirtree-state | grep -Fxq $'\tsrc/config.json' && \
 			strip_ansi < \"\$tmpf\" | grep -Fq 'configXjson' && echo OK \
 		) && \
 		rm -f \"\$tmpf\" \
+	)" \
+	"OK"
+
+test_function "--show-hidden reveals hidden entries without persisting" \
+	"(\
+		cd '$basedir' && \
+		dirtree --hide tests >/dev/null && \
+		dirtree --hide '/^src/' >/dev/null && \
+		tmpf=\$(mktemp) && \
+		dirtree --show-hidden > \"\$tmpf\" && \
+		strip_ansi < \"\$tmpf\" | grep -Fq 'tests/' && \
+		strip_ansi < \"\$tmpf\" | grep -Fq 'src/' && \
+		rm -f \"\$tmpf\" && \
+		grep -q '^hide=' .dirtree-state && \
+		echo OK \
+	)" \
+	"OK"
+
+test_function "decorated output reports hidden counts" \
+	"(\
+		cd '$basedir' && \
+		dirtree --hide tests >/dev/null && \
+		dirtree --hide '/^src/' >/dev/null && \
+		tmpf=\$(mktemp) && \
+		dirtree > \"\$tmpf\" 2>\"\$tmpf.err\" && \
+		if grep -E '\\btests/' \"\$tmpf\"; then \
+			echo BAD; \
+		else \
+			grep -Fq $'\033[2;3m2 directories are hidden.\033[0m' \"\$tmpf.err\" && echo OK; \
+		fi && \
+		rm -f \"\$tmpf\" \"\$tmpf.err\" \
+	)" \
+	"OK"
+
+test_function "--show-hidden suppresses hidden count" \
+	"(\
+		cd '$basedir' && \
+		dirtree --hide tests >/dev/null && \
+		dirtree --hide '/^src/' >/dev/null && \
+		tmpf=\$(mktemp) && \
+		dirtree --show-hidden > \"\$tmpf\" 2>\"\$tmpf.err\" && \
+		sed -n 's/^.*hidden\.$//p' \"\$tmpf.err\" | grep -q '.' && echo BAD || echo OK && \
+		rm -f \"\$tmpf\" \"\$tmpf.err\" \
 	)" \
 	"OK"
 

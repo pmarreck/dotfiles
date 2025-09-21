@@ -22,6 +22,7 @@ show_help() {
 	echo "  --sort MODE        Sorting mode: modified|alpha (default: modified)"
 	echo "  --asc              Sort ascending"
 	echo "  --desc             Sort descending (default)"
+	echo "  --show-hidden      Temporarily display paths hidden via config"
 	echo "  --test             Run associated tests"
 	echo ""
 	echo "Use 're:pattern' or /pattern/ with --open/--close/--show to add regex rules; --hide expects /pattern/."
@@ -57,6 +58,12 @@ sort_reverse=1  # 1 => descending (default), 0 => ascending
 render_sort_field="modified"
 render_sort_reverse=1
 dir_pending=true
+show_hidden=false
+
+STATE_VERSION_LABEL="ver=1.1"
+state_version=""
+state_needs_migration=false
+declare -a state_passthrough_lines=()
 
 # Normalize path to a relative, trimmed form
 normalize_rel() {
@@ -101,6 +108,61 @@ open_regexes=()
 close_regexes=()
 show_regexes=()
 hide_regexes=()
+
+hidden_count_log=""
+
+note_hidden() {
+	local kind="$1"
+	[[ "$show_hidden" == true ]] && return
+	[[ -z "$hidden_count_log" ]] && return
+	printf '%s\n' "$kind" >>"$hidden_count_log"
+}
+
+report_hidden_counts() {
+	[[ "$show_hidden" == true ]] && return
+	[[ -z "$hidden_count_log" ]] && return
+	[[ ! -f "$hidden_count_log" ]] && return
+	local dir_count=0 file_count=0
+	if [[ -s "$hidden_count_log" ]]; then
+		dir_count=$(grep -c '^dir$' "$hidden_count_log" || true)
+		file_count=$(grep -c '^file$' "$hidden_count_log" || true)
+	fi
+	if (( dir_count == 0 && file_count == 0 )); then
+		return
+	fi
+	local parts=()
+	local msg=""
+	if (( dir_count > 0 )); then
+		if (( dir_count == 1 )); then
+			parts+=("1 directory")
+		else
+			parts+=("${dir_count} directories")
+		fi
+	fi
+	if (( file_count > 0 )); then
+		if (( file_count == 1 )); then
+			parts+=("1 file")
+		else
+			parts+=("${file_count} files")
+		fi
+	fi
+	if (( ${#parts[@]} == 2 )); then
+		msg="${parts[0]} and ${parts[1]}"
+	else
+		msg="${parts[0]}"
+	fi
+	local total=$((dir_count + file_count))
+	if (( total == 1 )); then
+		msg+=" is hidden."
+	else
+		msg+=" are hidden."
+	fi
+	if [[ "$simple_mode" == true ]]; then
+		printf '\n%s\n' "$msg" >&2
+	else
+		printf '\n\033[2;3m%s\033[0m\n' "$msg" >&2
+	fi
+}
 
 open_match_type="none"
 open_match_pattern=""
@@ -196,8 +258,31 @@ load_show_list() {
 	done
 }
 
+strip_leading_space_tabs() {
+	local value="$1"
+	if [[ "$value" =~ ^[[:space:]]*(.*)$ ]]; then
+		printf '%s' "${BASH_REMATCH[1]}"
+	else
+		printf '%s' "$value"
+	fi
+}
+
+strip_trailing_space_tabs() {
+	local value="$1"
+	while [[ -n "$value" ]]; do
+		local last="${value: -1}"
+		if [[ "$last" == ' ' || "$last" == $'\t' ]]; then
+			value="${value::-1}"
+		else
+			break
+		fi
+	done
+	printf '%s' "$value"
+}
+
 read_state() {
-	local state_file="$1/.dirtree-state"
+	local base="$1"
+	local state_file="$base/.dirtree-state"
 	default_state=""
 	open_literals=()
 	close_literals=()
@@ -207,20 +292,170 @@ read_state() {
 	close_regexes=()
 	show_regexes=()
 	hide_regexes=()
-	if [[ -f "$state_file" ]]; then
-		while IFS= read -r line || [[ -n "$line" ]]; do
+	state_version="ver=1.0"
+	state_needs_migration=false
+	state_passthrough_lines=()
+	[[ ! -f "$state_file" ]] && return
+
+	local -a __state_lines=()
+	mapfile -t __state_lines < "$state_file"
+	local format="undetermined"
+	local idx=0
+	local count=${#__state_lines[@]}
+	local current_array=""
+	local collecting_unknown=0
+	local -a unknown_buffer=()
+
+	while (( idx < count )); do
+		local raw="${__state_lines[$idx]}"
+		local line="${raw%$'\r'}"
+
+		if [[ -n "$current_array" ]]; then
+			if (( collecting_unknown )); then
+				unknown_buffer+=("$raw")
+				if [[ "${line//[[:space:]]/}" == "]" ]]; then
+					state_passthrough_lines+=("${unknown_buffer[@]}")
+					unknown_buffer=()
+					collecting_unknown=0
+					current_array=""
+				fi
+				((idx++))
+				continue
+			fi
+
+			if [[ "${line//[[:space:]]/}" == "]" ]]; then
+				current_array=""
+				((idx++))
+				continue
+			fi
+
+			if [[ "$line" =~ ^[[:space:]]*# ]]; then
+				((idx++))
+				continue
+			fi
+
+			local entry
+			entry=$(strip_leading_space_tabs "$line")
+			entry=$(strip_trailing_space_tabs "$entry")
+			[[ -z "$entry" ]] && { ((idx++)); continue; }
+
+			if [[ "$entry" == /* && "$entry" == */ && ${#entry} -ge 2 ]]; then
+				entry="${entry:1:-1}"
+				case "$current_array" in
+					open) append_unique_regex open_regexes "$entry" ;;
+					close) append_unique_regex close_regexes "$entry" ;;
+					show) append_unique_regex show_regexes "$entry" ;;
+					hide) append_unique_regex hide_regexes "$entry" ;;
+				esac
+			else
+				local norm
+				norm=$(normalize_rel "$base" "$entry")
+				[[ -z "$norm" ]] && { ((idx++)); continue; }
+				case "$current_array" in
+					open) open_literals["$norm"]=1 ;;
+					close) close_literals["$norm"]=1 ;;
+					show) show_literals["$norm"]=1 ;;
+					hide) hide_literals["$norm"]=1 ;;
+				esac
+			fi
+
+			((idx++))
+			continue
+		fi
+
+		if [[ "$format" == "undetermined" ]]; then
+			local no_ws="${line//[[:space:]]/}"
+			if [[ -z "$no_ws" ]]; then
+				((idx++))
+				continue
+			fi
+			if [[ "$line" =~ ^[[:space:]]*# ]]; then
+				state_passthrough_lines+=("$raw")
+				((idx++))
+				continue
+			fi
+			if [[ "$line" =~ ^ver[[:space:]]*=[[:space:]]*([0-9.]+)$ ]]; then
+				state_version="ver=${BASH_REMATCH[1]}"
+				format="inima"
+				((idx++))
+				continue
+			fi
+			if [[ "$line" =~ ^ver([0-9.]+)$ ]]; then
+				state_version="ver=${BASH_REMATCH[1]}"
+				format="inima"
+				state_needs_migration=true
+				((idx++))
+				continue
+			fi
+			format="legacy"
+		fi
+
+		if [[ "$format" == "legacy" ]]; then
 			case "$line" in
 				default=*) default_state="${line#default=}" ;;
 				open_regex=*) load_regex_list "${line#open_regex=}" open_regexes ;;
 				close_regex=*) load_regex_list "${line#close_regex=}" close_regexes ;;
 				show_regex=*) load_regex_list "${line#show_regex=}" show_regexes ;;
 				hide_regex=*) load_regex_list "${line#hide_regex=}" hide_regexes ;;
-				open=*) load_literal_list "$1" "${line#open=}" open_literals open_regexes ;;
-				close=*) load_literal_list "$1" "${line#close=}" close_literals close_regexes ;;
-				show=*) load_show_list "$1" "${line#show=}" ;;
-				hide=*) load_hide_list "$1" "${line#hide=}" ;;
-				esac
-		done < "$state_file"
+				open=*) load_literal_list "$base" "${line#open=}" open_literals open_regexes ;;
+				close=*) load_literal_list "$base" "${line#close=}" close_literals close_regexes ;;
+				show=*) load_show_list "$base" "${line#show=}" ;;
+				hide=*) load_hide_list "$base" "${line#hide=}" ;;
+				*) state_passthrough_lines+=("$raw") ;;
+			esac
+			((idx++))
+			continue
+		fi
+
+		if [[ "$line" =~ ^[[:space:]]*# ]]; then
+			state_passthrough_lines+=("$raw")
+			((idx++))
+			continue
+		fi
+		if [[ -z "${line//[[:space:]]/}" ]]; then
+			((idx++))
+			continue
+		fi
+
+		if [[ "$line" =~ ^([A-Za-z0-9_]+)[[:space:]]*=(.*)$ ]]; then
+			local key="${BASH_REMATCH[1]}"
+			local value="${BASH_REMATCH[2]}"
+			if [[ ${value:0:1} == " " ]]; then
+				value="${value:1}"
+			fi
+			local compact="${value//[[:space:]]/}"
+			case "$key" in
+				default)
+					default_state="$value"
+					;;
+				open|close|show|hide)
+					if [[ "$compact" == "[" ]]; then
+						current_array="$key"
+						collecting_unknown=0
+					else
+						state_passthrough_lines+=("$raw")
+					fi
+					;;
+				*)
+					if [[ "$compact" == "[" ]]; then
+						current_array="$key"
+						collecting_unknown=1
+						unknown_buffer=("$raw")
+					else
+						state_passthrough_lines+=("$raw")
+					fi
+					;;
+			esac
+		else
+			state_passthrough_lines+=("$raw")
+		fi
+		((idx++))
+	done
+
+	if [[ "$format" == "legacy" ]]; then
+		state_needs_migration=true
+	else
+		[[ "$state_version" != "$STATE_VERSION_LABEL" ]] && state_needs_migration=true
 	fi
 }
 
@@ -230,74 +465,109 @@ persist_state() {
 	local tmp_file
 	tmp_file=$(mktemp "${state_file}.XXXXXX")
 
-	if [[ -f "$state_file" ]]; then
-		while IFS= read -r line || [[ -n "$line" ]]; do
-		case "$line" in
-			default=*|open=*|open_regex=*|close=*|close_regex=*|show=*|show_regex=*|hide=*|hide_regex=*) ;;
-				*) echo "$line" >>"$tmp_file" ;;
-			esac
-		done < "$state_file"
-	fi
-
-	sort_and_join() {
-		local items=("$@")
-		if [[ ${#items[@]} -eq 0 ]]; then
-			echo ""
-			return
+	{
+		echo "$STATE_VERSION_LABEL"
+		local wrote_block=false
+		if [[ -n "$default_state" ]]; then
+			echo "default=$default_state"
+			wrote_block=true
 		fi
-		IFS=$'\n' items=($(printf '%s\n' "${items[@]}" | sort))
-		local IFS=';'
-		printf '%s' "${items[*]}"
-	}
 
-	local open_literal_list close_literal_list
-	open_literal_list=$(sort_and_join "${!open_literals[@]}")
-	close_literal_list=$(sort_and_join "${!close_literals[@]}")
+		local -a entries=()
+		local key
 
-	sort_regex_array() {
-		local entries=("$@")
-		if [[ ${#entries[@]} -eq 0 ]]; then
-			echo ""
-			return
+		entries=()
+		for key in "${!open_literals[@]}"; do
+			entries+=("$key")
+		done
+		for key in "${open_regexes[@]}"; do
+			entries+=("/$key/")
+		done
+		if (( ${#entries[@]} > 0 )); then
+			IFS=$'\n' entries=($(printf '%s\n' "${entries[@]}" | sort))
+			if [[ "$wrote_block" == true ]]; then
+				echo
+			fi
+			echo "open=["
+			for key in "${entries[@]}"; do
+				printf '\t%s\n' "$key"
+			done
+			echo "]"
+			wrote_block=true
 		fi
-		IFS=$'\n' entries=($(printf '%s\n' "${entries[@]}" | sort))
-		local IFS=';'
-		printf '%s' "${entries[*]}"
-	}
 
-	local open_regex_list close_regex_list
-	open_regex_list=$(sort_regex_array "${open_regexes[@]}")
-	close_regex_list=$(sort_regex_array "${close_regexes[@]}")
+		entries=()
+		for key in "${!close_literals[@]}"; do
+			entries+=("$key")
+		done
+		for key in "${close_regexes[@]}"; do
+			entries+=("/$key/")
+		done
+		if (( ${#entries[@]} > 0 )); then
+			IFS=$'\n' entries=($(printf '%s\n' "${entries[@]}" | sort))
+			if [[ "$wrote_block" == true ]]; then
+				echo
+			fi
+			echo "close=["
+			for key in "${entries[@]}"; do
+				printf '\t%s\n' "$key"
+			done
+			echo "]"
+			wrote_block=true
+		fi
 
-	[[ -n "$default_state" ]] && echo "default=$default_state" >>"$tmp_file"
-	echo "open=$open_literal_list" >>"$tmp_file"
-	echo "open_regex=$open_regex_list" >>"$tmp_file"
-	echo "close=$close_literal_list" >>"$tmp_file"
-	echo "close_regex=$close_regex_list" >>"$tmp_file"
-	local show_entries=()
-	local key
-	for key in "${!show_literals[@]}"; do
-		show_entries+=("$key")
-	done
-	for key in "${show_regexes[@]}"; do
-		show_entries+=("/$key/")
-	done
-	local show_joined
-	show_joined=$(sort_and_join "${show_entries[@]}")
-	echo "show=$show_joined" >>"$tmp_file"
-	local hide_entries=()
-	for key in "${!hide_literals[@]}"; do
-		hide_entries+=("$key")
-	done
-	for key in "${hide_regexes[@]}"; do
-		hide_entries+=("/$key/")
-	done
-	local hide_joined
-	hide_joined=$(sort_and_join "${hide_entries[@]}")
-	echo "hide=$hide_joined" >>"$tmp_file"
+		entries=()
+		for key in "${!show_literals[@]}"; do
+			entries+=("$key")
+		done
+		for key in "${show_regexes[@]}"; do
+			entries+=("/$key/")
+		done
+		if (( ${#entries[@]} > 0 )); then
+			IFS=$'\n' entries=($(printf '%s\n' "${entries[@]}" | sort))
+			if [[ "$wrote_block" == true ]]; then
+				echo
+			fi
+			echo "show=["
+			for key in "${entries[@]}"; do
+				printf '\t%s\n' "$key"
+			done
+			echo "]"
+			wrote_block=true
+		fi
+
+		entries=()
+		for key in "${!hide_literals[@]}"; do
+			entries+=("$key")
+		done
+		for key in "${hide_regexes[@]}"; do
+			entries+=("/$key/")
+		done
+		if (( ${#entries[@]} > 0 )); then
+			IFS=$'\n' entries=($(printf '%s\n' "${entries[@]}" | sort))
+			if [[ "$wrote_block" == true ]]; then
+				echo
+			fi
+			echo "hide=["
+			for key in "${entries[@]}"; do
+				printf '\t%s\n' "$key"
+			done
+			echo "]"
+			wrote_block=true
+		fi
+
+		if (( ${#state_passthrough_lines[@]} > 0 )); then
+			if [[ "$wrote_block" == true ]]; then
+				echo
+			fi
+			printf '%s\n' "${state_passthrough_lines[@]}"
+		fi
+	} >"$tmp_file"
 
 	mv -f "$tmp_file" "$state_file"
+	state_needs_migration=false
 }
+
 
 dir_has_children() {
 	local d=${1:-.}
@@ -386,6 +656,11 @@ evaluate_path() {
 	local show_pat="$show_match_pattern"
 	local hide_pat="$hide_match_pattern"
 
+	if [[ "$show_hidden" == true ]]; then
+		hide_type="none"
+		hide_pat=""
+	fi
+
 	if [[ "$open_type" != "none" && "$close_type" != "none" ]]; then
 		if [[ "$open_type" == "literal" && "$close_type" == "regex" ]]; then
 			close_type="none"
@@ -416,7 +691,9 @@ evaluate_path() {
 		fi
 	fi
 
-	if [[ "$hide_type" != "none" ]]; then
+	if [[ "$show_hidden" == true ]]; then
+		path_hidden=0
+	elif [[ "$hide_type" != "none" ]]; then
 		path_hidden=1
 	elif [[ "$show_type" != "none" ]]; then
 		path_hidden=0
@@ -475,6 +752,7 @@ print_simple_tree() {
 		if [[ -d "$child_abs" ]]; then
 			evaluate_path "$child_rel" "$parent_closed"
 			if [[ $path_hidden -eq 1 ]]; then
+				note_hidden dir
 				continue
 			fi
 			local marker="/"
@@ -489,6 +767,7 @@ print_simple_tree() {
 		else
 			evaluate_path "$child_rel" "$parent_closed"
 			if [[ $path_hidden -eq 1 ]]; then
+				note_hidden file
 				continue
 			fi
 			echo "${prefix}${connector}${name}"
@@ -573,6 +852,11 @@ render_dir() {
 		fi
 		evaluate_path "$child_rel" "$parent_closed"
 		if [[ $path_hidden -eq 1 ]]; then
+			if [[ "${isdirs[$idx]}" -eq 1 ]]; then
+				note_hidden dir
+			else
+				note_hidden file
+			fi
 			continue
 		fi
 		if [[ "${isdirs[$idx]}" -eq 1 ]]; then
@@ -641,6 +925,9 @@ while [[ $# -gt 0 ]]; do
 				;;
 			--desc)
 				sort_reverse=1
+				;;
+			--show-hidden)
+				show_hidden=true
 				;;
 			-o|--open)
 				shift
@@ -865,7 +1152,7 @@ for p in "${hide_args[@]}"; do
 	unset 'show_literals[$p]'
 done
 
-if [[ "$state_modified" == true ]]; then
+if [[ "$state_modified" == true || "$state_needs_migration" == true ]]; then
 	persist_state "$dir"
 fi
 
@@ -891,8 +1178,11 @@ if [[ "$force_decorated" == false ]]; then
 	fi
 fi
 
+hidden_count_log=$(mktemp)
+
 if [[ "$simple_mode" == true ]]; then
 	# Print stateful simple tree without leading top-level connectors or root line
+	status=0
 	(
 		set -o pipefail
 		{
@@ -902,12 +1192,21 @@ if [[ "$simple_mode" == true ]]; then
 			ESC=$'\e'
 			sed -E "s/^(${ESC}\\[[0-9;]*m)*(├──|└──)[[:space:]]+//; s/^(${ESC}\\[[0-9;]*m)*│[[:space:]][[:space:]][[:space:]]//"
 		}
-	)
-	exit $?
+	) || status=$?
+	report_hidden_counts
+	if [[ -n "$hidden_count_log" ]]; then
+		rm -f "$hidden_count_log"
+		hidden_count_log=""
+	fi
+	exit $status
 fi
 
 # For decorated mode, ensure eza is available
 if ! command -v eza >/dev/null 2>&1; then
+	if [[ -n "$hidden_count_log" ]]; then
+		rm -f "$hidden_count_log"
+		hidden_count_log=""
+	fi
 	echo "Error: eza is not installed. Please install eza first." >&2
 	exit 1
 fi
@@ -925,12 +1224,22 @@ if [[ ! -t 1 && "$force_decorated" == false && "$simple_mode" != true ]]; then
 fi
 
 # Run renderer with optional OSC8 stripping
+status=0
 if $strip_osc8; then
 	(
 		set -o pipefail
 		ESC=$'\e'
 		render_dir "" "$depth" 0 "" | sed -E "s/${ESC}]8;;[^${ESC}]*${ESC}\\\\//g"
-	)
+	) || status=$?
 else
 	render_dir "" "$depth" 0 ""
+	status=$?
 fi
+
+report_hidden_counts
+if [[ -n "$hidden_count_log" ]]; then
+	rm -f "$hidden_count_log"
+	hidden_count_log=""
+fi
+
+exit $status
