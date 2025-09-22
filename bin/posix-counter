@@ -63,11 +63,6 @@ ffi.cdef[[
     int *__error(void);        // macOS errno location
     int *__errno_location(void); // Linux errno location
 
-    // Constants
-    static const int O_CREAT = 0x0200;
-    static const int O_RDWR = 0x0002;
-    static const int O_EXCL = 0x0800;
-
     static const int PROT_READ = 0x01;
     static const int PROT_WRITE = 0x02;
     static const int MAP_SHARED = 0x0001;
@@ -75,6 +70,18 @@ ffi.cdef[[
 ]]
 
 local C = ffi.C
+
+-- Platform-specific open flags; values differ between macOS and Linux
+local O_CREAT, O_RDWR, O_EXCL
+if ffi.os == "OSX" then
+	O_CREAT = 0x0200
+	O_RDWR = 0x0002
+	O_EXCL = 0x0800
+else
+	O_CREAT = 0x0040
+	O_RDWR = 0x0002
+	O_EXCL = 0x0080
+end
 
 -- Cross-platform errno access
 local function get_errno()
@@ -113,7 +120,8 @@ function PosixCounter:create(initial_value)
     C.shm_unlink(self.shm_name)  -- Ignore errors
 
     -- Create new shared memory object with read/write permissions for all
-    self.fd = C.shm_open(self.shm_name, bit.bor(C.O_CREAT, C.O_RDWR, C.O_EXCL), 0666)
+    local mode_all_rw = tonumber("666", 8)
+    self.fd = C.shm_open(self.shm_name, bit.bor(O_CREAT, O_RDWR, O_EXCL), mode_all_rw)
     if self.fd == -1 then
         local errno = get_errno()
         error("Failed to create shared memory: " .. ffi.string(C.strerror(errno)))
@@ -152,7 +160,7 @@ function PosixCounter:attach()
     if self.counter_ptr then return end -- already attached
 
     -- Open existing shared memory
-    self.fd = C.shm_open(self.shm_name, C.O_RDWR, 0)
+    self.fd = C.shm_open(self.shm_name, O_RDWR, 0)
     if self.fd == -1 then
         local errno = get_errno()
         error("Problem accessing shared memory: " .. ffi.string(C.strerror(errno)))
@@ -206,7 +214,7 @@ function PosixCounter:destroy(force)
 
     -- Check if shared memory exists first
     if not force then
-        local test_fd = C.shm_open(self.shm_name, C.O_RDWR, 0)
+        local test_fd = C.shm_open(self.shm_name, O_RDWR, 0)
         if test_fd == -1 then
             -- Counter doesn't exist, print contract-compliant output
             print("0")  -- stdout: count

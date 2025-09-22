@@ -1,5 +1,0 @@
-#!/usr/bin/env bash
-# Wrapper script to test posix-counter implementation
-# Sets COUNTER_TYPE=posix and executes the unified counter_test
-
-COUNTER_TYPE=posix exec "$(dirname "$0")/counter_test" "$@"

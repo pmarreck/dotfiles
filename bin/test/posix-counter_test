@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
+# Wrapper script to test posix-counter implementation
+# Sets COUNTER_TYPE=posix and executes the unified counter_test
 
-# Test for posix-counter
-echo "Test for posix-counter is not yet implemented"
-exit 0
+COUNTER_TYPE=posix exec "$(dirname "$0")/counter_test" "$@"
