@@ -25,7 +25,7 @@ show_help() {
 	echo "  --show-hidden      Temporarily display paths hidden via config"
 	echo "  --test             Run associated tests"
 	echo ""
-	echo "Use 're:pattern' or /pattern/ with --open/--close/--show to add regex rules; --hide expects /pattern/."
+	echo "Use /pattern/ with --open/--close/--show/--hide to add regex rules; other arguments are treated as literals."
 	echo "Paths supplied to --show/--hide must be relative (no leading '/')."
 	echo ""
 	echo "Behavior: By default, when stdout is not a TTY (piped),"
@@ -43,7 +43,12 @@ dir="."
 simple_mode=false
 force_decorated=false
 default_state=""
+default_state_set=false
+default_visibility="shown"
+default_visibility_set=false
+default_conflict=""
 cli_default_state=""
+cli_default_visibility=""
 open_args=()
 close_args=()
 show_args=()
@@ -104,6 +109,14 @@ declare -A open_literals
 declare -A close_literals
 declare -A show_literals
 declare -A hide_literals
+declare -A open_literal_comments
+declare -A close_literal_comments
+declare -A show_literal_comments
+declare -A hide_literal_comments
+declare -A open_regex_comments
+declare -A close_regex_comments
+declare -A show_regex_comments
+declare -A hide_regex_comments
 open_regexes=()
 close_regexes=()
 show_regexes=()
@@ -116,6 +129,58 @@ note_hidden() {
 	[[ "$show_hidden" == true ]] && return
 	[[ -z "$hidden_count_log" ]] && return
 	printf '%s\n' "$kind" >>"$hidden_count_log"
+}
+
+process_default_token() {
+	local token="$1"
+	[[ -z "$token" ]] && return 0
+	if [[ -n "$default_conflict" ]]; then
+		return 1
+	fi
+	token=$(printf '%s' "$token" | tr '[:upper:]' '[:lower:]')
+	case "$token" in
+		open|opened)
+			if [[ "$default_state_set" == true && "$default_state" != "opened" ]]; then
+				default_conflict="default entries conflict: opened and closed"
+				return 1
+			fi
+			[[ "$token" == "open" ]] && state_needs_migration=true
+			default_state="opened"
+			default_state_set=true
+			;;
+		close|closed)
+			if [[ "$default_state_set" == true && "$default_state" != "closed" ]]; then
+				default_conflict="default entries conflict: opened and closed"
+				return 1
+			fi
+			[[ "$token" == "close" ]] && state_needs_migration=true
+			default_state="closed"
+			default_state_set=true
+			;;
+		show|shown)
+			if [[ "$default_visibility_set" == true && "$default_visibility" != "shown" ]]; then
+				default_conflict="default entries conflict: shown and hidden"
+				return 1
+			fi
+			[[ "$token" == "show" ]] && state_needs_migration=true
+			default_visibility="shown"
+			default_visibility_set=true
+			;;
+		hide|hidden)
+			if [[ "$default_visibility_set" == true && "$default_visibility" != "hidden" ]]; then
+				default_conflict="default entries conflict: shown and hidden"
+				return 1
+			fi
+			[[ "$token" == "hide" ]] && state_needs_migration=true
+			default_visibility="hidden"
+			default_visibility_set=true
+			;;
+		*)
+			default_conflict="default entries conflict: unknown entry '$token'"
+			return 1
+			;;
+	esac
+	return 0
 }
 
 report_hidden_counts() {
@@ -192,13 +257,9 @@ load_literal_list() {
 	IFS=';' read -r -a arr <<< "$list"
 	for entry in "${arr[@]}"; do
 		[[ -z "$entry" ]] && continue
-		if [[ "$entry" == re:* ]]; then
-			append_unique_regex regexes_ref "${entry#re:}"
-		else
-			local norm
-			norm=$(normalize_rel "$base" "$entry")
-			[[ -n "$norm" ]] && literals_ref["$norm"]=1
-		fi
+		local norm
+		norm=$(normalize_rel "$base" "$entry")
+		[[ -n "$norm" ]] && literals_ref["$norm"]=1
 	done
 }
 
@@ -217,10 +278,6 @@ load_hide_list() {
 	IFS=';' read -r -a arr <<< "$list"
 	for entry in "${arr[@]}"; do
 		[[ -z "$entry" ]] && continue
-		if [[ "$entry" == re:* ]]; then
-			append_unique_regex hide_regexes "${entry#re:}"
-			continue
-		fi
 		if [[ "$entry" == /* && "$entry" == */ ]]; then
 			if (( ${#entry} <= 2 )); then
 				continue
@@ -240,10 +297,6 @@ load_show_list() {
 	IFS=';' read -r -a arr <<< "$list"
 	for entry in "${arr[@]}"; do
 		[[ -z "$entry" ]] && continue
-		if [[ "$entry" == re:* ]]; then
-			append_unique_regex show_regexes "${entry#re:}"
-			continue
-		fi
 		if [[ "$entry" == /* && "$entry" == */ ]]; then
 			if (( ${#entry} <= 2 )); then
 				continue
@@ -280,10 +333,68 @@ strip_trailing_space_tabs() {
 	printf '%s' "$value"
 }
 
+split_inline_items() {
+	local content="$1"
+	local ref_name="$2"
+	local -n arr_ref="$ref_name"
+	arr_ref=()
+	content=$(strip_leading_space_tabs "$content")
+	content=$(strip_trailing_space_tabs "$content")
+	[[ -z "$content" ]] && return
+	local sentinel=$'\x1f'
+	content="${content//\\ /$sentinel}"
+	local -a parts=()
+	read -r -a parts <<< "$content"
+	for part in "${parts[@]}"; do
+		arr_ref+=("${part//$sentinel/ }")
+	done
+}
+
+parse_inline_default() {
+	local content="$1"
+	local -a tokens=()
+	split_inline_items "$content" tokens
+	for token in "${tokens[@]}"; do
+		process_default_token "$token"
+	done
+}
+
+parse_inline_collection() {
+	local base="$1" key="$2" content="$3"
+	local -a tokens=()
+	split_inline_items "$content" tokens
+	local token pattern norm
+	for token in "${tokens[@]}"; do
+		[[ -z "$token" ]] && continue
+		if [[ "$token" == /* && "$token" == */ && ${#token} -gt 2 ]]; then
+			pattern="${token:1:-1}"
+			case "$key" in
+				open) append_unique_regex open_regexes "$pattern" ;;
+				close) append_unique_regex close_regexes "$pattern" ;;
+				show) append_unique_regex show_regexes "$pattern" ;;
+				hide) append_unique_regex hide_regexes "$pattern" ;;
+			esac
+			continue
+		fi
+		norm=$(normalize_rel "$base" "$token")
+		[[ -z "$norm" ]] && continue
+		case "$key" in
+			open) open_literals["$norm"]=1 ;;
+			close) close_literals["$norm"]=1 ;;
+			show) show_literals["$norm"]=1 ;;
+			hide) hide_literals["$norm"]=1 ;;
+		esac
+	done
+}
+
 read_state() {
 	local base="$1"
 	local state_file="$base/.dirtree-state"
 	default_state=""
+	default_state_set=false
+	default_visibility="shown"
+	default_visibility_set=false
+	default_conflict=""
 	open_literals=()
 	close_literals=()
 	show_literals=()
@@ -305,6 +416,7 @@ read_state() {
 	local current_array=""
 	local collecting_unknown=0
 	local -a unknown_buffer=()
+	local array_comment_buffer=""
 
 	while (( idx < count )); do
 		local raw="${__state_lines[$idx]}"
@@ -325,11 +437,18 @@ read_state() {
 
 			if [[ "${line//[[:space:]]/}" == "]" ]]; then
 				current_array=""
+				array_comment_buffer=""
 				((idx++))
 				continue
 			fi
 
 			if [[ "$line" =~ ^[[:space:]]*# ]]; then
+				case "$current_array" in
+					default|open|close|show|hide)
+						array_comment_buffer+="$raw\n"
+						;;
+					*) ;;
+				esac
 				((idx++))
 				continue
 			fi
@@ -342,21 +461,47 @@ read_state() {
 			if [[ "$entry" == /* && "$entry" == */ && ${#entry} -ge 2 ]]; then
 				entry="${entry:1:-1}"
 				case "$current_array" in
-					open) append_unique_regex open_regexes "$entry" ;;
-					close) append_unique_regex close_regexes "$entry" ;;
-					show) append_unique_regex show_regexes "$entry" ;;
-					hide) append_unique_regex hide_regexes "$entry" ;;
+					open)
+						append_unique_regex open_regexes "$entry"
+						[[ -n "$array_comment_buffer" ]] && open_regex_comments["/$entry/"]="$array_comment_buffer"
+						;;
+					close)
+						append_unique_regex close_regexes "$entry"
+						[[ -n "$array_comment_buffer" ]] && close_regex_comments["/$entry/"]="$array_comment_buffer"
+						;;
+					show)
+						append_unique_regex show_regexes "$entry"
+						[[ -n "$array_comment_buffer" ]] && show_regex_comments["/$entry/"]="$array_comment_buffer"
+						;;
+					hide)
+						append_unique_regex hide_regexes "$entry"
+						[[ -n "$array_comment_buffer" ]] && hide_regex_comments["/$entry/"]="$array_comment_buffer"
+						;;
 				esac
+				array_comment_buffer=""
 			else
 				local norm
 				norm=$(normalize_rel "$base" "$entry")
 				[[ -z "$norm" ]] && { ((idx++)); continue; }
 				case "$current_array" in
-					open) open_literals["$norm"]=1 ;;
-					close) close_literals["$norm"]=1 ;;
-					show) show_literals["$norm"]=1 ;;
-					hide) hide_literals["$norm"]=1 ;;
+					open)
+						open_literals["$norm"]=1
+						[[ -n "$array_comment_buffer" ]] && open_literal_comments["$norm"]="$array_comment_buffer"
+						;;
+					close)
+						close_literals["$norm"]=1
+						[[ -n "$array_comment_buffer" ]] && close_literal_comments["$norm"]="$array_comment_buffer"
+						;;
+					show)
+						show_literals["$norm"]=1
+						[[ -n "$array_comment_buffer" ]] && show_literal_comments["$norm"]="$array_comment_buffer"
+						;;
+					hide)
+						hide_literals["$norm"]=1
+						[[ -n "$array_comment_buffer" ]] && hide_literal_comments["$norm"]="$array_comment_buffer"
+						;;
 				esac
+				array_comment_buffer=""
 			fi
 
 			((idx++))
@@ -391,8 +536,14 @@ read_state() {
 		fi
 
 		if [[ "$format" == "legacy" ]]; then
-			case "$line" in
-				default=*) default_state="${line#default=}" ;;
+		case "$line" in
+			default=*)
+				local legacy_value="${line#default=}"
+				legacy_value=${legacy_value//;/ }
+				for token in $legacy_value; do
+					process_default_token "$token"
+				 done
+				;;
 				open_regex=*) load_regex_list "${line#open_regex=}" open_regexes ;;
 				close_regex=*) load_regex_list "${line#close_regex=}" close_regexes ;;
 				show_regex=*) load_regex_list "${line#show_regex=}" show_regexes ;;
@@ -426,12 +577,32 @@ read_state() {
 			local compact="${value//[[:space:]]/}"
 			case "$key" in
 				default)
-					default_state="$value"
+					value=$(strip_trailing_space_tabs "$(strip_leading_space_tabs "$value")")
+					if [[ "$compact" == "[" ]]; then
+						current_array="default"
+						collecting_unknown=0
+						array_comment_buffer=""
+					elif [[ "$value" =~ ^\[[^][]*\]$ ]]; then
+						local inner="${value:1:-1}"
+						parse_inline_default "$inner"
+						state_needs_migration=true
+					else
+						value=${value//;/ }
+						for token in $value; do
+							process_default_token "$token"
+						done
+					fi
 					;;
 				open|close|show|hide)
+					value=$(strip_trailing_space_tabs "$(strip_leading_space_tabs "$value")")
 					if [[ "$compact" == "[" ]]; then
 						current_array="$key"
 						collecting_unknown=0
+						array_comment_buffer=""
+					elif [[ "$value" =~ ^\[[^][]*\]$ ]]; then
+						local inner="${value:1:-1}"
+						parse_inline_collection "$base" "$key" "$inner"
+						state_needs_migration=true
 					else
 						state_passthrough_lines+=("$raw")
 					fi
@@ -452,6 +623,11 @@ read_state() {
 		((idx++))
 	done
 
+	if [[ -n "$default_conflict" ]]; then
+		echo "Error: $default_conflict" >&2
+		exit 1
+	fi
+
 	if [[ "$format" == "legacy" ]]; then
 		state_needs_migration=true
 	else
@@ -468,8 +644,25 @@ persist_state() {
 	{
 		echo "$STATE_VERSION_LABEL"
 		local wrote_block=false
-		if [[ -n "$default_state" ]]; then
-			echo "default=$default_state"
+		local default_entries=()
+		if [[ "$default_state_set" == true ]]; then
+			default_entries+=("$default_state")
+		fi
+		if [[ "$default_visibility_set" == true ]]; then
+			default_entries+=("$default_visibility")
+		fi
+		if (( ${#default_entries[@]} == 0 )) && [[ -n "$default_state" ]]; then
+			default_entries+=("$default_state")
+		fi
+		if (( ${#default_entries[@]} == 1 )); then
+			echo "default=${default_entries[0]}"
+			wrote_block=true
+		elif (( ${#default_entries[@]} > 1 )); then
+			echo "default=["
+			for entry in "${default_entries[@]}"; do
+				printf '\t%s\n' "$entry"
+			done
+			echo "]"
 			wrote_block=true
 		fi
 
@@ -490,6 +683,15 @@ persist_state() {
 			fi
 			echo "open=["
 			for key in "${entries[@]}"; do
+				if [[ ${key:0:1} == "/" && ${key: -1} == "/" ]]; then
+					if [[ -n "${open_regex_comments[$key]:-}" ]]; then
+						printf '%s' "${open_regex_comments[$key]}"
+					fi
+				else
+					if [[ -n "${open_literal_comments[$key]:-}" ]]; then
+						printf '%s' "${open_literal_comments[$key]}"
+					fi
+				fi
 				printf '\t%s\n' "$key"
 			done
 			echo "]"
@@ -510,6 +712,15 @@ persist_state() {
 			fi
 			echo "close=["
 			for key in "${entries[@]}"; do
+				if [[ ${key:0:1} == "/" && ${key: -1} == "/" ]]; then
+					if [[ -n "${close_regex_comments[$key]:-}" ]]; then
+						printf '%s' "${close_regex_comments[$key]}"
+					fi
+				else
+					if [[ -n "${close_literal_comments[$key]:-}" ]]; then
+						printf '%s' "${close_literal_comments[$key]}"
+					fi
+				fi
 				printf '\t%s\n' "$key"
 			done
 			echo "]"
@@ -530,6 +741,15 @@ persist_state() {
 			fi
 			echo "show=["
 			for key in "${entries[@]}"; do
+				if [[ ${key:0:1} == "/" && ${key: -1} == "/" ]]; then
+					if [[ -n "${show_regex_comments[$key]:-}" ]]; then
+						printf '%s' "${show_regex_comments[$key]}"
+					fi
+				else
+					if [[ -n "${show_literal_comments[$key]:-}" ]]; then
+						printf '%s' "${show_literal_comments[$key]}"
+					fi
+				fi
 				printf '\t%s\n' "$key"
 			done
 			echo "]"
@@ -550,6 +770,15 @@ persist_state() {
 			fi
 			echo "hide=["
 			for key in "${entries[@]}"; do
+				if [[ ${key:0:1} == "/" && ${key: -1} == "/" ]]; then
+					if [[ -n "${hide_regex_comments[$key]:-}" ]]; then
+						printf '%s' "${hide_regex_comments[$key]}"
+					fi
+				else
+					if [[ -n "${hide_literal_comments[$key]:-}" ]]; then
+						printf '%s' "${hide_literal_comments[$key]}"
+					fi
+				fi
 				printf '\t%s\n' "$key"
 			done
 			echo "]"
@@ -837,42 +1066,77 @@ render_dir() {
 	done < <(eza "${eza_args[@]}" "$abs")
 
 	local count=${#lines[@]}
+	local -a visible_indices=()
+	local -a cached_closed=()
 	local idx
 	for ((idx=0; idx<count; idx++)); do
-		local line="${lines[$idx]}"
 		local child_rel="${rels[$idx]}"
 		local target="${targets[$idx]}"
 		if [[ -z "$child_rel" ]]; then
-			printf '%s%s\n' "$prefix" "$line"
-			continue
-		fi
-		if [[ "$child_rel" == "." || "$child_rel" == ".." ]]; then
-			printf '%s%s\n' "$prefix" "$line"
-			continue
-		fi
-		evaluate_path "$child_rel" "$parent_closed"
-		if [[ $path_hidden -eq 1 ]]; then
-			if [[ "${isdirs[$idx]}" -eq 1 ]]; then
-				note_hidden dir
+			rels[$idx]="$child_rel"
+			if [[ -n "$target" ]]; then
+				targets[$idx]="$target"
 			else
-				note_hidden file
+				if [[ -n "$child_rel" ]]; then
+					targets[$idx]="$abs/$child_rel"
+				else
+					targets[$idx]="$abs"
+				fi
 			fi
-			continue
 		fi
-		if [[ "${isdirs[$idx]}" -eq 1 ]]; then
+		if [[ -n "$child_rel" && "$child_rel" != "." && "$child_rel" != ".." ]]; then
+			evaluate_path "$child_rel" "$parent_closed"
+			cached_closed[$idx]=$path_closed
+			if [[ $path_hidden -eq 1 ]]; then
+				if [[ "${isdirs[$idx]}" -eq 1 ]]; then
+					note_hidden dir
+				else
+					note_hidden file
+				fi
+				continue
+			fi
+		else
+			cached_closed[$idx]=0
+		fi
+		visible_indices+=("$idx")
+	done
+
+	local visible_count=${#visible_indices[@]}
+	local pos
+	for ((pos=0; pos<visible_count; pos++)); do
+		idx=${visible_indices[$pos]}
+		local line="${lines[$idx]}"
+		local child_rel="${rels[$idx]}"
+		local target="${targets[$idx]}"
+		local is_dir="${isdirs[$idx]}"
+		local path_closed_val=${cached_closed[$idx]:-0}
+		if [[ -z "$target" && -n "$child_rel" ]]; then
+			target="$abs/$child_rel"
+		fi
+		local is_last=0
+		if (( pos == visible_count-1 )); then
+			is_last=1
+		fi
+		local connector="├── "
+		local next_prefix="${prefix}│   "
+		if (( is_last )); then
+			connector="└── "
+			next_prefix="${prefix}    "
+		fi
+		if [[ -n "$child_rel" && "$child_rel" != "." && "$child_rel" != ".." && "$is_dir" -eq 1 ]]; then
 			local marker="/"
-			if [[ $path_closed -eq 1 ]]; then
-				if dir_has_children "$target"; then
+			if (( path_closed_val == 1 )); then
+				if [[ -n "$target" ]] && dir_has_children "$target"; then
 					marker="/*"
 				fi
 			fi
 			line=$(append_with_marker "$line" "$marker")
-			printf '%s%s\n' "$prefix" "$line"
-			if [[ $path_closed -eq 0 && $depth_left -gt 1 ]]; then
-				render_dir "$child_rel" $((depth_left-1)) "$path_closed" "${prefix}    "
+			printf '%s%s%s\n' "$prefix" "$connector" "$line"
+			if (( path_closed_val == 0 && depth_left > 1 )); then
+				render_dir "$child_rel" $((depth_left-1)) "$path_closed_val" "$next_prefix"
 			fi
 		else
-			printf '%s%s\n' "$prefix" "$line"
+			printf '%s%s%s\n' "$prefix" "$connector" "$line"
 		fi
 	done
 }
@@ -885,7 +1149,7 @@ while [[ $# -gt 0 ]]; do
 			exit 0
 			;;
 		-a|--about)
-			echo "Stateful eza tree (icons/colors/links); --simple for LLMs; persists .dirtree-state (default/open/close/show/hide); regex via /pattern/ or re:; literals must be relative; env: DIRTREE_{SIMPLE,DECORATED,AUTO_SIMPLE}."
+			echo "Stateful eza tree (icons/colors/links); --simple for LLMs; persists .dirtree-state (default/open/close/show/hide); regex via /pattern/; literals must be relative; env: DIRTREE_{SIMPLE,DECORATED,AUTO_SIMPLE}."
 			exit 0
 			;;
 		-d|--depth)
@@ -908,10 +1172,62 @@ while [[ $# -gt 0 ]]; do
 			;;
 			--default)
 				shift
-				case "$1" in
-					opened|closed) cli_default_state="$1"; state_modified=true ;;
-					*) echo "Error: --default requires 'opened' or 'closed'" >&2; exit 1 ;;
-				esac
+				collected=()
+				while [[ $# -gt 0 && "$1" != --* && "$1" != -* ]]; do
+					if [[ "$dir_pending" == true && $# -eq 1 && ${#collected[@]} -gt 0 ]]; then
+						local_candidate="${1,,}"
+						case "$local_candidate" in
+							open|opened|close|closed|show|shown|hide|hidden) ;;
+							*) break ;;
+						esac
+					fi
+					collected+=("$1")
+					shift
+				done
+				if [[ ${#collected[@]} -eq 0 ]]; then
+					echo "Error: --default requires at least one value" >&2
+					exit 1
+				fi
+				for token in "${collected[@]}"; do
+					local_token="${token,,}"
+					case "$local_token" in
+						open|opened)
+							if [[ -n "$cli_default_state" && "$cli_default_state" != "opened" ]]; then
+								echo "Error: --default state conflict between '$cli_default_state' and '$token'" >&2
+								exit 1
+							fi
+							cli_default_state="opened"
+							;;
+						close|closed)
+							if [[ -n "$cli_default_state" && "$cli_default_state" != "closed" ]]; then
+								echo "Error: --default state conflict between '$cli_default_state' and '$token'" >&2
+								exit 1
+							fi
+							cli_default_state="closed"
+							;;
+						show|shown)
+							if [[ -n "$cli_default_visibility" && "$cli_default_visibility" != "shown" ]]; then
+								echo "Error: --default visibility conflict between '$cli_default_visibility' and '$token'" >&2
+								exit 1
+							fi
+							cli_default_visibility="shown"
+							;;
+						hide|hidden)
+							if [[ -n "$cli_default_visibility" && "$cli_default_visibility" != "hidden" ]]; then
+								echo "Error: --default visibility conflict between '$cli_default_visibility' and '$token'" >&2
+								exit 1
+							fi
+							cli_default_visibility="hidden"
+							;;
+						*)
+							echo "Error: --default accepts opened/closed/shown/hidden" >&2
+							exit 1
+							;;
+						esac
+					done
+				state_modified=true
+				unset collected
+				continue
 				;;
 			--sort)
 				shift
@@ -943,15 +1259,13 @@ while [[ $# -gt 0 ]]; do
 					echo "Error: --open requires at least one directory" >&2
 					exit 1
 				fi
-				for entry in "${collected[@]}"; do
-					if [[ "$entry" == re:* ]]; then
-						open_regex_args+=("${entry#re:}")
-					elif [[ "$entry" == /* && "$entry" == */ ]]; then
-						if (( ${#entry} <= 2 )); then
-							echo "Error: --open regex pattern must not be empty" >&2
-							exit 1
-						fi
-						pattern_val="${entry:1:-1}"
+		for entry in "${collected[@]}"; do
+			if [[ "$entry" == /* && "$entry" == */ ]]; then
+				if (( ${#entry} <= 2 )); then
+					echo "Error: --open regex pattern must not be empty" >&2
+					exit 1
+				fi
+				pattern_val="${entry:1:-1}"
 						open_regex_args+=("$pattern_val")
 					else
 						open_args+=("$entry")
@@ -975,15 +1289,13 @@ while [[ $# -gt 0 ]]; do
 					echo "Error: --close requires at least one directory" >&2
 					exit 1
 				fi
-				for entry in "${collected[@]}"; do
-					if [[ "$entry" == re:* ]]; then
-						close_regex_args+=("${entry#re:}")
-					elif [[ "$entry" == /* && "$entry" == */ ]]; then
-						if (( ${#entry} <= 2 )); then
-							echo "Error: --close regex pattern must not be empty" >&2
-							exit 1
-						fi
-						pattern_val="${entry:1:-1}"
+		for entry in "${collected[@]}"; do
+			if [[ "$entry" == /* && "$entry" == */ ]]; then
+				if (( ${#entry} <= 2 )); then
+					echo "Error: --close regex pattern must not be empty" >&2
+					exit 1
+				fi
+				pattern_val="${entry:1:-1}"
 						close_regex_args+=("$pattern_val")
 					else
 						close_args+=("$entry")
@@ -1007,14 +1319,12 @@ while [[ $# -gt 0 ]]; do
 					echo "Error: --show requires at least one path" >&2
 					exit 1
 				fi
-				for entry in "${collected[@]}"; do
-					if [[ "$entry" == re:* ]]; then
-						show_regex_args+=("${entry#re:}")
-					elif [[ "$entry" == /* && "$entry" == */ ]]; then
-						if (( ${#entry} <= 2 )); then
-							echo "Error: --show regex pattern must not be empty" >&2
-							exit 1
-						fi
+		for entry in "${collected[@]}"; do
+			if [[ "$entry" == /* && "$entry" == */ ]]; then
+				if (( ${#entry} <= 2 )); then
+					echo "Error: --show regex pattern must not be empty" >&2
+					exit 1
+				fi
 						pattern_val="${entry:1:-1}"
 						show_regex_args+=("$pattern_val")
 					else
@@ -1043,14 +1353,12 @@ while [[ $# -gt 0 ]]; do
 					echo "Error: --hide requires at least one path" >&2
 					exit 1
 				fi
-				for entry in "${collected[@]}"; do
-					if [[ "$entry" == re:* ]]; then
-						hide_regex_args+=("${entry#re:}")
-					elif [[ "$entry" == /* && "$entry" == */ ]]; then
-						if (( ${#entry} <= 2 )); then
-							echo "Error: --hide regex pattern must not be empty" >&2
-							exit 1
-						fi
+		for entry in "${collected[@]}"; do
+			if [[ "$entry" == /* && "$entry" == */ ]]; then
+				if (( ${#entry} <= 2 )); then
+					echo "Error: --hide regex pattern must not be empty" >&2
+					exit 1
+				fi
 						pattern_val="${entry:1:-1}"
 						hide_regex_args+=("$pattern_val")
 					else
@@ -1103,6 +1411,11 @@ read_state "$dir"
 # Apply CLI default after loading persisted state so it isn't overwritten
 if [[ -n "$cli_default_state" ]]; then
 	default_state="$cli_default_state"
+	default_state_set=true
+fi
+if [[ -n "$cli_default_visibility" ]]; then
+	default_visibility="$cli_default_visibility"
+	default_visibility_set=true
 fi
 
 # Apply CLI open/close mutations if any

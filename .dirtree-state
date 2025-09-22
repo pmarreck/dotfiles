@@ -1,0 +1,19 @@
+ver=1.1
+default=closed
+
+open=[
+	bin
+	bin/src
+	bin/test
+]
+
+hide=[
+	.git
+	.jj
+	.gitconfig.old-possibly-useful
+	Library
+	of_historical_note
+	.secrets
+	.secrets.gpg
+	.netrc.gpg
+]

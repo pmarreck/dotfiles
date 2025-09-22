@@ -16,4 +16,4 @@ bin/*launcher
 .vscode
 
 **/.claude/settings.local.json
-.dirtree-state
+.jj/

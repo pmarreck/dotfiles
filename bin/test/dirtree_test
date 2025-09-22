@@ -133,6 +133,33 @@ test_function "persist default via --default only" \
 # Clean up first tmpdir
 rm -rf "$tmpdir"
 
+# Persisting default visibility via --default hide/show
+tmpdir=$(mktemp -d)
+basedir="$tmpdir/proj"
+mkdir -p "$basedir"
+rm -f "$basedir/.dirtree-state"
+basedir_q=$(printf '%q' "$basedir")
+state_q=$(printf '%q' "$basedir/.dirtree-state")
+
+test_function "persist default visibility via --default hide" \
+	"(cd $basedir_q && dirtree --default hide >/dev/null && head -n1 $state_q | grep -q '^ver=1\\.1$' && grep -q '^default=hidden$' $state_q && echo OK)" \
+	"OK"
+
+rm -rf "$tmpdir"
+
+# Persisting default array via multiple tokens
+tmpdir=$(mktemp -d)
+basedir="$tmpdir/proj"
+mkdir -p "$basedir"
+rm -f "$basedir/.dirtree-state"
+basedir_q=$(printf '%q' "$basedir")
+
+test_function "persist default array via multiple --default tokens" \
+	"(cd $basedir_q && dirtree --default opened hidden >/dev/null && awk '/^default=\[/{flag=1;next} flag && /^]/{flag=0;next} flag {print}' .dirtree-state | grep -Fxq $'\topened' && awk '/^default=\[/{flag=1;next} flag && /^]/{flag=0;next} flag {print}' .dirtree-state | grep -Fxq $'\thidden' && echo OK)" \
+	"OK"
+
+rm -rf "$tmpdir"
+
 # Decorated mode should honor persisted default=closed
 tmpdir=$(mktemp -d)
 basedir="$tmpdir/closed"
@@ -148,7 +175,7 @@ STATE
 		tmp=\$(mktemp) && \
 		trap 'rm -f \"\$tmp\"' EXIT && \
 		dirtree > \"\$tmp\" && \
-		if grep -Fqx 'parent/*' \"\$tmp\" && ! grep -q 'child' \"\$tmp\"; then \
+		if grep -Fq 'parent/*' \"\$tmp\" && ! grep -q 'child' \"\$tmp\"; then \
 			echo OK; \
 		else \
 			echo BAD; \
@@ -176,7 +203,7 @@ STATE
 		tmp=\$(mktemp) && \
 		trap 'rm -f \"\$tmp\"' EXIT && \
 		dirtree > \"\$tmp\" && \
-		if grep -Fqx 'parent/*' \"\$tmp\"; then \
+		if grep -Fq 'parent/*' \"\$tmp\"; then \
 			echo BAD; \
 		elif grep -Fq 'child/' \"\$tmp\"; then \
 			echo OK; \
@@ -250,19 +277,19 @@ test_function "decorated handles percent-encoded OSC8 hyperlinks" \
 rm -rf "$stubdir"
 rm -rf "$tmpdir"
 
-# --- INIMA format tests ---
+# --- INI-MA format tests ---
 
 tmpdir_inima=$(mktemp -d)
 basedir="$tmpdir_inima/inima"
 mkdir -p "$basedir/src" "$basedir/docs" "$basedir/tmp" "$basedir/logs"
 
-test_function "state persists using INIMA arrays" \
+test_function "state persists using INI-MA arrays" \
 	"(\
 		cd \"$basedir\" && \
 		rm -f .dirtree-state && \
 		dirtree --default opened >/dev/null && \
 		dirtree --open src >/dev/null && \
-		dirtree --open re:^docs >/dev/null && \
+		dirtree --open '/^docs/' >/dev/null && \
 		dirtree --close tmp >/dev/null && \
 		dirtree --close '/^tmp/' >/dev/null && \
 		dirtree --show docs >/dev/null && \
@@ -283,7 +310,7 @@ test_function "state persists using INIMA arrays" \
 	)" \
 	"OK"
 
-test_function "legacy state migrates to INIMA" \
+test_function "legacy state migrates to INI-MA" \
 	"(\
 		cd \"$basedir\" && \
 		rm -f .dirtree-state && \
@@ -453,9 +480,12 @@ test_function "decorated indentation reflects hierarchy" \
 	"(\
 		tmpf=\$(mktemp) && \
 		dirtree \"$basedir\" > \"\$tmpf\" && \
-		grep -Eq '^[[:space:]]{4}child/' \"\$tmpf\" && \
+		tmpclean=\$(mktemp) && \
+		strip_ansi < \"\$tmpf\" > \"\$tmpclean\" && \
+		grep -Eq '^└── parent/' \"\$tmpclean\" && \
+		grep -Eq '^    └── child/' \"\$tmpclean\" && \
 		echo OK && \
-		rm -f \"\$tmpf\" \
+		rm -f \"\$tmpf\" \"\$tmpclean\" \
 	)" \
 	"OK"
 
@@ -470,15 +500,15 @@ touch -t 202001020000 "$basedir/b"
 
 test_function "default sort is modified desc" \
 	"dirtree '$basedir' | sed -n '1p'" \
-	"^b$"
+	"├── b$"
 
 test_function "--sort alpha --asc orders ascending" \
 	"dirtree --sort alpha --asc '$basedir' | sed -n '1p'" \
-	"^a$"
+	"├── a$"
 
 test_function "--sort alpha --desc orders descending" \
 	"dirtree --sort alpha --desc '$basedir' | sed -n '1p'" \
-	"^b$"
+	"├── b$"
 
 rm -rf "$tmpdir"
 
@@ -493,11 +523,13 @@ test_function "open parent does not expand grandchildren by default" \
 		dirtree --default closed >/dev/null && \
 		tmpf=\$(mktemp) && \
 		dirtree --open parent > \"\$tmpf\" && \
-		strip_ansi < \"\$tmpf\" | grep -Fqx 'parent/' && \
-		strip_ansi < \"\$tmpf\" | grep -Fqx '    child/*' && \
-		! strip_ansi < \"\$tmpf\" | grep -F 'grand/' && \
+		tmpclean=\$(mktemp) && \
+		strip_ansi < \"\$tmpf\" > \"\$tmpclean\" && \
+		grep -Fq '└── parent/' \"\$tmpclean\" && \
+		grep -Fq '└── child/*' \"\$tmpclean\" && \
+		! grep -F 'grand/' \"\$tmpclean\" && \
 		echo OK && \
-		rm -f \"\$tmpf\" \
+		rm -f \"\$tmpf\" \"\$tmpclean\" \
 	)" \
 	"OK"
 
@@ -515,7 +547,7 @@ test_function "--open regex persists in state" \
 	"(\
 		cd '$basedir' && \
 		dirtree --default closed >/dev/null && \
-		dirtree --open re:^src >/dev/null && \
+		dirtree --open '/^src/' >/dev/null && \
 		awk '/^open=\[/{flag=1;next}/^]/{flag=0} flag && /\/\^src\//{found=1} END{exit found?0:1}' .dirtree-state && \
 		echo OK \
 	)" \
@@ -535,11 +567,11 @@ test_function "literal close beats regex open" \
 	"(\
 		cd '$basedir' && \
 		dirtree --default closed >/dev/null && \
-		dirtree --open re:^src >/dev/null && \
+		dirtree --open '/^src/' >/dev/null && \
 		dirtree --close src >/dev/null && \
 		tmpf=\$(mktemp) && \
 		dirtree > \"\$tmpf\" && \
-		strip_ansi < \"\$tmpf\" | grep -Fqx 'src/*' && \
+		strip_ansi < \"\$tmpf\" | grep -Fq 'src/*' && \
 		echo OK && \
 		rm -f \"\$tmpf\" \
 	)" \
@@ -588,7 +620,7 @@ test_function "--hide literal suppresses node" \
 test_function "--hide regex suppresses matches" \
 	"(\
 		cd '$basedir' && \
-		dirtree --hide re:^src >/dev/null && \
+		dirtree --hide '/^src/' >/dev/null && \
 		dirtree | strip_ansi | grep -q 'src' && echo BAD || echo OK \
 	)" \
 	"OK"
@@ -598,14 +630,71 @@ rm -f "$basedir/.dirtree-state"
 test_function "--hide slash regex persists and hides" \
 	"(\
 		cd '$basedir' && \
-		dirtree --hide '/\\.lnk$/' >/dev/null && \
-		grep -Fq '/\\.lnk$/' .dirtree-state && \
-		tmpf=\$(mktemp) && \
-		dirtree > \"\$tmpf\" && \
-		strip_ansi < \"\$tmpf\" | grep -q 'shortcut.lnk' && echo BAD || echo OK && \
-		rm -f \"\$tmpf\" \
+	dirtree --hide '/\\.lnk$/' >/dev/null && \
+	grep -Fq '/\\.lnk$/' .dirtree-state && \
+	tmpf=\$(mktemp) && \
+	dirtree > \"\$tmpf\" && \
+	strip_ansi < \"\$tmpf\" | grep -q 'shortcut.lnk' && echo BAD || echo OK && \
+	rm -f \"\$tmpf\" \
 	)" \
 	"OK"
+
+basedir_saved="$basedir"
+
+# re:-prefixed arguments should be treated as literals
+tmpdir_re_literal=$(mktemp -d)
+basedir_re_literal="$tmpdir_re_literal/re_literal"
+mkdir -p "$basedir_re_literal/src/deep" "$basedir_re_literal/re:^src/inner"
+
+cat <<'STATE' > "$basedir_re_literal/.dirtree-state"
+ver=1.1
+default=closed
+STATE
+
+test_function "re-prefix --open treats argument as literal" \
+	"(\
+		cd '$basedir_re_literal' && \
+		dirtree --open 're:^src' >/dev/null && \
+		awk '/^open=\[/{flag=1;next}/^]/{flag=0} flag {print}' .dirtree-state | grep -Fxq $'\tre:^src' && \
+		tmpf=\$(mktemp) && \
+		dirtree > \"\$tmpf\" && \
+		tmpclean=\$(mktemp) && \
+		strip_ansi < \"\$tmpf\" > \"\$tmpclean\" && \
+		grep -Fq 're:^src/' \"\$tmpclean\" && \
+		grep -Fq 'inner/' \"\$tmpclean\" && \
+		grep -Fq 'src/*' \"\$tmpclean\" && echo OK || echo BAD && \
+		rm -f \"\$tmpf\" \"\$tmpclean\" \
+	)" \
+	"OK"
+
+cat <<'STATE' > "$basedir_re_literal/.dirtree-state"
+ver=1.1
+default=opened
+STATE
+
+test_function "re-prefix --hide treats argument as literal" 	"(		cd '$basedir_re_literal' && 		dirtree --hide 're:^src' >/dev/null && 		awk '/^hide=\[/{flag=1;next}/^]/{flag=0} flag {print}' .dirtree-state | grep -Fxq $'	re:^src' && 		tmpf=\$(mktemp) && 		dirtree > "\$tmpf" 2> "\$tmpf.err" && 		strip_ansi < "\$tmpf" | grep -Fq 're:^src/' && echo BAD || (strip_ansi < "\$tmpf" | grep -Fq 'src/' && echo OK) && 		rm -f "\$tmpf" "\$tmpf.err" 	)" 	"OK"
+
+rm -rf "$tmpdir_re_literal"
+
+tmpdir_inline=$(mktemp -d)
+basedir_inline="$tmpdir_inline/inline_arrays"
+mkdir -p "$basedir_inline/src/deep" "$basedir_inline/docs/with space" "$basedir_inline/tmp/cache" "$basedir_inline/logs"
+touch "$basedir_inline/src/deep/file.txt" "$basedir_inline/docs/with space/readme.md" "$basedir_inline/tmp/cache/tmpfile" "$basedir_inline/logs/app.log"
+
+cat <<'STATE' > "$basedir_inline/.dirtree-state"
+ver=1.1
+default=[ open shown ]
+open=[ src docs/with\ space ]
+close=[ tmp ]
+show=[ src/deep ]
+hide=[ logs /\.log$/ ]
+STATE
+
+test_function "inline INI-MA arrays parse correctly" 	"(		cd '$basedir_inline' && 		tmpf=\$(mktemp) && 		tmpf_err=\$(mktemp) && 		dirtree --decorated > "\$tmpf" 2> "\$tmpf_err" && 		strip_ansi < "\$tmpf" | grep -Fq 'docs/with space/' && 		strip_ansi < "\$tmpf" | grep -Fq 'src/deep/' && 		! strip_ansi < "\$tmpf" | grep -Fq 'logs/' && 		awk '/^open=\[/{flag=1;next}/^]/{flag=0;next} flag {print}' .dirtree-state | grep -Fxq $'	docs/with space' && 		awk '/^hide=\[/{flag=1;next}/^]/{flag=0;next} flag {print}' .dirtree-state | grep -Fxq $'	/\.log$/' && 		echo OK && 		rm -f "\$tmpf" "\$tmpf_err" 	)" 	"OK"
+
+rm -rf "$tmpdir_inline"
+
+basedir="$basedir_saved"
 
 test_function "--hide literal with dot stays literal" \
 	"(\
@@ -674,9 +763,11 @@ test_function "--show literal overrides hide regex" \
 		dirtree --show src >/dev/null && \
 		tmpf=\$(mktemp) && \
 		dirtree > \"\$tmpf\" && \
-		strip_ansi < \"\$tmpf\" | grep -Fqx 'src/' && \
-		strip_ansi < \"\$tmpf\" | grep -Fq 'tests' && echo BAD || echo OK && \
-		rm -f \"\$tmpf\" \
+		tmpclean=\$(mktemp) && \
+		strip_ansi < \"\$tmpf\" > \"\$tmpclean\" && \
+		grep -Fq 'src/' \"\$tmpclean\" && \
+		grep -Fq 'tests' \"\$tmpclean\" && echo BAD || echo OK && \
+		rm -f \"\$tmpf\" \"\$tmpclean\" \
 	)" \
 	"OK"
 
@@ -753,8 +844,14 @@ mkdir -p "$basedir/a/b"
 touch "$basedir/a/b/file"
 basedir_q=$(printf '%q' "$basedir")
 
-test_function "decorated: no leading '├──', '└──', or '│   '" \
-	"out=\"\$(dirtree $basedir_q)\"; ! echo \"$out\" | grep -q '^├──' && ! echo \"$out\" | grep -q '^└──' && ! echo \"$out\" | grep -q '^│   ' && echo OK" \
+test_function "decorated tree shows connectors" \
+	"(\
+		tmpf=\$(mktemp) && \
+		dirtree $basedir_q > \"\$tmpf\" && \
+		grep -q '^└──' \"\$tmpf\" && \
+		echo OK && \
+		rm -f \"\$tmpf\" \
+	)" \
 	"OK"
 
 rm -rf "$tmpdir"
