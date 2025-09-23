@@ -49,6 +49,10 @@ default_visibility_set=false
 default_conflict=""
 cli_default_state=""
 cli_default_visibility=""
+# smarts: reveal SCM changes unless explicitly disabled
+priority_enabled=false
+declare -A priority_files
+declare -A priority_dirs
 open_args=()
 close_args=()
 show_args=()
@@ -129,6 +133,115 @@ note_hidden() {
 	[[ "$show_hidden" == true ]] && return
 	[[ -z "$hidden_count_log" ]] && return
 	printf '%s\n' "$kind" >>"$hidden_count_log"
+}
+
+clear_priority_maps() {
+	local key
+	for key in "${!priority_files[@]}"; do
+		unset 'priority_files[$key]'
+	done
+	for key in "${!priority_dirs[@]}"; do
+		unset 'priority_dirs[$key]'
+	done
+}
+
+add_priority_parents() {
+	local p="$1"
+	while [[ "$p" == */* ]]; do
+		p="${p%/*}"
+		[[ -z "$p" ]] && break
+		priority_dirs["$p"]=1
+	done
+}
+
+add_priority_path() {
+	local repo_root="$1"
+	local rel_path="$2"
+	[[ -z "$rel_path" ]] && return
+	local abs_path="$repo_root/$rel_path"
+	if [[ ! -e "$abs_path" && ! -L "$abs_path" ]]; then
+		return
+	fi
+	local relative
+	relative=$(realpath --relative-to="$abs_dir" "$abs_path" 2>/dev/null) || return
+	if [[ "$relative" == ..* ]]; then
+		return
+	fi
+	if [[ -d "$abs_path" ]]; then
+		priority_dirs["$relative"]=1
+		add_priority_parents "$relative"
+		while IFS= read -r -d '' child; do
+			local rel_child
+			rel_child=$(realpath --relative-to="$abs_dir" "$child" 2>/dev/null) || continue
+			if [[ "$rel_child" == ..* ]]; then
+				continue
+			fi
+			priority_files["$rel_child"]=1
+			add_priority_parents "$rel_child"
+		done < <(find "$abs_path" \( -type f -o -type l \) -print0)
+	else
+		priority_files["$relative"]=1
+		add_priority_parents "$relative"
+	fi
+}
+
+collect_priority_paths() {
+	local base="$1"
+	priority_enabled=false
+	clear_priority_maps
+	if command -v git >/dev/null 2>&1; then
+		if git -C "$base" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+			local repo_root
+			repo_root=$(git -C "$base" rev-parse --show-toplevel 2>/dev/null) || repo_root=""
+			if [[ -n "$repo_root" ]]; then
+				while IFS= read -r -d '' record; do
+					[[ -z "$record" ]] && continue
+					local path="${record:3}"
+					if [[ -z "$path" ]]; then
+						continue
+					fi
+					if [[ "$path" == *" -> "* ]]; then
+						path="${path##* -> }"
+					fi
+					add_priority_path "$repo_root" "$path"
+					# Treat deleted files (status starting with ' D' etc.) even if absent by checking parent directories
+					if [[ -e "$repo_root/$path" || -L "$repo_root/$path" ]]; then
+						continue
+					fi
+					local rel_dir
+					rel_dir=$(dirname -- "$path")
+					if [[ "$rel_dir" != "." ]]; then
+						local abs_dir_local="$repo_root/$rel_dir"
+						if [[ -d "$abs_dir_local" ]]; then
+							local rel_to_target
+							rel_to_target=$(realpath --relative-to="$abs_dir" "$abs_dir_local" 2>/dev/null) || rel_to_target=""
+							if [[ -n "$rel_to_target" && "$rel_to_target" != ..* ]]; then
+								priority_dirs["$rel_to_target"]=1
+								add_priority_parents "$rel_to_target"
+							fi
+						fi
+					fi
+				done < <(git -C "$repo_root" status --porcelain -z)
+			fi
+		fi
+	fi
+	if [[ ${#priority_files[@]} -gt 0 || ${#priority_dirs[@]} -gt 0 ]]; then
+		priority_enabled=true
+		return
+	fi
+	if command -v jj >/dev/null 2>&1; then
+		local repo_root
+		repo_root=$(jj -R "$base" root 2>/dev/null) || repo_root=""
+		if [[ -n "$repo_root" ]]; then
+			while IFS= read -r path; do
+				[[ -z "$path" ]] && continue
+				add_priority_path "$repo_root" "$path"
+			done < <(jj -R "$base" diff --name-only)
+		fi
+	fi
+	if [[ ${#priority_files[@]} -gt 0 || ${#priority_dirs[@]} -gt 0 ]]; then
+		priority_enabled=true
+	fi
 }
 
 process_default_token() {
@@ -941,6 +1054,16 @@ evaluate_path() {
 	else
 		path_closed=0
 	fi
+
+	if [[ "$priority_enabled" == true && -n "$rel" ]]; then
+		if [[ -n "${priority_dirs[$rel]:-}" ]]; then
+			path_hidden=0
+			path_closed=0
+		fi
+		if [[ -n "${priority_files[$rel]:-}" ]]; then
+			path_hidden=0
+		fi
+	fi
 }
 
 # Recursively print a simple tree (used for --simple mode)
@@ -1404,6 +1527,19 @@ fi
 
 # Absolute path for rendering
 abs_dir=$(cd "$dir" && pwd -P)
+
+if [[ -z "${DIRTREE_SCM_CHANGES_STAY_HIDDEN_OR_CLOSED:-}" ]]; then
+	collect_priority_paths "$abs_dir"
+else
+	case "${DIRTREE_SCM_CHANGES_STAY_HIDDEN_OR_CLOSED}" in
+		1|true|TRUE|on|ON)
+			:
+			;;
+		*)
+			collect_priority_paths "$abs_dir"
+			;;
+	esac
+fi
 
 # Load and possibly update state
 read_state "$dir"

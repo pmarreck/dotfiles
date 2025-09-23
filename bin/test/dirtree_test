@@ -185,6 +185,108 @@ STATE
 
 rm -rf "$tmpdir"
 
+# --- Git-specific visibility overrides ---
+tmpdir=$(mktemp -d)
+basedir="$tmpdir/gitforce"
+mkdir -p "$basedir"
+basedir_q=$(printf '%q' "$basedir")
+
+test_function "git modified file bypasses hide" \
+	"(\
+		cd $basedir_q && \
+		git init -q >/dev/null && \
+		git config user.name tester && \
+		git config user.email tester@example.com && \
+		echo 'original' > tracked.txt && \
+		git add tracked.txt && \
+		GIT_COMMITTER_NAME=tester GIT_COMMITTER_EMAIL=tester@example.com GIT_AUTHOR_NAME=tester GIT_AUTHOR_EMAIL=tester@example.com git commit -q -m init && \
+		cat <<'STATE' > .dirtree-state
+ver=1.1
+hide=[
+\ttracked.txt
+]
+STATE
+		echo 'changed' > tracked.txt && \
+		tmpf=\$(mktemp) && \
+		trap 'rm -f "$tmpf"' EXIT && \
+		dirtree --simple > \"\$tmpf\" && \
+		grep -Fq 'tracked.txt' \"\$tmpf\" && \
+		echo OK \
+	)" \
+	"OK"
+
+rm -rf "$tmpdir"
+
+tmpdir=$(mktemp -d)
+basedir="$tmpdir/gitforce"
+mkdir -p "$basedir"
+basedir_q=$(printf '%q' "$basedir")
+
+test_function "git untracked file opens hidden parents" \
+	"(\
+		cd $basedir_q && \
+		git init -q >/dev/null && \
+		git config user.name tester && \
+		git config user.email tester@example.com && \
+		cat <<'STATE' > .dirtree-state
+ver=1.1
+hide=[
+\thidden
+]
+close=[
+\thidden
+]
+STATE
+		mkdir -p hidden && \
+		touch hidden/new.txt && \
+		tmpf=\$(mktemp) && \
+		trap 'rm -f "$tmpf"' EXIT && \
+		dirtree --simple > \"\$tmpf\" && \
+		grep -Fq 'hidden/' \"\$tmpf\" && \
+		grep -Fq 'new.txt' \"\$tmpf\" && \
+		echo OK \
+	)" \
+	"OK"
+
+rm -rf "$tmpdir"
+
+tmpdir=$(mktemp -d)
+basedir="$tmpdir/gitforce"
+mkdir -p "$basedir"
+basedir_q=$(printf '%q' "$basedir")
+
+test_function "git override can be disabled via env" \
+	"(\
+		cd $basedir_q && \
+		git init -q >/dev/null && \
+		git config user.name tester && \
+		git config user.email tester@example.com && \
+		cat <<'STATE' > .dirtree-state
+ver=1.1
+hide=[
+	hidden
+]
+close=[
+	hidden
+]
+STATE
+		mkdir -p hidden && \
+		touch hidden/new.txt && \
+		tmpf=\$(mktemp) && \
+		trap 'rm -f "\$tmpf"' EXIT && \
+		DIRTREE_SCM_CHANGES_STAY_HIDDEN_OR_CLOSED=1 dirtree --simple > "\$tmpf" && \
+		if grep -Fq 'hidden/' "\$tmpf"; then \
+			echo BAD; \
+		else \
+			echo OK; \
+		fi \
+	)" \
+	"OK"
+
+rm -rf "$tmpdir"
+
+
+
 # Decorated mode expands explicitly opened directories even when default=closed
 tmpdir=$(mktemp -d)
 basedir="$tmpdir/closed"

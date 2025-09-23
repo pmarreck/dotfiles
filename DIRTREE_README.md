@@ -25,6 +25,8 @@
   - Decorated mode keeps eza’s colors, icons, and OSC8 hyperlinks.
   - Simple mode removes ASCII art connectors so LLMs or diff tools can ingest the tree without glyph noise.
   - Auto-simple mode can kick in for non-TTY outputs via `DIRTREE_AUTO_SIMPLE`.
+- **SCM awareness**
+  - When a Git or Jujutsu repo is detected, paths reported as modified/untracked are forced visible and opened even if state rules would hide them. Set `DIRTREE_SCM_CHANGES_STAY_HIDDEN_OR_CLOSED=1` to opt out.
 - **CLI conveniences**
   - `--open`, `--close`, `--show`, `--hide` accept multiple values and regexes using the `/pattern/` form.
   - `--default` and `--sort` options to tune depth and ordering.
@@ -68,4 +70,4 @@ The repository includes bash-based integration tests under `bin/test/dirtree_tes
 bin/test/dirtree_test
 ```
 
-They cover CLI flags, persistence, migration, hidden summaries, and interaction with the simple/decorated modes.
+They cover CLI flags, persistence, migration, SCM overrides, hidden summaries, and interaction with the simple/decorated modes.
