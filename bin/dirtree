@@ -17,15 +17,15 @@ show_help() {
 	echo "  --default X        Persist default state: opened|closed"
 	echo "  -o, --open DIR...  Open one or more subdirs (repeat flag to add more)"
 	echo "  -c, --close DIR... Close one or more subdirs (repeat flag to add more)"
-	echo "  --show PATH...     Force show relative paths; wrap regexes as /pattern/"
-	echo "  --hide PATH...     Hide relative paths; wrap regexes as /pattern/ (repeatable)"
+	echo "  --show PATH...     Force show relative paths; wrap regexes as /pattern/ or !/pattern/"
+	echo "  --hide PATH...     Hide relative paths; wrap regexes as /pattern/ or !/pattern/ (repeatable)"
 	echo "  --sort MODE        Sorting mode: modified|alpha (default: modified)"
 	echo "  --asc              Sort ascending"
 	echo "  --desc             Sort descending (default)"
 	echo "  --show-hidden      Temporarily display paths hidden via config"
 	echo "  --test             Run associated tests"
 	echo ""
-	echo "Use /pattern/ with --open/--close/--show/--hide to add regex rules; other arguments are treated as literals."
+	echo "Use /pattern/ or !/pattern/ with --open/--close/--show/--hide to add regex rules; other arguments are treated as literals."
 	echo "Paths supplied to --show/--hide must be relative (no leading '/')."
 	echo ""
 	echo "Behavior: By default, when stdout is not a TTY (piped),"
@@ -363,6 +363,81 @@ append_unique_regex() {
 	array_ref+=("$pattern")
 }
 
+parse_wrapped_regex_token() {
+	local token="$1"
+	local result_var="$2"
+	local neg=false
+	if [[ "$token" == \!/* && "$token" == */ ]]; then
+		neg=true
+		if (( ${#token} <= 3 )); then
+			return 2
+		fi
+		local inner="${token:2:-1}"
+		[[ -z "$inner" ]] && return 2
+		if [[ "$neg" == true ]]; then
+			printf -v "$result_var" '!%s' "$inner"
+		else
+			printf -v "$result_var" '%s' "$inner"
+		fi
+		return 0
+	elif [[ "$token" == /* && "$token" == */ ]]; then
+		if (( ${#token} <= 2 )); then
+			return 2
+		fi
+		local inner="${token:1:-1}"
+		[[ -z "$inner" ]] && return 2
+		printf -v "$result_var" '%s' "$inner"
+		return 0
+	fi
+	return 1
+}
+
+wrap_regex_pattern() {
+	local token="$1"
+	if [[ "$token" == \!* ]]; then
+		printf '!/%s/' "${token:1}"
+	else
+		printf '/%s/' "$token"
+	fi
+}
+
+regex_token_matches() {
+	local token="$1"
+	local rel="$2"
+	local pattern="$token"
+	local neg=false
+	if [[ "$pattern" == \!* ]]; then
+		neg=true
+		pattern="${pattern:1}"
+	fi
+	if [[ -z "$pattern" ]]; then
+		return 1
+	fi
+	if [[ "$neg" == true ]]; then
+		if [[ "$rel" =~ $pattern ]]; then
+			return 1
+		else
+			return 0
+		fi
+	else
+		if [[ "$rel" =~ $pattern ]]; then
+			return 0
+		else
+			return 1
+		fi
+	fi
+}
+
+is_wrapped_regex_string() {
+	local token="$1"
+	[[ ${token: -1} == "/" ]] || return 1
+	case "$token" in
+		/*) return 0 ;;
+		!/*) return 0 ;;
+		*) return 1 ;;
+	esac
+}
+
 load_literal_list() {
 	local base="$1" list="$2" literal_name="$3" regex_name="$4"
 	local -n literals_ref="$literal_name"
@@ -391,14 +466,17 @@ load_hide_list() {
 	IFS=';' read -r -a arr <<< "$list"
 	for entry in "${arr[@]}"; do
 		[[ -z "$entry" ]] && continue
-		if [[ "$entry" == /* && "$entry" == */ ]]; then
-			if (( ${#entry} <= 2 )); then
+		local pattern=""
+		parse_wrapped_regex_token "$entry" pattern
+		case $? in
+			0)
+				append_unique_regex hide_regexes "$pattern"
 				continue
-			fi
-			pattern="${entry:1:-1}"
-			append_unique_regex hide_regexes "$pattern"
-			continue
-		fi
+				;;
+			2)
+				continue
+				;;
+		esac
 		local norm
 		norm=$(normalize_rel "$base" "$entry")
 		[[ -n "$norm" ]] && hide_literals["$norm"]=1
@@ -410,14 +488,17 @@ load_show_list() {
 	IFS=';' read -r -a arr <<< "$list"
 	for entry in "${arr[@]}"; do
 		[[ -z "$entry" ]] && continue
-		if [[ "$entry" == /* && "$entry" == */ ]]; then
-			if (( ${#entry} <= 2 )); then
+		pattern=""
+		parse_wrapped_regex_token "$entry" pattern
+		case $? in
+			0)
+				append_unique_regex show_regexes "$pattern"
 				continue
-			fi
-			pattern="${entry:1:-1}"
-			append_unique_regex show_regexes "$pattern"
-			continue
-		fi
+				;;
+			2)
+				continue
+				;;
+		esac
 		local norm
 		norm=$(normalize_rel "$base" "$entry")
 		[[ -n "$norm" ]] && show_literals["$norm"]=1
@@ -479,16 +560,22 @@ parse_inline_collection() {
 	local token pattern norm
 	for token in "${tokens[@]}"; do
 		[[ -z "$token" ]] && continue
-		if [[ "$token" == /* && "$token" == */ && ${#token} -gt 2 ]]; then
-			pattern="${token:1:-1}"
-			case "$key" in
-				open) append_unique_regex open_regexes "$pattern" ;;
-				close) append_unique_regex close_regexes "$pattern" ;;
-				show) append_unique_regex show_regexes "$pattern" ;;
-				hide) append_unique_regex hide_regexes "$pattern" ;;
-			esac
-			continue
-		fi
+		pattern=""
+		parse_wrapped_regex_token "$token" pattern
+		case $? in
+			0)
+				case "$key" in
+					open) append_unique_regex open_regexes "$pattern" ;;
+					close) append_unique_regex close_regexes "$pattern" ;;
+					show) append_unique_regex show_regexes "$pattern" ;;
+					hide) append_unique_regex hide_regexes "$pattern" ;;
+				esac
+				continue
+				;;
+			2)
+				continue
+				;;
+		esac
 		norm=$(normalize_rel "$base" "$token")
 		[[ -z "$norm" ]] && continue
 		case "$key" in
@@ -571,31 +658,58 @@ read_state() {
 			entry=$(strip_trailing_space_tabs "$entry")
 			[[ -z "$entry" ]] && { ((idx++)); continue; }
 
-			if [[ "$entry" == /* && "$entry" == */ && ${#entry} -ge 2 ]]; then
-				entry="${entry:1:-1}"
+		pattern=""
+		parse_wrapped_regex_token "$entry" pattern
+		case $? in
+			0)
 				case "$current_array" in
 					open)
-						append_unique_regex open_regexes "$entry"
-						[[ -n "$array_comment_buffer" ]] && open_regex_comments["/$entry/"]="$array_comment_buffer"
+						append_unique_regex open_regexes "$pattern"
+						if [[ -n "$array_comment_buffer" ]]; then
+							local key
+							key=$(wrap_regex_pattern "$pattern")
+							open_regex_comments["$key"]="$array_comment_buffer"
+						fi
 						;;
 					close)
-						append_unique_regex close_regexes "$entry"
-						[[ -n "$array_comment_buffer" ]] && close_regex_comments["/$entry/"]="$array_comment_buffer"
+						append_unique_regex close_regexes "$pattern"
+						if [[ -n "$array_comment_buffer" ]]; then
+							local key
+							key=$(wrap_regex_pattern "$pattern")
+							close_regex_comments["$key"]="$array_comment_buffer"
+						fi
 						;;
 					show)
-						append_unique_regex show_regexes "$entry"
-						[[ -n "$array_comment_buffer" ]] && show_regex_comments["/$entry/"]="$array_comment_buffer"
+						append_unique_regex show_regexes "$pattern"
+						if [[ -n "$array_comment_buffer" ]]; then
+							local key
+							key=$(wrap_regex_pattern "$pattern")
+							show_regex_comments["$key"]="$array_comment_buffer"
+						fi
 						;;
 					hide)
-						append_unique_regex hide_regexes "$entry"
-						[[ -n "$array_comment_buffer" ]] && hide_regex_comments["/$entry/"]="$array_comment_buffer"
+						append_unique_regex hide_regexes "$pattern"
+						if [[ -n "$array_comment_buffer" ]]; then
+							local key
+							key=$(wrap_regex_pattern "$pattern")
+							hide_regex_comments["$key"]="$array_comment_buffer"
+						fi
 						;;
 				esac
 				array_comment_buffer=""
-			else
-				local norm
-				norm=$(normalize_rel "$base" "$entry")
-				[[ -z "$norm" ]] && { ((idx++)); continue; }
+				((idx++))
+				continue
+				;;
+			2)
+				array_comment_buffer=""
+				((idx++))
+				continue
+				;;
+		esac
+
+			local norm
+			norm=$(normalize_rel "$base" "$entry")
+			[[ -z "$norm" ]] && { ((idx++)); continue; }
 				case "$current_array" in
 					open)
 						open_literals["$norm"]=1
@@ -614,8 +728,7 @@ read_state() {
 						[[ -n "$array_comment_buffer" ]] && hide_literal_comments["$norm"]="$array_comment_buffer"
 						;;
 				esac
-				array_comment_buffer=""
-			fi
+			array_comment_buffer=""
 
 			((idx++))
 			continue
@@ -787,7 +900,7 @@ persist_state() {
 			entries+=("$key")
 		done
 		for key in "${open_regexes[@]}"; do
-			entries+=("/$key/")
+			entries+=("$(wrap_regex_pattern "$key")")
 		done
 		if (( ${#entries[@]} > 0 )); then
 			IFS=$'\n' entries=($(printf '%s\n' "${entries[@]}" | sort))
@@ -796,7 +909,7 @@ persist_state() {
 			fi
 			echo "open=["
 			for key in "${entries[@]}"; do
-				if [[ ${key:0:1} == "/" && ${key: -1} == "/" ]]; then
+				if is_wrapped_regex_string "$key"; then
 					if [[ -n "${open_regex_comments[$key]:-}" ]]; then
 						printf '%s' "${open_regex_comments[$key]}"
 					fi
@@ -816,7 +929,7 @@ persist_state() {
 			entries+=("$key")
 		done
 		for key in "${close_regexes[@]}"; do
-			entries+=("/$key/")
+			entries+=("$(wrap_regex_pattern "$key")")
 		done
 		if (( ${#entries[@]} > 0 )); then
 			IFS=$'\n' entries=($(printf '%s\n' "${entries[@]}" | sort))
@@ -825,7 +938,7 @@ persist_state() {
 			fi
 			echo "close=["
 			for key in "${entries[@]}"; do
-				if [[ ${key:0:1} == "/" && ${key: -1} == "/" ]]; then
+				if is_wrapped_regex_string "$key"; then
 					if [[ -n "${close_regex_comments[$key]:-}" ]]; then
 						printf '%s' "${close_regex_comments[$key]}"
 					fi
@@ -845,7 +958,7 @@ persist_state() {
 			entries+=("$key")
 		done
 		for key in "${show_regexes[@]}"; do
-			entries+=("/$key/")
+			entries+=("$(wrap_regex_pattern "$key")")
 		done
 		if (( ${#entries[@]} > 0 )); then
 			IFS=$'\n' entries=($(printf '%s\n' "${entries[@]}" | sort))
@@ -854,7 +967,7 @@ persist_state() {
 			fi
 			echo "show=["
 			for key in "${entries[@]}"; do
-				if [[ ${key:0:1} == "/" && ${key: -1} == "/" ]]; then
+				if is_wrapped_regex_string "$key"; then
 					if [[ -n "${show_regex_comments[$key]:-}" ]]; then
 						printf '%s' "${show_regex_comments[$key]}"
 					fi
@@ -874,7 +987,7 @@ persist_state() {
 			entries+=("$key")
 		done
 		for key in "${hide_regexes[@]}"; do
-			entries+=("/$key/")
+			entries+=("$(wrap_regex_pattern "$key")")
 		done
 		if (( ${#entries[@]} > 0 )); then
 			IFS=$'\n' entries=($(printf '%s\n' "${entries[@]}" | sort))
@@ -883,7 +996,7 @@ persist_state() {
 			fi
 			echo "hide=["
 			for key in "${entries[@]}"; do
-				if [[ ${key:0:1} == "/" && ${key: -1} == "/" ]]; then
+				if is_wrapped_regex_string "$key"; then
 					if [[ -n "${hide_regex_comments[$key]:-}" ]]; then
 						printf '%s' "${hide_regex_comments[$key]}"
 					fi
@@ -933,7 +1046,7 @@ path_state() {
 	else
 		for pattern in "${open_regexes[@]}"; do
 			[[ -z "$pattern" ]] && continue
-			if [[ "$rel" =~ $pattern ]]; then
+			if regex_token_matches "$pattern" "$rel"; then
 				open_match_type="regex"
 				open_match_pattern="$pattern"
 				break
@@ -947,7 +1060,7 @@ path_state() {
 	else
 		for pattern in "${close_regexes[@]}"; do
 			[[ -z "$pattern" ]] && continue
-			if [[ "$rel" =~ $pattern ]]; then
+			if regex_token_matches "$pattern" "$rel"; then
 				close_match_type="regex"
 				close_match_pattern="$pattern"
 				break
@@ -961,7 +1074,7 @@ path_state() {
 	else
 		for pattern in "${show_regexes[@]}"; do
 			[[ -z "$pattern" ]] && continue
-			if [[ "$rel" =~ $pattern ]]; then
+			if regex_token_matches "$pattern" "$rel"; then
 				show_match_type="regex"
 				show_match_pattern="$pattern"
 				break
@@ -975,7 +1088,7 @@ path_state() {
 	else
 		for pattern in "${hide_regexes[@]}"; do
 			[[ -z "$pattern" ]] && continue
-			if [[ "$rel" =~ $pattern ]]; then
+			if regex_token_matches "$pattern" "$rel"; then
 				hide_match_type="regex"
 				hide_match_pattern="$pattern"
 				break
@@ -1272,7 +1385,7 @@ while [[ $# -gt 0 ]]; do
 			exit 0
 			;;
 		-a|--about)
-			echo "Stateful eza tree (icons/colors/links); --simple for LLMs; persists .dirtree-state (default/open/close/show/hide); regex via /pattern/; literals must be relative; env: DIRTREE_{SIMPLE,DECORATED,AUTO_SIMPLE}."
+		echo "Stateful eza tree (icons/colors/links); --simple for LLMs; persists .dirtree-state (default/open/close/show/hide); regex via /pattern/ or !/pattern/; literals must be relative; env: DIRTREE_{SIMPLE,DECORATED,AUTO_SIMPLE}."
 			exit 0
 			;;
 		-d|--depth)
@@ -1383,17 +1496,21 @@ while [[ $# -gt 0 ]]; do
 					exit 1
 				fi
 		for entry in "${collected[@]}"; do
-			if [[ "$entry" == /* && "$entry" == */ ]]; then
-				if (( ${#entry} <= 2 )); then
+			pattern_val=""
+			parse_wrapped_regex_token "$entry" pattern_val
+			case $? in
+				0)
+					open_regex_args+=("$pattern_val")
+					;;
+				2)
 					echo "Error: --open regex pattern must not be empty" >&2
 					exit 1
-				fi
-				pattern_val="${entry:1:-1}"
-						open_regex_args+=("$pattern_val")
-					else
-						open_args+=("$entry")
-					fi
-					done
+					;;
+				*)
+					open_args+=("$entry")
+					;;
+			esac
+			done
 				state_modified=true
 				unset collected
 				continue
@@ -1413,17 +1530,21 @@ while [[ $# -gt 0 ]]; do
 					exit 1
 				fi
 		for entry in "${collected[@]}"; do
-			if [[ "$entry" == /* && "$entry" == */ ]]; then
-				if (( ${#entry} <= 2 )); then
+			pattern_val=""
+			parse_wrapped_regex_token "$entry" pattern_val
+			case $? in
+				0)
+					close_regex_args+=("$pattern_val")
+					;;
+				2)
 					echo "Error: --close regex pattern must not be empty" >&2
 					exit 1
-				fi
-				pattern_val="${entry:1:-1}"
-						close_regex_args+=("$pattern_val")
-					else
-						close_args+=("$entry")
-					fi
-					done
+					;;
+				*)
+					close_args+=("$entry")
+					;;
+			esac
+			done
 				state_modified=true
 				unset collected
 				continue
@@ -1443,21 +1564,25 @@ while [[ $# -gt 0 ]]; do
 					exit 1
 				fi
 		for entry in "${collected[@]}"; do
-			if [[ "$entry" == /* && "$entry" == */ ]]; then
-				if (( ${#entry} <= 2 )); then
+			pattern_val=""
+			parse_wrapped_regex_token "$entry" pattern_val
+			case $? in
+				0)
+					show_regex_args+=("$pattern_val")
+					;;
+				2)
 					echo "Error: --show regex pattern must not be empty" >&2
 					exit 1
-				fi
-						pattern_val="${entry:1:-1}"
-						show_regex_args+=("$pattern_val")
-					else
-						if [[ "$entry" == /* ]]; then
-							echo "Error: --show paths must be relative (no leading '/'): $entry" >&2
-							exit 1
-						fi
-						show_args+=("$entry")
+					;;
+				*)
+					if [[ "$entry" == /* ]]; then
+						echo "Error: --show paths must be relative (no leading '/'): $entry" >&2
+						exit 1
 					fi
-					done
+					show_args+=("$entry")
+					;;
+			esac
+			done
 				state_modified=true
 				unset collected
 				continue
@@ -1477,21 +1602,25 @@ while [[ $# -gt 0 ]]; do
 					exit 1
 				fi
 		for entry in "${collected[@]}"; do
-			if [[ "$entry" == /* && "$entry" == */ ]]; then
-				if (( ${#entry} <= 2 )); then
+			pattern_val=""
+			parse_wrapped_regex_token "$entry" pattern_val
+			case $? in
+				0)
+					hide_regex_args+=("$pattern_val")
+					;;
+				2)
 					echo "Error: --hide regex pattern must not be empty" >&2
 					exit 1
-				fi
-						pattern_val="${entry:1:-1}"
-						hide_regex_args+=("$pattern_val")
-					else
-						if [[ "$entry" == /* ]]; then
-							echo "Error: --hide paths must be relative (no leading '/'): $entry" >&2
-							exit 1
-						fi
-						hide_args+=("$entry")
+					;;
+				*)
+					if [[ "$entry" == /* ]]; then
+						echo "Error: --hide paths must be relative (no leading '/'): $entry" >&2
+						exit 1
 					fi
-					done
+					hide_args+=("$entry")
+					;;
+			esac
+			done
 				state_modified=true
 				unset collected
 				continue

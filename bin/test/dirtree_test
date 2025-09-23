@@ -741,6 +741,49 @@ test_function "--hide slash regex persists and hides" \
 	)" \
 	"OK"
 
+tmpdir_neg=$(mktemp -d)
+basedir_neg="$tmpdir_neg/neg_hide"
+mkdir -p "$basedir_neg"
+touch "$basedir_neg/keep.exe" "$basedir_neg/skip.txt"
+basedir_neg_q=$(printf '%q' "$basedir_neg")
+
+test_function "--hide negated regex hides non matches" \
+	"(\
+		cd $basedir_neg_q && \
+		tmpf=\$(mktemp) && \
+		trap 'rm -f \"\$tmpf\"' EXIT && \
+		dirtree --simple --hide '!/\\.exe$/' > \"\$tmpf\" && \
+		strip_ansi < \"\$tmpf\" | grep -Fq 'keep.exe' && \
+		! strip_ansi < \"\$tmpf\" | grep -Fq 'skip.txt' && \
+		echo OK \
+	)" \
+	"OK"
+
+rm -rf "$tmpdir_neg"
+
+tmpdir_neg=$(mktemp -d)
+basedir_neg="$tmpdir_neg/neg_persist"
+mkdir -p "$basedir_neg"
+touch "$basedir_neg/keep.exe" "$basedir_neg/skip.txt"
+basedir_neg_q=$(printf '%q' "$basedir_neg")
+
+test_function "--hide negated regex persists and hides" \
+	"(\
+		cd $basedir_neg_q && \
+		rm -f .dirtree-state && \
+		dirtree --hide '!/\\.exe$/' >/dev/null && \
+		grep -Fq $'\t!/\\.exe$/' .dirtree-state && \
+		tmpf=\$(mktemp) && \
+		trap 'rm -f \"\$tmpf\"' EXIT && \
+		dirtree --simple > \"\$tmpf\" && \
+		strip_ansi < \"\$tmpf\" | grep -Fq 'keep.exe' && \
+		! strip_ansi < \"\$tmpf\" | grep -Fq 'skip.txt' && \
+		echo OK \
+	)" \
+	"OK"
+
+rm -rf "$tmpdir_neg"
+
 basedir_saved="$basedir"
 
 # re:-prefixed arguments should be treated as literals
