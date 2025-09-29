@@ -32,7 +32,7 @@ exclude_path '/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/ap
 
 # Nix
 # Prefer Nix stuff to both system and homebrew
-if [ "$PLATFORM" = "osx" ]; then
+if [[ "$OSTYPE" == "darwin"* ]]; then
   # idempotent nix config that every macos update seems to need
   # (it checks if it's already been run before and returns if so)
   if [ -e '/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh' ]; then
@@ -61,16 +61,16 @@ prepend_path $HOME/bin
 # Due to race condition issues with iCloud backup, on my Mac, my Github projects are in Documents-CloudManaged (alias dcm)
 # and not in ~/Documents, which is where they still live on my Linux installs
 # if on mac, set DOCUMENTS to $HOME/Documents-CloudManaged, otherwise set it to $HOME/Documents
-if [ "$PLATFORM" = "osx" ]; then
+if [[ "$OSTYPE" == "darwin"* ]]; then
   DOCUMENTS="$HOME/Documents-CloudManaged"
 else
   DOCUMENTS="$HOME/Documents"
 fi
-prepend_path "$DOCUMENTS/ixnay"
-prepend_path "$DOCUMENTS/jumpscript"
-prepend_path "$DOCUMENTS/yt-transcriber"
-prepend_path "$DOCUMENTS/baseN"
-prepend_path "$DOCUMENTS/printable-binary"
+IGNORE_PREPEND_PATH_WARNINGS=true prepend_path "$DOCUMENTS/ixnay"
+IGNORE_PREPEND_PATH_WARNINGS=true prepend_path "$DOCUMENTS/jumpscript"
+IGNORE_PREPEND_PATH_WARNINGS=true prepend_path "$DOCUMENTS/yt-transcriber"
+IGNORE_PREPEND_PATH_WARNINGS=true prepend_path "$DOCUMENTS/baseN"
+IGNORE_PREPEND_PATH_WARNINGS=true prepend_path "$DOCUMENTS/printable-binary"
 
 # Now exclude every path from PATH that does not actually exist.
 # I don't like this way of doing it, but it was the only way that worked easily.

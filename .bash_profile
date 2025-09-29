@@ -24,23 +24,6 @@ fi
 shopt -q login_shell && LOGIN_SHELL=true || LOGIN_SHELL=false
 [[ $- == *i* ]] && INTERACTIVE_SHELL=true || INTERACTIVE_SHELL=false
 
-# Warp terminal seems to have nonstandard behavior and non-gnu sed breaks things
-# so we are using this workaround:
-# Set SED env var to first gnu sed found on PATH; otherwise warn
-# Set SED env var - with Nix, sed is already GNU sed
-if [ -z ${SED+x} ]; then
-  if [[ "$(sed --version 2>/dev/null | head -1)" =~ .*GNU.* ]]; then
-    export SED="sed"
-  else
-    echo "Warning from .bash_profile: sed is not GNU sed. Some scripts may fail." >&2
-    export SED="sed"
-  fi
-fi
-# echo "SED in .bash_profile:56 is: $SED"
-# Awk-ward! (see note below about "using the right awk"...)
-[ -z "${AWK+x}" ] && \
-  export AWK=$(command -v frawk || command -v gawk || command -v awk)
-
 . "$HOME/dotfiles/bin/src/append_dotfile_progress.sh"
 
 [ "${DEBUG_SHELLCONFIG+set}" = "set" ] && echo "Entering $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")" || $INTERACTIVE_SHELL && $LOGIN_SHELL && append_dotfile_progress "bp"
@@ -62,6 +45,24 @@ fi
 
 # Pull in path configuration
 . $HOME/.pathconfig
+
+# Warp terminal seems to have nonstandard behavior and non-gnu sed breaks things
+# so we are using this workaround:
+# Set SED env var to first gnu sed found on PATH; otherwise warn
+# Set SED env var - with Nix, sed is already GNU sed
+if [ -z ${SED+x} ]; then
+  if [[ "$(sed --version 2>/dev/null | head -1)" =~ .*GNU.* ]]; then
+    export SED="sed"
+  else
+    echo "Warning from .bash_profile: sed is not GNU sed. Some scripts may fail." >&2
+    export SED="sed"
+  fi
+fi
+
+# echo "SED in .bash_profile:56 is: $SED"
+# Awk-ward! (see note below about "using the right awk"...)
+[ -z "${AWK+x}" ] && \
+  export AWK=$(command -v frawk || command -v gawk || command -v awk)
 
 # Warp terminal seems to have nonstandard behavior and non-gnu sed breaks things
 # so we are using this workaround:
