@@ -45,6 +45,8 @@ fi
 
 # Pull in path configuration
 . $HOME/.pathconfig
+# tmux helpers
+. "$HOME/dotfiles/bin/src/session.bash"
 
 # Warp terminal seems to have nonstandard behavior and non-gnu sed breaks things
 # so we are using this workaround:

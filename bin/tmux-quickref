@@ -1,0 +1,349 @@
+#!/usr/bin/env luajit
+
+local ansi = {
+	orange = "\27[38;5;208m",
+	blue = "\27[34m",
+	dim = "\27[2m",
+	italic = "\27[3m",
+	reset = "\27[0m",
+}
+
+local keyword_order = {
+	"bind-key",
+	"bind",
+	"set-window-option",
+	"set-option",
+	"setw",
+	"set",
+}
+
+local keyword_set = {}
+for _, word in ipairs(keyword_order) do
+	keyword_set[word] = true
+end
+
+local word_pattern = "[a-z][a-z0-9]*%-[a-z0-9%-]*"
+
+local function normalize_code(code)
+	local trimmed = code:match("^%s*(.-)%s*$") or code
+	return trimmed:gsub("%s+", " ")
+end
+
+local function description_file_path()
+	local override = os.getenv("TMUX_QUICKREF_DESCRIPTIONS")
+	if override and override ~= "" then
+		return override
+	end
+	local home = os.getenv("HOME") or ""
+	return home .. "/dotfiles/bin/data/tmux-quickref_descriptions.tsv"
+end
+
+local function load_description_map()
+	local map = {}
+	local path = description_file_path()
+	local file = io.open(path, "r")
+	if not file then
+		return map
+	end
+	for line in file:lines() do
+		if line:match("%S") and not line:match("^#") then
+			local key, desc = line:match("^(.-)	(.*)$")
+			if key and desc then
+				map[normalize_code(key)] = desc
+			end
+		end
+	end
+	file:close()
+	return map
+end
+
+local description_map = load_description_map()
+
+
+local default_allowlist = {
+	["bind-key -T prefix Space select-layout -n"] = true,
+	["bind-key -T prefix % split-window -h"] = true,
+	["bind-key -T prefix \" split-window -v"] = true,
+	["bind-key -T prefix q display-panes"] = true,
+	["bind-key -T prefix n next-window"] = true,
+	["bind-key -T prefix p previous-window"] = true,
+	["bind-key -T prefix l last-window"] = true,
+	["bind-key -T prefix L select-pane -R"] = true,
+	["bind-key -T prefix H select-pane -L"] = true,
+	["bind-key -T prefix J select-pane -D"] = true,
+	["bind-key -T prefix K select-pane -U"] = true,
+	["bind-key -T prefix x kill-pane"] = true,
+	["bind-key -T prefix & kill-window"] = true,
+}
+
+local function read_lines(path)
+	local lines = {}
+	local file = io.open(path, "r")
+	if not file then
+		return lines
+	end
+	for line in file:lines() do
+		lines[#lines + 1] = line
+	end
+	file:close()
+	return lines
+end
+
+local function split_code_comment(line)
+	local in_single = false
+	local in_double = false
+	local i = 1
+	local len = #line
+	while i <= len do
+		local ch = line:sub(i, i)
+		if ch == "'" and not in_double then
+			in_single = not in_single
+		elseif ch == '"' and not in_single then
+			local prev = i > 1 and line:sub(i - 1, i - 1) or nil
+			if prev ~= "\\" then
+				in_double = not in_double
+			end
+		elseif ch == "#" and not in_single and not in_double then
+			return line:sub(1, i - 1), line:sub(i)
+		end
+		if ch == "\\" and in_double then
+			i = i + 1
+		end
+		i = i + 1
+	end
+	return line, ""
+end
+
+local function collect_words(code, set)
+	for word in code:gmatch(word_pattern) do
+		set[word] = true
+	end
+end
+
+local function highlight_hyphen_words(text)
+	return text:gsub(word_pattern, function(word)
+		if keyword_set[word] then
+			return word
+		end
+		return ansi.blue .. word .. ansi.reset
+	end)
+end
+
+local function dim_italic(text)
+	return ansi.dim .. ansi.italic .. text .. ansi.reset
+end
+
+local function colorize_code(code)
+	if code:match("^%s*$") then
+		return code
+	end
+	if code:match("^%s*unbind") then
+		return ansi.dim .. code .. ansi.reset
+	end
+	local indent, first = code:match("^(%s*)(%S+)")
+	if not first then
+		return code
+	end
+	local rest = code:sub(#indent + #first + 1)
+	local formatted_first
+	if keyword_set[first] then
+		formatted_first = ansi.orange .. first .. ansi.reset
+	else
+		formatted_first = highlight_hyphen_words(first)
+	end
+	local formatted_rest = highlight_hyphen_words(rest)
+	return indent .. formatted_first .. formatted_rest
+end
+
+local function colorize_parts(code, comment)
+	local colored = colorize_code(code)
+	local comment_colored = ""
+	if comment ~= "" then
+		comment_colored = dim_italic(comment)
+	end
+	return colored .. comment_colored
+end
+
+local function format_line(code, comment, opts)
+	opts = opts or {}
+	if opts.descriptions then
+		local description = description_map[normalize_code(code)]
+		if description then
+			if comment ~= "" and comment:match("#%s*default") then
+				description = description .. " (tmux default)"
+			end
+			return description
+		end
+	end
+	return colorize_parts(code, comment)
+end
+
+local function read_list_keys_lines()
+	local override = os.getenv("TMUX_QUICKREF_LIST_KEYS_SOURCE")
+	if override and override ~= "" then
+		return read_lines(override)
+	end
+	local handle = io.popen("tmux list-keys 2>/dev/null")
+	if not handle then
+		return {}
+	end
+	local lines = {}
+	for line in handle:lines() do
+		lines[#lines + 1] = line
+	end
+	handle:close()
+	return lines
+end
+
+local function process_lines(lines, present, out, opts)
+	for _, line in ipairs(lines) do
+		local code, comment = split_code_comment(line)
+		collect_words(code, present)
+		out[#out + 1] = format_line(code, comment, opts)
+	end
+end
+
+local function append_defaults(present, out, opts)
+	opts = opts or {}
+	local list_lines = read_list_keys_lines()
+	local additional = {}
+	for _, line in ipairs(list_lines) do
+		local code, comment = split_code_comment(line)
+		local normalized = normalize_code(code)
+		local include = opts.full or default_allowlist[normalized]
+		if include then
+			local new_word = false
+			for word in code:gmatch(word_pattern) do
+				if not present[word] then
+					present[word] = true
+					new_word = true
+				end
+			end
+			if new_word then
+				local augmented
+				if comment ~= "" then
+					augmented = line .. " # default"
+				else
+					augmented = code .. " # default"
+				end
+				additional[#additional + 1] = augmented
+			end
+		end
+	end
+	if #additional > 0 then
+		out[#out + 1] = ""
+		out[#out + 1] = dim_italic("# additional defaults from tmux list-keys")
+		for _, entry in ipairs(additional) do
+			local formatted_code, formatted_comment = split_code_comment(entry)
+			out[#out + 1] = format_line(formatted_code, formatted_comment, opts)
+		end
+	end
+end
+
+local function render_quickref(options)
+	options = options or {}
+	local home = os.getenv("HOME") or ""
+	local config_path = os.getenv("TMUX_QUICKREF_CONF")
+	if not config_path or config_path == "" then
+		config_path = home .. "/.config/tmux/tmux.conf"
+	end
+
+	local config_lines = read_lines(config_path)
+	local present = {}
+	local output = {
+		"Tmux Quick Reference",
+		"====================",
+	}
+
+	if #config_lines > 0 then
+		output[#output + 1] = dim_italic("# from " .. config_path)
+		process_lines(config_lines, present, output, options)
+	else
+		output[#output + 1] = dim_italic("(no tmux config found at " .. config_path .. ")")
+	end
+
+	append_defaults(present, output, options)
+
+	output[#output + 1] = ""
+	output[#output + 1] = "Keybinding Notes"
+	output[#output + 1] = "----------------"
+	output[#output + 1] = "bind-key is the long-form tmux command; bind is its shorthand alias."
+	output[#output + 1] = "setw is shorthand for set-window-option; set is the global equivalent (set-option)."
+	output[#output + 1] = "Key notation: C- means Control, M- means Meta/Alt (press Esc then the key if Alt is unavailable)."
+	output[#output + 1] = "Use tmux list-keys to see everything; add --full here to include the long default definitions."
+
+	io.write(table.concat(output, "\n"), "\n")
+end
+
+local function run_tests()
+	local home = os.getenv("HOME") or ""
+	local test_script = home .. "/dotfiles/bin/test/tmux-quickref_test"
+	local handle = io.open(test_script, "r")
+	if not handle then
+		io.stderr:write("Error: missing test script at " .. test_script .. "\n")
+		os.exit(1)
+	end
+	handle:close()
+	local command = string.format("%q >/dev/null", test_script)
+	local status = os.execute(command)
+	if status ~= 0 then
+		os.exit(status)
+	end
+end
+
+local function parse_options()
+	local options = {
+		full = false,
+		descriptions = false,
+		help = false,
+		test = false,
+	}
+	if type(arg) ~= "table" then
+		return options
+	end
+	for i = 1, #arg do
+		local value = arg[i]
+		if value == "--help" or value == "-h" then
+			options.help = true
+		elseif value == "--test" then
+			options.test = true
+		elseif value == "--full" then
+			options.full = true
+		elseif value == "--description" or value == "--descriptions" then
+			options.descriptions = true
+		end
+	end
+	return options
+end
+
+local function show_help()
+	io.write([[Usage: tmux-quickref [--help] [--test] [--full] [--description]
+
+Generate a tmux quick reference using your ~/.config/tmux/tmux.conf and
+selected defaults gleaned from `tmux list-keys`.
+
+Options:
+  --full          Include every binding reported by `tmux list-keys`.
+  --description   Replace bindings with plain-English descriptions when available.
+
+Environment overrides:
+  TMUX_QUICKREF_CONF              Path to tmux configuration file to inspect
+  TMUX_QUICKREF_LIST_KEYS_SOURCE  File containing `tmux list-keys` output
+  TMUX_QUICKREF_DESCRIPTIONS      Override path to the description TSV
+]])
+end
+
+local function main()
+	local options = parse_options()
+	if options.help then
+		show_help()
+		return
+	end
+	if options.test then
+		run_tests()
+		return
+	end
+	render_quickref(options)
+end
+
+main()

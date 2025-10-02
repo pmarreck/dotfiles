@@ -168,6 +168,13 @@ fi
 . $HOME/.pathconfig
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced .pathconfig"
 
+# codex function/wrapper
+. $HOME/dotfiles/bin/src/codex.bash
+
+# claude function/wrapper
+. $HOME/dotfiles/bin/src/claude.bash
+
+
 SIXEL_ENV=$(DEBUG_SHELLCONFIG=1 check_sixel_support 2>&1)
 SIXEL_CAPABLE=$?
 # if retcode is 0 then set SIXEL_CAPABLE to "true" else "false"

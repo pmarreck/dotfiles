@@ -205,3 +205,7 @@ alias variables='compgen -v'
 alias hi="echo \"Hello, ${USER}!\""
 alias lc='wc -l'
 alias newterm='wezterm start --always-new-process &'
+alias upgrade_codex='npm install -g --prefix "$HOME/.local" @openai/codex@latest'
+alias update_codex=upgrade_codex
+alias upgrade_claude='npm install -g --prefix "$HOME/.local" @anthropic-ai/claude-code'
+alias update_claude=upgrade_claude

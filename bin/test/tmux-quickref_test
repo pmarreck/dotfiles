@@ -1,0 +1,159 @@
+#!/usr/bin/env bash
+
+fails=0
+tests=0
+
+tmpdir=$(mktemp -d)
+trap 'rm -rf "$tmpdir"' EXIT
+
+config="$tmpdir/tmux.conf"
+cat <<'CONF' > "$config"
+# Personal tmux overrides
+set-window-option -g pane-base-index 1
+setw -g monitor-activity on
+bind-key . select-layout -n # cycle layouts with dot
+unbind %
+bind '|' split-window -h -c '#{pane_current_path}'
+CONF
+
+list_keys="$tmpdir/list-keys.txt"
+cat <<'KEYS' > "$list_keys"
+bind-key    -T prefix       Space select-layout -n
+bind-key    -T prefix       %     split-window -h
+bind-key    -T prefix       "     split-window -v
+bind-key    -T prefix       q     display-panes
+bind-key    -T prefix       n     next-window
+bind-key    -T prefix       p     previous-window
+bind-key    -T prefix       l     last-window
+bind-key    -T prefix       L     select-pane -R
+bind-key    -T prefix       H     select-pane -L
+bind-key    -T prefix       J     select-pane -D
+bind-key    -T prefix       K     select-pane -U
+bind-key    -T prefix       x     kill-pane
+bind-key    -T prefix       &     kill-window
+KEYS
+
+output=$(TMUX_QUICKREF_CONF="$config" TMUX_QUICKREF_LIST_KEYS_SOURCE="$list_keys" "$HOME/dotfiles/bin/tmux-quickref" 2>/dev/null)
+desc_output=$(TMUX_QUICKREF_CONF="$config" TMUX_QUICKREF_LIST_KEYS_SOURCE="$list_keys" "$HOME/dotfiles/bin/tmux-quickref" --description 2>/dev/null)
+
+ansi_header=$(printf '%s\n' "$output" | awk '/# from / {print; exit}')
+ansi_config_comment=$(printf '%s\n' "$output" | awk '/# Personal tmux overrides/ {print; exit}')
+ansi_inline_comment_line=$(printf '%s\n' "$output" | awk '/# cycle layouts with dot/ {print; exit}')
+comment_segment=$(printf '%s\n' "$output" | perl -0ne 'print $1 if /(\x1b\[2m\x1b\[3m# cycle layouts with dot\x1b\[0m)/')
+ansi_defaults_header=$(printf '%s\n' "$output" | awk '/# additional defaults from tmux list-keys/ {print; exit}')
+pane_line=$(printf '%s\n' "$output" | awk '/pane_current_path/ {print; exit}')
+
+((tests++))
+echo "Testing: header comment is dim+italic without extra colors..."
+if [[ "$ansi_header" == $'\e[2m\e[3m'#* ]] && [[ "$ansi_header" == *$'\e[0m' ]] && \
+   [[ "$ansi_header" != *$'\e[38;5;208m'* ]] && [[ "$ansi_header" != *$'\e[34m'* ]]; then
+	echo "✓ header comment formatting correct"
+else
+	echo "✗ header comment formatting incorrect" >&2
+	echo "Header line was: $ansi_header" >&2
+	((fails++))
+fi
+
+((tests++))
+echo "Testing: tmux.conf comment is dim+italic without extra colors..."
+if [[ "$ansi_config_comment" == $'\e[2m\e[3m# Personal tmux overrides\e[0m' ]]; then
+	echo "✓ config comment formatting correct"
+else
+	echo "✗ config comment formatting incorrect" >&2
+	echo "Config comment line was: $ansi_config_comment" >&2
+	((fails++))
+fi
+
+((tests++))
+echo "Testing: inline comments inherit dim+italic without extra colors..."
+if [[ "$ansi_inline_comment_line" == *$'\e[2m\e[3m# cycle layouts with dot\e[0m' ]] && \
+   [[ "$comment_segment" == $'\e[2m\e[3m# cycle layouts with dot\e[0m' ]]; then
+	echo "✓ inline comment formatting correct"
+else
+	echo "✗ inline comment formatting incorrect" >&2
+	echo "Inline comment line was: $ansi_inline_comment_line" >&2
+	echo "Comment segment was: $comment_segment" >&2
+	((fails++))
+fi
+
+((tests++))
+echo "Testing: default section header is dim+italic..."
+if [[ -n "$ansi_defaults_header" ]]; then
+	if [[ "$ansi_defaults_header" == $'\e[2m\e[3m'#* ]] && [[ "$ansi_defaults_header" == *$'\e[0m' ]]; then
+		echo "✓ defaults header formatting correct"
+	else
+		echo "✗ defaults header formatting incorrect" >&2
+		echo "Defaults header line was: $ansi_defaults_header" >&2
+		((fails++))
+	fi
+fi
+
+((tests++))
+echo "Testing: binds are colored and include custom select-layout..."
+if [[ "$output" == *$'\e[38;5;208mbind-key'* ]] && [[ "$output" == *$'\e[34mselect-layout'* ]]; then
+	echo "✓ colorized bind-key and select-layout present"
+else
+	echo "✗ custom bind line missing or not colorized" >&2
+	echo "Output was:" >&2
+	echo "$output" >&2
+	((fails++))
+fi
+
+((tests++))
+echo "Testing: unbind lines are dimmed..."
+if [[ "$output" == *$'\e[2munbind %\e[0m'* ]]; then
+	echo "✓ unbind lines dimmed"
+else
+	echo "✗ unbind line not dimmed" >&2
+	((fails++))
+fi
+
+((tests++))
+echo "Testing: pane_current_path line preserves normal styling..."
+if [[ "$pane_line" != *$'\e[2m'* ]]; then
+	echo "✓ pane_current_path line not dimmed"
+else
+	echo "✗ pane_current_path line was dimmed" >&2
+	echo "Line was: $pane_line" >&2
+	((fails++))
+fi
+
+((tests++))
+echo "Testing: setw keyword is fully highlighted..."
+if [[ "$output" == *$'\e[38;5;208msetw\e[0m'* ]]; then
+	echo "✓ setw keyword fully highlighted"
+else
+	echo "✗ setw keyword not fully highlighted" >&2
+	((fails++))
+fi
+
+((tests++))
+echo "Testing: default list-keys entry shown for display-panes and navigation..."
+if [[ "$output" == *$'\e[34mdisplay-panes'* ]] && [[ "$output" == *$'\e[34mnext-window'* ]] && [[ "$output" == *$'\e[34mprevious-window'* ]]; then
+	echo "✓ default navigation entries included"
+else
+	echo "✗ navigation defaults missing" >&2
+	echo "Output was:" >&2
+	echo "$output" >&2
+	((fails++))
+fi
+
+((tests++))
+echo "Testing: description mode replaces bindings with prose and no ANSI codes..."
+if [[ "$desc_output" == *"prefix q : Show pane numbers for quick selection. (tmux default)"* ]] && \
+   [[ "$desc_output" == *"prefix | : Split horizontally and stay in the same directory."* ]]; then
+	echo "✓ description mode output looks correct"
+else
+	echo "✗ description mode output unexpected" >&2
+	echo "Description output was:" >&2
+	echo "$desc_output" >&2
+	((fails++))
+fi
+
+if (( fails == 0 )); then
+	echo "All $tests tmux-quickref tests passed"
+else
+	echo "$fails of $tests tmux-quickref tests failed" >&2
+fi
+
+exit $fails
