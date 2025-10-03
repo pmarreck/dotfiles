@@ -159,9 +159,10 @@ export TXTRST="$SGR"          # Text Reset
 #E=quit at first EOF
 #Q=no bell
 #R=pass through raw ansi so colors work
-#X=no termcap init
+#F=exit if only 1 screen
+#X=no termcap init/alt screen
 #-x2=two spaces per tab
-export LESS="-EQRX -x2"
+export LESS="-EQRFX -x2"
 
 # pretty man pages via bat
 needs bat "please install bat for fancier man pages" && export MANPAGER="sh -c 'sed -u -e \"s/\\x1B\[[0-9;]*m//g; s/.\\x08//g\" | bat -p -lman'"

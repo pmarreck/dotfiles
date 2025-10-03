@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+
+tests=0
+fails=0
+
+repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+script_path="$repo_dir/completions/show_completion.bash"
+
+if command -v zsh >/dev/null 2>&1; then
+	((tests++))
+	echo "Testing: show completion script can be sourced by zsh without errors..."
+	output=$(zsh -lc ". '$script_path'" 2>&1)
+	status=$?
+	if [[ $status -eq 0 ]] && [[ -z "$output" ]]; then
+		echo "✓ Test passed: sourcing in zsh exits cleanly"
+	else
+		echo "✗ Test failed: sourcing in zsh produced errors" >&2
+		[[ $status -ne 0 ]] && echo "  Exit status: $status" >&2
+		[[ -n "$output" ]] && echo "  Output:" >&2 && printf '%s\n' "$output" >&2
+		((fails++))
+	fi
+else
+	echo "Skipping: zsh not available, guard test not run"
+fi
+
+((tests++))
+echo "Testing: show completion script in bash posix mode..."
+output=$(POSIXLY_CORRECT=1 bash -lc ". '$script_path'" 2>&1)
+status=$?
+if [[ $status -eq 0 ]] && [[ -z "$output" ]]; then
+	echo "✓ Test passed: sourcing under POSIXLY_CORRECT is silent"
+else
+	echo "✗ Test failed: sourcing under POSIXLY_CORRECT produced errors" >&2
+	[[ $status -ne 0 ]] && echo "  Exit status: $status" >&2
+	[[ -n "$output" ]] && echo "  Output:" >&2 && printf '%s\n' "$output" >&2
+	((fails++))
+fi
+
+if (( fails == 0 )); then
+	echo "All $tests tests passed"
+else
+	echo "$fails of $tests tests failed" >&2
+fi
+
+exit $fails

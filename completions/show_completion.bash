@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 
+# Bail out unless we're in a Bash with programmable completion support
+if [ -z "${BASH_VERSION-}" ] || ! type complete >/dev/null 2>&1; then
+	return 0 2>/dev/null || exit 0
+fi
+
 # Tab completion for show/what commands
 _show_completion() {
 	local cur="${COMP_WORDS[COMP_CWORD]}"
