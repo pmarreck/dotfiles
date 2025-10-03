@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+tests=0
+fails=0
+
+print_result() {
+	local status=$1
+	shift
+	if [ "$status" -eq 0 ]; then
+		printf '%s\n' "PASSED"
+	else
+		printf '%s\n' "FAILED"
+		((fails+=1))
+	fi
+}
+
+test_help_output() {
+	((tests+=1))
+	printf 'Test --help shows usage... '
+	local output rc
+	output=$(reformat_spaces_to_tabs --help 2>&1) || rc=$?
+	rc=${rc:-0}
+	if [ "$rc" -eq 0 ] && printf '%s' "$output" | grep -q 'Usage: reformat_spaces_to_tabs'; then
+		print_result 0
+	else
+		print_result 1
+		printf '%s\n' "$output" >&2
+	fi
+}
+
+test_self_test_flag() {
+	if [ -n "${RSTT_RUNNING_SUITE:-}" ]; then
+		return
+	fi
+	((tests+=1))
+	printf 'Test --test is silent on success... '
+	local output rc
+	output=$(reformat_spaces_to_tabs --test 2>&1) || rc=$?
+	rc=${rc:-0}
+	if [ "$rc" -eq 0 ] && [ -z "$output" ]; then
+		print_result 0
+	else
+		print_result 1
+		printf '%s\n' "$output" >&2
+	fi
+}
+
+test_backup_directory() {
+	((tests+=1))
+	printf 'Test backups are stored in /tmp/rstt$PID... '
+	local workdir stderr_file stdout_file backup_line backup_path
+	workdir=$(mktemp -d "${TMPDIR:-/tmp}/rstt_test.XXXXXX")
+	stderr_file=$(mktemp)
+	stdout_file=$(mktemp)
+	{
+		cd "$workdir"
+		cat <<'EOF' > sample.txt
+  def foo
+    puts "hello"
+EOF
+		reformat_spaces_to_tabs -i sample.txt >"$stdout_file" 2>"$stderr_file"
+	} || true
+	if grep -q '\.maybe-no-tabs' "$workdir"/sample.txt*; then
+		print_result 1
+		printf 'Unexpected backup alongside original file\n' >&2
+		rm -rf "$workdir" "$stderr_file" "$stdout_file"
+		return
+	fi
+	backup_line=$(grep 'Backup stored for' "$stderr_file" || true)
+	backup_path=${backup_line##* }
+	if [ -n "$backup_path" ] && [ -f "$backup_path" ] && printf '%s' "$backup_path" | grep -q '/tmp/rstt'; then
+		print_result 0
+	else
+		print_result 1
+		printf 'Backup path not reported correctly\n' >&2
+	fi
+	rm -rf "$workdir" "$stderr_file" "$stdout_file"
+}
+
+main() {
+	test_help_output
+	test_self_test_flag
+	test_backup_directory
+
+	if [ "$fails" -eq 0 ]; then
+		printf 'All %d tests passed\n' "$tests"
+		return 0
+	fi
+	printf '%d of %d tests failed\n' "$fails" "$tests" >&2
+	return "$fails"
+}
+
+main "$@"

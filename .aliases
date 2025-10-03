@@ -126,9 +126,7 @@ alias fuck='sudo $(history -p \!\!)'
 alias beep='tput bel'
 
 # forget curl vs wget; just get a URL, follow any redirects, and output it to stdout, reliably
-alias get='wget --xattr -c --progress=bar -O - --'
 # but also sometimes just download a file as-is
-alias getfile='wget --xattr -c --progress=bar --'
 
 alias newsshkey='ssh-keygen -t ed25519 -C lumbergh@gmail.com'
 alias copysshpubkey='cat ~/.ssh/id_ed25519.pub | clip' # depends on 'clip' function

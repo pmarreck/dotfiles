@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+	cat <<'USAGE'
+Usage: getfile [options] URL [URL...]
+
+Download remote files to disk using wget (preferred) or curl.
+
+Options:
+  --help    Show this help message and exit.
+  --about   Show a short description and exit.
+  --        Treat all following arguments as downloader parameters.
+
+All non-option arguments are forwarded to the underlying downloader.
+USAGE
+}
+
+about() {
+	printf '%s\n' "Download remote files with resume support and progress output."
+}
+
+run_downloader() {
+	if command -v wget >/dev/null 2>&1; then
+		wget --xattr -c --progress=bar -- "$@"
+	elif command -v curl >/dev/null 2>&1; then
+		curl -fL --progress-bar -O "$@"
+	else
+		echo "getfile: require wget or curl" >&2
+		return 1
+	fi
+}
+
+if [ $# -eq 0 ]; then
+	usage >&2
+	exit 1
+fi
+
+args=()
+while [ $# -gt 0 ]; do
+	case "$1" in
+		--help)
+			usage
+			exit 0
+			;;
+		--about)
+			about
+			exit 0
+			;;
+		--)
+			shift
+			args=("$@")
+			break
+			;;
+		*)
+			args=("$@")
+			break
+			;;
+	esac
+	done
+
+if [ ${#args[@]} -eq 0 ]; then
+	usage >&2
+	exit 1
+fi
+
+run_downloader "${args[@]}"

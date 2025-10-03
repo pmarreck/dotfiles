@@ -1,189 +1,355 @@
-#!/usr/bin/env bash
+#!/usr/bin/env sh
 # moonrun - Moonscript transpile-and-run wrapper
 #
 # This script enables Moonscript files to be executed directly using a hashbang line,
 # automatically handling transpilation to Lua when needed. It's designed to be used
 # as the interpreter in the shebang of .moon files.
-#
-# TYPICAL USAGE IN SCRIPT HASHBANG:
-#   #!/usr/bin/env moonrun
-#   -- Your Moonscript code here
-#   print "Hello from Moonscript!"
-#
-# HOW IT WORKS:
-# 1. When you run a .moon file directly (via hashbang), moonrun is invoked
-# 2. It checks if a corresponding .lua file exists and is up-to-date
-# 3. If the .moon file is newer than .lua (or .lua doesn't exist), it calls moonbuild
-# 4. Finally, it executes the .lua file with luajit, passing through all arguments
-#
-# This allows Moonscript files to behave like native executables while maintaining
-# the performance benefits of running compiled Lua code. The transpilation step
-# only occurs when the source file has been modified.
-#
-# DIRECT USAGE:
-#   moonrun script.moon [args...]    # Run a Moonscript file
-#   moonrun script [args...]         # Run script.moon (extension optional)
-#
-# DEPENDENCIES:
-# - moonbuild (for transpilation)
-# - luajit (for execution)
-# - moonc compiler (used by moonbuild)
 
-set -uo pipefail
+set -eu
 
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-script_path="$script_dir/$(basename "${BASH_SOURCE[0]}")"
+script_path=$(command -v "$0" 2>/dev/null || echo "$0")
+script_dir=$(dirname "$script_path")
+script_dir=$(cd "$script_dir" 2>/dev/null && pwd -P)
+script_name=$(basename "$script_path")
+script_path="$script_dir/$script_name"
 
 usage() {
-	cat <<EOF >&2
-moonrun - Moonscript transpile-and-run wrapper
+	cat <<EOF
+$script_name - Moonscript transpile-and-run wrapper
 
 DESCRIPTION:
-    Enables Moonscript files to be executed directly via hashbang lines.
-    Automatically transpiles .moon files to .lua when needed, then runs
-    the compiled Lua with luajit.
+	Enables Moonscript files to be executed directly via hashbang lines.
+	Automatically transpiles .moon files to .lua when needed, then runs
+	the compiled Lua with luajit.
 
 USAGE:
-    moonrun [--test] <file> [args...]
-
-    In Moonscript file hashbang:
-        #!/usr/bin/env moonrun
+	$script_name [options] <file> [args...]
 
 ARGUMENTS:
-    file        Moonscript file to run (.moon extension optional)
-    args...     Arguments passed to the Moonscript program
+	file        Moonscript file to run (.moon extension optional)
+	args...     Arguments passed to the Moonscript program
 
 OPTIONS:
-    --test      Run built-in unit tests
+	-h, --help      Show this help information
+	--test          Run built-in unit tests
+	-o <path>       Explicit output Lua file (overrides cache)
+	--cache <dir>   Directory for generated Lua output (overrides env)
 
-EXAMPLES:
-    moonrun script.moon arg1 arg2     # Run Moonscript file with arguments
-    moonrun script arg1 arg2          # Same (extension optional)
-
-    In a Moonscript file:
-        #!/usr/bin/env moonrun
-        print "Hello from Moonscript!"
-
-HOW IT WORKS:
-    1. Checks if corresponding .lua file exists and is current
-    2. Calls moonbuild to transpile if .moon is newer than .lua
-    3. Executes the .lua file with luajit
-    4. Only transpiles when source file has been modified
-
-DEPENDENCIES:
-    moonbuild, luajit, moonc compiler
+ENVIRONMENT:
+	MOON_BUILD_CACHE  Default directory for generated Lua files
 EOF
 }
 
+resolve_with_base() {
+	base_dir=$1
+	target_path=$2
+	case $target_path in
+		/*)
+			printf '%s\n' "$target_path"
+			;;
+		*)
+			printf '%s/%s\n' "$base_dir" "$target_path"
+			;;
+	esac
+}
+
+ensure_sources() {
+	input=$1
+	case $input in
+		*.moon)
+			base=${input%".moon"}
+			src=$input
+			;;
+		*)
+			if [ -e "$input" ]; then
+				base=$input
+				src=$input
+			else
+				base=$input
+				src=$input.moon
+			fi
+			;;
+	esac
+	out=$base.lua
+}
+
 main() {
-	set -euo pipefail
-	if [[ $# -lt 1 ]]; then usage; exit 1; fi
+	if [ $# -lt 1 ]; then
+		usage >&2
+		return 1
+	fi
 
-	# Check if first arg is a file or an option
-	input="$1"
+	output_override=
+	cache_override=
+	while [ $# -gt 0 ]; do
+		case $1 in
+			-h|--help)
+				usage
+				return 0
+				;;
+			-o)
+				if [ $# -lt 2 ]; then
+					usage >&2
+					return 1
+				fi
+				output_override=$2
+				shift 2
+				continue
+				;;
+			--cache)
+				if [ $# -lt 2 ]; then
+					usage >&2
+					return 1
+				fi
+				cache_override=$2
+				shift 2
+				continue
+				;;
+			--cache=*)
+				cache_override=${1#*=}
+				shift
+				continue
+				;;
+			--)
+				shift
+				break
+				;;
+			--*)
+				usage >&2
+				return 1
+				;;
+			*)
+				break
+				;;
+		esac
+	done
+
+	if [ $# -lt 1 ]; then
+		usage >&2
+		return 1
+	fi
+
+	input=$1
 	shift
+	ensure_sources "$input"
 
-	# Determine source and base for .moon files (support extensionless input)
-	if [[ "$input" == *.moon ]]; then
-		base="${input%.moon}"
-		src="$input"
-	elif [[ -e "$input" ]]; then
-		base="$input"
-		src="$input"
-	else
-		base="$input"
-		src="$input.moon"
-	fi
-	out="$base.lua"
-
-	if [[ ! -e "$src" ]]; then
-		echo "Error: '$src' not found." >&2
-		exit 1
+	if [ ! -e "$src" ]; then
+		printf "Error: '%s' not found.\n" "$src" >&2
+		return 1
 	fi
 
-	need_build=false
-	if [[ ! -e "$out" ]]; then
-		need_build=true
+	src_dir_raw=$(dirname "$src")
+	src_dir_abs=$( (cd "$src_dir_raw" 2>/dev/null && pwd -P) )
+	if [ -z "$src_dir_abs" ]; then
+		printf "Error: failed to resolve directory for '%s'.\n" "$src" >&2
+		return 1
+	fi
+
+	cache_dir=$src_dir_abs
+	if [ -n "${MOON_BUILD_CACHE:-}" ]; then
+		cache_dir=$(resolve_with_base "$src_dir_abs" "$MOON_BUILD_CACHE")
+	fi
+	if [ -n "$cache_override" ]; then
+		cache_dir=$(resolve_with_base "$src_dir_abs" "$cache_override")
+	fi
+
+	file_name=$(basename "$base")
+	if [ -n "$output_override" ]; then
+		lua_path=$(resolve_with_base "$src_dir_abs" "$output_override")
 	else
-		# rebuild if modification times differ (avoid external gstat)
-		if [[ "$src" -nt "$out" || "$out" -nt "$src" ]]; then
-			need_build=true
+		lua_path=$cache_dir/$file_name.lua
+	fi
+
+	build_cmd="$script_dir/moonbuild"
+	if [ -n "$output_override" ]; then
+		if ! "$build_cmd" -o "$output_override" "$src"; then
+			return 1
+		fi
+	elif [ -n "$cache_override" ]; then
+		if ! "$build_cmd" --cache "$cache_override" "$src"; then
+			return 1
+		fi
+	else
+		if ! "$build_cmd" "$src"; then
+			return 1
 		fi
 	fi
 
-	if $need_build; then
-		"$script_dir/moonbuild" "$src"
+	if [ ! -e "$lua_path" ]; then
+		printf "Error: expected '%s' after build.\n" "$lua_path" >&2
+		return 1
 	fi
 
-	# Pass all remaining arguments to the Lua script
-	exec luajit "$out" "$@"
+	if [ $# -gt 0 ]; then
+		exec luajit "$lua_path" "$@"
+	else
+		exec luajit "$lua_path"
+	fi
 }
 
 test_suite() {
-	set -o pipefail
-	local failures=0
-	echo "Running moonrun tests..."
+	failures=0
+	printf "Running moonrun tests...\n"
 
-	# Test 1: nonexistent file
 	printf "Test 1 (nonexistent file)... "
-	out=$("$script_path" nonexistent.moon 2>&1)
-	rc=$?
-	if [[ $rc -ne 0 ]]; then echo "PASSED"; else echo "FAILED"; failures=$((failures+1)); fi
+	if "$script_path" nonexistent.moon >/dev/null 2>&1; then
+		printf "FAILED\n"
+		failures=$((failures + 1))
+	else
+		printf "PASSED\n"
+	fi
 
-	# Test 2: missing lua run
 	printf "Test 2 (missing lua run)... "
-	tmp=$(mktemp -d /tmp/moonrun_test.XXXXXX)
-	trap 'rm -rf "$tmp"' EXIT
-	cd "$tmp"
-	echo 'io.write "hello2"' > foo.moon
+	tmp=$(mktemp -d "${TMPDIR:-/tmp}/moonrun_test.XXXXXX") || exit 1
+	oldpwd=$(pwd)
+	cd "$tmp" || exit 1
+	printf 'io.write "hello2"\n' > foo.moon
 	out=$("$script_path" foo.moon 2>&1)
 	rc=$?
-	if [[ $rc -eq 0 && "$out" == "hello2" ]]; then echo "PASSED"; else echo "FAILED"; failures=$((failures+1)); fi
-	cd - >/dev/null
+	if [ "$rc" -eq 0 ] && [ "$out" = "hello2" ]; then
+		printf "PASSED\n"
+	else
+		printf "FAILED\n"
+		failures=$((failures + 1))
+	fi
+	cd "$oldpwd" || exit 1
+	rm -rf "$tmp"
 
-	# Test 3: up-to-date lua run
 	printf "Test 3 (uptodate lua run)... "
-	tmp2=$(mktemp -d /tmp/moonrun_test.XXXXXX)
-	cd "$tmp2"
-	echo 'io.write "hello3"' > foo.moon
+	tmp=$(mktemp -d "${TMPDIR:-/tmp}/moonrun_test.XXXXXX") || exit 1
+	oldpwd=$(pwd)
+	cd "$tmp" || exit 1
+	printf 'io.write "hello3"\n' > foo.moon
 	"$script_dir/moonbuild" foo.moon >/dev/null 2>&1
 	out=$("$script_path" foo.moon 2>&1)
 	rc=$?
-	if [[ $rc -eq 0 && "$out" == "hello3" ]]; then echo "PASSED"; else echo "FAILED"; failures=$((failures+1)); fi
-	cd - >/dev/null
+	if [ "$rc" -eq 0 ] && [ "$out" = "hello3" ]; then
+		printf "PASSED\n"
+	else
+		printf "FAILED\n"
+		failures=$((failures + 1))
+	fi
+	cd "$oldpwd" || exit 1
+	rm -rf "$tmp"
 
-	# Test 4: input without .moon suffix
 	printf "Test 4 (input without .moon)... "
-	tmp3=$(mktemp -d /tmp/moonrun_test.XXXXXX)
-	cd "$tmp3"
-	echo 'io.write "xyz"' > baz.moon
+	tmp=$(mktemp -d "${TMPDIR:-/tmp}/moonrun_test.XXXXXX") || exit 1
+	oldpwd=$(pwd)
+	cd "$tmp" || exit 1
+	printf 'io.write "xyz"\n' > baz.moon
 	out=$("$script_path" baz 2>&1)
 	rc=$?
-	if [[ $rc -eq 0 && "$out" == "xyz" ]]; then echo "PASSED"; else echo "FAILED"; failures=$((failures+1)); fi
-	cd - >/dev/null
+	if [ "$rc" -eq 0 ] && [ "$out" = "xyz" ]; then
+		printf "PASSED\n"
+	else
+		printf "FAILED\n"
+		failures=$((failures + 1))
+	fi
+	cd "$oldpwd" || exit 1
+	rm -rf "$tmp"
 
-	# Test 5: require dependency
 	printf "Test 5 (require dependency)... "
-	tmp5=$(mktemp -d /tmp/moonrun_test.XXXXXX) && cd "$tmp5"
-	echo 'print "lib loaded"' > lib.moon
-	printf '%s\n%s\n' 'require "lib"' 'io.write "OK"' > main.moon
+	tmp=$(mktemp -d "${TMPDIR:-/tmp}/moonrun_test.XXXXXX") || exit 1
+	oldpwd=$(pwd)
+	cd "$tmp" || exit 1
+	printf 'print "lib loaded"\n' > lib.moon
+	{
+		printf 'require "lib"\n'
+		printf 'io.write "OK"\n'
+	} > main.moon
 	out=$("$script_path" main.moon 2>&1 | grep -v '^Warning:')
 	rc=$?
-	if [[ $rc -eq 0 && -e lib.lua && -e main.lua && "$out" == *OK ]]; then
-		echo "PASSED"
+	if [ "$rc" -eq 0 ] && [ -e lib.lua ] && [ -e main.lua ]; then
+		case "$out" in
+			*OK)
+				printf "PASSED\n"
+				;;
+			*)
+				printf "FAILED\n"
+				failures=$((failures + 1))
+				;;
+		esac
 	else
-		echo "FAILED"; failures=$((failures+1)); fi
-	cd - >/dev/null && rm -rf "$tmp5"
-
-	if [[ $failures -eq 0 ]]; then
-		echo "All tests passed"
-		exit 0
-	else
-		echo "$failures test(s) failed"
-		exit 1
+		printf "FAILED\n"
+		failures=$((failures + 1))
 	fi
+	cd "$oldpwd" || exit 1
+	rm -rf "$tmp"
+
+	printf "Test 6 (--cache option)... "
+	tmp=$(mktemp -d "${TMPDIR:-/tmp}/moonrun_cache.XXXXXX") || exit 1
+	oldpwd=$(pwd)
+	cd "$tmp" || exit 1
+	printf 'io.write "CACHED"\n' > foo.moon
+	out=$("$script_path" --cache build foo.moon 2>&1)
+	rc=$?
+	if [ "$rc" -eq 0 ] && [ "$out" = "CACHED" ] && [ -e build/foo.lua ] && [ ! -e foo.lua ]; then
+		printf "PASSED\n"
+	else
+		printf "FAILED\n"
+		failures=$((failures + 1))
+	fi
+	cd "$oldpwd" || exit 1
+	rm -rf "$tmp"
+
+	printf "Test 7 (MOON_BUILD_CACHE env)... "
+	tmp=$(mktemp -d "${TMPDIR:-/tmp}/moonrun_env.XXXXXX") || exit 1
+	oldpwd=$(pwd)
+	cd "$tmp" || exit 1
+	printf 'io.write "ENV"\n' > foo.moon
+	out=$(MOON_BUILD_CACHE=cache "$script_path" foo.moon 2>&1)
+	rc=$?
+	if [ "$rc" -eq 0 ] && [ "$out" = "ENV" ] && [ -e cache/foo.lua ] && [ ! -e foo.lua ]; then
+		printf "PASSED\n"
+	else
+		printf "FAILED\n"
+		failures=$((failures + 1))
+	fi
+	cd "$oldpwd" || exit 1
+	rm -rf "$tmp"
+
+	printf "Test 8 (-o overrides cache)... "
+	tmp=$(mktemp -d "${TMPDIR:-/tmp}/moonrun_output.XXXXXX") || exit 1
+	oldpwd=$(pwd)
+	cd "$tmp" || exit 1
+	printf 'io.write "OUT"\n' > foo.moon
+	out=$(MOON_BUILD_CACHE=cache "$script_path" --cache other -o output/custom.lua foo.moon 2>&1)
+	rc=$?
+	if [ "$rc" -eq 0 ] && [ "$out" = "OUT" ] && [ -e output/custom.lua ] && [ ! -e cache/foo.lua ] && [ ! -e foo.lua ]; then
+		printf "PASSED\n"
+	else
+		printf "FAILED\n"
+		failures=$((failures + 1))
+	fi
+	cd "$oldpwd" || exit 1
+	rm -rf "$tmp"
+
+	if [ "$failures" -eq 0 ]; then
+		printf "All tests passed\n"
+		return 0
+	fi
+	printf "%s test(s) failed\n" "$failures" >&2
+	return "$failures"
 }
 
-# Entry point
-if [[ "${1:-}" == "--test" && $# -eq 1 ]]; then test_suite; exit $?; fi
+if [ $# -eq 0 ]; then
+	usage >&2
+	exit 1
+fi
+
+case $1 in
+	-h|--help)
+		usage
+		exit 0
+		;;
+	--test)
+		if [ $# -ne 1 ]; then
+			usage >&2
+			exit 1
+		fi
+		test_suite
+		exit $?
+		;;
+esac
+
 main "$@"
