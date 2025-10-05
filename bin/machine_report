@@ -4,6 +4,7 @@ script_path=$(command -v "$0" 2>/dev/null || echo "$0")
 script_dir=$(cd "$(dirname "$script_path")" 2>/dev/null && pwd -P)
 report_script="$script_dir/src/machine_report.sh"
 update_url="https://raw.githubusercontent.com/usgraphics/usgc-machine-report/refs/heads/master/machine_report.sh"
+machine_report__real_uptime=""
 
 show_help() {
 	cat <<USAGE
@@ -15,24 +16,7 @@ Options:
   --help           Show this help message and exit.
   --update         Download the latest upstream machine_report.sh into src/.
   --upgrade        Alias for --update.
-
-Without options, runs the bundled machine_report.sh to display the report.
 USAGE
-}
-
-perform_update() {
-	shopt -s expand_aliases
-	tmp_file=$(mktemp)
-	if fetch_with_get "$update_url" >"$tmp_file"; then
-		mv "$tmp_file" "$report_script"
-		chmod +x "$report_script"
-		echo "Updated $report_script from upstream." >&2
-		exit 0
-	else
-		echo "Failed to download machine_report.sh from upstream." >&2
-		rm -f "$tmp_file"
-		exit 1
-	fi
 }
 
 fetch_with_get() {
@@ -58,7 +42,241 @@ fetch_with_get() {
 	esac
 }
 
-if ! command -v lastlog >/dev/null 2>&1; then
+perform_update() {
+	shopt -s expand_aliases
+	tmp_file=$(mktemp)
+	if fetch_with_get "$update_url" >"$tmp_file"; then
+		mv "$tmp_file" "$report_script"
+		chmod +x "$report_script"
+		echo "Updated $report_script from upstream." >&2
+	else
+		echo "Failed to download machine_report.sh from upstream." >&2
+		rm -f "$tmp_file"
+		exit 1
+	fi
+	exit 0
+}
+
+uptime_read_seconds() {
+	if [ -r /proc/uptime ]; then
+		local first
+		if IFS=' ' read -r first _ < /proc/uptime; then
+			first=${first%%.*}
+			case "$first" in
+				'') return 1 ;;
+				*[!0-9]*) return 1 ;;
+				*)
+					echo "$first"
+					return 0
+					;;
+			esac
+		fi
+	fi
+	return 1
+}
+
+format_uptime_from_seconds() {
+	local total_seconds="$1"
+	case "$total_seconds" in
+		''|*[!0-9]*) return 1 ;;
+	esac
+	local days hours minutes seconds
+	days=$((total_seconds / 86400))
+	hours=$(((total_seconds % 86400) / 3600))
+	minutes=$(((total_seconds % 3600) / 60))
+	seconds=$((total_seconds % 60))
+	local -a segments
+	segments=()
+	if [ "$days" -gt 0 ]; then
+		if [ "$days" -eq 1 ]; then
+			segments+=("1 day")
+		else
+			segments+=("$days days")
+		fi
+	fi
+	if [ "$hours" -gt 0 ] || [ "$days" -gt 0 ]; then
+		if [ "$hours" -eq 1 ]; then
+			segments+=("1 hour")
+		else
+			segments+=("$hours hours")
+		fi
+	fi
+	if [ "$minutes" -gt 0 ] || [ "$hours" -gt 0 ] || [ "$days" -gt 0 ]; then
+		if [ "$minutes" -eq 1 ]; then
+			segments+=("1 minute")
+		else
+			segments+=("$minutes minutes")
+		fi
+	fi
+	if [ ${#segments[@]} -eq 0 ]; then
+		if [ "$seconds" -gt 0 ]; then
+			segments+=("1 minute")
+		else
+			segments+=("0 minutes")
+		fi
+	fi
+	local result="up ${segments[0]}"
+	local i
+	for (( i=1; i<${#segments[@]}; i++ )); do
+		result="$result, ${segments[$i]}"
+	done
+	printf '%s\n' "$result"
+	return 0
+}
+
+format_uptime_from_legacy() {
+	local raw="$1"
+	local cleaned days hours minutes part remainder digits hour_segment minute_segment
+	local hours_set=0
+	local minutes_set=0
+	local days_set=0
+
+	raw=$(printf '%s\n' "$raw" | head -n 1)
+	case "$raw" in
+		*" up "*)
+			cleaned=${raw#* up }
+			;;
+		*)
+			cleaned=$raw
+			;;
+	esac
+	cleaned=$(printf '%s\n' "$cleaned" | sed \
+		's/, *[0-9]\+ users.*//; s/, *[0-9]\+ user.*//; s/, *load average:.*//; s/, *averages:.*//')
+	days=0
+	hours=0
+	minutes=0
+	remainder=$cleaned
+	while [ -n "$remainder" ]; do
+		case "$remainder" in
+			*,*)
+				part=${remainder%%,*}
+				remainder=${remainder#*,}
+				;;
+			*)
+				part=$remainder
+				remainder=""
+				;;
+		esac
+		part=$(printf '%s' "$part" | sed 's/^ *//; s/ *$//')
+		[ -n "$part" ] || continue
+		case "$part" in
+			*day*|*days*)
+				digits=$(printf '%s' "$part" | tr -cd '0-9')
+				[ -n "$digits" ] || continue
+				days=$((10#$digits))
+				days_set=1
+				;;
+			*hour*|*hours*|*hr*|*hrs*)
+				digits=$(printf '%s' "$part" | tr -cd '0-9')
+				[ -n "$digits" ] || continue
+				hours=$((10#$digits))
+				hours_set=1
+				;;
+			*min*|*minute*|*minutes*)
+				digits=$(printf '%s' "$part" | tr -cd '0-9')
+				[ -n "$digits" ] || continue
+				minutes=$((10#$digits))
+				minutes_set=1
+				;;
+			*sec*|*second*|*seconds*)
+				minutes=1
+				minutes_set=1
+				;;
+			*:* )
+				hour_segment=${part%%:*}
+				minute_segment=${part#*:}
+				hour_segment=$(printf '%s' "$hour_segment" | tr -cd '0-9')
+				minute_segment=$(printf '%s' "$minute_segment" | tr -cd '0-9')
+				if [ -n "$hour_segment" ]; then
+					hours=$((10#$hour_segment))
+					hours_set=1
+				fi
+				if [ -n "$minute_segment" ]; then
+					minutes=$((10#$minute_segment))
+					minutes_set=1
+				fi
+				;;
+			*)
+				;;
+		esac
+	done
+
+	if [ "$days_set" -eq 0 ] && [ "$hours_set" -eq 0 ] && [ "$minutes_set" -eq 0 ]; then
+		local seconds
+		if seconds=$(uptime_read_seconds); then
+			format_uptime_from_seconds "$seconds"
+			return 0
+		fi
+	fi
+
+	local -a segments
+	segments=()
+	if [ "$days" -gt 0 ]; then
+		if [ "$days" -eq 1 ]; then
+			segments+=("1 day")
+		else
+			segments+=("$days days")
+		fi
+	fi
+	if [ "$hours_set" -eq 1 ] || [ "$hours" -gt 0 ] || [ "$days" -gt 0 ]; then
+		if [ "$hours" -eq 1 ]; then
+			segments+=("1 hour")
+		else
+			segments+=("$hours hours")
+		fi
+	fi
+	if [ "$minutes_set" -eq 1 ] || [ "$minutes" -gt 0 ] || [ "$hours_set" -eq 1 ] || [ "$days" -gt 0 ] || [ ${#segments[@]} -eq 0 ]; then
+		if [ "$minutes" -eq 1 ]; then
+			segments+=("1 minute")
+		else
+			segments+=("$minutes minutes")
+		fi
+	fi
+
+	local result="up ${segments[0]}"
+	local i
+	for (( i=1; i<${#segments[@]}; i++ )); do
+		result="$result, ${segments[$i]}"
+	done
+	printf '%s\n' "$result"
+}
+
+setup_uptime_polyfill() {
+	command -v uptime >/dev/null 2>&1 || return 0
+	local detected_uptime
+	detected_uptime=$(command -v uptime 2>/dev/null) || return 0
+	if [ -z "${MACHINE_REPORT_FORCE_LEGACY_UPTIME:-}" ]; then
+		if "$detected_uptime" -p >/dev/null 2>&1; then
+			return 0
+		fi
+	fi
+	machine_report__real_uptime="$detected_uptime"
+	uptime() {
+		if [ "${1:-}" = "-p" ]; then
+			shift
+			local seconds
+			if seconds=$(uptime_read_seconds); then
+				if format_uptime_from_seconds "$seconds"; then
+					return 0
+				fi
+			fi
+			local legacy status formatted
+			legacy="$($machine_report__real_uptime "$@" 2>/dev/null)"
+			status=$?
+			if [ $status -ne 0 ] && [ -z "$legacy" ]; then
+				return $status
+			fi
+			formatted=$(format_uptime_from_legacy "$legacy")
+			printf '%s\n' "$formatted"
+			return 0
+		fi
+		"$machine_report__real_uptime" "$@"
+	}
+}
+setup_lastlog_polyfill() {
+	command -v lastlog >/dev/null 2>&1 && return 0
+	command -v last >/dev/null 2>&1 || return 0
+
 	lastlog() {
 		local user=""
 		while [ $# -gt 0 ]; do
@@ -70,7 +288,6 @@ if ! command -v lastlog >/dev/null 2>&1; then
 					fi
 					user="$2"
 					shift 2
-					continue
 					;;
 				*)
 					shift
@@ -83,16 +300,13 @@ if ! command -v lastlog >/dev/null 2>&1; then
 			return 1
 		fi
 
-		if ! command -v last >/dev/null 2>&1; then
-			echo "lastlog: requires either lastlog or last to be available." >&2
-			return 1
-		fi
+		command -v last >/dev/null 2>&1 || return 1
 
 		local entry
-		entry=$(last --time-format iso -n 5 "$user" 2>/dev/null | grep -Ev '^$' | head -n 1 || true)
+		entry=$(last --time-format iso -n 32 "$user" 2>/dev/null | grep -Ev '^$' | head -n 1 || true)
 		if [ -n "$entry" ]; then
 			local ip_entry
-			ip_entry=$(last --time-format iso -n 5 "$user" 2>/dev/null | grep -E '([0-9]{1,3}\.){3}[0-9]{1,3}' | head -n 1 || true)
+			ip_entry=$(last --time-format iso -n 32 "$user" 2>/dev/null | grep -E '([0-9]{1,3}\.){3}[0-9]{1,3}' | head -n 1 || true)
 			if [ -n "$ip_entry" ]; then
 				entry="$ip_entry"
 			fi
@@ -106,94 +320,141 @@ if ! command -v lastlog >/dev/null 2>&1; then
 		fi
 
 		set -- $entry
-		local username tty from start_iso
-		username=$1
-		tty=$2
-		from=$3
+		local username=$1
+		local tty=$2
+		local from=$3
 
-		start_iso=""
+		local iso=""
 		for token in "$@"; do
-			if [[ $token == [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T* ]]; then
-				start_iso=$token
-				break
-			fi
+			case "$token" in
+				[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T*)
+					iso=$token
+					break
+					;;
+			esac
 		done
 
-		if [ -z "$start_iso" ]; then
+		if [ -z "$iso" ]; then
 			printf '%-15s %-12s %-17s %s\n' "$username" "$tty" "$from" "**Never logged in**"
 			return 0
 		fi
 
-		if formatted=$(date -d "$start_iso" '+%a %b %e %H:%M:%S %z %Y' 2>/dev/null); then
+		if formatted=$(date -d "$iso" '+%a %b %e %H:%M:%S %z %Y' 2>/dev/null); then
 			read -r dow mon day time tz year <<<"$formatted"
-			if [[ $from =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
-				printf '%-15s %-12s %-17s %s %s %s %s %s %s %s\n' \
-					"$username" "$tty" "$from" "$dow" "-" "$mon" "$day" "$tz" "$year" "$time"
+			printf '%-15s %-12s %-17s %s %s %s %s %s %s %s\n' \
+				"$username" "$tty" "$from" "-" "-" "$mon" "$day" "$tz" "$year" "$time"
+		else
+			printf '%-15s %-12s %-17s %s\n' "$username" "$tty" "$from" "$iso"
+		fi
+	}
+}
+setup_grep_polyfill() {
+	command -v grep >/dev/null 2>&1 || return 0
+	real_grep=$(command -v grep)
+	zfs_mount_marker=""
+	if command "$real_grep" -q 'zfs' /proc/mounts 2>/dev/null; then
+		zfs_mount_marker="zfs"
+	fi
+	grep() {
+		local quiet=0
+		for arg in "$@"; do
+			if [ "$arg" = "-q" ] || [ "$arg" = "--quiet" ]; then
+				quiet=1
+			fi
+		done
+		if [ $quiet -eq 1 ] && [ "$#" -gt 0 ] && [ "${!#}" = "/proc/mounts" ] && [ -n "$zfs_mount_marker" ]; then
+			if command "$real_grep" "$@"; then
+				printf '%s' "$zfs_mount_marker"
+				return 0
 			else
-				printf '%-15s %-12s %-17s %s %s %s %s %s %s\n' \
-					"$username" "$tty" "$from" "$mon" "$day" "$tz" "$year" "$time" ""
+				return 1
 			fi
 		else
-			printf '%-15s %-12s %-17s %s\n' "$username" "$tty" "$from" "$start_iso"
+			command "$real_grep" "$@"
 		fi
 	}
-fi
+}
 
-if ! command uptime -p >/dev/null 2>&1; then
-	uptime() {
-		if [ "$#" -gt 0 ] && [ "$1" = "-p" ]; then
-			local raw
-			raw=$(command uptime 2>/dev/null || true)
-			raw=${raw#* up }
-			raw=${raw%%,*load average*}
-			raw=${raw%%,*load averages*}
-			raw=${raw%%,*users*}
-			raw=${raw%%,*user*}
-			raw=${raw%,}
-			local segments=()
-			IFS=',' read -r -a segments <<< "$raw"
-			local parts=()
-			for segment in "${segments[@]}"; do
-				local seg
-				seg=$(printf '%s' "$segment" | sed 's/^ *//; s/ *$//')
-				[ -n "$seg" ] || continue
-				if [[ $seg =~ ^([0-9]+)[[:space:]]+day ]]; then
-					local n=${BASH_REMATCH[1]}
-					if [ "$n" -eq 1 ]; then
-						parts+=("1 day")
-					else
-						parts+=("$n days")
-					fi
-				elif [[ $seg =~ ^([0-9]+):([0-9]{2})$ ]]; then
-					local h=${BASH_REMATCH[1]}
-					local m=${BASH_REMATCH[2]}
-					h=$((10#$h))
-					m=$((10#$m))
-					if [ "$h" -gt 0 ]; then
-						parts+=("$h hour"$([ "$h" -eq 1 ] || printf 's'))
-					fi
-					if [ "$m" -gt 0 ]; then
-						parts+=("$m minute"$([ "$m" -eq 1 ] || printf 's'))
-					fi
-				elif [[ $seg =~ ^([0-9]+)[[:space:]]+hour ]]; then
-					local n=${BASH_REMATCH[1]}
-					parts+=("$n hour"$([ "$n" -eq 1 ] || printf 's'))
-				elif [[ $seg =~ ^([0-9]+)[[:space:]]+min ]]; then
-					local n=${BASH_REMATCH[1]}
-					parts+=("$n minute"$([ "$n" -eq 1 ] || printf 's'))
-				fi
-			done
-			if [ ${#parts[@]} -eq 0 ]; then
-				parts=("0 minutes")
-			fi
-			local joined
-			printf -v joined '%s, ' "${parts[@]}"
-			printf 'up %s\n' "${joined%, }"
-		else
-			command uptime "$@"
+setup_zfs_polyfill() {
+	command -v zfs >/dev/null 2>&1 || return 0
+	real_zfs=$(command -v zfs)
+	real_zpool=$(command -v zpool 2>/dev/null || true)
+	fallback_zfs_dataset=""
+	fallback_zfs_pool=""
+	if candidate=$(df -P / | awk 'NR==2 {print $1}'); then
+		if [ -n "$candidate" ] && command "$real_zfs" list "$candidate" >/dev/null 2>&1; then
+			fallback_zfs_dataset="$candidate"
+			fallback_zfs_pool=${fallback_zfs_dataset%%/*}
 		fi
-	}
-fi
+	fi
+
+	if [ -n "$fallback_zfs_dataset" ]; then
+		zfs() {
+			if [ "$1" = "get" ]; then
+				shift
+				local -a opts=()
+				local prop=""
+				local dataset=""
+				while [ $# -gt 0 ]; do
+					case "$1" in
+						-o|-d|-s|-t)
+							opts+=("$1")
+							shift
+							if [ $# -gt 0 ]; then
+								opts+=("$1")
+								shift
+							fi
+							;;
+						-*)
+							opts+=("$1")
+							shift
+							;;
+						*)
+							prop="$1"
+							shift
+							dataset="${1:-}" 
+							[ $# -gt 0 ] && shift
+							break
+							;;
+					esac
+				done
+				[ -n "$dataset" ] || dataset="$fallback_zfs_dataset"
+				if [ "$dataset" = "zroot/ROOT/os" ]; then
+					dataset="$fallback_zfs_dataset"
+				fi
+				if [ "$prop" = "available" ]; then
+					local avail used total
+					avail=$(command "$real_zfs" get -Hp -o value available "$dataset")
+					used=$(command "$real_zfs" get -Hp -o value used "$dataset")
+					total=$((avail + used))
+					printf '%s\n' "$total"
+					return 0
+				fi
+				command "$real_zfs" get "${opts[@]}" "$prop" "$dataset"
+				return $?
+			fi
+			if [ "$#" -gt 0 ] && [ "${!#}" = "zroot/ROOT/os" ]; then
+				set -- "${@:1:$#-1}" "$fallback_zfs_dataset"
+			fi
+			command "$real_zfs" "$@"
+		}
+
+		if [ -n "$real_zpool" ] && [ -n "$fallback_zfs_pool" ]; then
+			zpool() {
+				if [ "$1" = "status" ] && [ "${2:-}" = "-x" ] && [ "${3:-}" = "zroot" ]; then
+					shift 3
+					set -- status -x "$fallback_zfs_pool" "$@"
+				fi
+				command "$real_zpool" "$@"
+			}
+		fi
+	fi
+}
+
+setup_uptime_polyfill
+setup_lastlog_polyfill
+setup_grep_polyfill
+setup_zfs_polyfill
 
 args=()
 while [ $# -gt 0 ]; do
@@ -216,65 +477,6 @@ if [ ${#args[@]} -gt 0 ]; then
 	set -- "${args[@]}"
 else
 	set --
-fi
-
-if command -v grep >/dev/null 2>&1; then
-	real_grep=$(command -v grep)
-	grep() {
-		local -a args=()
-		local quiet=0
-		local arg
-		for arg in "$@"; do
-			if [ "$arg" = "-q" ] || [ "$arg" = "--quiet" ]; then
-				quiet=1
-			fi
-			args+=("$arg")
-		done
-		if [ $quiet -eq 1 ]; then
-			if command "$real_grep" "${args[@]}"; then
-				local last_arg_index=$(( ${#args[@]} - 1 ))
-				local last_arg="${args[$last_arg_index]}"
-				if [ "$last_arg" = "/proc/mounts" ]; then
-					printf '1'
-				fi
-				return 0
-			else
-				return 1
-			fi
-		else
-			command "$real_grep" "$@"
-		fi
-	}
-fi
-
-if command -v zfs >/dev/null 2>&1; then
-	real_zfs=$(command -v zfs)
-	real_zpool=$(command -v zpool 2>/dev/null || true)
-	fallback_zfs_dataset=""
-	fallback_zfs_pool=""
-	candidate=$(df -P / | awk 'NR==2 {print $1}')
-	if [ -n "$candidate" ] && command "$real_zfs" list "$candidate" >/dev/null 2>&1; then
-		fallback_zfs_dataset="$candidate"
-		fallback_zfs_pool=${fallback_zfs_dataset%%/*}
-	fi
-	if [ -n "$fallback_zfs_dataset" ]; then
-		zfs() {
-			local last_arg="${!#}"
-			if [ "$last_arg" = "zroot/ROOT/os" ]; then
-				set -- "${@:1:$#-1}" "$fallback_zfs_dataset"
-			fi
-			command "$real_zfs" "$@"
-		}
-		if [ -n "$real_zpool" ] && [ -n "$fallback_zfs_pool" ]; then
-			zpool() {
-				if [ "$1" = "status" ] && [ "${2:-}" = "-x" ] && [ "${3:-}" = "zroot" ]; then
-					shift 3
-					set -- status -x "$fallback_zfs_pool" "$@"
-				fi
-				command "$real_zpool" "$@"
-			}
-		fi
-	fi
 fi
 
 source "$report_script"

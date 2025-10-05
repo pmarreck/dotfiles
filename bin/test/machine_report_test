@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+tests=0
+fails=0
+
+declare -a cleanup_items
+
+cleanup() {
+	local item
+	for item in "${cleanup_items[@]:-}"; do
+		[ -e "$item" ] && rm -rf "$item"
+	done
+}
+
+trap cleanup EXIT
+
+print_result() {
+	local status=$1
+	shift
+	if [ "$status" -eq 0 ]; then
+		printf '%s\n' "PASSED"
+	else
+		printf '%s\n' "FAILED"
+		((fails+=1))
+	fi
+}
+
+assert_uptime_line_populated() {
+	local output="$1"
+	local uptime_line
+	uptime_line=$(printf '%s\n' "$output" | grep '│ UPTIME')
+	if [ -z "$uptime_line" ]; then
+		return 1
+	fi
+	if [ "$uptime_line" = "│ UPTIME        │                                │" ]; then
+		return 1
+	fi
+	if ! printf '%s' "$uptime_line" | grep -Eq '[0-9]+m'; then
+		return 1
+	fi
+	return 0
+}
+
+test_uptime_not_blank() {
+	((tests+=1))
+	printf 'Test uptime line renders data... '
+	local sandbox output rc
+	sandbox=$(mktemp -d "${TMPDIR:-/tmp}/mr_uptime.XXXXXX")
+	cleanup_items+=("$sandbox")
+	cat <<'SCRIPT' >"$sandbox/uptime"
+#!/usr/bin/env bash
+if [ "${1:-}" = "-p" ]; then
+	echo "uptime: invalid option -- 'p'" >&2
+	exit 1
+fi
+printf ' 16:28:34 up 1 day, 20:55,  3 users,  load average: 0.01, 0.05, 0.02\n'
+SCRIPT
+	chmod +x "$sandbox/uptime"
+	output=$(PATH="$sandbox:$PATH" machine_report 2>/dev/null) || rc=$?
+	rc=${rc:-0}
+	if [ "$rc" -ne 0 ]; then
+		print_result 1
+		printf 'machine_report exited %s\n' "$rc" >&2
+		return
+	fi
+	if assert_uptime_line_populated "$output"; then
+		print_result 0
+	else
+		print_result 1
+		printf 'Uptime line malformed:%s\n' "\n$output" >&2
+	fi
+}
+
+main() {
+	test_uptime_not_blank
+
+	if [ "$fails" -eq 0 ]; then
+		printf 'All %d tests passed\n' "$tests"
+		return 0
+	fi
+	printf '%d of %d tests failed\n' "$fails" "$tests" >&2
+	return "$fails"
+}
+
+main "$@"

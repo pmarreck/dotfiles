@@ -207,3 +207,4 @@ alias upgrade_codex='npm install -g --prefix "$HOME/.local" @openai/codex@latest
 alias update_codex=upgrade_codex
 alias upgrade_claude='npm install -g --prefix "$HOME/.local" @anthropic-ai/claude-code'
 alias update_claude=upgrade_claude
+alias sessions='tmux list-sessions'

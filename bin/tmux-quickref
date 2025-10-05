@@ -271,6 +271,7 @@ local function render_quickref(options)
 	output[#output + 1] = "setw is shorthand for set-window-option; set is the global equivalent (set-option)."
 	output[#output + 1] = "Key notation: C- means Control, M- means Meta/Alt (press Esc then the key if Alt is unavailable)."
 	output[#output + 1] = "Use tmux list-keys to see everything; add --full here to include the long default definitions."
+	output[#output + 1] = ""
 
 	io.write(table.concat(output, "\n"), "\n")
 end
