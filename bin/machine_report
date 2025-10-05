@@ -21,25 +21,18 @@ USAGE
 
 fetch_with_get() {
 	local url="$1"
-	local get_type
-	get_type=$(type -t get 2>/dev/null || true)
-	case "$get_type" in
-		alias)
-			eval "get \"$url\""
-			;;
-		function|file|builtin)
-			get "$url"
-			;;
-		*)
-			if command -v wget >/dev/null 2>&1; then
-				wget --xattr -c --progress=bar -O - -- "$url"
-			elif command -v curl >/dev/null 2>&1; then
-				curl -fL "$url"
-			else
-				return 127
-			fi
-			;;
-	esac
+	local local_get="$HOME/dotfiles/bin/get"
+	if [ -x "$local_get" ]; then
+		"$local_get" "$url"
+	elif command -v get >/dev/null 2>&1; then
+		get "$url"
+	elif command -v wget >/dev/null 2>&1; then
+		wget --xattr -c --progress=bar -O - -- "$url"
+	elif command -v curl >/dev/null 2>&1; then
+		curl -fL "$url"
+	else
+		return 127
+	fi
 }
 
 perform_update() {
