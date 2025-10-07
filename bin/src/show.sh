@@ -67,6 +67,10 @@ function determine_language_from_source() {
 		
 		lang=$(truncate_run "$lang")
 		debug "lang after truncate_run: '$lang'"
+		if [ "$file_ext" = "wat" ]; then
+			lang_orig="WebAssembly text (WAT)"
+			lang="wat"
+		fi
 		# add exceptions/overrides here
 		case $lang in
 			bourne-again*)
@@ -92,6 +96,22 @@ function determine_language_from_source() {
 			moon)
 				lang_orig="MoonScript"
 				lang="lua" # bat doesn't have a moonscript syntax parser yet
+				;;
+			wasm)
+				if [ "$lang" = "wat" ]; then
+					# already reclassified above based on extension
+					:
+				elif [[ "$file_cmd_output" =~ [Tt]ext ]]; then
+					lang_orig="WebAssembly text (WAT)"
+					lang="wat"
+				else
+					lang_orig="WebAssembly binary"
+					lang="wasm"
+				fi
+				;;
+			wat)
+				lang_orig=${lang_orig:-"WebAssembly text (WAT)"}
+				lang="wat"
 				;;
 			empty*)
 				lang_orig="empty"
@@ -163,6 +183,18 @@ function truncate_run() {
 		filename=${filename%run}
 	fi
 	echo "$filename"
+}
+
+map_highlight_language() {
+	local lang="$1"
+	case "$lang" in
+		wat)
+			echo "lisp"
+			;;
+		*)
+			echo "$lang"
+			;;
+	esac
 }
 
 # Function to detect if a string is an HTTP(S) URL suitable for reader view
@@ -412,11 +444,12 @@ show() {
 			echo "$word"
 			local lang=$(determine_language_from_source "$word")
 			if [ -n "$lang" ]; then
+				local highlight_lang=$(map_highlight_language "$lang")
 				note "'${word}' is $(a_or_an "$lang") $lang file on disk:"
 				if [ "$file_ext" = "md" ] && needs glow "please install glow"; then
 					glow "$word"
 				else
-					$batless && less "$word" || bat "$word" -l "$lang" $bat_opts 2>/dev/null
+					$batless && less "$word" || bat "$word" -l "$highlight_lang" $bat_opts 2>/dev/null
 				fi
 			else
 				note "'${word}' is a file on disk, but it is not a text file"
@@ -499,6 +532,7 @@ show() {
 						echo "$file"
 						if is_script "$file"; then
 							local lang=$(determine_language_from_source "$file")
+							local highlight_lang=$(map_highlight_language "$lang")
 							case $lang in
 								link)
 									local link_target=$(readlink -f "$file")
@@ -509,10 +543,11 @@ show() {
 									file=$link_target
 									debug "resolved link: $file"
 									lang=$(determine_language_from_source "$file")
+									highlight_lang=$(map_highlight_language "$lang")
 									debug "language: $lang"
 									;;&    # yes, this is a Bash 4 thing that falls through to the next case
 								*)
-									$batless && less "$file" || bat -l "$lang" $bat_opts "$file"
+									$batless && less "$file" || bat -l "$highlight_lang" $bat_opts "$file"
 									;;
 							esac
 						else

@@ -1,0 +1,201 @@
+#!/bin/sh
+set -eu
+
+usage() {
+  cat <<'USAGE' >&2
+Usage: wasmrun [--help] [-o OUTPUT] [--cache DIR] [RUNNER] <path-to-wat> [args...]
+
+Options:
+  -o OUTPUT     Use OUTPUT as the compiled .wasm path. Relative paths are resolved
+                against the .wat directory.
+  --cache DIR   Store the compiled .wasm under DIR (relative to the .wat directory
+                unless absolute). Overrides the WASM_BUILD_CACHE environment variable.
+  --help        Show this help message and exit.
+
+RUNNER defaults to $WASM_RUNNER_DEFAULT or 'wazero' if unset. Valid runners are:
+  wazero (default), wasmtime, wasmedge, wasmer, wasmer-aot, wasmedge-aot, deno
+
+The WASM_BUILD_CACHE environment variable controls the default cache directory and
+defaults to '.'.
+USAGE
+}
+
+output_opt=""
+cache_opt=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --help)
+      usage
+      exit 0
+      ;;
+    -o)
+      shift
+      if [ $# -eq 0 ]; then
+        echo "wasmrun: -o requires an argument" >&2
+        exit 64
+      fi
+      output_opt=$1
+      shift
+      ;;
+    --cache)
+      shift
+      if [ $# -eq 0 ]; then
+        echo "wasmrun: --cache requires an argument" >&2
+        exit 64
+      fi
+      cache_opt=$1
+      shift
+      ;;
+    --)
+      shift
+      break
+      ;;
+    -*)
+      echo "wasmrun: unknown option $1" >&2
+      usage
+      exit 64
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+
+if [ $# -eq 0 ]; then
+  usage
+  exit 64
+fi
+
+default_runner=${WASM_RUNNER_DEFAULT:-wazero}
+case "$1" in
+  wazero|wasmtime|wasmedge|wasmer|wasmer-aot|wasmedge-aot|deno)
+    runner=$1
+    shift
+    ;;
+  *)
+    runner=$default_runner
+    ;;
+esac
+
+if [ $# -eq 0 ]; then
+  usage
+  exit 64
+fi
+
+wat_path=$1
+shift
+
+if [ ! -f "$wat_path" ]; then
+  echo "wasmrun: no such file: $wat_path" >&2
+  exit 66
+fi
+
+script_dir=$(cd "$(dirname "$0")" && pwd)
+project_root=$(cd "$script_dir/.." && pwd)
+wasmbuild_bin="$script_dir/wasmbuild"
+if [ ! -x "$wasmbuild_bin" ]; then
+  echo "wasmrun: missing helper $wasmbuild_bin" >&2
+  exit 69
+fi
+
+wat_dir=$(cd "$(dirname "$wat_path")" && pwd)
+wat_file=$(basename "$wat_path")
+case "$wat_path" in
+  /*) wat_abs=$wat_path ;;
+  *) wat_abs="$wat_dir/$wat_file" ;;
+esac
+
+default_cache=${WASM_BUILD_CACHE-.}
+if [ -n "$cache_opt" ]; then
+  cache_raw=$cache_opt
+  cache_flag=1
+else
+  cache_raw=$default_cache
+  cache_flag=0
+fi
+case "$cache_raw" in
+  /*) cache_dir=$cache_raw ;;
+  *) cache_dir="$wat_dir/$cache_raw" ;;
+esac
+
+if [ -n "$output_opt" ]; then
+  output_raw=$output_opt
+  case "$output_raw" in
+    /*) wasm_path=$output_raw ;;
+    *) wasm_path="$wat_dir/$output_raw" ;;
+  esac
+  output_flag=1
+else
+  case "$wat_file" in
+    *.wat) base=${wat_file%*.wat} ;;
+    *) base=$wat_file ;;
+  esac
+  wasm_path="$cache_dir/$base.wasm"
+  output_flag=0
+fi
+
+mkdir -p "$(dirname "$wasm_path")"
+
+if [ -f "$wasm_path" ] && [ ! "$wat_abs" -nt "$wasm_path" ] && [ ! "$wasm_path" -nt "$wat_abs" ]; then
+  :
+else
+  if [ "$output_flag" -eq 1 ]; then
+    module_src=$("$wasmbuild_bin" -o "$output_opt" "$wat_path")
+  elif [ "$cache_flag" -eq 1 ]; then
+    module_src=$("$wasmbuild_bin" --cache "$cache_opt" "$wat_path")
+  else
+    module_src=$("$wasmbuild_bin" "$wat_path")
+  fi
+  wasm_path=$module_src
+fi
+
+case "$wasm_path" in
+  *.wasm) native_base=${wasm_path%*.wasm} ;;
+  *) native_base=$wasm_path ;;
+esac
+
+locale=${LC_ALL:-C}
+
+case "$runner" in
+  wazero)
+    exec wazero run -env "LC_ALL=$locale" "$wasm_path" "$@"
+    ;;
+  wasmtime)
+    exec wasmtime --env LC_ALL="$locale" "$wasm_path" "$@"
+    ;;
+  wasmedge)
+    exec wasmedge --env LC_ALL="$locale" "$wasm_path" "$@"
+    ;;
+  wasmedge-aot)
+    native_path="${native_base}.wasmedge"
+    if [ ! -f "$native_path" ] || [ "$wasm_path" -nt "$native_path" ]; then
+      if ! wasmedgec "$wasm_path" "$native_path" >/dev/null 2>&1; then
+        echo "wasmrun: wasmedgec compile failed" >&2
+        exit 1
+      fi
+    fi
+    exec wasmedge --env LC_ALL="$locale" "$native_path" "$@"
+    ;;
+  wasmer)
+    exec wasmer run --env "LC_ALL=$locale" "$wasm_path" "$@"
+    ;;
+  wasmer-aot)
+    native_path="${native_base}.wasmer"
+    if [ ! -f "$native_path" ] || [ "$wasm_path" -nt "$native_path" ]; then
+      if ! wasmer compile -q -o "$native_path" "$wasm_path" >/dev/null 2>&1; then
+        echo "wasmrun: wasmer compile failed" >&2
+        exit 1
+      fi
+    fi
+    exec wasmer run --env "LC_ALL=$locale" "$native_path" "$@"
+    ;;
+  deno)
+    exec deno run --unstable --allow-run --allow-env --allow-read --quiet \
+      "$project_root/scripts/deno_wasi.ts" "$wasm_path" "$@"
+    ;;
+  *)
+    echo "wasmrun: unknown runner $runner" >&2
+    exit 65
+    ;;
+esac

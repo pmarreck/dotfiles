@@ -1,0 +1,175 @@
+#!/bin/sh
+set -eu
+
+usage() {
+  cat <<'USAGE' >&2
+Usage: wasmbuild [--help] [-o OUTPUT] [--cache DIR] <path-to-wat>
+
+Options:
+  -o OUTPUT     Write the .wasm to OUTPUT. Relative paths are resolved against the
+                directory containing the source .wat file.
+  --cache DIR   Place the generated .wasm inside DIR (relative to the .wat directory
+                unless absolute). Overrides the WASM_BUILD_CACHE environment variable.
+  --help        Show this help message and exit.
+
+If neither -o nor --cache is specified, the output defaults to the same directory
+as the .wat file with a .wasm extension. WASM_BUILD_CACHE can be set to choose a
+default cache directory; it defaults to '.'.
+USAGE
+}
+
+output_opt=""
+cache_opt=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --help)
+      usage
+      exit 0
+      ;;
+    -o)
+      shift
+      if [ $# -eq 0 ]; then
+        echo "wasmbuild: -o requires an argument" >&2
+        exit 64
+      fi
+      output_opt=$1
+      shift
+      ;;
+    --cache)
+      shift
+      if [ $# -eq 0 ]; then
+        echo "wasmbuild: --cache requires an argument" >&2
+        exit 64
+      fi
+      cache_opt=$1
+      shift
+      ;;
+    --)
+      shift
+      break
+      ;;
+    -*)
+      echo "wasmbuild: unknown option $1" >&2
+      usage
+      exit 64
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+
+if [ $# -lt 1 ]; then
+  usage
+  exit 64
+fi
+
+wat_path=$1
+shift
+
+if [ $# -ne 0 ]; then
+  usage
+  exit 64
+fi
+
+if [ ! -f "$wat_path" ]; then
+  echo "wasmbuild: no such file: $wat_path" >&2
+  exit 66
+fi
+
+wat_dir=$(cd "$(dirname "$wat_path")" && pwd)
+wat_file=$(basename "$wat_path")
+case "$wat_path" in
+  /*) wat_abs=$wat_path ;;
+  *) wat_abs="$wat_dir/$wat_file" ;;
+esac
+
+default_cache=${WASM_BUILD_CACHE-.}
+if [ -n "$cache_opt" ]; then
+  cache_raw=$cache_opt
+else
+  cache_raw=$default_cache
+fi
+case "$cache_raw" in
+  /*) cache_dir=$cache_raw ;;
+  *) cache_dir="$wat_dir/$cache_raw" ;;
+esac
+mkdir -p "$cache_dir"
+
+if [ -n "$output_opt" ]; then
+  case "$output_opt" in
+    /*) wasm_path=$output_opt ;;
+    *) wasm_path="$wat_dir/$output_opt" ;;
+  esac
+else
+  case "$wat_file" in
+    *.wat) base=${wat_file%*.wat} ;;
+    *) base=$wat_file ;;
+  esac
+  wasm_path="$cache_dir/$base.wasm"
+fi
+
+out_dir=$(dirname "$wasm_path")
+mkdir -p "$out_dir"
+
+if [ -f "$wasm_path" ] && [ ! "$wat_abs" -nt "$wasm_path" ] && [ ! "$wasm_path" -nt "$wat_abs" ]; then
+  printf '%s\n' "$wasm_path"
+  exit 0
+fi
+
+wasmtools_bin=$(command -v wasm-tools || true)
+first_line=$(head -n 1 "$wat_abs" 2>/dev/null || printf '')
+
+if [ -n "$wasmtools_bin" ]; then
+  case "$first_line" in
+    '#!'*)
+      tail -n +2 "$wat_abs" | "$wasmtools_bin" parse -o "$wasm_path"
+      ;;
+    *)
+      "$wasmtools_bin" parse "$wat_abs" -o "$wasm_path"
+      ;;
+  esac
+else
+  wat2wasm_bin=$(command -v wat2wasm || true)
+  if [ -z "$wat2wasm_bin" ]; then
+    echo "wasmbuild: need wasm-tools or wat2wasm on PATH" >&2
+    exit 69
+  fi
+  echo "wasmbuild: wasm-tools unavailable; using wat2wasm via temporary file. Install wasm-tools to avoid disk I/O." >&2
+  tmp_wat=""
+  case "$first_line" in
+    '#!'*)
+      tmp_wat=$(mktemp)
+      tail -n +2 "$wat_abs" > "$tmp_wat"
+      input_path=$tmp_wat
+      ;;
+    *)
+      input_path="$wat_abs"
+      ;;
+  esac
+  "$wat2wasm_bin" "$input_path" -o "$wasm_path"
+  if [ -n "$tmp_wat" ] && [ "$tmp_wat" != "$wat_abs" ]; then
+    rm -f "$tmp_wat"
+  fi
+fi
+
+if command -v gtouch >/dev/null 2>&1; then
+  gtouch -r "$wat_abs" "$wasm_path"
+else
+  os_name=$(uname -s 2>/dev/null || echo unknown)
+  case "$os_name" in
+    Darwin)
+      ts=$(stat -f '%Sm' -t '%Y%m%d%H%M.%S' "$wat_abs")
+      touch -t "$ts" "$wasm_path"
+      ;;
+    Linux)
+      touch -r "$wat_abs" "$wasm_path"
+      ;;
+    *)
+      touch "$wasm_path"
+      ;;
+  esac
+fi
+
+printf '%s\n' "$wasm_path"

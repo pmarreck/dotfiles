@@ -1,0 +1,285 @@
+#!/usr/bin/env luajit
+
+local jit = require("jit")
+local os_name = jit.os
+
+local function print_usage()
+	print("Usage: procstat [--help] [--about] [--version] [--test]")
+	print("")
+	print("Emit Linux-style /proc/stat data. On macOS this synthesizes data from sysctl.")
+end
+
+local function print_about()
+	print("Linux /proc/stat pass-through with a macOS sysctl-based polyfill.")
+end
+
+local function print_version()
+	print("procstat 0.1.0")
+end
+
+local function run_tests()
+	local home = os.getenv("HOME")
+	if not home or home == "" then
+		io.stderr:write("procstat: HOME is not set; cannot locate tests\n")
+		return 1
+	end
+	local test_script = home .. "/dotfiles/bin/test/procstat_test"
+	local cmd = string.format("%q >/dev/null 2>&1", test_script)
+	local ok, why, status = os.execute(cmd)
+	if ok == true or ok == 0 then
+		return 0
+	end
+	if why == "exit" and status then
+		return status
+	end
+	if type(ok) == "number" and ok > 0 then
+		return ok
+	end
+	return 1
+end
+
+local function emit_linux()
+	local fh, err = io.open("/proc/stat", "r")
+	if not fh then
+		return nil, "unable to open /proc/stat: " .. (err or "unknown error")
+	end
+	local data = fh:read("*a")
+	fh:close()
+	if not data then
+		return nil, "failed to read /proc/stat"
+	end
+	io.write(data)
+	return true
+end
+
+local function table_concat_with_space(parts)
+	return table.concat(parts, " ")
+end
+
+local function emit_macos()
+	local warnings = {}
+
+	local function warn(msg)
+		table.insert(warnings, msg)
+	end
+
+	local function run_command(cmd)
+		local handle, err = io.popen(cmd)
+		if not handle then
+			return nil, err or "popen failed"
+		end
+		local output = handle:read("*a") or ""
+		local ok, why, status = handle:close()
+		if not ok then
+			return nil, string.format("command failed (%s, %s)", why or "unknown", status or "unknown")
+		end
+		output = output:gsub("%s+$", "")
+		return output
+	end
+
+	local function run_sysctl(key)
+		return run_command(string.format("sysctl -n %s 2>/dev/null", key))
+	end
+
+	local function parse_numbers(str)
+		local numbers = {}
+		if not str then
+			return numbers
+		end
+		for token in str:gmatch("[-%d]+") do
+			local value = tonumber(token)
+			if value then
+				table.insert(numbers, value)
+			end
+		end
+		return numbers
+	end
+
+	local function format_cpu_line(label, values)
+		local fields = {
+			values[1] or 0,
+			values[2] or 0,
+			values[3] or 0,
+			values[4] or 0,
+			0,
+			values[5] or 0,
+			0,
+			0,
+			0,
+			0
+		}
+		return label .. " " .. table_concat_with_space(fields)
+	end
+
+	local cpu_totals = parse_numbers(run_sysctl("kern.cp_time"))
+	if #cpu_totals == 0 then
+		warn("sysctl kern.cp_time returned no data")
+	end
+	io.write(format_cpu_line("cpu", cpu_totals), "\n")
+
+	local per_cpu_numbers = parse_numbers(run_sysctl("kern.cp_times"))
+	if #per_cpu_numbers == 0 then
+		local cpu_count = tonumber(run_sysctl("hw.ncpu") or "")
+		if cpu_count and cpu_count > 0 then
+			for idx = 0, cpu_count - 1 do
+				io.write(format_cpu_line("cpu" .. idx, cpu_totals), "\n")
+			end
+			warn("sysctl kern.cp_times returned no data; reused totals for each CPU")
+		else
+			warn("sysctl kern.cp_times returned no data")
+		end
+	else
+		local fields_per_cpu = 5
+		local cpu_count = math.floor(#per_cpu_numbers / fields_per_cpu)
+		if cpu_count == 0 then
+			warn("sysctl kern.cp_times format was unexpected")
+		else
+			for idx = 0, cpu_count - 1 do
+				local values = {}
+				for field = 1, fields_per_cpu do
+					values[field] = per_cpu_numbers[idx * fields_per_cpu + field]
+				end
+				io.write(format_cpu_line("cpu" .. idx, values), "\n")
+			end
+		end
+	end
+
+	local intr_total = 0
+	local intr_raw = run_sysctl("vm.stats.sys.v_intr")
+	if intr_raw then
+		local numbers = parse_numbers(intr_raw)
+		if #numbers > 0 then
+			intr_total = numbers[1]
+		else
+			warn("sysctl vm.stats.sys.v_intr returned no numeric data")
+		end
+	else
+		warn("sysctl vm.stats.sys.v_intr unavailable")
+	end
+	local intr_parts = {string.format("intr %d", intr_total)}
+	local intr_counts = parse_numbers(run_sysctl("hw.intrcnt"))
+	if #intr_counts > 0 then
+		table.insert(intr_parts, table_concat_with_space(intr_counts))
+	end
+	io.write(table_concat_with_space(intr_parts), "\n")
+
+	local ctxt_value = tonumber(run_sysctl("vm.stats.sys.v_swtch") or "")
+	if not ctxt_value then
+		ctxt_value = 0
+		warn("sysctl vm.stats.sys.v_swtch unavailable")
+	end
+	io.write(string.format("ctxt %d\n", ctxt_value))
+
+	local boottime_raw = run_sysctl("kern.boottime")
+	local boot_seconds
+	if boottime_raw then
+		boot_seconds = tonumber(boottime_raw:match("(%d+)"))
+		if not boot_seconds then
+			local numbers = parse_numbers(boottime_raw)
+			if #numbers > 0 then
+				boot_seconds = numbers[1]
+			end
+		end
+	end
+	if not boot_seconds then
+		boot_seconds = 0
+		warn("sysctl kern.boottime unavailable")
+	end
+	io.write(string.format("btime %d\n", boot_seconds))
+
+	local processes_value = tonumber(run_sysctl("vm.stats.vm.v_forks") or "")
+	if not processes_value then
+		processes_value = 0
+		warn("sysctl vm.stats.vm.v_forks unavailable")
+	end
+	io.write(string.format("processes %d\n", processes_value))
+
+	local function count_processes_by_state(targets)
+		local output, err = run_command("ps -axo stat")
+		if not output then
+			warn("ps -axo stat failed: " .. (err or "unknown error"))
+			return 0
+		end
+		local lookup = {}
+		for _, state in ipairs(targets) do
+			lookup[state] = true
+		end
+		local count = 0
+		for line in output:gmatch("[^\n]+") do
+			if not line:match("^%s*STAT") then
+				local state = line:match("^%s*([A-Z])")
+				if state and lookup[state] then
+					count = count + 1
+				end
+			end
+		end
+		return count
+	end
+
+	local running = count_processes_by_state({"R"})
+	io.write(string.format("procs_running %d\n", running))
+
+	local blocked = count_processes_by_state({"D"})
+	io.write(string.format("procs_blocked %d\n", blocked))
+
+	io.write("softirq 0 0 0 0 0 0 0 0 0 0\n")
+
+	if #warnings > 0 then
+		for _, message in ipairs(warnings) do
+			io.stderr:write("procstat: " .. message .. "\n")
+		end
+	end
+
+	return true
+end
+
+local function handle_arguments()
+	if not arg or #arg == 0 then
+		return nil
+	end
+	local index = 1
+	while arg[index] do
+		local current = arg[index]
+		if current == "--help" or current == "-h" then
+			print_usage()
+			return 0
+		elseif current == "--about" or current == "-a" then
+			print_about()
+			return 0
+		elseif current == "--version" or current == "-v" then
+			print_version()
+			return 0
+		elseif current == "--test" then
+			return run_tests()
+		else
+			io.stderr:write(string.format("procstat: unknown option '%s'\n", current))
+			print_usage()
+			return 1
+		end
+	end
+	return nil
+end
+
+local function main()
+	local arg_result = handle_arguments()
+	if arg_result ~= nil then
+		os.exit(arg_result)
+	end
+
+	local ok, err
+	if os_name == "Linux" then
+		ok, err = emit_linux()
+	elseif os_name == "OSX" then
+		ok, err = emit_macos()
+	else
+		ok, err = emit_macos()
+	end
+
+	if not ok then
+		io.stderr:write("procstat: " .. (err or "unknown error") .. "\n")
+		os.exit(1)
+	end
+	os.exit(0)
+end
+
+main()

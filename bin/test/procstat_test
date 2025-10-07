@@ -1,0 +1,187 @@
+#!/usr/bin/env bash
+
+compare_monotonic_line() {
+	local label=$1
+
+	local before_line
+	before_line=$(grep -E "^${label}[[:space:]]" "$tmp_before" | head -n1)
+	if [ -z "$before_line" ]; then
+		echo "Missing ${label} in baseline snapshot" >&2
+		return 1
+	fi
+
+	local proc_line
+	proc_line=$(grep -E "^${label}[[:space:]]" "$tmp_proc" | head -n1)
+	if [ -z "$proc_line" ]; then
+		echo "procstat output missing ${label} line" >&2
+		return 1
+	fi
+
+	local after_line
+	after_line=$(grep -E "^${label}[[:space:]]" "$tmp_after" | head -n1)
+	if [ -z "$after_line" ]; then
+		echo "Missing ${label} in post snapshot" >&2
+		return 1
+	fi
+
+	local -a before_fields
+	local -a proc_fields
+	local -a after_fields
+	read -r -a before_fields <<<"$before_line"
+	read -r -a proc_fields <<<"$proc_line"
+	read -r -a after_fields <<<"$after_line"
+
+	if [ ${#before_fields[@]} -ne ${#proc_fields[@]} ] || [ ${#before_fields[@]} -ne ${#after_fields[@]} ]; then
+		echo "${label} field count mismatch between snapshots and procstat output" >&2
+		return 1
+	fi
+
+	for ((i=1; i<${#before_fields[@]}; i++)); do
+		local before_val=${before_fields[i]}
+		local proc_val=${proc_fields[i]}
+		local after_val=${after_fields[i]}
+
+		if (( proc_val < before_val )); then
+			echo "${label} field $((i-1)) decreased (before=${before_val}, proc=${proc_val})" >&2
+			return 1
+		fi
+
+		if (( proc_val > after_val )); then
+			echo "${label} field $((i-1)) exceeded after snapshot (proc=${proc_val}, after=${after_val})" >&2
+			return 1
+		fi
+	done
+
+	return 0
+}
+
+compare_exact_line() {
+	local label=$1
+
+	local before_line
+	before_line=$(grep -E "^${label}[[:space:]]" "$tmp_before" | head -n1)
+	local proc_line
+	proc_line=$(grep -E "^${label}[[:space:]]" "$tmp_proc" | head -n1)
+
+	if [ -z "$before_line" ] || [ -z "$proc_line" ]; then
+		echo "Missing ${label} line for exact comparison" >&2
+		return 1
+	fi
+
+	if [ "$before_line" != "$proc_line" ]; then
+		echo "${label} line mismatch: baseline='${before_line}' procstat='${proc_line}'" >&2
+		return 1
+	fi
+
+	return 0
+}
+
+test_procstat() {
+	local fails=0
+	local tests=0
+
+	echo "Testing procstat..."
+
+	((tests++))
+	echo "Testing --help..."
+	if output=$(procstat --help 2>&1); then
+		if [[ "$output" == *"Usage:"* && "$output" == *"procstat"* ]]; then
+			echo "[PASS] --help prints usage"
+		else
+			echo "[FAIL] --help output missing Usage line" >&2
+			echo "$output" >&2
+			((fails++))
+		fi
+	else
+		echo "[FAIL] --help failed to execute" >&2
+		((fails++))
+	fi
+
+	((tests++))
+	echo "Testing default invocation on $(uname -s)..."
+	case "$(uname -s)" in
+		Linux)
+			tmp_before=$(mktemp)
+			tmp_proc=$(mktemp)
+			tmp_after=$(mktemp)
+			trap 'rm -f "$tmp_before" "$tmp_proc" "$tmp_after"' EXIT
+
+			local linux_validation_failed=0
+
+			if ! cat /proc/stat >"$tmp_before"; then
+				echo "[FAIL] Unable to capture baseline /proc/stat snapshot" >&2
+				linux_validation_failed=1
+			fi
+
+			if [ $linux_validation_failed -eq 0 ] && ! procstat >"$tmp_proc"; then
+				echo "[FAIL] procstat execution failed during Linux validation" >&2
+				linux_validation_failed=1
+			fi
+
+			if [ $linux_validation_failed -eq 0 ] && ! cat /proc/stat >"$tmp_after"; then
+				echo "[FAIL] Unable to capture post /proc/stat snapshot" >&2
+				linux_validation_failed=1
+			fi
+
+			if [ $linux_validation_failed -eq 0 ]; then
+				mapfile -t cpu_labels < <(awk '{print $1}' "$tmp_before" | grep -E '^cpu([0-9]+)?$')
+				local labels=("${cpu_labels[@]}" "intr" "ctxt" "processes" "softirq")
+
+				for label in "${labels[@]}"; do
+					if compare_monotonic_line "$label"; then
+						echo "[PASS] ${label} line within expected bounds"
+					else
+						echo "[FAIL] ${label} line outside expected bounds" >&2
+						linux_validation_failed=1
+					fi
+				done
+
+				if compare_exact_line "btime"; then
+					echo "[PASS] btime line matches baseline snapshot"
+				else
+					echo "[FAIL] btime line mismatch" >&2
+					linux_validation_failed=1
+				fi
+			fi
+
+			rm -f "$tmp_before" "$tmp_proc" "$tmp_after"
+			trap - EXIT
+
+			if [ $linux_validation_failed -eq 0 ]; then
+				echo "[PASS] Linux pass-through matches /proc/stat snapshots"
+			else
+				((fails++))
+				echo "[FAIL] Linux pass-through diverged from /proc/stat snapshots" >&2
+			fi
+			;;
+		Darwin)
+			if output=$(procstat); then
+				if grep -E '^cpu\s+[0-9]' <<<"$output" >/dev/null && grep -E '^intr\s+[0-9]' <<<"$output" >/dev/null; then
+					echo "[PASS] macOS output includes cpu and intr summaries"
+				else
+					echo "[FAIL] macOS output missing cpu/intr lines" >&2
+					echo "$output" >&2
+					((fails++))
+				fi
+			else
+				echo "[FAIL] procstat failed to run on macOS" >&2
+				((fails++))
+			fi
+			;;
+		*)
+			echo "[WARN] Unknown platform: $(uname -s); skipping output comparison"
+			;;
+	esac
+
+	if [ $fails -gt 0 ]; then
+		echo "procstat test FAILED: $fails of $tests tests failed" >&2
+	else
+		echo "procstat test PASSED: all $tests tests passed"
+	fi
+	return $fails
+}
+
+if ! (return 0 2>/dev/null); then
+	test_procstat
+	exit $?
+fi
