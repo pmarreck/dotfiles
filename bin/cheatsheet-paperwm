@@ -1,0 +1,370 @@
+#!/usr/bin/env luajit
+
+local SCHEMA_ID = 'org.gnome.shell.extensions.paperwm.keybindings'
+local EXTENSION_NAME = 'paperwm@paperwm.github.com'
+local EXTENSION_PREFIX = 'paperwm@'
+local SEARCH_DIRS = {
+	'/run/current-system/sw/share/gnome-shell/extensions',
+	os.getenv('HOME') .. '/.local/share/gnome-shell/extensions',
+	'/usr/share/gnome-shell/extensions',
+}
+
+local function detect_default_super_symbol()
+	local handle = io.popen('uname')
+	if handle then
+		local line = handle:read('*l') or ''
+		handle:close()
+		if line == 'Darwin' then
+			return '⌘'
+		end
+	end
+	return '⊞'
+end
+local ASCII_ONLY = false
+local USE_ANSI_STYLE = true
+local CTRL_SYMBOL = '⌃'
+local ALT_SYMBOL = '⌥'
+local SHIFT_SYMBOL = '⇧'
+local SUPER_SYMBOL = detect_default_super_symbol()
+
+local function usage()
+	io.write([[Usage: cheatsheet-paperwm [OPTIONS]
+
+Show the current PaperWM keybindings with descriptions.
+
+Options:
+  --ascii-only          Use plain text tokens; also disables ANSI styling.
+  --ansi-keys           Force ANSI keycaps even when ASCII mode is requested.
+  --no-ansi             Disable ANSI keycaps entirely.
+  --super-symbol=GLYPH  Override the glyph used for the Super/Meta key.
+  --help, -h            Show this help message.
+  --test                No-op placeholder to satisfy bin/ standards.
+]])
+end
+
+local function parse_args(argv)
+	local super_override
+	for _, a in ipairs(argv) do
+		if a == '--ascii-only' then
+			ASCII_ONLY = true
+			USE_ANSI_STYLE = false
+		elseif a == '--ansi-keys' then
+			USE_ANSI_STYLE = true
+		elseif a == '--no-ansi' then
+			USE_ANSI_STYLE = false
+		elseif a:match('^%-%-super%-symbol=') then
+			super_override = a:sub(#'--super-symbol=' + 1)
+		elseif a == '--help' or a == '-h' then
+			usage()
+			os.exit(0)
+		elseif a == '--test' then
+			os.exit(0)
+		else
+			io.stderr:write('Unknown option: ' .. a .. '\n')
+			usage()
+			os.exit(1)
+		end
+	end
+	if super_override and super_override ~= '' then
+		SUPER_SYMBOL = super_override
+	end
+	if ASCII_ONLY and USE_ANSI_STYLE and not super_override then
+		USE_ANSI_STYLE = false
+	end
+end
+
+local function has_schema(path)
+	local xml_path = path .. '/schemas/org.gnome.shell.extensions.paperwm.gschema.xml'
+	local f = io.open(xml_path, 'r')
+	if f then
+		f:close()
+		return true
+	end
+	return false
+end
+
+local function find_extension_dir()
+	for _, base in ipairs(SEARCH_DIRS) do
+		local candidate = base .. '/' .. EXTENSION_NAME
+		if has_schema(candidate) then
+			return candidate
+		end
+	end
+	for _, base in ipairs(SEARCH_DIRS) do
+		local cmd = string.format("ls -1 %s* 2>/dev/null", base .. '/' .. EXTENSION_PREFIX)
+		local handle = io.popen(cmd)
+		if handle then
+			local line = handle:read('*l')
+			handle:close()
+			if line and has_schema(line) then
+				return line
+			end
+		end
+	end
+	return nil
+end
+
+local function shell_quote(str)
+	return string.format("'%s'", str:gsub("'", "'\\''"))
+end
+
+local function run_command(cmd)
+	local handle = io.popen(cmd)
+	if not handle then
+		return nil
+	end
+	local output = handle:read('*a') or ''
+	handle:close()
+	return output
+end
+
+local function collect_lines(cmd)
+	local text = run_command(cmd)
+	local lines = {}
+	if not text then
+		return lines
+	end
+	for line in text:gmatch('([^\n]+)') do
+		table.insert(lines, line)
+	end
+	return lines
+end
+
+local function trim(s)
+	return (s:gsub('^%s+', ''):gsub('%s+$', ''))
+end
+
+local function load_schema_summaries(schema_dir)
+	local summaries = {}
+	local path = schema_dir .. '/org.gnome.shell.extensions.paperwm.gschema.xml'
+	local f = io.open(path, 'r')
+	if not f then
+		return summaries
+	end
+	local xml = f:read('*a')
+	f:close()
+	for block in xml:gmatch('<key.-</key>') do
+		local name = block:match('name="([^"]+)"')
+		if name then
+			local summary = block:match('<summary>(.-)</summary>')
+			if summary then
+				summaries[name] = trim(summary:gsub('\n', ' '))
+			end
+		end
+	end
+	return summaries
+end
+
+local function get_all_bindings(schema_dir)
+	local cmd = string.format('gsettings --schemadir %s list-recursively %s', shell_quote(schema_dir), shell_quote(SCHEMA_ID))
+	local lines = collect_lines(cmd)
+	local values = {}
+	for _, line in ipairs(lines) do
+		local _, key, value = line:match('^(%S+)%s+(%S+)%s+(.+)$')
+		if key and value then
+			values[key] = value
+		end
+	end
+	return values
+end
+
+local ascii_map = {
+	super = 'Super',
+	shift = 'Shift',
+	ctrl = 'Ctrl',
+	control = 'Ctrl',
+	alt = 'Alt',
+	left = 'Left',
+	right = 'Right',
+	up = 'Up',
+	down = 'Down',
+	comma = 'Comma',
+	bracketleft = '[',
+	bracketright = ']',
+	minus = '-',
+	plus = '+',
+	period = 'Period',
+	semicolon = 'Semicolon',
+	apostrophe = 'Apostrophe',
+	space = 'Space',
+	tab = 'Tab',
+	escape = 'Esc',
+	['return'] = 'Enter',
+	backspace = 'Backspace',
+	page_up = 'Page Up',
+	page_down = 'Page Down',
+	home = 'Home',
+	['end'] = 'End',
+	grave = 'Grave / Tilde',
+	['above_tab'] = 'Grave / Tilde',
+}
+
+local symbol_map = {
+	super = SUPER_SYMBOL,
+	shift = SHIFT_SYMBOL,
+	ctrl = CTRL_SYMBOL,
+	control = CTRL_SYMBOL,
+	alt = ALT_SYMBOL,
+	left = '←',
+	right = '→',
+	up = '↑',
+	down = '↓',
+	comma = ',',
+	bracketleft = '[',
+	bracketright = ']',
+	minus = '-',
+	plus = '+',
+	period = '.',
+	semicolon = ';',
+	apostrophe = "'",
+	space = '␣',
+	tab = '⇥',
+	escape = 'Esc',
+	['return'] = 'Enter',
+	backspace = 'Backspace',
+	page_up = 'Pg↑',
+	page_down = 'Pg↓',
+	home = 'Home',
+	['end'] = 'End',
+	grave = '˜',
+	['above_tab'] = '˜',
+}
+
+local function normalize_token(token)
+	local res = token:gsub('-', '_')
+	res = res:gsub('%s+', '_')
+	res = res:gsub('_l$', '')
+	res = res:gsub('_r$', '')
+	return res:lower()
+end
+
+local function style_token(text)
+	if not USE_ANSI_STYLE then
+		return text
+	end
+	return string.format('\27[30;47m %s \27[0m', text)
+end
+
+local function format_token(token)
+	local norm = normalize_token(token)
+	local base
+	if ASCII_ONLY then
+		base = ascii_map[norm] or ((#token == 1) and token:upper() or token)
+	else
+		base = symbol_map[norm] or ((#token == 1) and token:upper() or token)
+	end
+	return style_token(base)
+end
+
+local function split_combo(combo)
+	local tokens = {}
+	local i = 1
+	local len = #combo
+	while i <= len do
+		local char = combo:sub(i, i)
+		if char == '<' then
+			local closing = combo:find('>', i + 1, true)
+			if not closing then
+				break
+			end
+			table.insert(tokens, combo:sub(i + 1, closing - 1))
+			i = closing + 1
+		else
+			local next_angle = combo:find('<', i + 1, true)
+			if not next_angle then
+				table.insert(tokens, combo:sub(i))
+				break
+			end
+			table.insert(tokens, combo:sub(i, next_angle - 1))
+			i = next_angle
+		end
+	end
+	return tokens
+end
+
+local function parse_combos(raw)
+	local combos = {}
+	if not raw then
+		return combos
+	end
+	raw = raw:gsub('^@as%s+', '')
+	for combo in raw:gmatch("'([^']*)'") do
+		table.insert(combos, combo)
+	end
+	return combos
+end
+
+local function format_combo(combo)
+	local tokens = split_combo(combo)
+	if #tokens == 0 then
+		return combo
+	end
+	local parts = {}
+	for _, tok in ipairs(tokens) do
+		table.insert(parts, format_token(tok))
+	end
+	return table.concat(parts, ' + ')
+end
+
+local function format_bindings(raw)
+	local combos = parse_combos(raw)
+	if #combos == 0 then
+		return '(unbound)'
+	end
+	local formatted = {}
+	for _, combo in ipairs(combos) do
+		table.insert(formatted, format_combo(combo))
+	end
+	local sep = ASCII_ONLY and ' or ' or ' [3mor[0m '
+	return table.concat(formatted, sep)
+end
+
+local function ulen(str)
+	local count = 0
+	for _ in str:gmatch('[^\128-\191]') do
+		count = count + 1
+	end
+	return count
+end
+
+local function main()
+	parse_args(arg)
+	local extension_dir = find_extension_dir()
+	if not extension_dir then
+		io.stderr:write('PaperWM extension directory not found.\n')
+		return 1
+	end
+	symbol_map.super = SUPER_SYMBOL
+	local schema_dir = extension_dir .. '/schemas'
+	local list_cmd = string.format('gsettings --schemadir %s list-keys %s', shell_quote(schema_dir), shell_quote(SCHEMA_ID))
+	local keys = collect_lines(list_cmd)
+	if #keys == 0 then
+		io.stderr:write('No keybindings found. Is PaperWM enabled?\n')
+		return 1
+	end
+	table.sort(keys)
+	local summaries = load_schema_summaries(schema_dir)
+	local values = get_all_bindings(schema_dir)
+	local rows = {}
+	local max_width = 0
+	for _, key in ipairs(keys) do
+		local summary = summaries[key] or key
+		local binding = format_bindings(values[key])
+		table.insert(rows, { summary = summary, key = key, binding = binding })
+		local width = ulen(summary)
+		if width > max_width then
+			max_width = width
+		end
+	end
+	for _, row in ipairs(rows) do
+		local padding = max_width - ulen(row.summary)
+		io.write(row.summary)
+		if padding > 0 then
+			io.write(string.rep(' ', padding))
+		end
+		io.write('  ' .. row.binding .. '  [' .. row.key .. ']\n')
+	end
+	return 0
+end
+
+os.exit(main())

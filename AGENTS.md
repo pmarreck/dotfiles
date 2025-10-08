@@ -73,6 +73,11 @@ All scripts in `bin/` should support at minimum:
 - **`-h`** or **`--help`**: Show usage information
 - **`--test`**: Run associated tests (if available)
 
+### Language Restrictions
+
+- **No Python**: Do not create, modify, or depend on Python scripts or tooling. Prefer Bash or POSIX shell, Lua-family (LuaJIT/MoonScript/Yuescript), or other approved runtimes instead.
+- **No Perl**: Do not create, modify, or depend on Perl scripts or tooling either. I know it's fast, but it's also a mess.
+
 Shebangs should be `#!/usr/bin/env <language executable>`.
 
 Optionally:
