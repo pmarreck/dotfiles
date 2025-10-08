@@ -199,12 +199,18 @@ alias rm='rm-safe'
 needs timeout 2>/dev/null || needs uutils-timeout "please install uutils-coreutils" && alias timeout='uutils-timeout'
 # hacker news TUI
 alias hn='clx --nerdfonts --no-less-verify --comment-width 120'
+
+# others
 alias variables='compgen -v'
 alias hi="echo \"Hello, ${USER}!\""
+# letter count
 alias lc='wc -l'
+
 alias newterm='wezterm start --always-new-process &'
 alias upgrade_codex='npm install -g --prefix "$HOME/.local" @openai/codex@latest'
 alias update_codex=upgrade_codex
 alias upgrade_claude='npm install -g --prefix "$HOME/.local" @anthropic-ai/claude-code'
 alias update_claude=upgrade_claude
 alias sessions='tmux list-sessions'
+# change the window/pane title; use like `title "My Title"`
+alias title="printf '\033]2;%s\007'"

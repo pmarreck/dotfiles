@@ -1,0 +1,28 @@
+From sysexits.h (BSD/Sendmail heritage, not POSIX-mandatory)
+This header defines more human-readable exit codes (values 64–78). Some highlights:
+
+64 (EX_USAGE) → Command line usage error.
+
+65 (EX_DATAERR) → Input data was invalid.
+
+66 (EX_NOINPUT) → Missing input file.
+
+67 (EX_NOUSER) → Addressee unknown.
+
+68 (EX_NOHOST) → Host unknown.
+
+69 (EX_UNAVAILABLE) → Service unavailable.
+
+70 (EX_SOFTWARE) → Internal software error.
+
+71 (EX_OSERR) → System error (e.g. fork failure).
+
+72 (EX_OSFILE) → Critical OS file missing.
+
+73 (EX_CANTCREAT) → Can’t create output file.
+
+74 (EX_IOERR) → I/O error.
+
+75 (EX_TEMPFAIL) → Temporary failure, try again.
+
+78 (EX_CONFIG) → Configuration error.
