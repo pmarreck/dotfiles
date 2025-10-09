@@ -1,0 +1,120 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+usage() {
+	cat <<'EOF'
+Usage: sizes [OPTIONS] PATH...
+
+Report apparent (logical) and disk (physical) sizes for each specified path.
+
+Options:
+  -h, --help     Show this help message and exit
+      --about    Show a short description and exit
+      --test     Run the sizes test suite (stdout suppressed)
+EOF
+}
+
+about() {
+	echo "sizes - show logical vs physical sizes for paths"
+}
+
+run_tests() {
+	local script_dir test_script
+	script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+	test_script="$script_dir/test/sizes_test"
+	if [[ ! -x "$test_script" ]]; then
+		echo "sizes: test script not found at $test_script" >&2
+		return 1
+	fi
+	"$test_script" >/dev/null
+}
+
+normalize_size() {
+	local value="$1"
+	if [[ "$value" =~ ^[0-9]+$ ]]; then
+		printf '%sB' "$value"
+	else
+		printf '%s' "$value"
+	fi
+}
+
+trim_directory_path() {
+	local path="$1"
+	if [[ "$path" == "/" ]]; then
+		echo "/"
+		return
+	fi
+	echo "${path%/}"
+}
+
+process_path() {
+	local path="$1"
+	if [[ ! -e "$path" ]]; then
+		echo "sizes: $path: No such file or directory" >&2
+		return 1
+	fi
+
+	local display_path logical_size physical_size stripped
+	if [[ -d "$path" ]]; then
+		stripped=$(trim_directory_path "$path")
+		display_path="${stripped}/"
+	else
+		display_path="$path"
+	fi
+
+	logical_size=$(du -sh --apparent-size -- "$path" | awk '{print $1}')
+	physical_size=$(du -sh -- "$path" | awk '{print $1}')
+
+	logical_size=$(normalize_size "$logical_size")
+	physical_size=$(normalize_size "$physical_size")
+
+	printf '%s\t%s -> %s\n' "$display_path" "$logical_size" "$physical_size"
+	return 0
+}
+
+main() {
+	local -a paths=()
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+			-h|--help)
+				usage
+				return 0
+				;;
+			--about)
+				about
+				return 0
+				;;
+			--test)
+				run_tests
+				return $?
+				;;
+			-*)
+				echo "sizes: unknown option: $1" >&2
+				echo "Try 'sizes --help' for usage." >&2
+				return 1
+				;;
+			*)
+				paths+=("$1")
+				;;
+		esac
+		shift
+	done
+
+	if [[ ${#paths[@]} -eq 0 ]]; then
+		echo "sizes: no paths specified" >&2
+		echo "Try 'sizes --help' for usage." >&2
+		return 1
+	fi
+
+	local exit_code=0
+	for path in "${paths[@]}"; do
+		if ! process_path "$path"; then
+			exit_code=1
+		fi
+	done
+
+	return "$exit_code"
+}
+
+main "$@"

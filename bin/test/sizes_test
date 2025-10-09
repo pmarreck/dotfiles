@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+
+PATH="$HOME/bin:$PATH"
+
+fails=0
+tests=0
+
+tmpdir=$(mktemp -d)
+cleanup() {
+	rm -rf "$tmpdir"
+}
+trap cleanup EXIT
+
+normalize_size() {
+	local value="$1"
+	if [[ "$value" =~ ^[0-9]+$ ]]; then
+		echo "${value}B"
+	else
+		echo "$value"
+	fi
+}
+
+file="$tmpdir/sample.bin"
+head -c 4096 </dev/zero >"$file"
+
+dir="$tmpdir/sample_dir"
+mkdir -p "$dir/nested"
+echo "hello world" >"$dir/nested/file.txt"
+
+((tests++))
+echo "Testing: sizes reports logical and physical sizes for files and directories..."
+output=$(sizes "$file" "$dir")
+exit_code=$?
+if [[ $exit_code -ne 0 ]]; then
+	echo "✗ Test failed: sizes exited with code $exit_code" >&2
+	((fails++))
+else
+	mapfile -t lines <<<"$output"
+	if [[ ${#lines[@]} -ne 2 ]]; then
+		echo "✗ Test failed: expected 2 output lines, got ${#lines[@]}" >&2
+		printf 'Output:\n%s\n' "$output" >&2
+		((fails++))
+	else
+		expected_file_logical=$(normalize_size "$(du -sh --apparent-size "$file" | awk '{print $1}')")
+		expected_file_physical=$(normalize_size "$(du -sh "$file" | awk '{print $1}')")
+		expected_dir_logical=$(normalize_size "$(du -sh --apparent-size "$dir" | awk '{print $1}')")
+		expected_dir_physical=$(normalize_size "$(du -sh "$dir" | awk '{print $1}')")
+
+		expected_file_line="$file"$'\t'"$expected_file_logical -> $expected_file_physical"
+		expected_dir_line="$dir/"$'\t'"$expected_dir_logical -> $expected_dir_physical"
+
+		if [[ "${lines[0]}" == "$expected_file_line" && "${lines[1]}" == "$expected_dir_line" ]]; then
+			echo "✓ Test passed: sizes output matched expected values"
+		else
+			echo "✗ Test failed: sizes output did not match expected values" >&2
+			echo "  Expected file line: $expected_file_line" >&2
+			echo "  Actual file line:   ${lines[0]}" >&2
+			echo "  Expected dir line:  $expected_dir_line" >&2
+			echo "  Actual dir line:    ${lines[1]}" >&2
+			((fails++))
+		fi
+	fi
+fi
+
+((tests++))
+echo "Testing: sizes preserves relative paths and omits trailing slash for files..."
+pushd "$tmpdir" >/dev/null || exit 1
+rel_output=$(sizes "sample.bin")
+popd >/dev/null || exit 1
+expected_rel_logical=$(normalize_size "$(du -sh --apparent-size "$file" | awk '{print $1}')")
+expected_rel_physical=$(normalize_size "$(du -sh "$file" | awk '{print $1}')")
+expected_rel_line="sample.bin"$'\t'"$expected_rel_logical -> $expected_rel_physical"
+if [[ "$rel_output" == "$expected_rel_line" ]]; then
+	echo "✓ Test passed: relative path output matched expected values"
+else
+	echo "✗ Test failed: relative path output did not match expected values" >&2
+	echo "  Expected: $expected_rel_line" >&2
+	echo "  Actual:   $rel_output" >&2
+	((fails++))
+fi
+
+space_file="$tmpdir/file with spaces.txt"
+printf 'spaced content' >"$space_file"
+
+((tests++))
+echo "Testing: sizes handles file paths containing spaces..."
+space_output=$(sizes "$space_file")
+expected_space_logical=$(normalize_size "$(du -sh --apparent-size "$space_file" | awk '{print $1}')")
+expected_space_physical=$(normalize_size "$(du -sh "$space_file" | awk '{print $1}')")
+expected_space_line="$space_file"$'\t'"$expected_space_logical -> $expected_space_physical"
+if [[ "$space_output" == "$expected_space_line" ]]; then
+	echo "✓ Test passed: space-containing path output matched expected values"
+else
+	echo "✗ Test failed: path with spaces output mismatch" >&2
+	echo "  Expected: $expected_space_line" >&2
+	echo "  Actual:   $space_output" >&2
+	((fails++))
+fi
+
+echo "All $tests tests completed"
+if [[ $fails -ne 0 ]]; then
+	echo "$fails of $tests tests failed" >&2
+fi
+
+exit "$fails"
