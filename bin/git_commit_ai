@@ -33,7 +33,7 @@ git_commit_ai() {
 	temp_json=$(mktemp -t git_commit_ai.XXXXXX --tmpdir)
 	temp_json_out=$(mktemp -t git_commit_ai.XXXXXX --tmpdir)
 	system_prompt="You are a helpful coding AI assistant. You always output plaintext without markdown."
-	user_prompt="Output only the git commit command for the following git diff. Do not include any markdown formatting, triple backticks, discussion, or description. Provide the command in plain text, exactly as it should be entered in a command-line interface. If multiple lines of commit messages are required, use separate '-m' arguments to git. If no diff data is present, just state 'No diff data'."
+	user_prompt="Output only the git commit command for the following git diff. Do not include any markdown formatting, triple backticks, discussion, or description. Do not include any 'git add' command; the user will do that if necessary. Provide the command in plain text, exactly as it should be entered in a command-line interface. If multiple lines of commit messages are required, use separate '-m' arguments to git. If no diff data is present, just state 'No diff data'."
 	trap 'rm -f "$temp_json" && rm -f "$temp_json_out"' EXIT # ensure temp file is cleaned up on exit
 
 	local_llm=false
