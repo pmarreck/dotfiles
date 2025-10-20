@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+
+test_datetimestamp() {
+	local fails=0
+	local tests=0
+
+	echo "Testing datetimestamp output stability..."
+
+	(( tests++ ))
+	echo "Ensuring single-line output and deterministic timestamp when TIME_SOURCE is provided..."
+
+	local fake_time_source
+	fake_time_source=$(mktemp)
+	cat >"$fake_time_source" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "19990101000000.000"
+EOF
+	chmod +x "$fake_time_source"
+
+	local output exit_code
+	output=$(TIME_SOURCE="$fake_time_source" datetimestamp 2>&1)
+	exit_code=$?
+
+	rm -f "$fake_time_source"
+
+	if [ "$exit_code" -eq 0 ] && [ "$output" = "19990101000000.000" ]; then
+		echo "✓ datetimestamp respects TIME_SOURCE override with single output line"
+	else
+		echo "✗ datetimestamp TIME_SOURCE override failed" >&2
+		echo "  exit code: $exit_code (expected 0)" >&2
+		echo "  output: '$output' (expected '19990101000000.000')" >&2
+		(( fails++ ))
+	fi
+
+	(( tests++ ))
+	echo "Checking --date handling produces expected timestamp..."
+
+	output=$(datetimestamp --date='@2147483640' 2>&1)
+	exit_code=$?
+
+	if [ "$exit_code" -eq 0 ] && [ "$output" = "20380118221400.000" ]; then
+		echo "✓ datetimestamp --date formats epoch properly with zero padding"
+	else
+		echo "✗ datetimestamp --date formatting failed" >&2
+		echo "  exit code: $exit_code (expected 0)" >&2
+		echo "  output: '$output' (expected '20380118221400.000')" >&2
+		(( fails++ ))
+	fi
+
+	(( tests++ ))
+	echo "Checking DATETIMESTAMPFORMAT overrides output layout..."
+
+	output=$(DATETIMESTAMPFORMAT='+%Y-%m-%d %H:%M:%S' datetimestamp --date='@2147483640' 2>&1)
+	exit_code=$?
+
+	if [ "$exit_code" -eq 0 ] && [ "$output" = "2038-01-18 22:14:00" ]; then
+		echo "✓ datetimestamp respects DATETIMESTAMPFORMAT with spaces"
+	else
+		echo "✗ datetimestamp format override failed" >&2
+		echo "  exit code: $exit_code (expected 0)" >&2
+		echo "  output: '$output' (expected '2038-01-18 22:14:00')" >&2
+		(( fails++ ))
+	fi
+
+	if [ "$fails" -gt 0 ]; then
+		echo "" >&2
+		echo "datetimestamp test FAILED: $fails of $tests tests failed" >&2
+		return "$fails"
+	else
+		echo ""
+		echo "datetimestamp test PASSED: All $tests tests passed"
+		return 0
+	fi
+}
+
+if ! (return 0 2>/dev/null); then
+	test_datetimestamp
+	exit $?
+fi
