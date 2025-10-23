@@ -3,13 +3,25 @@
 . "$(dirname "${0##\-}")/src/truthy.sh"
 
 debug() {
-  if [ $# = 0 ]; then
-    truthy DEBUG;
-  else
-    if truthy DEBUG; then
-      echo -e "\033[33mDEBUG: $*\033[0m" 1>&2;
-    fi;
-  fi
+	if [ $# -eq 0 ]; then
+		if [ -t 0 ]; then
+			truthy DEBUG
+			return $?
+		fi
+
+		if truthy DEBUG; then
+			while IFS= read -r line; do
+				printf '\033[33mDEBUG: %s\033[0m\n' "$line" >&2
+			done
+		else
+			cat >/dev/null
+		fi
+		return 0
+	fi
+
+	if truthy DEBUG; then
+		printf '\033[33mDEBUG: %s\033[0m\n' "$*" >&2
+	fi
 }
 
-debug $*
+debug "$@"

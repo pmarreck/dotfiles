@@ -247,9 +247,12 @@ ask() {
 	fi
 
 	# Add debugging for the request
-	debug "Making API request to: $openai_url"
-	debug "Using model: $model"
-	debug "Request payload: $(cat "$temp_json")"
+	if debug; then
+		debug "Making API request to: $openai_url"
+		debug "Using model: $model"
+		debug "Request payload:"
+		debug < "$temp_json"
+	fi
 
 	http_status=$($curl -w "%{http_code}" -s -o "$temp_json_out" -X POST $openai_url \
 		-H "Content-Type: application/json" \
@@ -258,8 +261,11 @@ ask() {
 		--max-time $timeout \
 		-d "@$temp_json")
 
-	debug "HTTP status: $http_status"
-	debug "Response: $(cat "$temp_json_out")"
+	if debug; then
+		debug "HTTP status: $http_status"
+		debug "Response:"
+		debug < "$temp_json_out"
+	fi
 
 	if [[ "$http_status" -ne 200 ]]; then
 		warn "Error: API request failed with status code $http_status."
@@ -274,17 +280,25 @@ ask() {
 
 	# Check if there is a tool call in the response (only if tooling-capable)
 	if [[ "$tooling_capable" == "true" ]]; then
-		debug "temp_json_out:"
-		debug "$(cat $temp_json_out)"
+		if debug; then
+			debug "temp_json_out:"
+			debug < "$temp_json_out"
+		fi
 		tool_calls=$(jq -r '.choices[0].message.tool_calls // empty' < "$temp_json_out")
-		debug "tool_calls (initial): $tool_calls"
+		if debug; then
+			debug "tool_calls (initial): $tool_calls"
+		fi
 		if [[ -n "$tool_calls" ]]; then
 			tool_results=""
 
 			# Collect all tool results
-			debug "raw tool_calls: $tool_calls"
+			if debug; then
+				debug "raw tool_calls: $tool_calls"
+			fi
 			tool_calls=$(echo "$tool_calls" | jq -c '.[]')
-			debug "tool_calls (parsed): $tool_calls"
+			if debug; then
+				debug "tool_calls (parsed): $tool_calls"
+			fi
 			for tool_call in $tool_calls; do
 				debug "tool_call: $tool_call"
 				tool_name=$(echo "$tool_call" | jq -r '.function.name')
@@ -376,7 +390,10 @@ ask() {
 			response=$(jq -r '.choices[0].message.content // .message.content' < "$temp_json_out" 2>/dev/null | $SED 's/^[ \t]*//;s/[ \t]*$//')
 		else
 			# No tool call, just process the response
-			debug "temp_json_out=$(cat $temp_json_out)"
+			if debug; then
+				debug "temp_json_out contents:"
+				debug < "$temp_json_out"
+			fi
 			# Attempt to parse JSON response with better error handling
 			if ! jq empty < "$temp_json_out" 2>/dev/null; then
 				warn "Error: Invalid JSON response from API"
@@ -389,7 +406,10 @@ ask() {
 		fi
 	else
 		# Non-tooling-capable LLM, just process the response directly
-		debug "temp_json_out=$(cat $temp_json_out)"
+		if debug; then
+			debug "temp_json_out contents:"
+			debug < "$temp_json_out"
+		fi
 		# Attempt to parse JSON response with better error handling
 		if ! jq empty < "$temp_json_out" 2>/dev/null; then
 			warn "Error: Invalid JSON response from API"
