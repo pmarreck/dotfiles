@@ -510,7 +510,16 @@ EOF
   assert "$output" == "$expected_output" "glob -0 -n should use space-separated output (last flag wins)"
   (( fails += $? ))
   rm -f "test with spaces.jpg" "other.txt"
-  
+
+  # Test 42: Recursive globbing should include directories (e.g. **/node_modules)
+  (( tests++ ))
+  mkdir -p project/node_modules lib/components/node_modules shared/plugins
+  output=$(glob "**/node_modules" 2>/dev/null)
+  expected_output=$'lib/components/node_modules\nproject/node_modules'
+  assert "$output" == "$expected_output" "glob should return directories when pattern matches them"
+  (( fails += $? ))
+  rm -rf project lib shared
+
   # Leave temp dir (mktemp -d creates a temporary directory that will be cleaned up by the system)
   popd >/dev/null
 

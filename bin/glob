@@ -461,7 +461,7 @@ EOF
 					if [[ -n "$exec_command" ]] && $nullglob_set; then
 						# First check if there are any matches using a quick find command
 						local test_pattern="${arg//\*\*/\*}"
-						local test_cmd="find . -path \"$test_pattern\" -type f -print -quit 2>/dev/null"
+						local test_cmd="find . -path \"$test_pattern\" -print -quit 2>/dev/null"
 						debug "Testing recursive pattern with nullglob: $test_cmd"
 
 						local test_result=$(eval "$test_cmd")
@@ -489,7 +489,7 @@ EOF
 					fi
 
 					# Add the pattern matching
-					find_cmd="$find_cmd -path \"$find_pattern\" -type f -print0"
+					find_cmd="$find_cmd -path \"$find_pattern\" -print0"
 
 					debug "Recursive find command: $find_cmd"
 

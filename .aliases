@@ -212,7 +212,10 @@ alias upgrade_codex='npm install -g --prefix "$HOME/.local" @openai/codex@latest
 alias update_codex=upgrade_codex
 alias upgrade_claude='npm install -g --prefix "$HOME/.local" @anthropic-ai/claude-code'
 alias update_claude=upgrade_claude
+alias upgrade_opencode='echo "NOTE: This type of install currently will not run on NixOS as of 2025-10-29; use nixpkgs"; npm install -g --prefix "$HOME/.local" opencode-ai@latest'
+alias update_opencode=upgrade_opencode
 alias sessions='tmux list-sessions'
 # change the window/pane title; use like `title "My Title"`
 alias title="printf '\033]2;%s\007'"
 alias home='cd $HOME'
+

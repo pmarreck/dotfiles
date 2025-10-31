@@ -160,6 +160,104 @@ test_function "persist default array via multiple --default tokens" \
 
 rm -rf "$tmpdir"
 
+test_function "depth flag persists and applies" \
+	"(\
+		tmpdir=\$(mktemp -d) && \
+		trap 'rm -rf \"\$tmpdir\"' EXIT && \
+		mkdir -p \"\$tmpdir/project/deep/sub\" && \
+		cd \"\$tmpdir/project\" && \
+		dirtree -d 1 >/dev/null && \
+		grep -q '^depth=1$' .dirtree-state && \
+		if dirtree | grep -q 'sub'; then \
+			echo BAD; \
+		else \
+			echo OK; \
+		fi \
+	)" \
+	"OK"
+
+test_function "sort flags persist and apply" \
+	"(\
+		tmpdir=\$(mktemp -d) && \
+		trap 'rm -rf \"\$tmpdir\"' EXIT && \
+		cd \"\$tmpdir\" && \
+		touch apple && sleep 1 && touch banana && \
+		dirtree --sort alpha --asc >/dev/null && \
+		grep -q '^sort=alpha$' .dirtree-state && \
+		grep -q '^sort_direction=asc$' .dirtree-state && \
+		first_line=\$(dirtree | head -n1) && \
+		if [[ \"\$first_line\" == *apple* ]]; then \
+			echo OK; \
+		else \
+			echo BAD; \
+		fi \
+	)" \
+	"OK"
+
+test_function "inherits parent .dirtree-state closing rules" \
+	"(\
+		root=\$(mktemp -d) && \
+		trap 'rm -rf \"\$root\"' EXIT && \
+		mkdir -p \"\$root/parent/child/.git/objects\" && \
+			cat <<'STATE' > \"\$root/.dirtree-state\"
+ver=1.1
+close=[
+	/.git$/
+]
+STATE
+		cd \"\$root/parent/child\" && \
+		if dirtree | grep -Fq '.git/*'; then \
+			echo OK; \
+		else \
+			echo BAD; \
+		fi \
+	)" \
+	"OK"
+
+test_function "no implicit state file creation" \
+	"(\
+		tmpdir=\$(mktemp -d) && \
+		trap 'rm -rf \"\$tmpdir\"' EXIT && \
+		cd \"\$tmpdir\" && \
+		dirtree >/dev/null && \
+		if [[ -e .dirtree-state ]]; then \
+			echo BAD; \
+		else \
+			echo OK; \
+		fi \
+	)" \
+	"OK"
+
+test_function "close glob applies to nested matches" \
+	"(\
+		tmpdir=\$(mktemp -d) && \
+		trap 'rm -rf "\$tmpdir"' EXIT && \
+		mkdir -p "\$tmpdir/proj/node_modules/lib" \
+			"\$tmpdir/proj/packages/pkg1/node_modules/deps" \
+			"\$tmpdir/proj/packages/pkg2/component" && \
+		cd "\$tmpdir/proj" && \
+		dirtree --close '**/node_modules' >/dev/null && \
+		close_block=\$(awk '/^close=\[/{flag=1;next} flag && /^]/{flag=0} flag {print}' .dirtree-state) && \
+		printf '%s\n' "\$close_block" | grep -Fq 'node_modules' && \
+		tmpf=\$(mktemp) && \
+		tmpf_err=\$(mktemp) && \
+		dirtree >"\$tmpf" 2>"\$tmpf_err" && \
+		if strip_ansi <"\$tmpf" | grep -F 'node_modules/*' | sed -n '2p' >/dev/null && \
+			! strip_ansi <"\$tmpf" | grep -Fq 'deps/'; then \
+			echo OK; \
+		else \
+			echo BAD; \
+		fi && \
+		rm -f "\$tmpf" "\$tmpf_err" \
+	)" \
+	"OK"
+
+
+
+
+
+
+
 # Decorated mode should honor persisted default=closed
 tmpdir=$(mktemp -d)
 basedir="$tmpdir/closed"

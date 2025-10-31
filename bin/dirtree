@@ -49,6 +49,12 @@ default_visibility_set=false
 default_conflict=""
 cli_default_state=""
 cli_default_visibility=""
+cli_depth_override=false
+cli_depth_value=""
+cli_sort_mode_override=false
+cli_sort_mode_value=""
+cli_sort_direction_override=false
+cli_sort_direction_value=""
 # smarts: reveal SCM changes unless explicitly disabled
 priority_enabled=false
 declare -A priority_files
@@ -73,6 +79,43 @@ STATE_VERSION_LABEL="ver=1.1"
 state_version=""
 state_needs_migration=false
 declare -a state_passthrough_lines=()
+persisted_depth=""
+persisted_depth_set=false
+persisted_sort_mode=""
+persisted_sort_mode_set=false
+persisted_sort_direction=""
+persisted_sort_direction_set=false
+inherited_default_state=""
+inherited_default_state_set=false
+inherited_default_visibility="shown"
+inherited_default_visibility_set=false
+inherited_depth=""
+inherited_depth_set=false
+inherited_sort_mode=""
+inherited_sort_mode_set=false
+inherited_sort_direction=""
+inherited_sort_direction_set=false
+declare -A inherited_open_literals
+declare -A inherited_close_literals
+declare -A inherited_show_literals
+declare -A inherited_hide_literals
+declare -A inherited_open_regex_map
+declare -A inherited_close_regex_map
+declare -A inherited_show_regex_map
+declare -A inherited_hide_regex_map
+declare -A effective_open_literals
+declare -A effective_close_literals
+declare -A effective_show_literals
+declare -A effective_hide_literals
+declare -a effective_open_regexes
+declare -a effective_close_regexes
+declare -a effective_show_regexes
+declare -a effective_hide_regexes
+effective_default_state=""
+effective_default_visibility="shown"
+effective_depth=""
+effective_sort_mode=""
+effective_sort_direction=""
 
 # Normalize path to a relative, trimmed form
 normalize_rel() {
@@ -130,9 +173,118 @@ hidden_count_log=""
 
 note_hidden() {
 	local kind="$1"
+	local rel="$2"
+	if [[ -n "$rel" ]]; then
+		case "$rel" in
+			*.dirtree-state|.dirtree-state)
+				return
+				;;
+		esac
+	fi
 	[[ "$show_hidden" == true ]] && return
 	[[ -z "$hidden_count_log" ]] && return
 	printf '%s\n' "$kind" >>"$hidden_count_log"
+}
+
+is_glob_pattern() {
+	local token="$1"
+	case "$token" in
+		re:*|RE:*) return 1 ;;
+	esac
+	case "$token" in
+		*\\*) return 1 ;;
+	esac
+	case "$token" in
+		*\**|*\?*|*\[*)
+			return 0
+			;;
+	esac
+	return 1
+}
+
+glob_to_regex() {
+	local glob="$1"
+	local regex="^"
+	local len=${#glob}
+	local i=0
+	while (( i < len )); do
+		local c=${glob:i:1}
+		case "$c" in
+			'*')
+				if (( i+1 < len )) && [[ ${glob:i+1:1} == "*" ]]; then
+					if (( i+2 < len )) && [[ ${glob:i+2:1} == "/" ]]; then
+						regex+="(.*/)?"
+						((i+=3))
+					else
+						regex+=".*"
+						((i+=2))
+					fi
+					continue
+				else
+					regex+="[^/]*"
+				fi
+				;;
+			'?')
+				regex+="[^/]"
+				;;
+			'[')
+				local j=$((i+1))
+				local class="["
+				if (( j < len )); then
+					local first=${glob:j:1}
+					if [[ "$first" == "!" || "$first" == "^" ]]; then
+						class+="^"
+						((j++))
+					fi
+				fi
+				if (( j < len )) && [[ ${glob:j:1} == ']' ]]; then
+					class+="]"
+					((j++))
+				fi
+				local valid=0
+				while (( j < len )); do
+					local ch=${glob:j:1}
+					if [[ "$ch" == "]" ]]; then
+						valid=1
+						((j++))
+						break
+					fi
+					case "$ch" in
+						'\'|'-'|'['|']'|'^')
+							class+="\\$ch"
+							;;
+						*)
+							class+="$ch"
+							;;
+					esac
+					((j++))
+				done
+				if (( valid == 0 )); then
+					regex+="\\["
+					((i++))
+					continue
+				fi
+				class+="]"
+				regex+="$class"
+				i=$j
+				continue
+				;;
+			*)
+				case "$c" in
+					'.'|'+'|'?'|'^'|'$'|'('|')'|'{'|'}'|'|'|'\\')
+						regex+="\\$c"
+						;;
+					*)
+						regex+="$c"
+						;;
+				esac
+				;;
+		esac
+		((i++))
+		continue
+	done
+	regex+="$"
+	printf '%s' "$regex"
 }
 
 clear_priority_maps() {
@@ -230,8 +382,12 @@ collect_priority_paths() {
 		return
 	fi
 	if command -v jj >/dev/null 2>&1; then
-		local repo_root
-		repo_root=$(jj -R "$base" root 2>/dev/null) || repo_root=""
+		local repo_root=""
+		if [[ -d "$base/.jj" && ! -f "$base/.jj/repo/store/type" ]]; then
+			repo_root=""
+		else
+			repo_root=$(jj -R "$base" root 2>/dev/null) || repo_root=""
+		fi
 		if [[ -n "$repo_root" ]]; then
 			while IFS= read -r path; do
 				[[ -z "$path" ]] && continue
@@ -606,6 +762,12 @@ read_state() {
 	state_version="ver=1.0"
 	state_needs_migration=false
 	state_passthrough_lines=()
+	persisted_depth=""
+	persisted_depth_set=false
+	persisted_sort_mode=""
+	persisted_sort_mode_set=false
+	persisted_sort_direction=""
+	persisted_sort_direction_set=false
 	[[ ! -f "$state_file" ]] && return
 
 	local -a __state_lines=()
@@ -819,6 +981,39 @@ read_state() {
 						done
 					fi
 					;;
+				depth)
+					value=$(strip_trailing_space_tabs "$(strip_leading_space_tabs "$value")")
+					if [[ "$value" =~ ^[0-9]+$ ]]; then
+						persisted_depth="$value"
+						persisted_depth_set=true
+					else
+						state_passthrough_lines+=("$raw")
+					fi
+					;;
+				sort)
+					value=$(strip_trailing_space_tabs "$(strip_leading_space_tabs "$value")")
+					case "$value" in
+						alpha|modified)
+							persisted_sort_mode="$value"
+							persisted_sort_mode_set=true
+							;;
+						*)
+							state_passthrough_lines+=("$raw")
+							;;
+					esac
+					;;
+				sort_direction)
+					value=$(strip_trailing_space_tabs "$(strip_leading_space_tabs "$value")")
+					case "$value" in
+						asc|desc)
+							persisted_sort_direction="$value"
+							persisted_sort_direction_set=true
+							;;
+						*)
+							state_passthrough_lines+=("$raw")
+							;;
+					esac
+					;;
 				open|close|show|hide)
 					value=$(strip_trailing_space_tabs "$(strip_leading_space_tabs "$value")")
 					if [[ "$compact" == "[" ]]; then
@@ -861,6 +1056,286 @@ read_state() {
 	fi
 }
 
+reset_inherited_state() {
+	inherited_default_state=""
+	inherited_default_state_set=false
+	inherited_default_visibility="shown"
+	inherited_default_visibility_set=false
+	inherited_depth=""
+	inherited_depth_set=false
+	inherited_sort_mode=""
+	inherited_sort_mode_set=false
+	inherited_sort_direction=""
+	inherited_sort_direction_set=false
+	inherited_open_literals=()
+	inherited_close_literals=()
+	inherited_show_literals=()
+	inherited_hide_literals=()
+	inherited_open_regex_map=()
+	inherited_close_regex_map=()
+	inherited_show_regex_map=()
+	inherited_hide_regex_map=()
+}
+
+merge_inherited_from_current() {
+	if [[ "$default_state_set" == true && -n "$default_state" ]]; then
+		inherited_default_state="$default_state"
+		inherited_default_state_set=true
+	fi
+	if [[ "$default_visibility_set" == true && -n "$default_visibility" ]]; then
+		inherited_default_visibility="$default_visibility"
+		inherited_default_visibility_set=true
+	fi
+	if [[ "$persisted_depth_set" == true && -n "$persisted_depth" ]]; then
+		inherited_depth="$persisted_depth"
+		inherited_depth_set=true
+	fi
+	if [[ "$persisted_sort_mode_set" == true && -n "$persisted_sort_mode" ]]; then
+		inherited_sort_mode="$persisted_sort_mode"
+		inherited_sort_mode_set=true
+	fi
+	if [[ "$persisted_sort_direction_set" == true && -n "$persisted_sort_direction" ]]; then
+		inherited_sort_direction="$persisted_sort_direction"
+		inherited_sort_direction_set=true
+	fi
+
+	local key
+	for key in "${!open_literals[@]}"; do
+		inherited_open_literals["$key"]=1
+		unset 'inherited_close_literals[$key]'
+	done
+	for key in "${!close_literals[@]}"; do
+		inherited_close_literals["$key"]=1
+		unset 'inherited_open_literals[$key]'
+	done
+	for key in "${!show_literals[@]}"; do
+		inherited_show_literals["$key"]=1
+		unset 'inherited_hide_literals[$key]'
+	done
+	for key in "${!hide_literals[@]}"; do
+		inherited_hide_literals["$key"]=1
+		unset 'inherited_show_literals[$key]'
+	done
+
+	local pattern
+	for pattern in "${open_regexes[@]}"; do
+		[[ -z "$pattern" ]] && continue
+		inherited_open_regex_map["$pattern"]=1
+		unset 'inherited_close_regex_map[$pattern]'
+	done
+	for pattern in "${close_regexes[@]}"; do
+		[[ -z "$pattern" ]] && continue
+		inherited_close_regex_map["$pattern"]=1
+		unset 'inherited_open_regex_map[$pattern]'
+	done
+	for pattern in "${show_regexes[@]}"; do
+		[[ -z "$pattern" ]] && continue
+		inherited_show_regex_map["$pattern"]=1
+		unset 'inherited_hide_regex_map[$pattern]'
+	done
+	for pattern in "${hide_regexes[@]}"; do
+		[[ -z "$pattern" ]] && continue
+		inherited_hide_regex_map["$pattern"]=1
+		unset 'inherited_show_regex_map[$pattern]'
+	done
+}
+
+load_state_chain() {
+	local target="$1"
+	reset_inherited_state
+
+	local -a state_dirs=()
+	local cursor="$target"
+	while true; do
+		if [[ -f "$cursor/.dirtree-state" ]]; then
+			state_dirs+=("$cursor")
+		fi
+		[[ "$cursor" == "/" ]] && break
+		cursor=$(dirname "$cursor")
+	done
+
+	local idx
+	for (( idx=${#state_dirs[@]}-1; idx>=0; idx-- )); do
+		local state_dir="${state_dirs[$idx]}"
+		if [[ "$state_dir" == "$target" ]]; then
+			continue
+		fi
+		read_state "$state_dir"
+		merge_inherited_from_current
+	done
+
+	read_state "$target"
+}
+
+rebuild_effective_state() {
+	effective_open_literals=()
+	effective_close_literals=()
+	effective_show_literals=()
+	effective_hide_literals=()
+	effective_open_regexes=()
+	effective_close_regexes=()
+	effective_show_regexes=()
+	effective_hide_regexes=()
+
+	effective_default_state=""
+	if [[ "$default_state_set" == true && -n "$default_state" ]]; then
+		effective_default_state="$default_state"
+	elif [[ "$inherited_default_state_set" == true ]]; then
+		effective_default_state="$inherited_default_state"
+	fi
+
+	effective_default_visibility="shown"
+	if [[ "$default_visibility_set" == true && -n "$default_visibility" ]]; then
+		effective_default_visibility="$default_visibility"
+	elif [[ "$inherited_default_visibility_set" == true ]]; then
+		effective_default_visibility="$inherited_default_visibility"
+	fi
+
+	effective_depth=""
+	if [[ "$persisted_depth_set" == true && -n "$persisted_depth" ]]; then
+		effective_depth="$persisted_depth"
+	elif [[ "$inherited_depth_set" == true ]]; then
+		effective_depth="$inherited_depth"
+	fi
+
+	effective_sort_mode=""
+	if [[ "$persisted_sort_mode_set" == true && -n "$persisted_sort_mode" ]]; then
+		effective_sort_mode="$persisted_sort_mode"
+	elif [[ "$inherited_sort_mode_set" == true ]]; then
+		effective_sort_mode="$inherited_sort_mode"
+	fi
+
+	effective_sort_direction=""
+	if [[ "$persisted_sort_direction_set" == true && -n "$persisted_sort_direction" ]]; then
+		effective_sort_direction="$persisted_sort_direction"
+	elif [[ "$inherited_sort_direction_set" == true ]]; then
+		effective_sort_direction="$inherited_sort_direction"
+	fi
+
+	local key
+	for key in "${!inherited_open_literals[@]}"; do
+		effective_open_literals["$key"]=1
+	done
+	for key in "${!inherited_close_literals[@]}"; do
+		effective_close_literals["$key"]=1
+	done
+	for key in "${!inherited_show_literals[@]}"; do
+		effective_show_literals["$key"]=1
+	done
+	for key in "${!inherited_hide_literals[@]}"; do
+		effective_hide_literals["$key"]=1
+	done
+
+for key in "${!close_literals[@]}"; do
+	unset 'effective_open_literals[$key]'
+done
+for key in "${!open_literals[@]}"; do
+	unset 'effective_close_literals[$key]'
+done
+for key in "${!hide_literals[@]}"; do
+	unset 'effective_show_literals[$key]'
+done
+for key in "${!show_literals[@]}"; do
+	unset 'effective_hide_literals[$key]'
+done
+
+for key in "${!open_literals[@]}"; do
+	effective_open_literals["$key"]=1
+done
+for key in "${!close_literals[@]}"; do
+	effective_close_literals["$key"]=1
+done
+for key in "${!show_literals[@]}"; do
+	effective_show_literals["$key"]=1
+done
+for key in "${!hide_literals[@]}"; do
+	effective_hide_literals["$key"]=1
+done
+
+	local -A open_map=()
+	local -A close_map=()
+	local -A show_map=()
+	local -A hide_map=()
+
+	for key in "${!inherited_open_regex_map[@]}"; do
+		open_map["$key"]=1
+	done
+	for key in "${!inherited_close_regex_map[@]}"; do
+		close_map["$key"]=1
+	done
+	for key in "${!inherited_show_regex_map[@]}"; do
+		show_map["$key"]=1
+	done
+	for key in "${!inherited_hide_regex_map[@]}"; do
+		hide_map["$key"]=1
+	done
+
+	local pattern
+for pattern in "${close_regexes[@]}"; do
+	[[ -z "$pattern" ]] && continue
+	unset 'open_map[$pattern]'
+done
+for pattern in "${open_regexes[@]}"; do
+	[[ -z "$pattern" ]] && continue
+	unset 'close_map[$pattern]'
+done
+for pattern in "${hide_regexes[@]}"; do
+	[[ -z "$pattern" ]] && continue
+	unset 'show_map[$pattern]'
+done
+for pattern in "${show_regexes[@]}"; do
+	[[ -z "$pattern" ]] && continue
+	unset 'hide_map[$pattern]'
+done
+
+for pattern in "${open_regexes[@]}"; do
+	[[ -z "$pattern" ]] && continue
+	open_map["$pattern"]=1
+done
+for pattern in "${close_regexes[@]}"; do
+	[[ -z "$pattern" ]] && continue
+	close_map["$pattern"]=1
+done
+for pattern in "${show_regexes[@]}"; do
+	[[ -z "$pattern" ]] && continue
+	show_map["$pattern"]=1
+done
+for pattern in "${hide_regexes[@]}"; do
+	[[ -z "$pattern" ]] && continue
+	hide_map["$pattern"]=1
+done
+
+local state_file_name=".dirtree-state"
+local show_state_visible=false
+if [[ -n "${effective_show_literals[$state_file_name]:-}" ]]; then
+	show_state_visible=true
+else
+	for pattern in "${!show_map[@]}"; do
+		[[ -z "$pattern" ]] && continue
+		if regex_token_matches "$pattern" "$state_file_name"; then
+			show_state_visible=true
+			break
+		fi
+	done
+fi
+if [[ "$show_state_visible" != true ]]; then
+	hide_map["^\\.dirtree-state$"]=1
+fi
+
+if (( ${#open_map[@]} > 0 )); then
+	mapfile -t effective_open_regexes < <(printf '%s\n' "${!open_map[@]}" | sort)
+fi
+	if (( ${#close_map[@]} > 0 )); then
+		mapfile -t effective_close_regexes < <(printf '%s\n' "${!close_map[@]}" | sort)
+	fi
+	if (( ${#show_map[@]} > 0 )); then
+		mapfile -t effective_show_regexes < <(printf '%s\n' "${!show_map[@]}" | sort)
+	fi
+	if (( ${#hide_map[@]} > 0 )); then
+		mapfile -t effective_hide_regexes < <(printf '%s\n' "${!hide_map[@]}" | sort)
+	fi
+}
+
 persist_state() {
 	local target_dir="$1"; shift
 	local state_file="$target_dir/.dirtree-state"
@@ -889,6 +1364,24 @@ persist_state() {
 				printf '\t%s\n' "$entry"
 			done
 			echo "]"
+			wrote_block=true
+		fi
+
+		local -a scalar_lines=()
+		if [[ "$persisted_depth_set" == true && -n "$persisted_depth" ]]; then
+			scalar_lines+=("depth=$persisted_depth")
+		fi
+		if [[ "$persisted_sort_mode_set" == true && -n "$persisted_sort_mode" ]]; then
+			scalar_lines+=("sort=$persisted_sort_mode")
+		fi
+		if [[ "$persisted_sort_direction_set" == true && -n "$persisted_sort_direction" ]]; then
+			scalar_lines+=("sort_direction=$persisted_sort_direction")
+		fi
+		if (( ${#scalar_lines[@]} > 0 )); then
+			if [[ "$wrote_block" == true ]]; then
+				echo
+			fi
+			printf '%s\n' "${scalar_lines[@]}"
 			wrote_block=true
 		fi
 
@@ -1040,11 +1533,11 @@ path_state() {
 	hide_match_type="none"
 	hide_match_pattern=""
 
-	if [[ -n "$rel" && -n "${open_literals[$rel]:-}" ]]; then
+	if [[ -n "$rel" && -n "${effective_open_literals[$rel]:-}" ]]; then
 		open_match_type="literal"
 		open_match_pattern="$rel"
 	else
-		for pattern in "${open_regexes[@]}"; do
+		for pattern in "${effective_open_regexes[@]}"; do
 			[[ -z "$pattern" ]] && continue
 			if regex_token_matches "$pattern" "$rel"; then
 				open_match_type="regex"
@@ -1054,11 +1547,11 @@ path_state() {
 		done
 	fi
 
-	if [[ -n "$rel" && -n "${close_literals[$rel]:-}" ]]; then
+	if [[ -n "$rel" && -n "${effective_close_literals[$rel]:-}" ]]; then
 		close_match_type="literal"
 		close_match_pattern="$rel"
 	else
-		for pattern in "${close_regexes[@]}"; do
+		for pattern in "${effective_close_regexes[@]}"; do
 			[[ -z "$pattern" ]] && continue
 			if regex_token_matches "$pattern" "$rel"; then
 				close_match_type="regex"
@@ -1068,11 +1561,11 @@ path_state() {
 		done
 	fi
 
-	if [[ -n "$rel" && -n "${show_literals[$rel]:-}" ]]; then
+	if [[ -n "$rel" && -n "${effective_show_literals[$rel]:-}" ]]; then
 		show_match_type="literal"
 		show_match_pattern="$rel"
 	else
-		for pattern in "${show_regexes[@]}"; do
+		for pattern in "${effective_show_regexes[@]}"; do
 			[[ -z "$pattern" ]] && continue
 			if regex_token_matches "$pattern" "$rel"; then
 				show_match_type="regex"
@@ -1082,11 +1575,11 @@ path_state() {
 		done
 	fi
 
-	if [[ -n "$rel" && -n "${hide_literals[$rel]:-}" ]]; then
+	if [[ -n "$rel" && -n "${effective_hide_literals[$rel]:-}" ]]; then
 		hide_match_type="literal"
 		hide_match_pattern="$rel"
 	else
-		for pattern in "${hide_regexes[@]}"; do
+		for pattern in "${effective_hide_regexes[@]}"; do
 			[[ -z "$pattern" ]] && continue
 			if regex_token_matches "$pattern" "$rel"; then
 				hide_match_type="regex"
@@ -1162,7 +1655,7 @@ evaluate_path() {
 		path_closed=1
 	elif [[ "$open_type" != "none" ]]; then
 		path_closed=0
-	elif [[ "$default_state" == "closed" ]]; then
+	elif [[ "$effective_default_state" == "closed" ]]; then
 		path_closed=1
 	else
 		path_closed=0
@@ -1217,7 +1710,7 @@ print_simple_tree() {
 		if [[ -d "$child_abs" ]]; then
 			evaluate_path "$child_rel" "$parent_closed"
 			if [[ $path_hidden -eq 1 ]]; then
-				note_hidden dir
+				note_hidden dir "$child_rel"
 				continue
 			fi
 			local marker="/"
@@ -1232,7 +1725,7 @@ print_simple_tree() {
 		else
 			evaluate_path "$child_rel" "$parent_closed"
 			if [[ $path_hidden -eq 1 ]]; then
-				note_hidden file
+				note_hidden file "$child_rel"
 				continue
 			fi
 			echo "${prefix}${connector}${name}"
@@ -1323,14 +1816,14 @@ render_dir() {
 		if [[ -n "$child_rel" && "$child_rel" != "." && "$child_rel" != ".." ]]; then
 			evaluate_path "$child_rel" "$parent_closed"
 			cached_closed[$idx]=$path_closed
-			if [[ $path_hidden -eq 1 ]]; then
-				if [[ "${isdirs[$idx]}" -eq 1 ]]; then
-					note_hidden dir
-				else
-					note_hidden file
-				fi
-				continue
+		if [[ $path_hidden -eq 1 ]]; then
+			if [[ "${isdirs[$idx]}" -eq 1 ]]; then
+				note_hidden dir "$child_rel"
+			else
+				note_hidden file "$child_rel"
 			fi
+			continue
+		fi
 		else
 			cached_closed[$idx]=0
 		fi
@@ -1392,6 +1885,8 @@ while [[ $# -gt 0 ]]; do
 			shift
 			if [[ -n "$1" && "$1" =~ ^[0-9]+$ ]]; then
 				depth="$1"
+				cli_depth_override=true
+				cli_depth_value="$1"
 			else
 				echo "Error: --depth requires a numeric argument" >&2
 				exit 1
@@ -1468,15 +1963,23 @@ while [[ $# -gt 0 ]]; do
 			--sort)
 				shift
 				case "$1" in
-					alpha|modified) sort_mode="$1" ;;
+					alpha|modified)
+						sort_mode="$1"
+						cli_sort_mode_override=true
+						cli_sort_mode_value="$1"
+						;;
 					*) echo "Error: --sort requires 'modified' or 'alpha'" >&2; exit 1 ;;
 				esac
 				;;
 			--asc)
 				sort_reverse=0
+				cli_sort_direction_override=true
+				cli_sort_direction_value="asc"
 				;;
 			--desc)
 				sort_reverse=1
+				cli_sort_direction_override=true
+				cli_sort_direction_value="desc"
 				;;
 			--show-hidden)
 				show_hidden=true
@@ -1495,22 +1998,27 @@ while [[ $# -gt 0 ]]; do
 					echo "Error: --open requires at least one directory" >&2
 					exit 1
 				fi
-		for entry in "${collected[@]}"; do
-			pattern_val=""
-			parse_wrapped_regex_token "$entry" pattern_val
-			case $? in
-				0)
-					open_regex_args+=("$pattern_val")
-					;;
-				2)
-					echo "Error: --open regex pattern must not be empty" >&2
-					exit 1
-					;;
-				*)
-					open_args+=("$entry")
-					;;
-			esac
-			done
+				for entry in "${collected[@]}"; do
+					pattern_val=""
+					parse_wrapped_regex_token "$entry" pattern_val
+					case $? in
+						0)
+							open_regex_args+=("$pattern_val")
+							;;
+						2)
+							echo "Error: --open regex pattern must not be empty" >&2
+							exit 1
+							;;
+						*)
+							if is_glob_pattern "$entry"; then
+								regex_value=$(glob_to_regex "$entry")
+								open_regex_args+=("$regex_value")
+							else
+								open_args+=("$entry")
+							fi
+							;;
+					esac
+				done
 				state_modified=true
 				unset collected
 				continue
@@ -1529,22 +2037,27 @@ while [[ $# -gt 0 ]]; do
 					echo "Error: --close requires at least one directory" >&2
 					exit 1
 				fi
-		for entry in "${collected[@]}"; do
-			pattern_val=""
-			parse_wrapped_regex_token "$entry" pattern_val
-			case $? in
-				0)
-					close_regex_args+=("$pattern_val")
-					;;
-				2)
-					echo "Error: --close regex pattern must not be empty" >&2
-					exit 1
-					;;
-				*)
-					close_args+=("$entry")
-					;;
-			esac
-			done
+				for entry in "${collected[@]}"; do
+					pattern_val=""
+					parse_wrapped_regex_token "$entry" pattern_val
+					case $? in
+						0)
+							close_regex_args+=("$pattern_val")
+							;;
+						2)
+							echo "Error: --close regex pattern must not be empty" >&2
+							exit 1
+							;;
+						*)
+							if is_glob_pattern "$entry"; then
+								regex_value=$(glob_to_regex "$entry")
+								close_regex_args+=("$regex_value")
+							else
+								close_args+=("$entry")
+							fi
+							;;
+					esac
+				done
 				state_modified=true
 				unset collected
 				continue
@@ -1563,26 +2076,31 @@ while [[ $# -gt 0 ]]; do
 					echo "Error: --show requires at least one path" >&2
 					exit 1
 				fi
-		for entry in "${collected[@]}"; do
-			pattern_val=""
-			parse_wrapped_regex_token "$entry" pattern_val
-			case $? in
-				0)
-					show_regex_args+=("$pattern_val")
-					;;
-				2)
-					echo "Error: --show regex pattern must not be empty" >&2
-					exit 1
-					;;
-				*)
-					if [[ "$entry" == /* ]]; then
-						echo "Error: --show paths must be relative (no leading '/'): $entry" >&2
-						exit 1
-					fi
-					show_args+=("$entry")
-					;;
-			esac
-			done
+				for entry in "${collected[@]}"; do
+					pattern_val=""
+					parse_wrapped_regex_token "$entry" pattern_val
+					case $? in
+						0)
+							show_regex_args+=("$pattern_val")
+							;;
+						2)
+							echo "Error: --show regex pattern must not be empty" >&2
+							exit 1
+							;;
+						*)
+							if [[ "$entry" == /* ]]; then
+								echo "Error: --show paths must be relative (no leading '/'): $entry" >&2
+								exit 1
+							fi
+							if is_glob_pattern "$entry"; then
+								regex_value=$(glob_to_regex "$entry")
+								show_regex_args+=("$regex_value")
+							else
+								show_args+=("$entry")
+							fi
+							;;
+					esac
+				done
 				state_modified=true
 				unset collected
 				continue
@@ -1601,26 +2119,31 @@ while [[ $# -gt 0 ]]; do
 					echo "Error: --hide requires at least one path" >&2
 					exit 1
 				fi
-		for entry in "${collected[@]}"; do
-			pattern_val=""
-			parse_wrapped_regex_token "$entry" pattern_val
-			case $? in
-				0)
-					hide_regex_args+=("$pattern_val")
-					;;
-				2)
-					echo "Error: --hide regex pattern must not be empty" >&2
-					exit 1
-					;;
-				*)
-					if [[ "$entry" == /* ]]; then
-						echo "Error: --hide paths must be relative (no leading '/'): $entry" >&2
-						exit 1
-					fi
-					hide_args+=("$entry")
-					;;
-			esac
-			done
+				for entry in "${collected[@]}"; do
+					pattern_val=""
+					parse_wrapped_regex_token "$entry" pattern_val
+					case $? in
+						0)
+							hide_regex_args+=("$pattern_val")
+							;;
+						2)
+							echo "Error: --hide regex pattern must not be empty" >&2
+							exit 1
+							;;
+						*)
+							if [[ "$entry" == /* ]]; then
+								echo "Error: --hide paths must be relative (no leading '/'): $entry" >&2
+								exit 1
+							fi
+							if is_glob_pattern "$entry"; then
+								regex_value=$(glob_to_regex "$entry")
+								hide_regex_args+=("$regex_value")
+							else
+								hide_args+=("$entry")
+							fi
+							;;
+					esac
+				done
 				state_modified=true
 				unset collected
 				continue
@@ -1670,8 +2193,8 @@ else
 	esac
 fi
 
-# Load and possibly update state
-read_state "$dir"
+# Load and possibly update state (including inheritance)
+load_state_chain "$abs_dir"
 
 # Apply CLI default after loading persisted state so it isn't overwritten
 if [[ -n "$cli_default_state" ]]; then
@@ -1697,20 +2220,22 @@ for pattern in "${hide_regex_args[@]}"; do
 	append_unique_regex hide_regexes "$pattern"
 done
 
+
 for p in "${open_args[@]}"; do
-	p=$(normalize_rel "$dir" "$p")
+	p=$(normalize_rel "$abs_dir" "$p")
 	[[ -z "$p" ]] && continue
-	if [[ -d "$dir/$p" ]]; then
+	if [[ -d "$abs_dir/$p" ]]; then
 		open_literals["$p"]=1
 		unset 'close_literals[$p]'
 	else
 		echo "Warning: open target not a directory: $p" >&2
 	fi
 done
+
 for p in "${close_args[@]}"; do
-	p=$(normalize_rel "$dir" "$p")
+	p=$(normalize_rel "$abs_dir" "$p")
 	[[ -z "$p" ]] && continue
-	if [[ -d "$dir/$p" ]]; then
+	if [[ -d "$abs_dir/$p" ]]; then
 		close_literals["$p"]=1
 		unset 'open_literals[$p]'
 	else
@@ -1718,20 +2243,57 @@ for p in "${close_args[@]}"; do
 	fi
 done
 for p in "${show_args[@]}"; do
-	p=$(normalize_rel "$dir" "$p")
+	p=$(normalize_rel "$abs_dir" "$p")
 	[[ -z "$p" ]] && continue
 	show_literals["$p"]=1
 	unset 'hide_literals[$p]'
 done
 for p in "${hide_args[@]}"; do
-	p=$(normalize_rel "$dir" "$p")
+	p=$(normalize_rel "$abs_dir" "$p")
 	[[ -z "$p" ]] && continue
 	hide_literals["$p"]=1
 	unset 'show_literals[$p]'
 done
 
+if [[ "$cli_depth_override" == true ]]; then
+	if [[ "$persisted_depth_set" != true || "$persisted_depth" != "$cli_depth_value" ]]; then
+		persisted_depth="$cli_depth_value"
+		persisted_depth_set=true
+		state_modified=true
+	fi
+fi
+if [[ "$cli_sort_mode_override" == true ]]; then
+	if [[ "$persisted_sort_mode_set" != true || "$persisted_sort_mode" != "$cli_sort_mode_value" ]]; then
+		persisted_sort_mode="$cli_sort_mode_value"
+		persisted_sort_mode_set=true
+		state_modified=true
+	fi
+fi
+if [[ "$cli_sort_direction_override" == true ]]; then
+	if [[ "$persisted_sort_direction_set" != true || "$persisted_sort_direction" != "$cli_sort_direction_value" ]]; then
+		persisted_sort_direction="$cli_sort_direction_value"
+		persisted_sort_direction_set=true
+		state_modified=true
+	fi
+fi
+
+rebuild_effective_state
+
+if [[ "$cli_depth_override" != true && -n "$effective_depth" ]]; then
+	depth="$effective_depth"
+fi
+if [[ "$cli_sort_mode_override" != true && -n "$effective_sort_mode" ]]; then
+	sort_mode="$effective_sort_mode"
+fi
+if [[ "$cli_sort_direction_override" != true ]]; then
+	case "$effective_sort_direction" in
+		asc) sort_reverse=0 ;;
+		desc) sort_reverse=1 ;;
+	esac
+fi
+
 if [[ "$state_modified" == true || "$state_needs_migration" == true ]]; then
-	persist_state "$dir"
+	persist_state "$abs_dir"
 fi
 
 case "$sort_mode" in
@@ -1764,7 +2326,7 @@ if [[ "$simple_mode" == true ]]; then
 	(
 		set -o pipefail
 		{
-			print_simple_tree "$dir" "" "" "$depth" 0
+			print_simple_tree "$abs_dir" "" "" "$depth" 0
 		} |
 		{
 			ESC=$'\e'

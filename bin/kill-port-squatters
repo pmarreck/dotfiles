@@ -1,0 +1,20 @@
+is_numeric() {
+  [[ $1 =~ ^[0-9]+$ ]]
+}
+
+kill-port-squatters() {
+  PORT=${1:-$PORT}
+  if ! is_numeric $PORT; then
+    echo "Port must be a number"
+    return 1
+  fi
+  local occupiers=$(lsof -ti:$PORT)
+  if [ -z "$occupiers" ]; then
+    echo "Port $PORT is not in use"
+    return 0
+  fi
+  echo "Port $PORT is in use by $occupiers"
+  echo "$occupiers" | xargs -r kill -9 2>&1; sleep 2; lsof -ti:$PORT || echo "Port $PORT now free"	
+}
+
+kill-port-squatters $1
