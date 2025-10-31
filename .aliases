@@ -219,3 +219,6 @@ alias sessions='tmux list-sessions'
 alias title="printf '\033]2;%s\007'"
 alias home='cd $HOME'
 
+# Use custom mkdir wrapper that supports -c/--cd option
+alias mkdir='mkdir-custom'
+

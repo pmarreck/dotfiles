@@ -1,0 +1,141 @@
+#!/usr/bin/env bash
+
+# Test for mkdir-custom functionality
+# Exit code should be number of failed tests
+
+source "$HOME/dotfiles/bin/src/truthy.sh"
+
+# This will fail initially since mkdir-custom doesn't exist yet
+source "$HOME/dotfiles/bin/src/mkdir-custom" 2>/dev/null || {
+	echo "✗ Cannot source mkdir-custom - file doesn't exist yet" >&2
+	exit 1
+}
+
+fails=0
+tests=0
+
+# Test 1: mkdir-custom creates a directory without -c flag
+((tests++))
+echo "Testing: mkdir-custom creates directory without -c flag..."
+test_dir=$(mktemp -d)/test_dir_no_cd
+if mkdir-custom "$test_dir" 2>/dev/null && [[ -d "$test_dir" ]]; then
+	echo "✓ Test passed: Directory created without cd"
+	rm -rf "$test_dir"
+else
+	echo "✗ Test failed: Directory not created" >&2
+	((fails++))
+fi
+
+# Test 2: mkdir-custom with -c creates and changes directory
+((tests++))
+echo "Testing: mkdir-custom with -c flag creates and changes to directory..."
+test_dir=$(mktemp -d)/test_dir_with_cd
+original_pwd="$PWD"
+(
+	mkdir-custom -c "$test_dir" 2>/dev/null
+	if [[ "$PWD" == "$test_dir" ]] && [[ -d "$test_dir" ]]; then
+		echo "✓ Test passed: Directory created and changed into"
+		exit 0
+	else
+		echo "✗ Test failed: Either directory not created or cd didn't happen" >&2
+		echo "  Expected PWD: $test_dir" >&2
+		echo "  Actual PWD: $PWD" >&2
+		exit 1
+	fi
+)
+test_result=$?
+((fails+=test_result))
+rm -rf "$test_dir"
+
+# Test 3: mkdir-custom with --cd creates and changes directory
+((tests++))
+echo "Testing: mkdir-custom with --cd flag creates and changes to directory..."
+test_dir=$(mktemp -d)/test_dir_with_long_cd
+(
+	mkdir-custom --cd "$test_dir" 2>/dev/null
+	if [[ "$PWD" == "$test_dir" ]] && [[ -d "$test_dir" ]]; then
+		echo "✓ Test passed: Directory created and changed into (--cd)"
+		exit 0
+	else
+		echo "✗ Test failed: Either directory not created or cd didn't happen with --cd" >&2
+		exit 1
+	fi
+)
+test_result=$?
+((fails+=test_result))
+rm -rf "$test_dir"
+
+# Test 4: mkdir-custom forwards other mkdir flags
+((tests++))
+echo "Testing: mkdir-custom forwards mkdir flags like -p..."
+test_dir=$(mktemp -d)/parent/child/grandchild
+if mkdir-custom -p "$test_dir" 2>/dev/null && [[ -d "$test_dir" ]]; then
+	echo "✓ Test passed: Parent directories created with -p flag"
+	rm -rf "$(dirname "$(dirname "$test_dir")")"
+else
+	echo "✗ Test failed: mkdir -p flag not forwarded correctly" >&2
+	((fails++))
+fi
+
+# Test 5: mkdir-custom with -c and -p
+((tests++))
+echo "Testing: mkdir-custom with both -c and -p flags..."
+test_dir=$(mktemp -d)/parent2/child2/grandchild2
+(
+	mkdir-custom -c -p "$test_dir" 2>/dev/null
+	if [[ "$PWD" == "$test_dir" ]] && [[ -d "$test_dir" ]]; then
+		echo "✓ Test passed: Nested directories created and changed into"
+		exit 0
+	else
+		echo "✗ Test failed: -c and -p combination didn't work" >&2
+		exit 1
+	fi
+)
+test_result=$?
+((fails+=test_result))
+rm -rf "$(dirname "$(dirname "$test_dir")")"
+
+# Test 6: mkdir-custom shows help with -h
+((tests++))
+echo "Testing: mkdir-custom shows help with -h..."
+output=$(mkdir-custom -h 2>&1)
+if [[ "$output" == *"Usage:"* ]] || [[ "$output" == *"usage:"* ]]; then
+	echo "✓ Test passed: Help text shown with -h"
+else
+	echo "✗ Test failed: No help text with -h" >&2
+	echo "  Output was: $output" >&2
+	((fails++))
+fi
+
+# Test 7: mkdir-custom shows help with --help
+((tests++))
+echo "Testing: mkdir-custom shows help with --help..."
+output=$(mkdir-custom --help 2>&1)
+if [[ "$output" == *"Usage:"* ]] || [[ "$output" == *"usage:"* ]]; then
+	echo "✓ Test passed: Help text shown with --help"
+else
+	echo "✗ Test failed: No help text with --help" >&2
+	((fails++))
+fi
+
+# Test 8: mkdir-custom handles no arguments gracefully
+((tests++))
+echo "Testing: mkdir-custom with no arguments shows error..."
+output=$(mkdir-custom 2>&1)
+exit_code=$?
+if [[ $exit_code -ne 0 ]]; then
+	echo "✓ Test passed: Non-zero exit code with no arguments"
+else
+	echo "✗ Test failed: Should fail with no arguments" >&2
+	echo "  Exit code was: $exit_code" >&2
+	((fails++))
+fi
+
+# Summary
+if [[ $fails -eq 0 ]]; then
+	echo "All $tests tests passed"
+else
+	echo "$fails of $tests tests failed" >&2
+fi
+
+exit $fails

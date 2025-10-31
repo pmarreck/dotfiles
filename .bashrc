@@ -258,6 +258,9 @@ set +H
 . "$HOME/dotfiles/bin/src/hook.sh"
 . "$HOME/dotfiles/bin/src/unhook.sh"
 
+# mkdir-custom function for enhanced mkdir with -c/--cd option
+. "$HOME/dotfiles/bin/src/mkdir-custom"
+
 # activate ble.sh/blesh
 # [[ ! ${BLE_VERSION-} ]] || ble-attach
 

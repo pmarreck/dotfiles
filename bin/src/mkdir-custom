@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+# mkdir-custom: Enhanced mkdir with -c/--cd option to change into newly created directory
+# This is a function designed to be sourced, not executed directly
+
+mkdir-custom() {
+	local do_cd=false
+	local mkdir_args=()
+	local target_dir=""
+
+	# Show help
+	show_help() {
+		cat <<-'EOF'
+			Usage: mkdir-custom [OPTIONS] DIRECTORY
+
+			Create a directory with optional automatic cd.
+
+			Options:
+			  -c, --cd           After creating directory, change into it
+			  -p                 Create parent directories as needed (passed to mkdir)
+			  -m MODE            Set file mode (passed to mkdir)
+			  -v, --verbose      Print a message for each created directory (passed to mkdir)
+			  -h, --help         Display this help message
+			  --test             Run associated tests
+
+			All other options are forwarded to the system mkdir command.
+
+			Examples:
+			  mkdir-custom mydir           # Create mydir
+			  mkdir-custom -c mydir        # Create mydir and cd into it
+			  mkdir-custom -c -p a/b/c     # Create nested dirs and cd to a/b/c
+
+			Note: The -c/--cd option only affects the current shell when used
+			through the 'mkdir' alias. Use 'alias mkdir=mkdir-custom' in your
+			shell configuration.
+		EOF
+	}
+
+	# Handle --test flag
+	if [[ "$1" == "--test" ]]; then
+		if [[ -x "$HOME/dotfiles/bin/test/mkdir-custom_test" ]]; then
+			"$HOME/dotfiles/bin/test/mkdir-custom_test" >/dev/null
+			return $?
+		else
+			echo "Error: Test file not found or not executable" >&2
+			return 1
+		fi
+	fi
+
+	# Parse arguments
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+			-h|--help)
+				show_help
+				return 0
+				;;
+			-c|--cd)
+				do_cd=true
+				shift
+				;;
+			-*)
+				# Pass through other flags to mkdir
+				mkdir_args+=("$1")
+				shift
+				;;
+			*)
+				# This is the directory argument
+				target_dir="$1"
+				shift
+				;;
+		esac
+	done
+
+	# Verify we have a directory to create
+	if [[ -z "$target_dir" ]]; then
+		echo "Error: No directory specified" >&2
+		show_help >&2
+		return 1
+	fi
+
+	# Create the directory with any additional flags
+	if ! command mkdir "${mkdir_args[@]}" "$target_dir"; then
+		return $?
+	fi
+
+	# Change into directory if requested
+	if [[ "$do_cd" == true ]]; then
+		cd "$target_dir" || return $?
+	fi
+
+	return 0
+}
