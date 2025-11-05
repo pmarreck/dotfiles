@@ -27,6 +27,11 @@ function determine_language_from_source() {
 			echo "lua"
 			return 0
 		fi
+		if [[ "$shebang" =~ ^#!/.*node(js)?$ ]] || [[ "$shebang" =~ ^#!/usr/bin/env[[:space:]]+node(js)?$ ]]; then
+			note "file '$file' is a Node.js script (detected from shebang)"
+			echo "js"
+			return 0
+		fi
 		
 		local filename=$(basename "$file")
 		local file_ext=""
@@ -87,6 +92,10 @@ function determine_language_from_source() {
 				;;
 			javascript*)
 				lang_orig="JavaScript"
+				lang="js"
+				;;
+			node.js*|nodejs*|node*)
+				lang_orig="Node.js script"
 				lang="js"
 				;;
 			yue)
@@ -190,6 +199,9 @@ map_highlight_language() {
 	case "$lang" in
 		wat)
 			echo "lisp"
+			;;
+		node.js|nodejs|node)
+			echo "js"
 			;;
 		*)
 			echo "$lang"
@@ -312,7 +324,7 @@ show_help() {
 			0: All items found and displayed successfully
 			1: One or more items were undefined or inaccessible
 
-		This function is defined in: $HOME/dotfiles/bin/src/show.sh
+		This function is defined in: $HOME/dotfiles/bin/src/show.bash
 EOF
 }
 

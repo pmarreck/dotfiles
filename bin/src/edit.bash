@@ -2,6 +2,9 @@
 
 edit() {
 	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	if [ $# -eq 0 ]; then
+		set -- "."
+	fi
 	# if the file is in the current directory, edit it
 	if [ -f "$1" ]; then
 		choose_editor "$1"

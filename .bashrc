@@ -63,7 +63,7 @@ fi
 . "$HOME/dotfiles/bin/src/silently.sh"
 
 # have to define show here for the same reason we have to define truthy...
-. "$HOME/dotfiles/bin/src/show.sh"
+. "$HOME/dotfiles/bin/src/show.bash"
 
 # have to source "functions" function for it to be able to see in-context functions
 . "$HOME/dotfiles/bin/src/functions.bash"

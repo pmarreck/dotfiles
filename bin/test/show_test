@@ -1,0 +1,145 @@
+#!/usr/bin/env bash
+
+tests=0
+fails=0
+
+repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+PATH="$repo_dir/bin:$PATH"
+
+show_script="$repo_dir/bin/src/show.bash"
+completion_script="$repo_dir/completions/show_completion.bash"
+
+source "$show_script"
+
+# Completion suite: ensure shell completion script loads cleanly in supported shells
+if command -v zsh >/dev/null 2>&1; then
+	((tests++))
+	echo "Testing: show completion script can be sourced by zsh without errors..."
+	output=$(zsh -lc ". '$completion_script'" 2>&1)
+	status=$?
+	if [[ $status -eq 0 ]] && [[ -z "$output" ]]; then
+		echo "[PASS] sourcing show completion in zsh exits cleanly"
+	else
+		echo "[FAIL] sourcing show completion in zsh produced errors" >&2
+		[[ $status -ne 0 ]] && echo "  Exit status: $status" >&2
+		[[ -n "$output" ]] && echo "  Output:" >&2 && printf '%s\n' "$output" >&2
+		((fails++))
+	fi
+else
+	echo "[SKIP] zsh not available; skipping completion guard"
+fi
+
+((tests++))
+echo "Testing: show completion script in bash POSIX mode..."
+output=$(POSIXLY_CORRECT=1 bash -lc ". '$completion_script'" 2>&1)
+status=$?
+if [[ $status -eq 0 ]] && [[ -z "$output" ]]; then
+	echo "[PASS] sourcing show completion under POSIXLY_CORRECT is silent"
+else
+	echo "[FAIL] sourcing show completion under POSIXLY_CORRECT produced errors" >&2
+	[[ $status -ne 0 ]] && echo "  Exit status: $status" >&2
+	[[ -n "$output" ]] && echo "  Output:" >&2 && printf '%s\n' "$output" >&2
+	((fails++))
+fi
+
+# WAT detection suite: verify wasmrun scripts map to WAT highlighting
+((tests++))
+echo "Testing: determine_language_from_source returns wat for wasmrun shebang..."
+wat_stderr=$(mktemp)
+output=$(PATH="$repo_dir/bin:$PATH" bash -lc 'source "'"$show_script"'"; determine_language_from_source "'"$repo_dir/bin/ns"'"' 2>"$wat_stderr")
+exit_code=$?
+if [[ $exit_code -eq 0 ]] && [[ "$output" == "wat" ]]; then
+	echo "[PASS] wasmrun shebang classified as wat"
+else
+	echo "[FAIL] wasmrun detection output: exit=$exit_code, value='${output}'" >&2
+	echo "--- stderr ---" >&2
+	cat "$wat_stderr" >&2
+	echo "--------------" >&2
+	((fails++))
+fi
+rm -f "$wat_stderr"
+
+((tests++))
+echo "Testing: show uses lisp highlighting for WAT files via bat..."
+wat_tmp_dir="$(mktemp -d)"
+bat_log="$wat_tmp_dir/bat_args"
+cat >"$wat_tmp_dir/bat" <<EOF
+#!/usr/bin/env bash
+echo "\$@" >"$bat_log"
+cat "\${@: -1}"
+EOF
+chmod +x "$wat_tmp_dir/bat"
+
+show_stderr="$wat_tmp_dir/show_wat_stderr"
+if PATH="$wat_tmp_dir:$repo_dir/bin:$PATH" bash -lc 'source "'"$show_script"'"; show "'"$repo_dir/bin/ns"'"' >"$wat_tmp_dir/show_output" 2>"$show_stderr"; then
+	if grep -q "\-l lisp" "$bat_log"; then
+		echo "[PASS] show invoked bat with lisp highlighting for WAT file"
+	else
+		echo "[FAIL] bat invocation missing lisp highlight flag" >&2
+		cat "$bat_log" >&2
+		((fails++))
+	fi
+else
+	echo "[FAIL] show command failed when displaying WAT file" >&2
+	cat "$show_stderr" >&2
+	((fails++))
+fi
+
+rm -rf "$wat_tmp_dir"
+
+# Node.js detection suite: ensure node-based scripts get JavaScript highlighting
+((tests++))
+echo "Testing: determine_language_from_source classifies node shebang as JavaScript..."
+node_tmp_dir="$(mktemp -d)"
+node_script="$node_tmp_dir/demo-node"
+cat >"$node_script" <<'EOF'
+#!/usr/bin/env node
+console.log("demo");
+EOF
+chmod +x "$node_script"
+node_lang_output="$(determine_language_from_source "$node_script" 2>"$node_tmp_dir/node_determine_stderr" || echo "exit-$?")"
+if [[ "$node_lang_output" == "js" ]]; then
+	echo "[PASS] determine_language_from_source returned 'js' for node shebang"
+else
+	echo "[FAIL] determine_language_from_source expected 'js', got '$node_lang_output'" >&2
+	echo "--- stderr ---" >&2
+	cat "$node_tmp_dir/node_determine_stderr" >&2
+	echo "--------------" >&2
+	((fails++))
+fi
+
+((tests++))
+echo "Testing: show uses JavaScript highlighting for node scripts..."
+node_bat_log="$node_tmp_dir/bat_args"
+cat >"$node_tmp_dir/bat" <<EOF
+#!/usr/bin/env bash
+echo "\$@" >"$node_bat_log"
+cat "\${@: -1}"
+EOF
+chmod +x "$node_tmp_dir/bat"
+
+node_show_output="$node_tmp_dir/show_output"
+node_show_stderr="$node_tmp_dir/show_stderr"
+if PATH="$node_tmp_dir:$PATH" show "$node_script" >"$node_show_output" 2>"$node_show_stderr"; then
+	if grep -q '\-l js' "$node_bat_log"; then
+		echo "[PASS] show invoked bat with JavaScript highlighting for node script"
+	else
+		echo "[FAIL] bat invocation missing '-l js'" >&2
+		cat "$node_bat_log" >&2
+		((fails++))
+	fi
+else
+	echo "[FAIL] show command failed for node script" >&2
+	cat "$node_show_stderr" >&2
+	((fails++))
+fi
+
+rm -rf "$node_tmp_dir"
+
+if (( fails == 0 )); then
+	echo "show_test PASSED: all $tests tests passed"
+else
+	echo "show_test FAILED: $fails of $tests tests failed" >&2
+fi
+
+exit $fails

@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+
+tests=0
+fails=0
+
+repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+PATH="$repo_dir/bin:$PATH"
+
+# Source the edit function definition
+source "$repo_dir/bin/src/edit.bash"
+
+# Stub choose_editor to capture invocations without launching a real editor
+__edit_test_editor_log=""
+choose_editor() {
+	printf '%s\n' "$@" >>"$__edit_test_editor_log"
+}
+
+((tests++))
+echo "Testing: edit with no arguments edits the current directory..."
+tmp_dir="$(mktemp -d)"
+__edit_test_editor_log="$tmp_dir/editor.log"
+if (
+	cd "$tmp_dir" || exit 1
+	edit >/tmp/edit_test_stdout.$$ 2>/tmp/edit_test_stderr.$$
+); then
+	if [[ "$(cat "$__edit_test_editor_log")" == "." ]]; then
+		echo "[PASS] edit invoked choose_editor with '.' when no arguments supplied"
+	else
+		echo "[FAIL] choose_editor expected '.', got '$(cat "$__edit_test_editor_log")'" >&2
+		((fails++))
+	fi
+else
+	echo "[FAIL] edit command failed when run without arguments" >&2
+	cat /tmp/edit_test_stderr.$$ >&2
+	((fails++))
+fi
+rm -rf "$tmp_dir"
+rm -f /tmp/edit_test_stdout.$$ /tmp/edit_test_stderr.$$
+
+if (( fails == 0 )); then
+	echo "edit_test PASSED: all $tests tests passed"
+else
+	echo "edit_test FAILED: $fails of $tests tests failed" >&2
+fi
+
+exit $fails
