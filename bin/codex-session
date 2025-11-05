@@ -1,0 +1,178 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+usage() {
+	cat <<'EOF'
+Usage: codex-session [-n|--new] [--test]
+
+Options:
+  -n, --new   Start a brand new Codex session (ignore saved session ID).
+  -h, --help  Show this help text.
+  -a, --about Show a short description of codex-session.
+  --test      Run the codex-session test suite.
+EOF
+}
+
+about() {
+	echo "codex-session: launch Codex in a tmux session with transcripts and auto-resume tracking."
+}
+
+run_tests() {
+	local test_script="$HOME/dotfiles/bin/test/codex-session_test"
+	if [[ ! -x "$test_script" ]]; then
+		echo "codex-session: missing test script at $test_script" >&2
+		exit 1
+	fi
+	"$test_script"
+	exit $?
+}
+
+ensure_not_in_tmux() {
+	if [[ -n ${TMUX:-} ]]; then
+		echo "codex-session: please run this command outside tmux." >&2
+		exit 1
+	fi
+}
+
+sanitize_session_name() {
+	local name=$1
+	name=${name//[^[:alnum:]_.-]/_}
+	if [[ -z "$name" ]]; then
+		name="codex"
+	fi
+	printf '%s' "$name"
+}
+
+extract_resume_id() {
+	local line=$1
+	printf '%s\n' "$line" | awk '{
+		for (i = 1; i <= NF; ++i) {
+			if ($i == "resume" && (i + 1) <= NF) {
+				print $(i + 1);
+				exit;
+			}
+		}
+	}'
+}
+
+main() {
+	local new_session=0
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+			-n|--new)
+				new_session=1
+				shift
+				;;
+			-h|--help)
+				usage
+				exit 0
+				;;
+			-a|--about)
+				about
+				exit 0
+				;;
+			--test)
+				run_tests
+				;;
+			--)
+				shift
+				break
+				;;
+			*)
+				echo "codex-session: unrecognized option '$1'" >&2
+				usage >&2
+				exit 1
+				;;
+		esac
+	done
+
+	if [[ $# -gt 0 ]]; then
+		echo "codex-session: unexpected positional arguments: $*" >&2
+		usage >&2
+		exit 1
+	fi
+
+	ensure_not_in_tmux
+
+	local tmux_bin codex_bin
+	tmux_bin=$(command -v tmux || true)
+	codex_bin=$(command -v codex || true)
+
+	if [[ -z "$tmux_bin" ]]; then
+		echo "codex-session: tmux is required but not found in PATH." >&2
+		exit 1
+	fi
+
+	if [[ -z "$codex_bin" ]]; then
+		echo "codex-session: Codex CLI is required but not found in PATH." >&2
+		exit 1
+	fi
+
+	local project_name session_name
+	project_name=$(basename "$PWD")
+	session_name=$(sanitize_session_name "$project_name")
+
+	printf '\033]2;%s\007' "$project_name"
+
+	local id_file transcript_file
+	id_file="$PWD/.last_codex_session_id"
+	transcript_file="$PWD/.tmux-codex-transcript"
+
+	if (( new_session )); then
+		rm -f "$id_file"
+	fi
+
+	local resume_id=""
+	if [[ -f "$id_file" ]]; then
+		resume_id=$(tr -d '\r\n' < "$id_file")
+	fi
+
+	local -a codex_cmd
+	codex_cmd=("$codex_bin" resume --enable web_search_request --dangerously-bypass-approvals-and-sandbox)
+	if [[ -n "$resume_id" ]]; then
+		codex_cmd+=("$resume_id")
+	fi
+
+	if tmux has-session -t "$session_name" 2>/dev/null; then
+		tmux kill-session -t "$session_name"
+	fi
+
+	: > "$transcript_file"
+
+	tmux new-session -d -s "$session_name" -c "$PWD"
+
+	local pipe_cmd
+	printf -v pipe_cmd 'cat >> %q' "$transcript_file"
+	tmux pipe-pane -t "$session_name:0.0" -o "$pipe_cmd"
+
+	local codex_cmd_str=""
+	printf -v codex_cmd_str '%q ' "${codex_cmd[@]}"
+	codex_cmd_str=${codex_cmd_str% }
+
+	tmux send-keys -t "$session_name:0.0" "$codex_cmd_str" C-m
+
+	tmux attach -t "$session_name"
+
+	local resume_line session_id=""
+	if [[ -f "$transcript_file" ]]; then
+		resume_line=$(grep -E 'codex resume ' "$transcript_file" | tail -n 1 || true)
+		if [[ -n "${resume_line:-}" ]]; then
+			session_id=$(extract_resume_id "$resume_line")
+		fi
+	fi
+
+	if [[ -n "$session_id" ]]; then
+		printf '%s\n' "$session_id" > "$id_file"
+	fi
+
+	echo "codex-session: transcript saved to $transcript_file"
+	if [[ -n "$session_id" ]]; then
+		echo "codex-session: session ID saved to $id_file"
+	else
+		echo "codex-session: no session ID detected (was Codex terminated?)" >&2
+	fi
+}
+
+main "$@"

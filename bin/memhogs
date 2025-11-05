@@ -1,0 +1,300 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+AWK_BIN=${MEMHOGS_AWK:-gawk}
+if ! command -v "$AWK_BIN" >/dev/null 2>&1; then
+  echo "memhogs: required awk interpreter '$AWK_BIN' not found" >&2
+  exit 1
+fi
+
+count=15
+mode="group"
+show_detail=0
+outlier_threshold=${MEMHOGS_ALERT_THRESHOLD:-10}
+
+usage() {
+  cat <<'EOF'
+Usage: memhogs [-i] [-n COUNT] [-F]
+
+Options:
+  -i        Show individual processes instead of aggregating by command name.
+  -n COUNT  Number of rows to display (default 15).
+  -F, --detail  Append a detailed summary for the heaviest multi-process executable.
+  -h, --help   Show this help text.
+  -a, --about  Describe what this tool does.
+
+Environment:
+  MEMHOGS_ALERT_THRESHOLD  Minimum process count to flag as an outlier (default 10).
+  MEMHOGS_AWK              awk interpreter to use (default gawk).
+EOF
+}
+
+about() {
+  echo "memhogs: report top memory consumers with optional Firefox detail and process-count alerts."
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -i)
+      mode="individual"
+      shift
+      ;;
+    -n)
+      if [[ $# -lt 2 ]]; then
+        echo "memhogs: option -n requires an argument" >&2
+        exit 1
+      fi
+      if [[ ! "$2" =~ ^[0-9]+$ ]] || [ "$2" -le 0 ]; then
+        echo "memhogs: COUNT must be a positive integer" >&2
+        exit 1
+      fi
+      count="$2"
+      shift 2
+      ;;
+    -F|--detail)
+      show_detail=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    -a|--about)
+      about
+      exit 0
+      ;;
+    --)
+      shift
+      break
+      ;;
+    --*)
+      echo "memhogs: invalid option $1" >&2
+      usage >&2
+      exit 1
+      ;;
+    -*)
+      echo "memhogs: invalid option $1" >&2
+      usage >&2
+      exit 1
+      ;;
+    *)
+      echo "memhogs: unexpected positional argument '$1'" >&2
+      usage >&2
+      exit 1
+      ;;
+  esac
+done
+
+platform=$(uname -s)
+case "$platform" in
+  Linux)
+    mem_total_kb=$("$AWK_BIN" '/^MemTotal:/ {print $2}' /proc/meminfo)
+    ;;
+  Darwin)
+    mem_total_bytes=$(sysctl -n hw.memsize 2>/dev/null || true)
+    if [[ -n "${mem_total_bytes:-}" ]]; then
+      mem_total_kb=$((mem_total_bytes / 1024))
+    fi
+    ;;
+  *)
+    echo "memhogs: unsupported platform '$platform'" >&2
+    exit 1
+    ;;
+esac
+
+if [[ -z "${mem_total_kb:-}" || "$mem_total_kb" == 0 ]]; then
+  echo "memhogs: unable to determine total memory" >&2
+  exit 1
+fi
+
+print_group_view() {
+  printf "%-32s %5s %10s %7s\n" "COMMAND" "PROC" "RSS" "%MEM"
+  ps axo rss=,command= | "$AWK_BIN" -v total="$mem_total_kb" -v limit="$count" '
+  function humanize(kb) {
+    if (kb >= 1073741824) {
+      return sprintf("%.2fT", kb / 1073741824);
+    } else if (kb >= 1048576) {
+      return sprintf("%.2fG", kb / 1048576);
+    } else if (kb >= 1024) {
+      return sprintf("%.1fM", kb / 1024);
+    }
+    return sprintf("%dK", kb);
+  }
+  {
+    rss = $1 + 0;
+    cmd = substr($0, index($0, $2));
+    split(cmd, parts, /[[:space:]]+/);
+    exe = parts[1];
+    if (exe == "") {
+      exe = "[unknown]";
+    }
+    rss_map[exe] += rss;
+    count_map[exe] += 1;
+  }
+  END {
+    n = asorti(rss_map, idx, "@val_num_desc");
+    if (limit < 1 || limit > n) {
+      limit = n;
+    }
+    for (i = 1; i <= limit; ++i) {
+      exe = idx[i];
+      rss = rss_map[exe];
+      procs = count_map[exe];
+      label = exe;
+      sub(".*/", "", label);
+      printf "%-32s %5d %10s %6.2f\n", label, procs, humanize(rss), (rss / total) * 100;
+    }
+  }'
+}
+
+print_individual_view() {
+  printf "%7s %-12s %10s %7s %s\n" "PID" "USER" "RSS" "%MEM" "COMMAND"
+  ps axo pid=,user=,rss=,command= | sort -k3,3nr | "$AWK_BIN" -v total="$mem_total_kb" -v limit="$count" '
+  function humanize(kb) {
+    if (kb >= 1073741824) {
+      return sprintf("%.2fT", kb / 1073741824);
+    } else if (kb >= 1048576) {
+      return sprintf("%.2fG", kb / 1048576);
+    } else if (kb >= 1024) {
+      return sprintf("%.1fM", kb / 1024);
+    }
+    return sprintf("%dK", kb);
+  }
+  {
+    cmd = $4;
+    for (i = 5; i <= NF; ++i) {
+      cmd = cmd " " $i;
+    }
+    if (++rows <= limit) {
+      printf "%7s %-12s %10s %6.2f %s\n", $1, $2, humanize($3), ($3 / total) * 100, cmd;
+    }
+  }'
+}
+
+humanize_kb() {
+  local kb=$1
+  if (( kb >= 1073741824 )); then
+    "$AWK_BIN" -v v="$kb" 'BEGIN { printf "%.2fT", v / 1073741824 }'
+  elif (( kb >= 1048576 )); then
+    "$AWK_BIN" -v v="$kb" 'BEGIN { printf "%.2fG", v / 1048576 }'
+  elif (( kb >= 1024 )); then
+    "$AWK_BIN" -v v="$kb" 'BEGIN { printf "%.1fM", v / 1024 }'
+  else
+    printf "%dK" "$kb"
+  fi
+}
+
+print_detail_summary() {
+  local detail_info detail_exe detail_rss_kb detail_count
+
+  detail_info=$(ps axo rss=,command= | "$AWK_BIN" '
+  {
+    rss = $1 + 0;
+    cmd = substr($0, index($0, $2));
+    split(cmd, parts, /[[:space:]]+/);
+    exe = parts[1];
+    if (exe == "")
+      exe = "[unknown]";
+    rss_map[exe] += rss;
+    count_map[exe] += 1;
+  }
+  END {
+    max_exe = "";
+    max_rss = 0;
+    for (exe in rss_map) {
+      if (rss_map[exe] > max_rss) {
+        max_rss = rss_map[exe];
+        max_exe = exe;
+      }
+    }
+    if (max_exe != "") {
+      printf "%s\t%lu\t%d\n", max_exe, rss_map[max_exe], count_map[max_exe];
+    }
+  }
+  ')
+
+  if [[ -z "${detail_info:-}" ]]; then
+    printf "\nFYI: no multi-process executables detected.\n"
+    return
+  fi
+
+  detail_exe=${detail_info%%$'\t'*}
+  detail_rss_kb=${detail_info#*$'\t'}
+  detail_rss_kb=${detail_rss_kb%%$'\t'*}
+  detail_count=${detail_info##*$'\t'}
+
+  printf "\nFYI: %s spans %d processes consuming %s RSS in total.\n" \
+    "$detail_exe" "$detail_count" "$(humanize_kb "$detail_rss_kb")"
+
+  ps axo pid=,rss=,command= | sort -k2,2nr | "$AWK_BIN" -v total="$mem_total_kb" -v limit="$count" -v exe="$detail_exe" '
+  function humanize(kb) {
+    if (kb >= 1073741824) {
+      return sprintf("%.2fT", kb / 1073741824);
+    } else if (kb >= 1048576) {
+      return sprintf("%.2fG", kb / 1048576);
+    } else if (kb >= 1024) {
+      return sprintf("%.1fM", kb / 1024);
+    }
+    return sprintf("%dK", kb);
+  }
+  {
+    cmd = substr($0, index($0, $3));
+    split(cmd, parts, /[[:space:]]+/);
+    exe_path = parts[1];
+    if (exe_path == exe) {
+      if (!printed_header) {
+        printf "\n%-7s %10s %7s %s\n", "PID", "RSS", "%MEM", "COMMAND";
+        printed_header = 1;
+      }
+      if (++rows <= limit) {
+        printf "%-7s %10s %6.2f %s\n", $1, humanize($2), ($2 / total) * 100, cmd;
+      }
+    }
+  }
+  '
+}
+
+print_outliers() {
+  local outliers
+  outliers=$(
+    ps axo comm= | "$AWK_BIN" -v threshold="$outlier_threshold" '
+    {
+      cmd = $1;
+      for (i = 2; i <= NF; ++i) {
+        cmd = cmd " " $i;
+      }
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", cmd);
+      if (cmd == "")
+        next;
+      count[cmd] += 1;
+    }
+    END {
+      for (cmd in count) {
+        if (count[cmd] > threshold) {
+          printf "%s\t%d\n", cmd, count[cmd];
+        }
+      }
+    }'
+  )
+
+  if [[ -n "${outliers:-}" ]]; then
+    echo
+    echo "FYI:"
+    printf '%s\n' "$outliers" | sort -t $'\t' -k2,2nr | while IFS=$'\t' read -r cmd cnt; do
+      printf "  There are over %d %s processes running (currently %d).\n" "$outlier_threshold" "$cmd" "$cnt"
+    done
+  fi
+}
+
+if [[ "$mode" == "group" ]]; then
+  print_group_view
+else
+  print_individual_view
+fi
+
+if (( show_detail )); then
+  print_detail_summary
+fi
+
+print_outliers

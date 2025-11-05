@@ -12,7 +12,7 @@ codex() {
 		if [ ! -d .jj ]; then
 			warn "No .jj directory found. Please initialize a jujutsu repository before running codex with unlimited privileges to capture all changes automatically."
 		fi
-		warn "$codex_path resume --search --dangerously-bypass-approvals-and-sandbox"
-		$codex_path resume --search --dangerously-bypass-approvals-and-sandbox
+		warn "$codex_path resume --enable web_search_request --dangerously-bypass-approvals-and-sandbox"
+		$codex_path resume --enable web_search_request --dangerously-bypass-approvals-and-sandbox
 	fi
 }

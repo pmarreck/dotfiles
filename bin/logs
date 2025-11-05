@@ -1,0 +1,2 @@
+#!/bin/sh
+journalctl --since "2 minutes ago" -f

@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+tests=0
+fails=0
+
+codex_session="$HOME/dotfiles/bin/codex-session"
+
+fixture_dir=$(mktemp -d)
+trap 'rm -rf "$fixture_dir"' EXIT
+pushd "$fixture_dir" >/dev/null
+
+pass() {
+	local name=$1
+	printf 'PASS: %s\n' "$name"
+}
+
+fail() {
+	local name=$1
+	printf 'FAIL: %s\n' "$name" >&2
+	((++fails))
+}
+
+((++tests))
+if "$codex_session" -h >/dev/null; then
+	pass "help flag exits cleanly"
+else
+	fail "help flag exits cleanly"
+fi
+
+((++tests))
+about_output=$("$codex_session" --about)
+if [[ "$about_output" == "codex-session: launch Codex in a tmux session with transcripts and auto-resume tracking." ]]; then
+	pass "about prints summary"
+else
+	fail "about prints summary"
+fi
+
+((++tests))
+if TMUX=1 "$codex_session" >/dev/null 2>&1; then
+	fail "guard when inside tmux"
+else
+	pass "guard when inside tmux"
+fi
+
+popd >/dev/null
+
+if ((fails > 0)); then
+	printf 'codex-session_test: %d of %d tests failed\n' "$fails" "$tests" >&2
+	exit "$fails"
+fi
+
+printf 'codex-session_test: all %d tests passed\n' "$tests"

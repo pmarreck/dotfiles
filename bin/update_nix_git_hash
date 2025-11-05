@@ -1,0 +1,304 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage: update_nix_git_hash [OPTIONS] PATH/TO/file.nix
+
+Options:
+  --ref BRANCH        Override the ref= attribute before fetching latest commit.
+  --rev COMMIT        Use the specified commit hash (skips remote lookup).
+  --tag TAG           Resolve the given tag to a commit and use it.
+  --expr EXPR         Custom nix build expression; %FILE% will be replaced with the target path.
+  -n, --dry-run       Show actions without modifying the file.
+  -h, --help          Show this help.
+
+The target .nix file must contain a builtins.fetchGit block and a vendorHash attribute.
+The script updates (or inserts) the rev attribute, refreshes vendorHash, and runs a
+verification build using nix.
+EOF
+}
+
+backup_path=""
+
+die() {
+  if [[ -n "${backup_path:-}" && -e "$backup_path" ]]; then
+    if [[ -n "${abs_target:-}" ]]; then
+      cp "$backup_path" "$abs_target"
+    fi
+    rm -f "$backup_path"
+    backup_path=""
+  fi
+  echo "update_nix_git_hash: $*" >&2
+  exit 1
+}
+
+ref_override=""
+rev_override=""
+tag_override=""
+build_expr=""
+dry_run=0
+
+positional=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --ref)
+      [[ $# -ge 2 ]] || die "--ref requires a value"
+      ref_override="$2"
+      shift 2
+      ;;
+    --rev)
+      [[ $# -ge 2 ]] || die "--rev requires a value"
+      rev_override="$2"
+      shift 2
+      ;;
+    --tag)
+      [[ $# -ge 2 ]] || die "--tag requires a value"
+      tag_override="$2"
+      shift 2
+      ;;
+    --expr)
+      [[ $# -ge 2 ]] || die "--expr requires a value"
+      build_expr="$2"
+      shift 2
+      ;;
+    -n|--dry-run)
+      dry_run=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --)
+      shift
+      break
+      ;;
+    -*)
+      die "unknown option: $1"
+      ;;
+    *)
+      positional+=("$1")
+      shift
+      ;;
+  esac
+done
+
+[[ ${#positional[@]} -eq 1 ]] || die "exactly one path to a .nix file is required"
+
+target="${positional[0]}"
+[[ -f "$target" ]] || die "file not found: $target"
+
+abs_target="$(realpath "$target")"
+
+if ! grep -q 'fetchGit' "$abs_target"; then
+  die "no fetchGit call detected in $target"
+fi
+
+python3 - <<'PY' "$abs_target" >/tmp/update-nix-git-hash-info.$$
+import re, sys, json
+path = sys.argv[1]
+data = open(path).read()
+def grab(pattern):
+    m = re.search(pattern, data, re.MULTILINE)
+    return m.group(1) if m else ""
+info = {
+    "url": grab(r'url\s*=\s*"([^"]+)"'),
+    "ref": grab(r'ref\s*=\s*"([^"]+)"'),
+    "rev": grab(r'rev\s*=\s*"([^"]+)"')
+}
+print(json.dumps(info))
+PY
+
+trap 'rm -f /tmp/update-nix-git-hash-info.$$' EXIT
+info_json="$(cat /tmp/update-nix-git-hash-info.$$)"
+url="$(python3 - <<'PY' "$info_json"
+import json, sys
+info = json.loads(sys.argv[1])
+print(info.get("url", ""))
+PY
+)"
+[[ -n "$url" ]] || die "could not determine fetchGit url from $target"
+
+existing_ref="$(python3 - <<'PY' "$info_json"
+import json, sys
+info = json.loads(sys.argv[1])
+print(info.get("ref", ""))
+PY
+)"
+
+existing_rev="$(python3 - <<'PY' "$info_json"
+import json, sys
+info = json.loads(sys.argv[1])
+print(info.get("rev", ""))
+PY
+)"
+
+rm -f /tmp/update-nix-git-hash-info.$$
+trap - EXIT
+
+[[ -n "$ref_override" ]] && chosen_ref="$ref_override" || chosen_ref="$existing_ref"
+
+resolve_rev() {
+  local rev="$rev_override"
+  if [[ -n "$rev" ]]; then
+    printf '%s' "$rev"
+    return
+  fi
+  if [[ -n "$tag_override" ]]; then
+    git ls-remote --tags "$url" \
+      | awk -v tag="refs/tags/${tag_override}" '
+          $2 == tag || $2 == tag "^{}" { hash=$1 }
+          END { if (hash == "") exit 1; print hash }
+        ' \
+      || return 1
+    return
+  fi
+  local remote_ref="${chosen_ref:-HEAD}"
+  git ls-remote "$url" "$remote_ref" \
+    | awk 'NR==1 {print $1}' \
+    || return 1
+}
+
+new_rev="$(resolve_rev)" || die "failed to resolve git revision"
+
+[[ -n "$new_rev" ]] || die "empty revision resolved"
+
+if [[ "$dry_run" -eq 1 ]]; then
+  echo "[dry-run] would set rev to $new_rev (was ${existing_rev:-<unset>})"
+fi
+
+if [[ "$dry_run" -eq 1 ]]; then
+  echo "[dry-run] would update vendorHash after building."
+  exit 0
+fi
+
+backup_path="$(mktemp)"
+cp "$abs_target" "$backup_path"
+restore() {
+  cp "$backup_path" "$abs_target"
+  rm -f "$backup_path"
+  backup_path=""
+}
+
+trap 'restore' ERR INT TERM
+
+python3 - <<'PY' "$abs_target" "$new_rev"
+import re, sys
+path, new_rev = sys.argv[1:]
+data = open(path).read()
+rev_pattern = re.compile(r'rev\s*=\s*"[^"]+";')
+if rev_pattern.search(data):
+    data, count = rev_pattern.subn(f'rev = "{new_rev}";', data, count=1)
+else:
+    insert_pattern = re.compile(r'^(\s*ref\s*=\s*"[^"]+";)', re.MULTILINE)
+    m = insert_pattern.search(data)
+    if m:
+        indent = re.match(r'^\s*', m.group(1)).group(0)
+        insert_at = m.end(1)
+        data = data[:insert_at] + f'\n{indent}rev = "{new_rev}";' + data[insert_at:]
+    else:
+        insert_pattern = re.compile(r'^(\s*url\s*=\s*"[^"]+";)', re.MULTILINE)
+        m = insert_pattern.search(data)
+        if not m:
+            raise SystemExit("could not insert rev attribute (url/ref not found)")
+        indent = re.match(r'^\s*', m.group(1)).group(0)
+        insert_at = m.end(1)
+        data = data[:insert_at] + f'\n{indent}rev = "{new_rev}";' + data[insert_at:]
+open(path, 'w').write(data)
+PY
+
+if [[ -n "$ref_override" ]]; then
+  python3 - <<'PY' "$abs_target" "$ref_override"
+import re, sys
+path, new_ref = sys.argv[1:]
+data = open(path).read()
+pattern = re.compile(r'ref\s*=\s*"[^"]+";')
+if pattern.search(data):
+    data, count = pattern.subn(f'ref = "{new_ref}";', data, count=1)
+else:
+    insert_pattern = re.compile(r'^(\s*url\s*=\s*"[^"]+";)', re.MULTILINE)
+    m = insert_pattern.search(data)
+    if not m:
+        raise SystemExit("could not insert ref attribute")
+    indent = re.match(r'^\s*', m.group(1)).group(0)
+    insert_at = m.end(1)
+    data = data[:insert_at] + f'\n{indent}ref = "{new_ref}";' + data[insert_at:]
+open(path, 'w').write(data)
+PY
+fi
+
+placeholder="sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+
+python3 - <<'PY' "$abs_target" "$placeholder"
+import re, sys
+path, placeholder = sys.argv[1:]
+data = open(path).read()
+pattern = re.compile(r'vendorHash\s*=\s*[^;]+;')
+if not pattern.search(data):
+    raise SystemExit("vendorHash attribute not found")
+data, count = pattern.subn(f'vendorHash = "{placeholder}";', data, count=1)
+open(path, 'w').write(data)
+PY
+
+if [[ -z "$build_expr" ]]; then
+  escaped_path="$(printf '%s' "$abs_target" | sed 's/\\/\\\\/g; s/"/\\"/g')"
+  build_expr="with import <nixpkgs> {}; callPackage \"${escaped_path}\" {}"
+else
+  build_expr="${build_expr//%FILE%/$abs_target}"
+fi
+
+build_log="$(mktemp)"
+if nix build --impure --expr "$build_expr" >"$build_log" 2>&1; then
+  actual_hash="$(grep -m1 -o 'sha256-[0-9A-Za-z+/=]\+' "$build_log" || true)"
+  cp "$backup_path" "$abs_target"
+  rm -f "$backup_path" "$build_log"
+  die "build succeeded while vendorHash was fake; aborting to avoid leaving placeholder. (hash seen: ${actual_hash:-none})"
+fi
+
+set +e
+actual_hash="$(python3 - <<'PY' "$build_log" "$placeholder"
+import pathlib, re, sys
+log_path, placeholder = sys.argv[1:]
+text = pathlib.Path(log_path).read_text()
+text = re.sub(r'\x1b\[[0-9;]*m', '', text)
+match = re.search(r'got:\s*(sha256-[0-9A-Za-z+/=]+)', text)
+if match:
+    value = match.group(1)
+else:
+    candidates = [h for h in re.findall(r'sha256-[0-9A-Za-z+/=]+', text) if h != placeholder]
+    if not candidates:
+        sys.exit(1)
+    value = candidates[0]
+print(value)
+PY
+)"
+status=$?
+set -e
+rm -f "$build_log"
+if [[ $status -ne 0 || -z "$actual_hash" ]]; then
+  die "failed to parse vendor hash from nix build output"
+fi
+
+python3 - <<'PY' "$abs_target" "$placeholder" "$actual_hash"
+import sys
+path, placeholder, actual = sys.argv[1:]
+data = open(path).read()
+if placeholder not in data:
+    raise SystemExit("placeholder hash not found for replacement")
+data = data.replace(placeholder, actual, 1)
+open(path, 'w').write(data)
+PY
+
+nix build --impure --expr "$build_expr" >/dev/null
+
+rm -f "$backup_path"
+backup_path=""
+trap - ERR INT TERM
+
+echo "Updated $target:"
+echo "  rev       -> $new_rev"
+echo "  vendorHash -> $actual_hash"
+if [[ -n "$ref_override" ]]; then
+  echo "  ref       -> $ref_override"
+fi
