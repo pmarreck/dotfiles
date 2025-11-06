@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+tests=0
+fails=0
+
+PATH="$HOME/bin:$PATH"
+
+cleanup() {
+	if [[ -n "${tmpdir:-}" && -d "$tmpdir" ]]; then
+		rm -rf "$tmpdir"
+	fi
+}
+
+trap cleanup EXIT
+
+test_removes_suffix_from_files_with_spaces() {
+	((++tests))
+	tmpdir=$(mktemp -d)
+	local cwd
+	cwd=$(pwd)
+	cd "$tmpdir"
+	touch 'My Book (Z-Library).pdf' 'Another Book (Z-Library).epub'
+	remove_z_library_attrib >/dev/null
+
+	if [[ -e 'My Book (Z-Library).pdf' ]]; then
+		echo "FAIL failed to rename file with spaces" >&2
+		((fails+=1))
+	elif [[ ! -e 'My Book.pdf' ]]; then
+		echo "FAIL renamed file missing expected target" >&2
+		((fails+=1))
+	fi
+
+	cd "$cwd"
+	rm -rf "$tmpdir"
+	unset tmpdir
+}
+
+test_noop_when_no_matches() {
+	((++tests))
+	tmpdir=$(mktemp -d)
+	local cwd
+	cwd=$(pwd)
+	cd "$tmpdir"
+	if ! remove_z_library_attrib >/dev/null; then
+		echo "FAIL command should succeed when nothing matches" >&2
+		((fails+=1))
+	fi
+	cd "$cwd"
+	rm -rf "$tmpdir"
+	unset tmpdir
+}
+
+main() {
+	test_removes_suffix_from_files_with_spaces
+	test_noop_when_no_matches
+
+	if (( fails == 0 )); then
+		echo "All $tests tests passed"
+		exit 0
+	else
+		echo "$fails of $tests tests failed" >&2
+		exit "$fails"
+	fi
+}
+
+main "$@"
