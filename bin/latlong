@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+
+latlong() {
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+
+	# Allow tests or callers to bypass network requests
+	if [ -n "${LATLONG_OVERRIDE:-}" ]; then
+		printf '%s\n' "$LATLONG_OVERRIDE"
+		return 0
+	fi
+
+	if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+		cat <<'EOF'
+latlong: Print approximate latitude and longitude for this connection
+
+Options:
+  --help    Show this help message
+
+Environment overrides:
+  LATLONG_OVERRIDE   If set, this value is printed directly.
+  CURL               Specify alternate curl command (default: curl).
+  JQ                 Specify alternate jq command (default: jq).
+  LATLONG_TIMEOUT    Override the curl timeout in seconds (default: 5).
+EOF
+		return 0
+	fi
+
+	local curl_cmd=${CURL:-curl}
+	local jq_cmd=${JQ:-jq}
+
+	needs "$curl_cmd"
+	needs "$jq_cmd"
+
+	local timeout=${LATLONG_TIMEOUT:-5}
+	local response lat long loc
+
+	# Primary provider: ipinfo.io
+	if response=$("$curl_cmd" -fsS --max-time "$timeout" https://ipinfo.io/json 2>/dev/null); then
+		loc=$(printf '%s' "$response" | "$jq_cmd" -r '.loc // empty')
+		if [[ "$loc" =~ ^-?[0-9]+(\.[0-9]+)?,-?[0-9]+(\.[0-9]+)?$ ]]; then
+			printf '%s\n' "$loc"
+			return 0
+		fi
+	fi
+
+	# Fallback provider: ipapi.co
+	if response=$("$curl_cmd" -fsS --max-time "$timeout" https://ipapi.co/json 2>/dev/null); then
+		lat=$(printf '%s' "$response" | "$jq_cmd" -r '.latitude // empty')
+		long=$(printf '%s' "$response" | "$jq_cmd" -r '.longitude // empty')
+		if [ -n "$lat" ] && [ -n "$long" ] && [ "$lat" != "null" ] && [ "$long" != "null" ]; then
+			printf '%s,%s\n' "$lat" "$long"
+			return 0
+		fi
+	fi
+
+	warn "Unable to determine latitude and longitude from available services"
+	return 1
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	if [ "$1" = "--test" ]; then
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		$(basename "${0##\-}") "$@"
+	fi
+fi

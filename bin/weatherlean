@@ -1,0 +1,47 @@
+#!/usr/bin/env -S jumpscript Lean
+
+-- A "weather" lookup implementation in Lean, using Jumpscript, mostly for demo purposes.
+open IO
+
+private def joinArgs (args : List String) : String :=
+  args.foldl (fun acc part => if acc.isEmpty then part else acc ++ " " ++ part) ""
+
+private def runCommand (cmd : String) (args : List String) : IO String := do
+  let result ← IO.Process.output { cmd := cmd, args := args.toArray }
+  if result.exitCode == 0 then
+    pure result.stdout
+  else
+    throw <| IO.userError s!"{cmd} {joinArgs args} failed ({result.exitCode}): {result.stderr.trim}"
+
+private def requireEnv (name : String) : IO String := do
+  match ← IO.getEnv name with
+  | some value =>
+      let trimmed := value.trim
+      if trimmed.isEmpty then
+        throw <| IO.userError s!"Environment variable {name} is empty."
+      pure trimmed
+  | none =>
+      throw <| IO.userError s!"Environment variable {name} is not set."
+
+private def fetchTemperature (appid : String) : IO String := do
+  let lat := "40.82658"
+  let lon := "-73.68312"
+  let query := s!"http://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={appid}&units=imperial"
+  let shell := s!"curl -s \"{query}\" | jq -r '.main.temp'"
+  let output ← runCommand "sh" ["-lc", shell]
+  let trimmed := output.trim
+  if trimmed.isEmpty then
+    throw <| IO.userError "Failed to parse temperature from API response."
+  pure trimmed
+
+private def renderFiglet (temp : String) : IO Unit := do
+  -- Force the C locale so printf emits `\260` as a single Latin-1 byte; otherwise UTF-8 splits it
+  -- and figlet interprets the leading byte as an "A" before the degree symbol.
+  let script := s!"LC_ALL=C printf '%s \\260F\\n' \"{temp}\" | figlet -kcf big"
+  let rendered ← runCommand "sh" ["-lc", script]
+  IO.print rendered
+
+def main (_args : List String) : IO Unit := do
+  let appid ← requireEnv "OPENWEATHERMAP_APPID"
+  let temp ← fetchTemperature appid
+  renderFiglet temp

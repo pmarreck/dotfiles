@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+
+latlong_test() {
+	export needs() { :; }
+
+	LATLONG_OVERRIDE="40.123,-73.456" assert "$(latlong)" == "40.123,-73.456"
+	unset -f needs
+}
+
+if [ "$(basename "${0##-}")" = "latlong_test" ]; then
+	latlong_test
+fi

@@ -15,7 +15,7 @@ weather() {
 	temp=`curl -s "http://api.openweathermap.org/data/2.5/weather?lat=40.82658&lon=-73.68312&appid=$OPENWEATHERMAP_APPID" | jq .main.temp`
 	# echo "temp in kelvin is: $temp"
 	temp=$(bc <<< "$temp*9/5-459.67") # convert from kelvin to F
-	echo "$temp F" | figlet -kcf big
+	echo -e "$temp \xB0F" | figlet -kcf big
 }
 
 # Run the function if this script is executed directly
