@@ -1,0 +1,251 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PATH="$HOME/dotfiles/bin:$PATH"
+
+tests=0
+fails=0
+
+increment_tests() {
+	if ((tests++)); then
+		:
+	fi
+}
+
+increment_fails() {
+	if ((fails++)); then
+		:
+	fi
+}
+
+record_result() {
+	local status=$1
+	local message=$2
+	if [ "$status" -eq 0 ]; then
+		printf 'PASS: %s\n' "$message"
+	else
+		increment_fails
+		printf 'FAIL: %s\n' "$message" >&2
+	fi
+}
+
+assert_equal() {
+	local expected=$1
+	local actual=$2
+	local message=$3
+	increment_tests
+	if [ "$expected" = "$actual" ]; then
+		record_result 0 "$message"
+	else
+		record_result 1 "$message"
+		printf 'Expected: %s\nActual: %s\n' "$expected" "$actual" >&2
+	fi
+}
+
+assert_success() {
+	local rc=$1
+	local message=$2
+	increment_tests
+	if [ "$rc" -eq 0 ]; then
+		record_result 0 "$message"
+	else
+		record_result 1 "$message (exit $rc)"
+	fi
+}
+
+assert_failure() {
+	local rc=$1
+	local message=$2
+	increment_tests
+	if [ "$rc" -ne 0 ]; then
+		record_result 0 "$message"
+	else
+		record_result 1 "$message (unexpected success)"
+	fi
+}
+
+assert_empty() {
+	local value=$1
+	local message=$2
+	increment_tests
+	if [ -z "$value" ]; then
+		record_result 0 "$message"
+	else
+		record_result 1 "$message"
+		printf 'Unexpected output: %s\n' "$value" >&2
+	fi
+}
+
+assert_contains() {
+	local haystack=$1
+	local needle=$2
+	local message=$3
+	increment_tests
+	if printf '%s' "$haystack" | grep -F -- "$needle" >/dev/null; then
+		record_result 0 "$message"
+	else
+		record_result 1 "$message"
+		printf 'Did not find %s in output\n' "$needle" >&2
+		printf 'Output was:\n%s\n' "$haystack" >&2
+	fi
+}
+
+test_argument_input() {
+	local output rc
+	if output=$(propercase 'hELLo wORLD'); then
+		rc=0
+	else
+		rc=$?
+	fi
+	assert_success "$rc" 'propercase runs with arguments'
+	assert_equal 'Hello World' "$output" 'arguments are converted to proper case'
+}
+
+test_stdin_input() {
+	local output rc expected
+	expected=$'Tabs\tStay\tPut\nMultiline Sentence'
+	if output=$(printf 'tabs\tSTAY\tPUT\nmULTILINE sENTENCE' | propercase); then
+		rc=0
+	else
+		rc=$?
+	fi
+	assert_success "$rc" 'propercase reads from stdin'
+	assert_equal "$expected" "$output" 'stdin text is converted'
+}
+
+test_about_flag() {
+	local output rc
+	if output=$(propercase --about); then
+		rc=0
+	else
+		rc=$?
+	fi
+	assert_success "$rc" '--about exits successfully'
+	assert_equal 'propercase/titlecase: title-case text while keeping short connectors lowercase mid-title' "$output" '--about output describes the tool'
+}
+
+test_expected_word_behavior() {
+	while IFS=$'\t' read -r description input expected; do
+		[ -n "$description" ] || continue
+		local output rc
+		if output=$(propercase "$input"); then
+			rc=0
+		else
+			rc=$?
+		fi
+		assert_success "$rc" "$description runs"
+		assert_equal "$expected" "$output" "$description output matches"
+	done <<'CASES'
+middle small words	WAR OF THE WORLDS AND THE MOON	War of the Worlds and the Moon
+leading small word	the rise AND fall OF nations	The Rise and Fall of Nations
+with/without	DINNER WITH AND WITHOUT FRIENDS	Dinner With and Without Friends
+upon/onto	UPON AND ONTO THE NEXT STAGE	Upon and Onto the Next Stage
+trailing on	TURN IT ON	Turn It On
+trailing off	TURN IT OFF	Turn It Off
+mid-phrase on/off	PUTTIN' ON THE RITZ AND SWITCHIN' OFF THE LIGHTS	Puttin' on the Ritz and Switchin' off the Lights
+colon small word	Boom and Bust: a Global History of Financial Bubbles	Boom and Bust: A Global History of Financial Bubbles
+hyphen small word	UPBEAT - in LOVE	Upbeat - In Love
+within mid-title	LOST WITHIN THE MAZE	Lost Within the Maze
+apostrophes straight	ROCK 'N' ROLL	Rock 'N' Roll
+apostrophes curly	l’amour d’artagnan	L’Amour D’Artagnan
+acronym dotted	the best of r.e.m. live	The Best of R.E.M. Live
+acronym simple	nasa deep space network	NASA Deep Space Network
+CASES
+}
+
+test_lowerwords_flag() {
+	local output rc expected
+	expected='a, an, and, as, at, but, by, for, from, if, in, into, nor, of, off, on, or, over, per, the, to, up, vs, via'
+	if output=$(propercase --lowerwords); then
+		rc=0
+	else
+		rc=$?
+	fi
+	assert_success "$rc" '--lowerwords exits successfully'
+	assert_equal "$expected" "$output" '--lowerwords outputs default list'
+}
+
+test_custom_lowerwords_env() {
+	local output rc
+	local custom='foo, bar'
+	if output=$(PROPERCASE_LOWERWORDS="$custom" propercase --lowerwords); then
+		rc=0
+	else
+		rc=$?
+	fi
+	assert_success "$rc" '--lowerwords honors env override'
+	assert_equal "$custom" "$output" 'env override list returned'
+
+	if output=$(PROPERCASE_LOWERWORDS='foo,bar' propercase 'ALPHA FOO BETA BAR GAMMA'); then
+		rc=0
+	else
+		rc=$?
+	fi
+	assert_success "$rc" 'env override applies to conversion'
+	assert_equal 'Alpha foo Beta bar Gamma' "$output" 'custom small words are lowercased mid-title'
+}
+
+test_help_flag() {
+	local output rc
+	if output=$(propercase --help); then
+		rc=0
+	else
+		rc=$?
+	fi
+	assert_success "$rc" '--help exits successfully'
+	assert_contains "$output" 'Usage: propercase [OPTIONS] [TEXT...]' '--help includes Usage line'
+	assert_contains "$output" 'titlecase (symlink to this script)' '--help lists titlecase alias'
+	assert_contains "$output" 'Lowercase mid-title (unless first or last word):' '--help documents small words list'
+	assert_contains "$output" '--lowerwords' '--help documents lowerwords flag'
+}
+
+test_error_without_input() {
+	local stderr_file rc
+	stderr_file=$(mktemp)
+	if propercase > /dev/null 2>"$stderr_file"; then
+		rc=0
+	else
+		rc=$?
+	fi
+	assert_failure "$rc" 'propercase fails without args or stdin'
+	local err_output
+	err_output=$(cat "$stderr_file")
+	assert_equal 'Usage: propercase [OPTIONS] [TEXT...]' "${err_output%%$'\n'*}" 'error usage message shown'
+	rm -f "$stderr_file"
+}
+
+test_self_test_flag() {
+	if [ -n "${PROPERCASE_SELFTEST:-}" ]; then
+		return
+	fi
+	local output rc
+	if output=$(propercase --test 2>&1); then
+		rc=0
+	else
+		rc=$?
+	fi
+	assert_success "$rc" '--test exits successfully'
+	assert_empty "$output" '--test is silent on success'
+}
+
+main() {
+	test_argument_input
+	test_stdin_input
+	test_about_flag
+	test_expected_word_behavior
+	test_lowerwords_flag
+	test_custom_lowerwords_env
+	test_help_flag
+	test_error_without_input
+	test_self_test_flag
+
+	if [ "$fails" -eq 0 ]; then
+		printf 'All %d tests passed\n' "$tests"
+	else
+		printf '%d of %d tests failed\n' "$fails" "$tests" >&2
+	fi
+	return "$fails"
+}
+
+main "$@"
+exit "$?"

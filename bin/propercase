@@ -1,0 +1,439 @@
+#!/usr/bin/env luajit
+
+local ffi = require('ffi')
+ffi.cdef[[
+	int isatty(int fd);
+]]
+
+-- TODO: consider replacing ASCII-centric casing with a Unicode-aware library.
+
+local ABOUT = 'propercase/titlecase: title-case text while keeping short connectors lowercase mid-title'
+local USAGE = 'Usage: propercase [OPTIONS] [TEXT...]'
+
+local DEFAULT_SMALL_WORDS = {
+	'a', 'an', 'and', 'as', 'at', 'but', 'by', 'for', 'from', 'if', 'in', 'into', 'nor',
+	'of', 'off', 'on', 'or', 'over', 'per', 'the', 'to', 'up', 'vs', 'via'
+}
+
+local DEFAULT_UPPER_WORDS = {
+	'NASA', 'FBI', 'CIA', 'NSA', 'NATO', 'USA', 'US', 'UK', 'EU', 'UN',
+	'UFO', 'AI', 'API', 'CPU', 'GPU', 'SQL', 'HTML', 'CSS', 'HTTP', 'HTTPS',
+	'TCP', 'UDP', 'URL', 'URI', 'CLI', 'GUI', 'VR', 'AR'
+}
+
+local APOST_CHARS = {"'", '’', '‘', '‛', '`'}
+
+local function clone_list(list)
+	local copy = {}
+	for i = 1, #list do
+		copy[i] = list[i]
+	end
+	return copy
+end
+
+local function parse_lowerwords(value)
+	local parsed = {}
+	for token in value:gmatch('[^,]+') do
+		local cleaned = token:gsub('^%s+', ''):gsub('%s+$', '')
+		if cleaned ~= '' then
+			table.insert(parsed, cleaned:lower())
+		end
+	end
+	if #parsed > 0 then
+		return parsed
+	end
+	return nil
+end
+
+local function resolve_small_words()
+	local override = os.getenv('PROPERCASE_LOWERWORDS')
+	if override and override:match('%S') then
+		return parse_lowerwords(override) or clone_list(DEFAULT_SMALL_WORDS)
+	end
+	return clone_list(DEFAULT_SMALL_WORDS)
+end
+
+local SMALL_WORDS_LIST = resolve_small_words()
+
+local function parse_upperwords(value)
+	local parsed = {}
+	for token in value:gmatch('[^,]+') do
+		local cleaned = token:gsub('^%s+', ''):gsub('%s+$', '')
+		if cleaned ~= '' then
+			table.insert(parsed, cleaned:upper())
+		end
+	end
+	if #parsed > 0 then
+		return parsed
+	end
+	return nil
+end
+
+local function resolve_upper_words()
+	local override = os.getenv('PROPERCASE_UPPERWORDS')
+	if override and override:match('%S') then
+		return parse_upperwords(override) or clone_list(DEFAULT_UPPER_WORDS)
+	end
+	return clone_list(DEFAULT_UPPER_WORDS)
+end
+
+local UPPER_WORDS_SET = {}
+for _, word in ipairs(resolve_upper_words()) do
+	UPPER_WORDS_SET[word] = true
+end
+
+local function join_with_commas(words)
+	return table.concat(words, ', ')
+end
+
+local LOWERWORDS_STRING = join_with_commas(SMALL_WORDS_LIST)
+
+local function build_help()
+	return ([=[
+Usage: propercase [OPTIONS] [TEXT...]
+
+Downcases text and capitalizes the first letter of every word.
+Provide TEXT arguments (joined with single spaces) or pipe input via STDIN.
+
+Alias:
+  titlecase (symlink to this script)
+
+Lowercase mid-title (unless first or last word):
+  %s
+
+Customize via PROPERCASE_LOWERWORDS (comma-separated, printable via `propercase --lowerwords`).
+Keep specific acronyms uppercase via PROPERCASE_UPPERWORDS (default includes NASA).
+
+Options:
+  -a, --about       Show a short description of the tool
+  -h, --help        Show this help message
+      --test        Run bin/test/propercase_test with stdout suppressed
+      --lowerwords  Print the current lowercase connector list
+]=]):format(LOWERWORDS_STRING)
+end
+
+local HELP = build_help()
+
+local SMALL_WORDS = {}
+for _, word in ipairs(SMALL_WORDS_LIST) do
+	SMALL_WORDS[word] = true
+end
+
+local function escape_pattern(text)
+	return text:gsub('(%W)', '%%%1')
+end
+
+local ESCAPED_APOST = {}
+for _, ch in ipairs(APOST_CHARS) do
+	ESCAPED_APOST[#ESCAPED_APOST + 1] = escape_pattern(ch)
+end
+
+local SCRIPT_SOURCE = debug.getinfo(1, 'S').source
+if SCRIPT_SOURCE:sub(1, 1) == '@' then
+	SCRIPT_SOURCE = SCRIPT_SOURCE:sub(2)
+end
+local SCRIPT_DIR, SCRIPT_NAME = SCRIPT_SOURCE:match('^(.*)/([^/]+)$')
+if not SCRIPT_DIR or SCRIPT_DIR == '' then
+	SCRIPT_DIR = '.'
+	SCRIPT_NAME = SCRIPT_SOURCE
+end
+
+local function stderr(msg)
+	io.stderr:write(msg, '\n')
+end
+
+local function stdin_has_data()
+	local ok, result = pcall(function()
+		return ffi.C.isatty(0) == 0
+	end)
+	return ok and result
+end
+
+local SMALL_WORDS = {}
+for _, word in ipairs(SMALL_WORDS_LIST) do
+	SMALL_WORDS[word] = true
+end
+
+local function is_apostrophe(ch)
+	for _, apost in ipairs(APOST_CHARS) do
+		if ch == apost then
+			return true
+		end
+	end
+	return false
+end
+
+local function is_word_char(ch)
+	return ch:match('%w') ~= nil or is_apostrophe(ch)
+end
+
+local function strip_edge_punctuation(word)
+	local start_idx = 1
+	local end_idx = #word
+	while start_idx <= end_idx do
+		local ch = word:sub(start_idx, start_idx)
+		if is_word_char(ch) then
+			break
+		end
+		start_idx = start_idx + 1
+	end
+	while end_idx >= start_idx do
+		local ch = word:sub(end_idx, end_idx)
+		if is_word_char(ch) then
+			break
+		end
+		end_idx = end_idx - 1
+	end
+	return word:sub(start_idx, end_idx)
+end
+
+local function trim_for_acronym(word)
+	local start_idx = 1
+	local end_idx = #word
+	local function allowed(ch)
+		return ch:match('%w') or ch == '.'
+	end
+	while start_idx <= end_idx do
+		local ch = word:sub(start_idx, start_idx)
+		if allowed(ch) then
+			break
+		end
+		start_idx = start_idx + 1
+	end
+	while end_idx >= start_idx do
+		local ch = word:sub(end_idx, end_idx)
+		if allowed(ch) then
+			break
+		end
+		end_idx = end_idx - 1
+	end
+	return word:sub(start_idx, end_idx)
+end
+
+local function uppercase_letters(text)
+	return (text:gsub('%l', string.upper))
+end
+
+local function capitalize_word(word)
+	local prefix, letter, suffix = word:match('^(%A*)(%a)(.*)$')
+	if letter then
+		word = prefix .. letter:upper() .. suffix
+	elseif word ~= '' then
+		local first = word:sub(1, 1)
+		word = first:upper() .. word:sub(2)
+	end
+	for idx, apost in ipairs(APOST_CHARS) do
+		local escaped = ESCAPED_APOST[idx]
+		local pattern = '(%u)' .. escaped .. '(%l)'
+		word = word:gsub(pattern, function(before, after)
+			return before .. apost .. after:upper()
+		end)
+	end
+	return word
+end
+
+local function to_proper_case(text)
+	local lower = text:lower()
+	local source_is_all_caps = not text:find('%l')
+	local result = {}
+	local cursor = 1
+	local word_index = 0
+	local last_non_space
+
+	local function append_segment(segment)
+		if segment ~= '' then
+			table.insert(result, segment)
+			for i = 1, #segment do
+				local ch = segment:sub(i, i)
+				if not ch:match('%s') then
+					last_non_space = ch
+				end
+			end
+		end
+	end
+
+	local function next_nonspace_index(start_pos)
+		return lower:find('%S', start_pos)
+	end
+
+	local function is_dotted_acronym_word(word)
+		local core = trim_for_acronym(word)
+		if core == '' or not core:find('.', 1, true) then
+			return false
+		end
+		if core:sub(1, 1) == '.' then
+			return false
+		end
+		local prev_dot = false
+		local letters = 0
+		for i = 1, #core do
+			local ch = core:sub(i, i)
+			if ch == '.' then
+				if prev_dot then
+					return false
+				end
+				prev_dot = true
+			else
+				if not ch:match('%w') then
+					return false
+				end
+				letters = letters + 1
+				prev_dot = false
+			end
+		end
+		return letters >= 2
+	end
+
+	local function is_upper_acronym_word(original_word)
+		local core = trim_for_acronym(original_word)
+		if core == '' then
+			return false
+		end
+		local upper_core = core:upper()
+		if UPPER_WORDS_SET[upper_core] then
+			return true
+		end
+		if source_is_all_caps then
+			return false
+		end
+		return core:find('%d') ~= nil
+	end
+
+	for start_idx, word in lower:gmatch('()(%S+)') do
+		local prefix = lower:sub(cursor, start_idx - 1)
+		append_segment(prefix)
+		word_index = word_index + 1
+		local after_word = start_idx + #word
+		local normalized = strip_edge_punctuation(word)
+		local normalized_lower = normalized:lower()
+		local is_small = normalized_lower ~= '' and SMALL_WORDS[normalized_lower]
+		local is_first = word_index == 1
+		local is_last = next_nonspace_index(after_word) == nil
+		local force_cap = last_non_space == '-' or last_non_space == ':'
+		local original_word = text:sub(start_idx, after_word - 1)
+		local processed
+		if is_dotted_acronym_word(word) then
+			processed = uppercase_letters(word)
+		elseif is_upper_acronym_word(original_word) then
+			processed = uppercase_letters(original_word)
+		elseif is_small and not is_first and not is_last and not force_cap then
+			processed = word
+		else
+			processed = capitalize_word(word)
+		end
+		append_segment(processed)
+		cursor = after_word
+	end
+	if cursor <= #lower then
+		local suffix = lower:sub(cursor)
+		append_segment(suffix)
+	end
+	return table.concat(result)
+end
+
+local function join_args(args)
+	if #args == 0 then
+		return nil
+	end
+	return table.concat(args, ' ')
+end
+
+local function read_stdin()
+	local data = io.stdin:read('*a')
+	return data or ''
+end
+
+local function exit_with_usage(code)
+	stderr(USAGE)
+	os.exit(code)
+end
+
+local function run_tests()
+	local test_path = string.format('%s/test/%s_test', SCRIPT_DIR, SCRIPT_NAME)
+	local cmd = string.format('PROPERCASE_SELFTEST=1 %q >/dev/null', test_path)
+	local result1, result2, result3 = os.execute(cmd)
+	if type(result1) == 'number' then
+		os.exit(result1)
+	end
+	if result1 == true then
+		os.exit(0)
+	end
+	if result2 == 'exit' then
+		os.exit(result3 or 1)
+	end
+	os.exit(1)
+end
+
+local function parse_args(argv)
+	local options = {
+		text = {}
+	}
+	local parsing = true
+	local i = 1
+	while i <= #argv do
+		local arg = argv[i]
+		if parsing and arg == '--' then
+			parsing = false
+		elseif parsing and (arg == '-h' or arg == '--help') then
+			options.help = true
+		elseif parsing and (arg == '-a' or arg == '--about') then
+			options.about = true
+		elseif parsing and arg == '--test' then
+			options.test = true
+		elseif parsing and arg == '--lowerwords' then
+			options.lowerwords = true
+		elseif parsing and arg:sub(1, 1) == '-' then
+			stderr('Unknown option: ' .. arg)
+			exit_with_usage(2)
+		else
+			table.insert(options.text, arg)
+		end
+		i = i + 1
+	end
+	return options
+end
+
+local function main(argv)
+	local options = parse_args(argv)
+	if options.help then
+		io.write(HELP)
+		return
+	end
+	if options.about then
+		io.write(ABOUT, '\n')
+		return
+	end
+	if options.lowerwords then
+		io.write(LOWERWORDS_STRING, '\n')
+		return
+	end
+	if options.test then
+		run_tests()
+		return
+	end
+	local source = join_args(options.text)
+	if not source then
+		if stdin_has_data() then
+			source = read_stdin()
+			if source == '' then
+				exit_with_usage(2)
+				return
+			end
+		else
+			exit_with_usage(2)
+			return
+		end
+	end
+	local result = to_proper_case(source)
+	io.write(result)
+	if result == '' or result:sub(-1) ~= '\n' then
+		io.write('\n')
+	end
+end
+
+local function collect_args(...)
+	local argv = {...}
+	return argv
+end
+
+main(collect_args(...))
