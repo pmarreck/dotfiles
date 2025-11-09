@@ -149,7 +149,11 @@ within mid-title	LOST WITHIN THE MAZE	Lost Within the Maze
 apostrophes straight	ROCK 'N' ROLL	Rock 'N' Roll
 apostrophes curly	l’amour d’artagnan	L’Amour D’Artagnan
 acronym dotted	the best of r.e.m. live	The Best of R.E.M. Live
-acronym simple	nasa deep space network	NASA Deep Space Network
+acronym simple	nasa deep space network	Nasa Deep Space Network
+lowercase http	http status codes	Http Status Codes
+uppercase HTTP	HTTP status codes	HTTP Status Codes
+lowercase us	it came from us	It Came from Us
+uppercase US	news from the US	News from the US
 CASES
 }
 

@@ -234,7 +234,6 @@ end
 
 local function to_proper_case(text)
 	local lower = text:lower()
-	local source_is_all_caps = not text:find('%l')
 	local result = {}
 	local cursor = 1
 	local word_index = 0
@@ -290,13 +289,10 @@ local function to_proper_case(text)
 			return false
 		end
 		local upper_core = core:upper()
-		if UPPER_WORDS_SET[upper_core] then
-			return true
-		end
-		if source_is_all_caps then
+		if core ~= upper_core then
 			return false
 		end
-		return core:find('%d') ~= nil
+		return UPPER_WORDS_SET[upper_core] == true
 	end
 
 	for start_idx, word in lower:gmatch('()(%S+)') do
