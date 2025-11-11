@@ -1,392 +1,692 @@
 #!/usr/bin/env bash
 
-# Encryption functions. Requires the GNUpg "gpg" commandline tool. On OS X, "brew install gnupg"
-# Explanation of options here:
-# --symmetric - Don't public-key encrypt, just symmetrically encrypt in-place with a passphrase.
-# -z 9 - Compression level
-# --require-secmem - Require use of secured memory for operations. Bails otherwise.
-# cipher-algo, s2k-cipher-algo - The algorithm used for the secret key
-# digest-algo - The algorithm used to mangle the secret key
-# s2k-mode 3 - Enables multiple rounds of mangling to thwart brute-force attacks
-# s2k-count 65000000 - Mangles the passphrase this number of times. Takes over a second on modern hardware.
-# compress-algo BZIP2- Uses a high quality compression algorithm before encryption. BZIP2 is good but not compatible with PGP proper, FYI.
+# Shared encrypt/decrypt helpers used by various wrappers.
 
-# Test function for encrypt/decrypt
+_encrypt_expand_path() {
+	local path="$1"
+	if [[ -z "$path" ]]; then
+		return
+	fi
+	case "$path" in
+		~)
+			printf '%s\n' "$HOME"
+			;;
+		~/|~/*)
+			printf '%s/%s\n' "$HOME" "${path#~/}"
+			;;
+		*)
+			printf '%s\n' "$path"
+			;;
+	esac
+}
+
+_encrypt_boolean() {
+	local val="$1"
+	if [[ -z "$val" ]]; then
+		return 1
+	fi
+	case "${val,,}" in
+		1|true|yes|y)
+			return 0
+			;;
+		*)
+			return 1
+			;;
+	esac
+}
+
+_decrypt_expand_path() {
+	local path="$1"
+	if [[ -z "$path" ]]; then
+		return
+	fi
+	case "$path" in
+		~)
+			printf '%s\n' "$HOME"
+			;;
+		~/|~/*)
+			printf '%s/%s\n' "$HOME" "${path#~/}"
+			;;
+		*)
+			printf '%s\n' "$path"
+			;;
+	esac
+}
+
+_decrypt_boolean() {
+	local val="$1"
+	if [[ -z "$val" ]]; then
+		return 1
+	fi
+	case "${val,,}" in
+		1|true|yes|y)
+			return 0
+			;;
+		*)
+			return 1
+			;;
+	esac
+}
+
 _test_encrypt_decrypt() {
-  local test_string="This is a test string with special chars: !@#$%^&*()_+"
-  local test_password="testpassword123"
-  local temp_file
-  temp_file=$(mktemp)
-  
-  echo -e "\n${ANSI}${TXTYLW}Running encryption/decryption test...${ANSI}${TXTRST}"
-  
-  # Test string encryption/decryption
-  echo -e "${ANSI}${TXTYLW}Test 1: String encryption/decryption${ANSI}${TXTRST}"
-  local encrypted
-  local decrypted
-  
-  encrypted=$(echo -n "$test_string" | encrypt -i - -o - -p "$test_password" 2>/dev/null)
-  if [[ $? -ne 0 ]]; then
-    echo -e "${ANSI}${TXTRED}✗ Encryption failed${ANSI}${TXTRST}"
-    rm -f "$temp_file"
-    return 1
-  fi
-  
-  decrypted=$(echo -n "$encrypted" | decrypt -i - -o - -p "$test_password" 2>/dev/null)
-  if [[ $? -ne 0 ]]; then
-    echo -e "${ANSI}${TXTRED}✗ Decryption failed${ANSI}${TXTRST}"
-    rm -f "$temp_file"
-    return 1
-  fi
-  
-  if [[ "$decrypted" == "$test_string" ]]; then
-    echo -e "${ANSI}${TXTGRN}✓ String encryption/decryption test passed${ANSI}${TXTRST}"
-  else
-    echo -e "${ANSI}${TXTRED}✗ String encryption/decryption test failed${ANSI}${TXTRST}"
-    echo "Expected: $test_string"
-    echo "Got: $decrypted"
-    rm -f "$temp_file"
-    return 1
-  fi
-  
-  # Test file encryption/decryption
-  echo -e "${ANSI}${TXTYLW}Test 2: File encryption/decryption${ANSI}${TXTRST}"
-  echo -n "$test_string" > "$temp_file"
-  
-  encrypt -i "$temp_file" -o "$temp_file.gpg" -p "$test_password" >/dev/null 2>&1
-  if [[ $? -ne 0 ]]; then
-    echo -e "${ANSI}${TXTRED}✗ File encryption failed${ANSI}${TXTRST}"
-    rm -f "$temp_file" "$temp_file.gpg"
-    return 1
-  fi
-  
-  decrypted=$(decrypt -i "$temp_file.gpg" -o - -p "$test_password" 2>/dev/null)
-  if [[ $? -ne 0 ]]; then
-    echo -e "${ANSI}${TXTRED}✗ File decryption failed${ANSI}${TXTRST}"
-    rm -f "$temp_file" "$temp_file.gpg"
-    return 1
-  fi
-  
-  if [[ "$decrypted" == "$test_string" ]]; then
-    echo -e "${ANSI}${TXTGRN}✓ File encryption/decryption test passed${ANSI}${TXTRST}"
-  else
-    echo -e "${ANSI}${TXTRED}✗ File encryption/decryption test failed${ANSI}${TXTRST}"
-    echo "Expected: $test_string"
-    echo "Got: $decrypted"
-    rm -f "$temp_file" "$temp_file.gpg"
-    return 1
-  fi
-  
-  # Cleanup
-  rm -f "$temp_file" "$temp_file.gpg"
-  echo -e "${ANSI}${TXTGRN}All tests passed successfully!${ANSI}${TXTRST}"
-  return 0
+	local test_string="This is a test string with special chars: !@#\$%^&*()_+"
+	local test_password="testpassword123"
+	local temp_file
+	temp_file=$(mktemp)
+
+	echo -e "\n${ANSI}${TXTYLW}Running encryption/decryption test...${ANSI}${TXTRST}"
+
+	# Test string encryption/decryption (symmetric)
+	echo -e "${ANSI}${TXTYLW}Test 1: Symmetric string encryption/decryption${ANSI}${TXTRST}"
+	local encrypted
+	local decrypted
+
+	encrypted=$(echo -n "$test_string" | encrypt -i - -o - -p "$test_password" 2>/dev/null | base64)
+	if [[ $? -ne 0 ]]; then
+		echo -e "${ANSI}${TXTRED}✗ Symmetric encryption failed${ANSI}${TXTRST}"
+		rm -f "$temp_file"
+		return 1
+	fi
+
+	decrypted=$(echo -n "$encrypted" | base64 -d | decrypt -i - -o - -p "$test_password" 2>/dev/null)
+	if [[ $? -ne 0 ]]; then
+		echo -e "${ANSI}${TXTRED}✗ Symmetric decryption failed${ANSI}${TXTRST}"
+		rm -f "$temp_file"
+		return 1
+	fi
+
+	if [[ "$decrypted" == "$test_string" ]]; then
+		echo -e "${ANSI}${TXTGRN}✓ Symmetric string encryption/decryption test passed${ANSI}${TXTRST}"
+	else
+		echo -e "${ANSI}${TXTRED}✗ Symmetric string encryption/decryption test failed${ANSI}${TXTRST}"
+		echo "Expected: $test_string"
+		echo "Got: $decrypted"
+		rm -f "$temp_file"
+		return 1
+	fi
+
+	# Test file encryption/decryption (symmetric)
+	echo -e "${ANSI}${TXTYLW}Test 2: Symmetric file encryption/decryption${ANSI}${TXTRST}"
+	echo -n "$test_string" > "$temp_file"
+
+	encrypt -i "$temp_file" -o "$temp_file.gpg" -p "$test_password" >/dev/null 2>&1
+	if [[ $? -ne 0 ]]; then
+		echo -e "${ANSI}${TXTRED}✗ Symmetric file encryption failed${ANSI}${TXTRST}"
+		rm -f "$temp_file" "$temp_file.gpg"
+		return 1
+	fi
+
+	decrypted=$(decrypt -i "$temp_file.gpg" -o - -p "$test_password" 2>/dev/null)
+	if [[ $? -ne 0 ]]; then
+		echo -e "${ANSI}${TXTRED}✗ Symmetric file decryption failed${ANSI}${TXTRST}"
+		rm -f "$temp_file" "$temp_file.gpg"
+		return 1
+	fi
+
+	if [[ "$decrypted" == "$test_string" ]]; then
+		echo -e "${ANSI}${TXTGRN}✓ Symmetric file encryption/decryption test passed${ANSI}${TXTRST}"
+	else
+		echo -e "${ANSI}${TXTRED}✗ Symmetric file encryption/decryption test failed${ANSI}${TXTRST}"
+		echo "Expected: $test_string"
+		echo "Got: $decrypted"
+		rm -f "$temp_file" "$temp_file.gpg"
+		return 1
+	fi
+
+	# Test asymmetric encryption/decryption via rage
+	echo -e "${ANSI}${TXTYLW}Test 3: Asymmetric (rage) round-trip${ANSI}${TXTRST}"
+	local key_dir
+	key_dir=$(mktemp -d)
+	local key_path="$key_dir/testkey"
+	if ! ssh-keygen -t ed25519 -N "" -f "$key_path" >/dev/null 2>&1; then
+		echo -e "${ANSI}${TXTRED}✗ Failed to create temporary test key${ANSI}${TXTRST}"
+		rm -rf "$key_dir" "$temp_file" "$temp_file.gpg"
+		return 1
+	fi
+
+	local asym_encrypted
+	asym_encrypted=$(ENCRYPT_IDENTITY="$key_path" ENCRYPT_ASSUME_YES=1 encrypt --asymmetric -s "$test_string" -o - 2>/dev/null | base64)
+	if [[ $? -ne 0 ]]; then
+		echo -e "${ANSI}${TXTRED}✗ Asymmetric encryption failed${ANSI}${TXTRST}"
+		rm -rf "$key_dir"
+		rm -f "$temp_file" "$temp_file.gpg"
+		return 1
+	fi
+
+	local asym_decrypted
+	asym_decrypted=$(echo -n "$asym_encrypted" | base64 -d | DECRYPT_IDENTITY="$key_path" DECRYPT_ASSUME_YES=1 decrypt --asymmetric -i - -o - 2>/dev/null)
+	if [[ $? -ne 0 ]]; then
+		echo -e "${ANSI}${TXTRED}✗ Asymmetric decryption failed${ANSI}${TXTRST}"
+		rm -rf "$key_dir"
+		rm -f "$temp_file" "$temp_file.gpg"
+		return 1
+	fi
+
+	if [[ "$asym_decrypted" == "$test_string" ]]; then
+		echo -e "${ANSI}${TXTGRN}✓ Asymmetric encryption/decryption test passed${ANSI}${TXTRST}"
+	else
+		echo -e "${ANSI}${TXTRED}✗ Asymmetric encryption/decryption test failed${ANSI}${TXTRST}"
+		echo "Expected: $test_string"
+		echo "Got: $asym_decrypted"
+		rm -rf "$key_dir"
+		rm -f "$temp_file" "$temp_file.gpg"
+		return 1
+	fi
+
+	rm -rf "$key_dir"
+	rm -f "$temp_file" "$temp_file.gpg"
+	echo -e "${ANSI}${TXTGRN}All tests passed successfully!${ANSI}${TXTRST}"
+	return 0
 }
 
 encrypt() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-  needs gpg
-  
-  # Check for test mode
-  if [[ "$1" == "--test" ]]; then
-    _test_encrypt_decrypt
-    return $?
-  fi
-  
-  # Default values
-  local input_file=""
-  local output_file=""
-  local input_string=""
-  local password=""
-  local gpg_args=()
-  local use_stdin=false
-  local use_stdout=false
-  local use_string=false
-  local use_password=false
-  
-  # Show help if no arguments
-  if [[ $# -eq 0 ]]; then
-    encrypt --help
-    return
-  fi
-  
-  # Parse arguments using case and shift
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      -h|--help)
-        echo 'Usage: encrypt [-i input|-] [-o output|-] [-- <additional gpg options>]'
-        echo '       encrypt -s "string" [-o output|-] [-- <additional gpg options>]'
-        echo '       encrypt --test'
-        echo "This function is defined in ${BASH_SOURCE[0]}"
-        echo 'Options:'
-        echo '  -i, --input <file>   Input file to encrypt (use - for stdin)'
-        echo '  -s, --string <text>  Text string to encrypt'
-        echo '  -o, --output <file>  Output file for encrypted data (use - for stdout)'
-        echo '  -p, --password <pw>  Use this password (INSECURE: visible in history!)'
-        echo '  --test               Run self-test and exit'
-        echo '  --                   All options after this are passed directly to gpg'
-        echo 'Examples:'
-        echo '  encrypt -i secret.txt                      # Encrypts to secret.txt.gpg'
-        echo '  encrypt -i secret.txt -o custom.gpg        # Encrypts to custom output path'
-        echo '  encrypt -s "secret text" -o secret.gpg     # Encrypt string to file'
-        echo '  echo "secret" | encrypt -i - -o secret.gpg # Encrypt stdin to file'
-        echo '  encrypt -i secret.txt -o -                 # Encrypt to stdout'
-        echo '  encrypt -i secret.txt -- --armor           # Outputs ASCII-armored encryption'
-        echo '  encrypt -i secret.txt -p "pass" -o out.gpg # Use password from command line'
-        echo '  encrypt --test                             # Run self-test'
-        return
-        ;;
-      -i|--input)
-        if [[ $# -lt 2 ]]; then
-          echo "Error: -i/--input option requires a file or -" >&2
-          return 1
-        fi
-        input_file="$2"
-        if [[ "$input_file" == "-" ]]; then
-          use_stdin=true
-          input_file=""
-        fi
-        shift 2
-        ;;
-      -s|--string)
-        if [[ $# -lt 2 ]]; then
-          echo "Error: -s/--string option requires a text string" >&2
-          return 1
-        fi
-        input_string="$2"
-        use_string=true
-        shift 2
-        ;;
-      -o|--output)
-        if [[ $# -lt 2 ]]; then
-          echo "Error: -o/--output option requires a file or -" >&2
-          return 1
-        fi
-        output_file="$2"
-        if [[ "$output_file" == "-" ]]; then
-          use_stdout=true
-          output_file=""
-        fi
-        shift 2
-        ;;
-      -p|--password)
-        if [[ $# -lt 2 ]]; then
-          echo "Error: -p/--password option requires a password" >&2
-          return 1
-        fi
-        password="$2"
-        use_password=true
-        shift 2
-        ;;
-      --)
-        shift
-        # All remaining args are for gpg
-        gpg_args+=("$@")
-        break
-        ;;
-      *)
-        # If no explicit -i was given, treat first non-option as input file
-        if [[ -z "$input_file" && ! "$1" =~ ^- ]]; then
-          input_file="$1"
-        else
-          # Otherwise, pass to gpg
-          gpg_args+=("$1")
-        fi
-        shift
-        ;;
-    esac
-  done
-  
-  # Construct the base command
-  local cmd=(gpg --symmetric -z 9 --require-secmem --cipher-algo AES256 --s2k-cipher-algo AES256 --s2k-digest-algo SHA512 --s2k-mode 3 --s2k-count 65000000 --compress-algo BZIP2)
-  
-  # Add password if specified
-  if [[ "$use_password" == true ]]; then
-    cmd+=(--batch --passphrase "$password")
-  fi
-  
-  # Add output file if specified
-  if [[ -n "$output_file" ]]; then
-    cmd+=("-o" "$output_file")
-  fi
-  
-  # Add any passthrough arguments
-  if [[ ${#gpg_args[@]} -gt 0 ]]; then
-    cmd+=("${gpg_args[@]}")
-  fi
-  
-  # Add input file if specified and not using stdin or string
-  if [[ -n "$input_file" && "$use_stdin" == false && "$use_string" == false ]]; then
-    cmd+=("$input_file")
-  fi
-  
-  # Echo the command to stderr (hide password)
-  local cmd_display=("${cmd[@]}")
-  if [[ "$use_password" == true ]]; then
-    # Replace password with ****** in display
-    for i in "${!cmd_display[@]}"; do
-      if [[ "${cmd_display[$i]}" == "--passphrase" ]]; then
-        cmd_display[$((i+1))]="******"
-      fi
-    done
-  fi
-  >&2 echo -e "${ANSI}${TXTYLW}${cmd_display[*]}${ANSI}${TXTRST}"
-  
-  # Execute the command
-  if [[ "$use_string" == true ]]; then
-    # Use provided string
-    echo -n "$input_string" | "${cmd[@]}"
-  elif [[ "$use_stdin" == true ]]; then
-    # Read from stdin
-    "${cmd[@]}"
-  else
-    # Standard execution
-    "${cmd[@]}"
-  fi
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+
+	if [[ "$1" == "--test" ]]; then
+		_test_encrypt_decrypt
+		return $?
+	fi
+
+	local input_file=""
+	local output_file=""
+	local input_string=""
+	local password=""
+	local passthrough_args=()
+	local use_stdin=false
+	local use_stdout=false
+	local use_string=false
+	local use_password=false
+	local mode="symmetric"
+	local default_identity="$HOME/.ssh/id_ed25519"
+	local identity_path="${ENCRYPT_IDENTITY:-${ENCRYPT_PRIVATE_KEY:-}}"
+	local identity_explicit=false
+	[[ -n "$identity_path" ]] && identity_explicit=true
+	local recipient_spec="${ENCRYPT_RECIPIENT:-}"
+	local assume_yes_env="${ENCRYPT_ASSUME_YES:-}"
+	local assume_yes=false
+	_encrypt_boolean "$assume_yes_env" && assume_yes=true
+
+	if [[ $# -eq 0 ]]; then
+		encrypt --help
+		return
+	fi
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+			-h|--help)
+				echo 'Usage: encrypt [-i input|-] [-o output|-] [-- <additional gpg/rage options>]'
+				echo '       encrypt -s "string" [-o output|-] [-- <additional options>]'
+				echo '       encrypt --asymmetric [options]'
+				echo '       encrypt --test'
+				echo "This function is defined in ${BASH_SOURCE[0]}"
+				echo 'Options:'
+				echo '  -i, --input <file>     Input file to encrypt (use - for stdin)'
+				echo '  -s, --string <text>    Text string to encrypt'
+				echo '  -o, --output <file>    Output file (use - for stdout)'
+				echo '  -p, --password <pw>    Passphrase for symmetric GnuPG mode'
+				echo '  --asymmetric           Use rage public-key mode (default is symmetric)'
+				echo '  --symmetric            Force GnuPG symmetric mode'
+				echo '  --identity <path>      Private key/identity for asymmetric mode (default ~/.ssh/id_ed25519)'
+				echo '  --recipient <value>    Recipient (ssh public key, age1..., or recipients file) for asymmetric mode'
+				echo '  -y, --yes              Skip confirmation when using default identity'
+				echo '  --                     Pass remaining args directly to gpg (symmetric) or rage (asymmetric)'
+				echo 'Environment:'
+				echo '  ENCRYPT_IDENTITY / ENCRYPT_PRIVATE_KEY   Default identity path for asymmetric mode'
+				echo '  ENCRYPT_RECIPIENT                        Default recipient (string or path)'
+				echo '  ENCRYPT_ASSUME_YES                       If truthy, skip confirmation prompt'
+				echo 'Examples:'
+				echo '  encrypt -i secret.txt                      # Symmetric encrypts to secret.txt.gpg'
+				echo '  encrypt --asymmetric -i secret.txt         # Encrypts with rage to secret.txt.age'
+				echo '  encrypt --asymmetric -s "secret" -o out.age -y'
+				echo '  ENCRYPT_IDENTITY=~/.ssh/other encrypt --asymmetric -i file'
+				return
+				;;
+			-i|--input)
+				if [[ $# -lt 2 ]]; then
+					echo "Error: -i/--input option requires a file or -" >&2
+					return 1
+				fi
+				input_file="$2"
+				if [[ "$input_file" == "-" ]]; then
+					use_stdin=true
+					input_file=""
+				fi
+				shift 2
+				;;
+			-s|--string)
+				if [[ $# -lt 2 ]]; then
+					echo "Error: -s/--string option requires a text string" >&2
+					return 1
+				fi
+				input_string="$2"
+				use_string=true
+				shift 2
+				;;
+			-o|--output)
+				if [[ $# -lt 2 ]]; then
+					echo "Error: -o/--output option requires a file or -" >&2
+					return 1
+				fi
+				output_file="$2"
+				if [[ "$output_file" == "-" ]]; then
+					use_stdout=true
+					output_file=""
+				fi
+				shift 2
+				;;
+			-p|--password)
+				if [[ $# -lt 2 ]]; then
+					echo "Error: -p/--password option requires a password" >&2
+					return 1
+				fi
+				password="$2"
+				use_password=true
+				shift 2
+				;;
+			--asymmetric|--rage|--public-key|--age)
+				mode="asymmetric"
+				shift
+				;;
+			--symmetric)
+				mode="symmetric"
+				shift
+				;;
+			--identity)
+				if [[ $# -lt 2 ]]; then
+					echo "Error: --identity requires a path" >&2
+					return 1
+				fi
+				identity_path="$2"
+				identity_explicit=true
+				shift 2
+				;;
+			--recipient)
+				if [[ $# -lt 2 ]]; then
+					echo "Error: --recipient requires a value or path" >&2
+					return 1
+				fi
+				recipient_spec="$2"
+				shift 2
+				;;
+			-y|--yes|--assume-yes|--no-confirm)
+				assume_yes=true
+				shift
+				;;
+			--)
+				shift
+				passthrough_args+=("$@")
+				break
+				;;
+			*)
+				if [[ -z "$input_file" && ! "$1" =~ ^- ]]; then
+					input_file="$1"
+				else
+					passthrough_args+=("$1")
+				fi
+				shift
+				;;
+		esac
+	done
+
+	if [[ "$mode" != "symmetric" ]]; then
+		mode="asymmetric"
+	fi
+
+	if [[ "$mode" == "symmetric" && -n "$recipient_spec" ]]; then
+		echo "Error: --recipient is only valid in asymmetric mode" >&2
+		return 1
+	fi
+
+	if [[ "$mode" == "asymmetric" && "$use_password" == true ]]; then
+		echo "Error: --password is not supported in asymmetric mode" >&2
+		return 1
+	fi
+
+	local cmd=()
+	local cleanup_recipient_file=""
+
+	if [[ "$mode" == "symmetric" ]]; then
+		needs gpg "please install gnupg for symmetric encryption"
+		cmd=(gpg --symmetric -z 9 --require-secmem --cipher-algo AES256 --s2k-cipher-algo AES256 --s2k-digest-algo SHA512 --s2k-mode 3 --s2k-count 65000000 --compress-algo BZIP2)
+		if [[ "$use_password" == true ]]; then
+			cmd+=(--batch --passphrase "$password")
+		fi
+		if [[ -n "$output_file" ]]; then
+			cmd+=(-o "$output_file")
+		fi
+	else
+		needs rage "install rage (age) for asymmetric mode"
+		local identity_src="$identity_path"
+		if [[ -z "$identity_src" ]]; then
+			identity_src="$default_identity"
+		fi
+		identity_src=$(_encrypt_expand_path "$identity_src")
+		if [[ ! -f "$identity_src" ]]; then
+			echo "Error: identity file not found at $identity_src" >&2
+			return 1
+		fi
+		local prompt_needed=false
+		if [[ "$identity_explicit" == false ]]; then
+			prompt_needed=true
+		fi
+		if [[ "$prompt_needed" == true && "$assume_yes" == false ]]; then
+			if [[ -t 0 || -t 1 || -t 2 ]]; then
+				local reply=""
+				if ! read -r -p "Use $identity_src for asymmetric encryption? [Y/n] " reply </dev/tty; then
+					echo "Error: unable to read confirmation" >&2
+					return 1
+				fi
+				case "${reply,,}" in
+					""|y|yes)
+						;;
+					*)
+						echo "Aborted at user request." >&2
+						return 1
+						;;
+				esac
+			else
+				echo "Refusing to use default identity without confirmation; re-run with --yes or ENCRYPT_ASSUME_YES=1" >&2
+				return 1
+			fi
+		fi
+
+		local -a recipient_flags=()
+		local recipient_display=""
+		if [[ -n "$recipient_spec" ]]; then
+			local expanded_recipient="$recipient_spec"
+			expanded_recipient=$(_encrypt_expand_path "$expanded_recipient")
+			if [[ -f "$expanded_recipient" ]]; then
+				recipient_flags=(-R "$expanded_recipient")
+				recipient_display="recipients file: $expanded_recipient"
+			else
+				recipient_flags=(-r "$recipient_spec")
+				recipient_display="recipient supplied via --recipient"
+			fi
+		else
+			local pub_path="${identity_src}.pub"
+			if [[ -f "$pub_path" ]]; then
+				recipient_flags=(-R "$pub_path")
+				recipient_display="public key file: $pub_path"
+			else
+				needs ssh-keygen "ssh-keygen is required to derive a public key from $identity_src"
+				local derived_key
+				if ! derived_key=$(ssh-keygen -y -f "$identity_src" 2>/dev/null); then
+					echo "Error: could not derive public key from $identity_src" >&2
+					return 1
+				fi
+				cleanup_recipient_file=$(mktemp)
+				printf '%s\n' "$derived_key" > "$cleanup_recipient_file"
+				recipient_flags=(-R "$cleanup_recipient_file")
+				recipient_display="derived recipient written to $cleanup_recipient_file"
+			fi
+		fi
+
+		if [[ ${#recipient_flags[@]} -eq 0 ]]; then
+			echo "Error: no recipient available for asymmetric mode" >&2
+			[[ -n "$cleanup_recipient_file" ]] && rm -f "$cleanup_recipient_file"
+			return 1
+		fi
+
+		cmd=(rage --encrypt)
+		cmd+=("${recipient_flags[@]}")
+		if [[ -z "$output_file" && "$use_stdout" == false && "$use_stdin" == false && "$use_string" == false && -n "$input_file" ]]; then
+			output_file="${input_file}.age"
+		fi
+		if [[ -n "$output_file" ]]; then
+			cmd+=(-o "$output_file")
+		fi
+		if [[ -n "$recipient_display" ]]; then
+			>&2 echo -e "${ANSI}${TXTYLW}Using ${recipient_display}${ANSI}${TXTRST}"
+		fi
+		>&2 echo -e "${ANSI}${TXTYLW}Identity: $identity_src${ANSI}${TXTRST}"
+	fi
+
+	if [[ ${#passthrough_args[@]} -gt 0 ]]; then
+		cmd+=("${passthrough_args[@]}")
+	fi
+
+	if [[ -n "$input_file" && "$use_stdin" == false && "$use_string" == false ]]; then
+		cmd+=("$input_file")
+	fi
+
+	local cmd_display=("${cmd[@]}")
+	if [[ "$mode" == "symmetric" && "$use_password" == true ]]; then
+		for i in "${!cmd_display[@]}"; do
+			if [[ "${cmd_display[$i]}" == "--passphrase" ]]; then
+				cmd_display[$((i+1))]="******"
+			fi
+		done
+	fi
+	>&2 echo -e "${ANSI}${TXTYLW}${cmd_display[*]}${ANSI}${TXTRST}"
+
+	local exit_code=0
+	if [[ "$use_string" == true ]]; then
+		echo -n "$input_string" | "${cmd[@]}"
+		exit_code=$?
+	elif [[ "$use_stdin" == true ]]; then
+		"${cmd[@]}"
+		exit_code=$?
+	else
+		"${cmd[@]}"
+		exit_code=$?
+	fi
+
+	if [[ -n "$cleanup_recipient_file" ]]; then
+		rm -f "$cleanup_recipient_file"
+	fi
+
+	return $exit_code
 }
 
-# note: will decrypt to STDOUT by default, for security reasons.
 decrypt() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-  needs gpg
-  
-  # Check for test mode
-  if [[ "$1" == "--test" ]]; then
-    _test_encrypt_decrypt
-    return $?
-  fi
-  
-  # Default values
-  local input_file=""
-  local output_file=""
-  local password=""
-  local gpg_args=()
-  local use_stdin=false
-  local use_stdout=false
-  local use_password=false
-  
-  # Show help if no arguments
-  if [[ $# -eq 0 ]]; then
-    decrypt --help
-    return
-  fi
-  
-  # Parse arguments using case and shift
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      -h|--help)
-        echo 'Usage: decrypt [-i input|-] [-o output|-] [-- <additional gpg options>]'
-        echo '       decrypt --test'
-        echo "This function is defined in ${BASH_SOURCE[0]}"
-        echo 'Options:'
-        echo '  -i, --input <file>   Input file to decrypt (use - for stdin)'
-        echo '  -o, --output <file>  Output file for decrypted data (use - for stdout, default)'
-        echo '  -p, --password <pw>  Use this password (INSECURE: visible in history!)'
-        echo '  --test               Run self-test and exit'
-        echo '  --                   All options after this are passed directly to gpg'
-        echo 'Will ask for password and *output cleartext to stdout* by default for security reasons'
-        echo 'Examples:'
-        echo '  decrypt -i secret.txt.gpg                  # Decrypt to stdout'
-        echo '  decrypt -i secret.txt.gpg -o secret.txt    # Decrypt to file'
-        echo '  decrypt -i secret.txt.gpg -o -             # Decrypt to stdout (explicit)'
-        echo '  decrypt -i - -o secret.txt                 # Decrypt from stdin to file'
-        echo '  decrypt -i secret.txt.gpg -- --quiet       # Suppress gpg status messages'
-        echo '  decrypt -i secret.gpg -p "pass" -o out.txt # Use password from command line'
-        echo '  decrypt --test                             # Run self-test'
-        return
-        ;;
-      -i|--input)
-        if [[ $# -lt 2 ]]; then
-          echo "Error: -i/--input option requires a file or -" >&2
-          return 1
-        fi
-        input_file="$2"
-        if [[ "$input_file" == "-" ]]; then
-          use_stdin=true
-          input_file=""
-        fi
-        shift 2
-        ;;
-      -o|--output)
-        if [[ $# -lt 2 ]]; then
-          echo "Error: -o/--output option requires a file or -" >&2
-          return 1
-        fi
-        output_file="$2"
-        if [[ "$output_file" == "-" ]]; then
-          use_stdout=true
-          output_file=""
-        fi
-        shift 2
-        ;;
-      -p|--password)
-        if [[ $# -lt 2 ]]; then
-          echo "Error: -p/--password option requires a password" >&2
-          return 1
-        fi
-        password="$2"
-        use_password=true
-        shift 2
-        ;;
-      --)
-        shift
-        # All remaining args are for gpg
-        gpg_args+=("$@")
-        break
-        ;;
-      *)
-        # If no explicit -i was given, treat first non-option as input file
-        if [[ -z "$input_file" && ! "$1" =~ ^- ]]; then
-          input_file="$1"
-        else
-          # Otherwise, pass to gpg
-          gpg_args+=("$1")
-        fi
-        shift
-        ;;
-    esac
-  done
-  
-  # Construct the base command
-  local cmd=(gpg)
-  
-  # Add password if specified
-  if [[ "$use_password" == true ]]; then
-    cmd+=(--batch --passphrase "$password")
-  fi
-  
-  # Set decrypt mode if using stdout (default) or explicitly specified
-  if [[ "$use_stdout" == true || -z "$output_file" ]]; then
-    cmd+=("-d")
-  fi
-  
-  # Add output file if specified and not using stdout
-  if [[ -n "$output_file" ]]; then
-    cmd+=("-o" "$output_file")
-  fi
-  
-  # Add input file if specified and not using stdin
-  if [[ -n "$input_file" && "$use_stdin" == false ]]; then
-    cmd+=("$input_file")
-  fi
-  
-  # Add any passthrough arguments
-  if [[ ${#gpg_args[@]} -gt 0 ]]; then
-    cmd+=("${gpg_args[@]}")
-  fi
-  
-  # Echo the command to stderr (hide password)
-  local cmd_display=("${cmd[@]}")
-  if [[ "$use_password" == true ]]; then
-    # Replace password with ****** in display
-    for i in "${!cmd_display[@]}"; do
-      if [[ "${cmd_display[$i]}" == "--passphrase" ]]; then
-        cmd_display[$((i+1))]="******"
-      fi
-    done
-  fi
-  >&2 echo -e "${ANSI}${TXTYLW}${cmd_display[*]}${ANSI}${TXTRST}"
-  
-  # Execute the command
-  "${cmd[@]}"
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+
+	if [[ "$1" == "--test" ]]; then
+		_test_encrypt_decrypt
+		return $?
+	fi
+
+	local input_file=""
+	local output_file=""
+	local password=""
+	local passthrough_args=()
+	local use_stdin=false
+	local use_stdout=false
+	local use_password=false
+	local mode="symmetric"
+	local default_identity="$HOME/.ssh/id_ed25519"
+	local identity_path="${DECRYPT_IDENTITY:-${DECRYPT_PRIVATE_KEY:-${ENCRYPT_IDENTITY:-${ENCRYPT_PRIVATE_KEY:-}}}}"
+	local identity_explicit=false
+	[[ -n "$identity_path" ]] && identity_explicit=true
+	local assume_yes_env="${DECRYPT_ASSUME_YES:-${ENCRYPT_ASSUME_YES:-}}"
+	local assume_yes=false
+	_decrypt_boolean "$assume_yes_env" && assume_yes=true
+
+	if [[ $# -eq 0 ]]; then
+		decrypt --help
+		return
+	fi
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+			-h|--help)
+				echo 'Usage: decrypt [-i input|-] [-o output|-] [-- <additional gpg/rage options>]'
+				echo '       decrypt --asymmetric [options]'
+				echo '       decrypt --test'
+				echo "This function is defined in ${BASH_SOURCE[0]}"
+				echo 'Options:'
+				echo '  -i, --input <file>     Input file to decrypt (use - for stdin)'
+				echo '  -o, --output <file>    Output file (use - for stdout, default for symmetric)'
+				echo '  -p, --password <pw>    Passphrase for symmetric GnuPG mode'
+				echo '  --asymmetric           Use rage private-key mode (default is symmetric)'
+				echo '  --symmetric            Force GnuPG symmetric mode'
+				echo '  --identity <path>      Private key/identity for asymmetric mode (default ~/.ssh/id_ed25519)'
+				echo '  -y, --yes              Skip confirmation when using default identity'
+				echo '  --                     Pass remaining args directly to gpg (symmetric) or rage (asymmetric)'
+				echo 'Environment:'
+				echo '  DECRYPT_IDENTITY / DECRYPT_PRIVATE_KEY   Default identity path for asymmetric mode'
+				echo '  DECRYPT_ASSUME_YES / ENCRYPT_ASSUME_YES  If truthy, skip confirmation prompt'
+				echo 'Examples:'
+				echo '  decrypt -i secret.txt.gpg                  # Symmetric decrypt to stdout'
+				echo '  decrypt --asymmetric -i secret.age -o secret.txt'
+				echo '  DECRYPT_IDENTITY=~/.ssh/other decrypt --asymmetric -i file.age'
+				return
+				;;
+			-i|--input)
+				if [[ $# -lt 2 ]]; then
+					echo "Error: -i/--input option requires a file or -" >&2
+					return 1
+				fi
+				input_file="$2"
+				if [[ "$input_file" == "-" ]]; then
+					use_stdin=true
+					input_file=""
+				fi
+				shift 2
+				;;
+			-o|--output)
+				if [[ $# -lt 2 ]]; then
+					echo "Error: -o/--output option requires a file or -" >&2
+					return 1
+				fi
+				output_file="$2"
+				if [[ "$output_file" == "-" ]]; then
+					use_stdout=true
+					output_file=""
+				fi
+				shift 2
+				;;
+			-p|--password)
+				if [[ $# -lt 2 ]]; then
+					echo "Error: -p/--password option requires a password" >&2
+					return 1
+				fi
+				password="$2"
+				use_password=true
+				shift 2
+				;;
+			--asymmetric|--rage|--public-key|--age)
+				mode="asymmetric"
+				shift
+				;;
+			--symmetric)
+				mode="symmetric"
+				shift
+				;;
+			--identity)
+				if [[ $# -lt 2 ]]; then
+					echo "Error: --identity requires a path" >&2
+					return 1
+				fi
+				identity_path="$2"
+				identity_explicit=true
+				shift 2
+				;;
+			-y|--yes|--assume-yes|--no-confirm)
+				assume_yes=true
+				shift
+				;;
+			--)
+				shift
+				passthrough_args+=("$@")
+				break
+				;;
+			*)
+				if [[ -z "$input_file" && ! "$1" =~ ^- ]]; then
+					input_file="$1"
+				else
+					passthrough_args+=("$1")
+				fi
+				shift
+				;;
+		esac
+	done
+
+	if [[ "$mode" != "symmetric" ]]; then
+		mode="asymmetric"
+	fi
+
+	if [[ "$mode" == "asymmetric" && "$use_password" == true ]]; then
+		echo "Error: --password is not supported in asymmetric mode" >&2
+		return 1
+	fi
+
+	local cmd=()
+	if [[ "$mode" == "symmetric" ]]; then
+		needs gpg "please install gnupg for symmetric decryption"
+		cmd=(gpg)
+		if [[ "$use_password" == true ]]; then
+			cmd+=(--batch --passphrase "$password")
+		fi
+		if [[ "$use_stdout" == true || -z "$output_file" ]]; then
+			cmd+=(-d)
+		fi
+		if [[ -n "$output_file" ]]; then
+			cmd+=(-o "$output_file")
+		fi
+	else
+		needs rage "install rage (age) for asymmetric mode"
+		local identity_src="$identity_path"
+		if [[ -z "$identity_src" ]]; then
+			identity_src="$default_identity"
+		fi
+		identity_src=$(_decrypt_expand_path "$identity_src")
+		if [[ ! -f "$identity_src" ]]; then
+			echo "Error: identity file not found at $identity_src" >&2
+			return 1
+		fi
+		local prompt_needed=false
+		if [[ "$identity_explicit" == false ]]; then
+			prompt_needed=true
+		fi
+		if [[ "$prompt_needed" == true && "$assume_yes" == false ]]; then
+			if [[ -t 0 || -t 1 || -t 2 ]]; then
+				local reply=""
+				if ! read -r -p "Use $identity_src for asymmetric decryption? [Y/n] " reply </dev/tty; then
+					echo "Error: unable to read confirmation" >&2
+					return 1
+				fi
+				case "${reply,,}" in
+					""|y|yes)
+						;;
+					*)
+						echo "Aborted at user request." >&2
+						return 1
+						;;
+				esac
+			else
+				echo "Refusing to use default identity without confirmation; re-run with --yes or DECRYPT_ASSUME_YES=1" >&2
+				return 1
+			fi
+		fi
+
+		cmd=(rage --decrypt -i "$identity_src")
+		if [[ -n "$output_file" ]]; then
+			cmd+=(-o "$output_file")
+		fi
+		>&2 echo -e "${ANSI}${TXTYLW}Identity: $identity_src${ANSI}${TXTRST}"
+	fi
+
+	if [[ ${#passthrough_args[@]} -gt 0 ]]; then
+		cmd+=("${passthrough_args[@]}")
+	fi
+
+	if [[ -n "$input_file" && "$use_stdin" == false ]]; then
+		cmd+=("$input_file")
+	fi
+
+	local cmd_display=("${cmd[@]}")
+	if [[ "$mode" == "symmetric" && "$use_password" == true ]]; then
+		for i in "${!cmd_display[@]}"; do
+			if [[ "${cmd_display[$i]}" == "--passphrase" ]]; then
+				cmd_display[$((i+1))]="******"
+			fi
+		done
+	fi
+	>&2 echo -e "${ANSI}${TXTYLW}${cmd_display[*]}${ANSI}${TXTRST}"
+
+	local exit_code=0
+	"${cmd[@]}"
+	exit_code=$?
+	return $exit_code
 }

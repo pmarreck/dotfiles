@@ -1,71 +1,111 @@
 #!/usr/bin/env bash
 
 test_encrypt_decrypt() {
-  local test_string="This is a test string with special chars: !@#$%^&*()_+"
+  local test_string="This is a test string with special chars: !@#\$%^&*()_+"
   local test_password="testpassword123"
   local temp_file
   temp_file=$(mktemp)
-  
+
   echo -e "\n${ANSI}${TXTYLW}Running encryption/decryption test...${ANSI}${TXTRST}"
-  
-  # Test string encryption/decryption
-  echo -e "${ANSI}${TXTYLW}Test 1: String encryption/decryption${ANSI}${TXTRST}"
+
+  # Test string encryption/decryption (symmetric)
+  echo -e "${ANSI}${TXTYLW}Test 1: Symmetric string encryption/decryption${ANSI}${TXTRST}"
   local encrypted
   local decrypted
-  
+
   encrypted=$(echo -n "$test_string" | encrypt -i - -o - -p "$test_password" 2>/dev/null | base64)
   if [[ $? -ne 0 ]]; then
-    echo -e "${ANSI}${TXTRED}✗ Encryption failed${ANSI}${TXTRST}"
+    echo -e "${ANSI}${TXTRED}✗ Symmetric encryption failed${ANSI}${TXTRST}"
     rm -f "$temp_file"
     return 1
   fi
-  
+
   decrypted=$(echo -n "$encrypted" | base64 -d | decrypt -i - -o - -p "$test_password" 2>/dev/null)
   if [[ $? -ne 0 ]]; then
-    echo -e "${ANSI}${TXTRED}✗ Decryption failed${ANSI}${TXTRST}"
+    echo -e "${ANSI}${TXTRED}✗ Symmetric decryption failed${ANSI}${TXTRST}"
     rm -f "$temp_file"
     return 1
   fi
-  
+
   if [[ "$decrypted" == "$test_string" ]]; then
-    echo -e "${ANSI}${TXTGRN}✓ String encryption/decryption test passed${ANSI}${TXTRST}"
+    echo -e "${ANSI}${TXTGRN}✓ Symmetric string encryption/decryption test passed${ANSI}${TXTRST}"
   else
-    echo -e "${ANSI}${TXTRED}✗ String encryption/decryption test failed${ANSI}${TXTRST}"
+    echo -e "${ANSI}${TXTRED}✗ Symmetric string encryption/decryption test failed${ANSI}${TXTRST}"
     echo "Expected: $test_string"
     echo "Got: $decrypted"
     rm -f "$temp_file"
     return 1
   fi
-  
-  # Test file encryption/decryption
-  echo -e "${ANSI}${TXTYLW}Test 2: File encryption/decryption${ANSI}${TXTRST}"
+
+  # Test file encryption/decryption (symmetric)
+  echo -e "${ANSI}${TXTYLW}Test 2: Symmetric file encryption/decryption${ANSI}${TXTRST}"
   echo -n "$test_string" > "$temp_file"
-  
+
   encrypt -i "$temp_file" -o "$temp_file.gpg" -p "$test_password" >/dev/null 2>&1
   if [[ $? -ne 0 ]]; then
-    echo -e "${ANSI}${TXTRED}✗ File encryption failed${ANSI}${TXTRST}"
+    echo -e "${ANSI}${TXTRED}✗ Symmetric file encryption failed${ANSI}${TXTRST}"
     rm -f "$temp_file" "$temp_file.gpg"
     return 1
   fi
-  
+
   decrypted=$(decrypt -i "$temp_file.gpg" -o - -p "$test_password" 2>/dev/null)
   if [[ $? -ne 0 ]]; then
-    echo -e "${ANSI}${TXTRED}✗ File decryption failed${ANSI}${TXTRST}"
+    echo -e "${ANSI}${TXTRED}✗ Symmetric file decryption failed${ANSI}${TXTRST}"
     rm -f "$temp_file" "$temp_file.gpg"
     return 1
   fi
-  
+
   if [[ "$decrypted" == "$test_string" ]]; then
-    echo -e "${ANSI}${TXTGRN}✓ File encryption/decryption test passed${ANSI}${TXTRST}"
+    echo -e "${ANSI}${TXTGRN}✓ Symmetric file encryption/decryption test passed${ANSI}${TXTRST}"
   else
-    echo -e "${ANSI}${TXTRED}✗ File encryption/decryption test failed${ANSI}${TXTRST}"
+    echo -e "${ANSI}${TXTRED}✗ Symmetric file encryption/decryption test failed${ANSI}${TXTRST}"
     echo "Expected: $test_string"
     echo "Got: $decrypted"
     rm -f "$temp_file" "$temp_file.gpg"
     return 1
   fi
-  
-  # Cleanup
+
+  # Test asymmetric encryption/decryption via rage
+  echo -e "${ANSI}${TXTYLW}Test 3: Asymmetric (rage) round-trip${ANSI}${TXTRST}"
+  local key_dir
+  key_dir=$(mktemp -d)
+  local key_path="$key_dir/testkey"
+  if ! ssh-keygen -t ed25519 -N "" -f "$key_path" >/dev/null 2>&1; then
+    echo -e "${ANSI}${TXTRED}✗ Failed to create temporary test key${ANSI}${TXTRST}"
+    rm -rf "$key_dir" "$temp_file" "$temp_file.gpg"
+    return 1
+  fi
+
+  local asym_encrypted
+  asym_encrypted=$(ENCRYPT_IDENTITY="$key_path" ENCRYPT_ASSUME_YES=1 encrypt --asymmetric -s "$test_string" -o - 2>/dev/null | base64)
+  if [[ $? -ne 0 ]]; then
+    echo -e "${ANSI}${TXTRED}✗ Asymmetric encryption failed${ANSI}${TXTRST}"
+    rm -rf "$key_dir"
+    rm -f "$temp_file" "$temp_file.gpg"
+    return 1
+  fi
+
+  local asym_decrypted
+  asym_decrypted=$(echo -n "$asym_encrypted" | base64 -d | DECRYPT_IDENTITY="$key_path" DECRYPT_ASSUME_YES=1 decrypt --asymmetric -i - -o - 2>/dev/null)
+  if [[ $? -ne 0 ]]; then
+    echo -e "${ANSI}${TXTRED}✗ Asymmetric decryption failed${ANSI}${TXTRST}"
+    rm -rf "$key_dir"
+    rm -f "$temp_file" "$temp_file.gpg"
+    return 1
+  fi
+
+  if [[ "$asym_decrypted" == "$test_string" ]]; then
+    echo -e "${ANSI}${TXTGRN}✓ Asymmetric encryption/decryption test passed${ANSI}${TXTRST}"
+  else
+    echo -e "${ANSI}${TXTRED}✗ Asymmetric encryption/decryption test failed${ANSI}${TXTRST}"
+    echo "Expected: $test_string"
+    echo "Got: $asym_decrypted"
+    rm -rf "$key_dir"
+    rm -f "$temp_file" "$temp_file.gpg"
+    return 1
+  fi
+
+  rm -rf "$key_dir"
   rm -f "$temp_file" "$temp_file.gpg"
   echo -e "${ANSI}${TXTGRN}All tests passed successfully!${ANSI}${TXTRST}"
   return 0

@@ -17,3 +17,4 @@ bin/*launcher
 
 **/.claude/settings.local.json
 .jj/
+.resume*

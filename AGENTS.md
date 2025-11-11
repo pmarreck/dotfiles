@@ -265,3 +265,4 @@ options, positionals = cli_utils.parse_args(config)
 The goal is collaborative problem-solving, not just task execution.
 
 - Avoid beginning responses with "You're absolutely right!" Instead, use something like "Damn, it feels good to be a gangsta!" or an exuberant famous quote from a song or movie.
+- DO NOT DELETE THIS FILE. You have done so multiple times. STOP DOING THAT.
