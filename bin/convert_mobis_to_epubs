@@ -1,0 +1,185 @@
+#!/usr/bin/env bash
+
+convert_mobis_to_epubs() {
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+
+	local delete_original=false
+	local -a positional=()
+	local exit_status=0
+	local about_text="Convert MOBI ebooks to EPUB via ebook-convert."
+
+	print_help() {
+		cat <<'EOF'
+Usage: convert_mobis_to_epubs [OPTIONS] [FILE...]
+
+Convert .mobi files in the current directory (or specified FILEs) to .epub
+using ebook-convert.
+
+Options:
+	-h, --help      Show this help message and exit
+	--delete        Delete each original .mobi after a successful conversion
+
+	Behavior:
+		- With no FILE arguments, every *.mobi in the current directory is converted.
+		- With FILE arguments, only those paths are converted (no implicit globbing).
+		- After each conversion you will be asked whether to delete the .mobi unless
+		  --delete is supplied.
+EOF
+	}
+
+	print_about() {
+		echo "$about_text"
+	}
+
+	require_dependency() {
+		if ! command -v "$1" >/dev/null 2>&1; then
+			echo "Error: required command '$1' not found on PATH" >&2
+			return 1
+		fi
+		return 0
+	}
+
+	collect_directory_mobis() {
+		local -n __dest=$1
+		local -a matches=()
+
+		if command -v glob >/dev/null 2>&1; then
+			while IFS= read -r match; do
+				[[ -n "$match" ]] && matches+=("$match")
+			done < <(glob "*.[Mm][Oo][Bb][Ii]" 2>/dev/null || true)
+		else
+			while IFS= read -r -d '' match; do
+				matches+=("${match#./}")
+			done < <(find . -maxdepth 1 -type f \( -iname "*.mobi" \) -print0)
+		fi
+
+		__dest=("${matches[@]}")
+	}
+
+	prompt_delete() {
+		local target="$1"
+		local response
+
+		if [[ -t 0 ]]; then
+			read -r -p "Delete original '$target'? [y/N] " response
+		else
+			printf "Delete original '%s'? [y/N] " "$target"
+			if ! read -r response; then
+				response=""
+			fi
+		fi
+
+		case "$response" in
+			y|Y|yes|YES|Yes)
+				if rm -f -- "$target"; then
+					echo "Deleted '$target'"
+				else
+					echo "Failed to delete '$target'" >&2
+					exit_status=1
+				fi
+				;;
+			*)
+				echo "Keeping '$target'"
+				;;
+		esac
+	}
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+			-h|--help)
+				print_help
+				return 0
+				;;
+			-a|--about)
+				print_about
+				return 0
+				;;
+			--delete)
+				delete_original=true
+				shift
+				;;
+			--)
+				shift
+				while [[ $# -gt 0 ]]; do
+					positional+=("$1")
+					shift
+				done
+				break
+				;;
+			*)
+				positional+=("$1")
+				shift
+				;;
+		esac
+	done
+
+	if ! require_dependency ebook-convert; then
+		return 1
+	fi
+
+	local -a targets=()
+	if [[ ${#positional[@]} -gt 0 ]]; then
+		local candidate
+		for candidate in "${positional[@]}"; do
+			if [[ -f "$candidate" ]]; then
+				targets+=("$candidate")
+			else
+				echo "Skipping missing mobi: $candidate" >&2
+				exit_status=1
+			fi
+		done
+	else
+		collect_directory_mobis targets
+	fi
+
+	if [[ ${#targets[@]} -eq 0 ]]; then
+		echo "No .mobi files to convert" >&2
+		return 1
+	fi
+
+	local mobi output
+	for mobi in "${targets[@]}"; do
+		if [[ ! -f "$mobi" ]]; then
+			echo "Skipping missing mobi: $mobi" >&2
+			exit_status=1
+			continue
+		fi
+
+		output="${mobi%.*}.epub"
+		echo "Converting '$mobi' -> '$output'..."
+		if ! ebook-convert "$mobi" "$output"; then
+			echo "Conversion failed for '$mobi'" >&2
+			exit_status=1
+			continue
+		fi
+
+		if [[ "$delete_original" == true ]]; then
+			if rm -f -- "$mobi"; then
+				echo "Deleted '$mobi'"
+			else
+				echo "Failed to delete '$mobi'" >&2
+				exit_status=1
+			fi
+		else
+			prompt_delete "$mobi"
+		fi
+	done
+
+	return $exit_status
+}
+
+if ! (return 0 2>/dev/null); then
+	if [[ "$1" == "--test" ]]; then
+		shift
+		test_script="$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+		if [[ -x "$test_script" ]]; then
+			"$test_script" "$@" >/dev/null
+			exit $?
+		else
+			echo "No test script found for $(basename "${0##\-}")" >&2
+			exit 1
+		fi
+	else
+		$(basename "${0##\-}") "$@"
+	fi
+fi

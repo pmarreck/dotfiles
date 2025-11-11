@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+
+test_convert_mobis_to_epubs() {
+	local fails=0
+	local tests=0
+	local script="$HOME/dotfiles/bin/convert_mobis_to_epubs"
+	local work_root
+	work_root=$(mktemp -d /tmp/convert_mobis_to_epubs_test.XXXXXX)
+	local original_path=$PATH
+
+	trap 'PATH="$original_path"; rm -rf "$work_root"' RETURN
+
+	local fake_bin="$work_root/fake_bin"
+	mkdir -p "$fake_bin"
+
+	cat <<'EOF' >"$fake_bin/ebook-convert"
+#!/usr/bin/env bash
+set -euo pipefail
+input="$1"
+output="$2"
+cp "$input" "$output"
+EOF
+	chmod +x "$fake_bin/ebook-convert"
+
+	PATH="$fake_bin:$HOME/dotfiles/bin:$PATH"
+
+	((tests++))
+	if output=$("$script" -a 2>/dev/null); then
+		if [[ "$output" == "Convert MOBI ebooks to EPUB via ebook-convert." ]]; then
+			echo "✓ -a/--about prints one-liner"
+		else
+			echo "✗ -a output unexpected: $output" >&2
+			((fails++))
+		fi
+	else
+		echo "✗ -a flag failed" >&2
+		((fails++))
+	fi
+
+	((tests++))
+	if "$script" -h >/dev/null 2>&1; then
+		echo "✓ -h/--help succeeds"
+	else
+		echo "✗ -h flag failed" >&2
+		((fails++))
+	fi
+
+	local case1
+	case1=$(mktemp -d "$work_root/case1.XXXXXX")
+	printf 'alpha edition' >"$case1/Book One.mobi"
+	printf 'beta edition' >"$case1/Book Two.mobi"
+
+	((tests++))
+	if (cd "$case1" && printf 'n\nn\n' | "$script" >/dev/null 2>&1); then
+		if [[ -f "$case1/Book One.epub" && -f "$case1/Book Two.epub" && -f "$case1/Book One.mobi" && -f "$case1/Book Two.mobi" ]]; then
+			echo "✓ converts every .mobi in directory when no args"
+		else
+			echo "✗ missing expected epub output or originals removed for glob conversion" >&2
+			((fails++))
+		fi
+	else
+		echo "✗ convert_mobis_to_epubs failed when converting directory" >&2
+		((fails++))
+	fi
+
+	local case2
+	case2=$(mktemp -d "$work_root/case2.XXXXXX")
+	printf 'gamma edition' >"$case2/Chosen.mobi"
+	printf 'delta edition' >"$case2/Skipped.mobi"
+
+	((tests++))
+	if (cd "$case2" && printf 'n\n' | "$script" "Chosen.mobi" >/dev/null 2>&1); then
+		if [[ -f "$case2/Chosen.epub" && ! -f "$case2/Skipped.epub" ]]; then
+			echo "✓ respects explicit mobi arguments"
+		else
+			echo "✗ argument-based conversion behaved incorrectly" >&2
+			((fails++))
+		fi
+	else
+		echo "✗ conversion with explicit arguments failed" >&2
+		((fails++))
+	fi
+
+	local case3
+	case3=$(mktemp -d "$work_root/case3.XXXXXX")
+	printf 'epsilon edition' >"$case3/Delete Me.mobi"
+
+	((tests++))
+	if (cd "$case3" && "$script" --delete "Delete Me.mobi" >/dev/null 2>&1); then
+		if [[ -f "$case3/Delete Me.epub" && ! -f "$case3/Delete Me.mobi" ]]; then
+			echo "✓ --delete removes originals after conversion"
+		else
+			echo "✗ --delete flag failed to remove original" >&2
+			((fails++))
+		fi
+	else
+		echo "✗ conversion with --delete failed" >&2
+		((fails++))
+	fi
+
+	if [[ $fails -gt 0 ]]; then
+		echo "$fails of $tests convert_mobis_to_epubs tests failed" >&2
+	else
+		echo "All $tests convert_mobis_to_epubs tests passed"
+	fi
+
+	return $fails
+}
+
+if ! (return 0 2>/dev/null); then
+	test_convert_mobis_to_epubs
+fi
