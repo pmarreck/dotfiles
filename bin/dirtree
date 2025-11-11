@@ -14,6 +14,7 @@ show_help() {
 	echo "  --simple           Output a simple, LLM-friendly stateful tree"
 	echo "  --llm              Alias for --simple"
 	echo "  --decorated        Force decorated eza output (even when piped)"
+	echo "  --no-icons         Disable icons (simple mode + decorated header)"
 	echo "  --default X        Persist default state: opened|closed"
 	echo "  -o, --open DIR...  Open one or more subdirs (repeat flag to add more)"
 	echo "  -c, --close DIR... Close one or more subdirs (repeat flag to add more)"
@@ -42,6 +43,7 @@ depth=10 # keep it deep but sane
 dir="."
 simple_mode=false
 force_decorated=false
+user_disabled_icons=false
 default_state=""
 default_state_set=false
 default_visibility="shown"
@@ -1672,67 +1674,6 @@ evaluate_path() {
 	fi
 }
 
-# Recursively print a simple tree (used for --simple mode)
-print_simple_tree() {
-	local base="$1" rel="$2" prefix="$3" depth_left="$4" parent_closed="$5"
-	local abs
-	if [[ -z "$rel" ]]; then abs="$base"; else abs="$base/$rel"; fi
-
-	# List children sorted by name (including dotfiles, excluding . and ..)
-	shopt -s dotglob nullglob
-	local children=("$abs"/*)
-	shopt -u dotglob
-	# Convert to relative names
-	local names=()
-	local c
-	for c in "${children[@]}"; do
-		local name
-		name=$(basename "$c")
-		names+=("$name")
-	done
-	IFS=$'\n' names=($(printf '%s\n' "${names[@]}" | sort))
-	unset IFS
-
-	local count=${#names[@]}
-	local i
-	for ((i=0; i<count; i++)); do
-		local name="${names[$i]}"
-		local child_rel
-		if [[ -n "$rel" ]]; then child_rel="$rel/$name"; else child_rel="$name"; fi
-		local child_abs="$abs/$name"
-		local is_last=$(( i == count-1 ))
-		local connector="├── "
-		local next_prefix="$prefix│   "
-		if [[ $is_last -eq 1 ]]; then
-			connector="└── "
-			next_prefix="$prefix    "
-		fi
-		if [[ -d "$child_abs" ]]; then
-			evaluate_path "$child_rel" "$parent_closed"
-			if [[ $path_hidden -eq 1 ]]; then
-				note_hidden dir "$child_rel"
-				continue
-			fi
-			local marker="/"
-			local show_star=""
-			if [[ $path_closed -eq 1 || $depth_left -le 1 ]]; then
-				if dir_has_children "$child_abs"; then show_star="*"; fi
-			fi
-			echo "${prefix}${connector}${name}${marker}${show_star}"
-			if [[ $path_closed -eq 0 && $depth_left -gt 1 ]]; then
-				print_simple_tree "$base" "$child_rel" "$next_prefix" $((depth_left-1)) 0
-			fi
-		else
-			evaluate_path "$child_rel" "$parent_closed"
-			if [[ $path_hidden -eq 1 ]]; then
-				note_hidden file "$child_rel"
-				continue
-			fi
-			echo "${prefix}${connector}${name}"
-		fi
-	done
-}
-
 # Append markers while preserving trailing ANSI resets and OSC8 terminators
 append_with_marker() {
 	local line="$1" marker="$2"
@@ -1752,6 +1693,18 @@ append_with_marker() {
 		trailing_color="${BASH_REMATCH[2]}${trailing_color}"
 	done
 	printf '%s' "${line}${marker}${trailing_color}${trailing_hyper}"
+}
+
+print_decorated_root_header() {
+	local color="${eza_color:-always}"
+	local icons="${eza_icons:-always}"
+	local eza_args=(-d --hyperlink --icons="$icons" --color="$color" --git -1 "$abs_dir")
+	local line
+	if ! line=$(eza "${eza_args[@]}"); then
+		return 1
+	fi
+	line=$(append_with_marker "$line" "/")
+	printf '%s\n' "$line"
 }
 
 # Recursively render decorated output without traversing closed subtrees
@@ -1900,6 +1853,9 @@ while [[ $# -gt 0 ]]; do
 			;;
 		--decorated)
 			force_decorated=true
+			;;
+		--no-icons)
+			user_disabled_icons=true
 			;;
 			--default)
 				shift
@@ -2320,27 +2276,6 @@ fi
 
 hidden_count_log=$(mktemp)
 
-if [[ "$simple_mode" == true ]]; then
-	# Print stateful simple tree without leading top-level connectors or root line
-	status=0
-	(
-		set -o pipefail
-		{
-			print_simple_tree "$abs_dir" "" "" "$depth" 0
-		} |
-		{
-			ESC=$'\e'
-			sed -E "s/^(${ESC}\\[[0-9;]*m)*(├──|└──)[[:space:]]+//; s/^(${ESC}\\[[0-9;]*m)*│[[:space:]][[:space:]][[:space:]]//"
-		}
-	) || status=$?
-	report_hidden_counts
-	if [[ -n "$hidden_count_log" ]]; then
-		rm -f "$hidden_count_log"
-		hidden_count_log=""
-	fi
-	exit $status
-fi
-
 # For decorated mode, ensure eza is available
 if ! command -v eza >/dev/null 2>&1; then
 	if [[ -n "$hidden_count_log" ]]; then
@@ -2351,16 +2286,24 @@ if ! command -v eza >/dev/null 2>&1; then
 	exit 1
 fi
 
-# Decide eza presentation based on TTY. When stdout is not a TTY (e.g. piped to
-# a pager like `more`), disable color/icons/hyperlinks to avoid line wrapping or
-# truncation issues in basic pagers.
+# Decide eza presentation based on mode/TTY.
 eza_color="always"
 eza_icons="always"
 strip_osc8=false
-if [[ ! -t 1 && "$force_decorated" == false && "$simple_mode" != true ]]; then
+if [[ "$simple_mode" == true ]]; then
 	eza_color="never"
-	eza_icons="never"
 	strip_osc8=true
+	if [[ "$user_disabled_icons" == true ]]; then
+		eza_icons="never"
+	fi
+else
+	if [[ ! -t 1 && "$force_decorated" == false ]]; then
+		eza_color="never"
+		strip_osc8=true
+	fi
+	if [[ "$user_disabled_icons" == true ]]; then
+		eza_icons="never"
+	fi
 fi
 
 # Run renderer with optional OSC8 stripping
@@ -2369,11 +2312,18 @@ if $strip_osc8; then
 	(
 		set -o pipefail
 		ESC=$'\e'
-		render_dir "" "$depth" 0 "" | sed -E "s/${ESC}]8;;[^${ESC}]*${ESC}\\\\//g"
+		{
+			print_decorated_root_header
+			render_dir "" "$depth" 0 ""
+		} | sed -E "s/${ESC}]8;;[^${ESC}]*${ESC}\\\\//g"
 	) || status=$?
 else
-	render_dir "" "$depth" 0 ""
-	status=$?
+	if ! print_decorated_root_header; then
+		status=$?
+	else
+		render_dir "" "$depth" 0 ""
+		status=$?
+	fi
 fi
 
 report_hidden_counts

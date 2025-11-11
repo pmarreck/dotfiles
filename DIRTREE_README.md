@@ -22,8 +22,8 @@
   - `--show-hidden` temporarily reveals everything hidden by config.
   - Hidden directories/files are counted and summarized after each run (decorated mode uses dim italics; simple mode prints plain text).
 - **Decorated vs simple output**
-  - Decorated mode keeps eza’s colors, icons, and OSC8 hyperlinks.
-  - Simple mode removes ASCII art connectors so LLMs or diff tools can ingest the tree without glyph noise.
+  - Decorated mode keeps eza’s colors, icons, and OSC8 hyperlinks; even when stdout is piped (non-TTY) it now emits monochrome Nerd Font icons unless you opt out with `--no-icons`.
+  - Simple mode removes ASCII art connectors so LLMs or diff tools can ingest the tree without glyph noise, but still includes the same monochrome icons to hint at file types (toggleable via `--no-icons`).
   - Auto-simple mode can kick in for non-TTY outputs via `DIRTREE_AUTO_SIMPLE`.
 - **SCM awareness**
   - When a Git or Jujutsu repo is detected, paths reported as modified/untracked are forced visible and opened even if state rules would hide them. Set `DIRTREE_SCM_CHANGES_STAY_HIDDEN_OR_CLOSED=1` to opt out.
@@ -31,6 +31,7 @@
   - `--open`, `--close`, `--show`, `--hide` accept multiple values and regexes using the `/pattern/` form.
   - `--default` and `--sort` options to tune depth and ordering.
   - `--test` hook to run the bash test suite.
+  - `--no-icons` disables icon rendering for both decorated and simple output when you truly need plain text.
 - **Safety niceties**
   - Number of hidden directories/files logged to stderr so you know what’s filtered out.
   - Conflicting rules (e.g., same path in open/close) surface as errors.

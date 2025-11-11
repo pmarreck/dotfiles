@@ -38,6 +38,10 @@ test_function() {
 	return 0
 }
 
+strip_tree_icons() {
+	sed -E 's/([├└]──)[[:space:]]+[^[:space:]]+[[:space:]]+/\1 /g'
+}
+
 # Create a temporary test directory structure
 tmpdir=$(mktemp -d)
 mkdir -p "$tmpdir/testdir"
@@ -46,9 +50,24 @@ touch "$tmpdir/testdir/.hidden"
 mkdir -p "$tmpdir/testdir/subdir"
 touch "$tmpdir/testdir/subdir/file2.txt"
 
-# Basic listing: no root line in output by default (non-TTY)
-test_function "basic listing omits root line by default" \
-	"dirtree '$tmpdir/testdir' | grep -q 'testdir' && echo BAD || echo OK" \
+# Basic listing: root header should be the absolute path (non-TTY disables icons)
+test_function "basic listing prints absolute root header" \
+	"(\
+		cd '$tmpdir/testdir' && \
+		raw_header="$(dirtree | head -n1 | strip_ansi)" && \
+		printf '%s\n' "\$raw_header" | grep -Fq "\$PWD/" && \
+		echo OK \
+	)" \
+	"OK"
+
+# Decorated mode should include trailing slash on root header
+test_function "decorated root header includes trailing slash" \
+	"(\
+		cd '$tmpdir/testdir' && \
+		raw_header="$(dirtree --decorated | head -n1 | strip_ansi)" && \
+		printf '%s\n' "\$raw_header" | grep -Fq "\$PWD/" && \
+		echo OK \
+	)" \
 	"OK"
 
 # Test dotfiles visibility (eza shows hidden files with --all)
@@ -71,15 +90,10 @@ test_function "help option" \
 	"dirtree --help" \
 	"Usage:"
 
-# Test current directory default produces entries (no root)
+# Test current directory default produces entries (header already printed)
 test_function "current directory listing shows entries" \
-	"cd '$tmpdir/testdir' && dirtree | grep -q 'file1.txt' && echo OK" \
+	"cd '$tmpdir/testdir' && dirtree | tail -n +2 | grep -q 'file1.txt' && echo OK" \
 	"OK"
-
-# Ensure directory name does not appear (no self-nesting/root line)
-test_function "no directory self-nesting or root line" \
-	"dirtree '$tmpdir/testdir' | grep -c 'testdir' | grep -q '^0$' && echo PASS" \
-	"PASS"
 
 # Test that files are visible at depth 2
 test_function "files visible at depth 2" \
@@ -185,8 +199,8 @@ test_function "sort flags persist and apply" \
 		dirtree --sort alpha --asc >/dev/null && \
 		grep -q '^sort=alpha$' .dirtree-state && \
 		grep -q '^sort_direction=asc$' .dirtree-state && \
-		first_line=\$(dirtree | head -n1) && \
-		if [[ \"\$first_line\" == *apple* ]]; then \
+		first_entry=\$(dirtree | tail -n +2 | head -n1) && \
+		if [[ \"\$first_entry\" == *apple* ]]; then \
 			echo OK; \
 		else \
 			echo BAD; \
@@ -582,6 +596,10 @@ test_function "--simple preserves unknown keys in state" \
 	"dirtree --simple -o src $basedir_q && grep -q '^custom=keepme$' $state_q && head -n1 $state_q | grep -q '^ver=1\\.1$' && echo OK" \
 	"OK"
 
+test_function "--simple emits tree connectors" \
+	"(tmpdir_indent=\$(mktemp -d); trap 'rm -rf "\$tmpdir_indent"' EXIT; mkdir -p "\$tmpdir_indent/project/child/grand" "\$tmpdir_indent/project/zlast"; cd "\$tmpdir_indent/project"; clean=\$(dirtree --simple -d 3 | strip_tree_icons); printf '%s\n' "\$clean" | grep -Eq '└── child/|├── child/' ; printf '%s\n' "\$clean" | grep -Eq '│   └── grand/|│   ├── grand/' ; echo OK)" \
+	"OK"
+
 # 5) closed marker shows '/' for empty dir, '/*' for non-empty
 mkdir -p "$basedir/emptydir"
 test_function "--simple closed marker variants" \
@@ -607,18 +625,68 @@ test_function "auto simple via DIRTREE_AUTO_SIMPLE when not TTY" \
 
 rm -rf "$tmpdir"
 
-# --- Simple mode: no leading connectors ---
-tmpdir=$(mktemp -d)
-basedir="$tmpdir/proj"
-mkdir -p "$basedir/a/b"
-touch "$basedir/a/b/file"
-basedir_q=$(printf '%q' "$basedir")
-
-test_function "simple: no leading '├──', '└──', or '│   '" \
-	"out=\"\$(dirtree --simple $basedir_q)\"; ! echo \"$out\" | grep -q '^├──' && ! echo \"$out\" | grep -q '^└──' && ! echo \"$out\" | grep -q '^│   ' && echo OK" \
+# --- Simple mode: tree glyphs + icons ---
+test_function "--simple shows icons by default" \
+	"(\
+		tmpicons=\$(mktemp -d) && \
+		trap 'rm -rf \"\$tmpicons\"' EXIT && \
+		mkdir -p \"\$tmpicons/dir\" && \
+		with=\$(dirtree --simple \"\$tmpicons\" | tail -n +2) && \
+		without=\$(dirtree --simple --no-icons \"\$tmpicons\" | tail -n +2) && \
+		if [[ \"\$with\" != \"\$without\" ]]; then \
+			echo OK; \
+		else \
+			echo BAD; \
+		fi \
+	)" \
 	"OK"
 
-rm -rf "$tmpdir"
+test_function "--simple --no-icons matches icon-stripped output" \
+	"(\
+		tmpicons=\$(mktemp -d) && \
+		trap 'rm -rf \"\$tmpicons\"' EXIT && \
+		mkdir -p \"\$tmpicons/dir\" && \
+		with=\$(dirtree --simple \"\$tmpicons\" | tail -n +2) && \
+		expected=\$(printf '%s\n' \"\$with\" | strip_tree_icons) && \
+		without=\$(dirtree --simple --no-icons \"\$tmpicons\" | tail -n +2) && \
+		if [[ \"\$expected\" == \"\$without\" ]]; then \
+			echo OK; \
+		else \
+			echo BAD; \
+		fi \
+	)" \
+	"OK"
+
+test_function "decorated piped keeps icons by default" \
+	"(\
+		tmpicons=\$(mktemp -d) && \
+		trap 'rm -rf \"\$tmpicons\"' EXIT && \
+		mkdir -p \"\$tmpicons/dir\" && \
+		with=\$(dirtree \"\$tmpicons\" | cat | tail -n +2) && \
+		without=\$(dirtree --no-icons \"\$tmpicons\" | cat | tail -n +2) && \
+		if [[ \"\$with\" != \"\$without\" ]]; then \
+			echo OK; \
+		else \
+			echo BAD; \
+		fi \
+	)" \
+	"OK"
+
+test_function "decorated piped --no-icons matches icon-stripped output" \
+	"(\
+		tmpicons=\$(mktemp -d) && \
+		trap 'rm -rf \"\$tmpicons\"' EXIT && \
+		mkdir -p \"\$tmpicons/dir\" && \
+		with=\$(dirtree \"\$tmpicons\" | cat | tail -n +2) && \
+		expected=\$(printf '%s\n' \"\$with\" | strip_tree_icons) && \
+		without=\$(dirtree --no-icons \"\$tmpicons\" | cat | tail -n +2) && \
+		if [[ \"\$expected\" == \"\$without\" ]]; then \
+			echo OK; \
+		else \
+			echo BAD; \
+		fi \
+	)" \
+	"OK"
 
 # --- Decorated mode respects closed subtrees ---
 tmpdir=$(mktemp -d)
@@ -681,7 +749,7 @@ test_function "decorated indentation reflects hierarchy" \
 		tmpf=\$(mktemp) && \
 		dirtree \"$basedir\" > \"\$tmpf\" && \
 		tmpclean=\$(mktemp) && \
-		strip_ansi < \"\$tmpf\" > \"\$tmpclean\" && \
+		strip_ansi < \"\$tmpf\" | strip_tree_icons > \"\$tmpclean\" && \
 		grep -Eq '^└── parent/' \"\$tmpclean\" && \
 		grep -Eq '^    └── child/' \"\$tmpclean\" && \
 		echo OK && \
@@ -699,18 +767,52 @@ touch -t 202001010000 "$basedir/a"
 touch -t 202001020000 "$basedir/b"
 
 test_function "default sort is modified desc" \
-	"dirtree '$basedir' | sed -n '1p'" \
+	"dirtree '$basedir' | strip_tree_icons | sed -n '2p'" \
 	"├── b$"
 
 test_function "--sort alpha --asc orders ascending" \
-	"dirtree --sort alpha --asc '$basedir' | sed -n '1p'" \
+	"dirtree --sort alpha --asc '$basedir' | strip_tree_icons | sed -n '2p'" \
 	"├── a$"
 
 test_function "--sort alpha --desc orders descending" \
-	"dirtree --sort alpha --desc '$basedir' | sed -n '1p'" \
+	"dirtree --sort alpha --desc '$basedir' | strip_tree_icons | sed -n '2p'" \
 	"├── b$"
 
 rm -rf "$tmpdir"
+
+test_function "--simple shares modified sort order" \
+	"(\
+		tmpdir=\$(mktemp -d) && \
+		trap 'rm -rf \"\$tmpdir\"' EXIT && \
+		cd \"\$tmpdir\" && \
+		touch -t 202001010000 older && \
+		touch -t 202001020000 newer && \
+		decorated=\$(dirtree | sed -n '2p' | awk '{print \$NF}') && \
+		simple=\$(dirtree --simple | sed -n '2p' | awk '{print \$NF}') && \
+		if [[ \"\$decorated\" == \"\$simple\" && \"\$decorated\" == newer ]]; then \
+			echo OK; \
+		else \
+			echo BAD; \
+		fi \
+	)" \
+	"OK"
+
+test_function "--simple shares alpha sort order" \
+	"(\
+		tmpdir=\$(mktemp -d) && \
+		trap 'rm -rf \"\$tmpdir\"' EXIT && \
+		cd \"\$tmpdir\" && \
+		touch beta && \
+		sleep 1 && touch alpha && \
+		decorated=\$(dirtree --sort alpha --asc | sed -n '2p' | awk '{print \$NF}') && \
+		simple=\$(dirtree --simple --sort alpha --asc | sed -n '2p' | awk '{print \$NF}') && \
+		if [[ \"\$decorated\" == \"\$simple\" && \"\$decorated\" == alpha ]]; then \
+			echo OK; \
+		else \
+			echo BAD; \
+		fi \
+	)" \
+	"OK"
 
 # --- default closed + open parent keeps grandchildren collapsed ---
 tmpdir=$(mktemp -d)
@@ -724,7 +826,7 @@ test_function "open parent does not expand grandchildren by default" \
 		tmpf=\$(mktemp) && \
 		dirtree --open parent > \"\$tmpf\" && \
 		tmpclean=\$(mktemp) && \
-		strip_ansi < \"\$tmpf\" > \"\$tmpclean\" && \
+		strip_ansi < \"\$tmpf\" | strip_tree_icons > \"\$tmpclean\" && \
 		grep -Fq '└── parent/' \"\$tmpclean\" && \
 		grep -Fq '└── child/*' \"\$tmpclean\" && \
 		! grep -F 'grand/' \"\$tmpclean\" && \
