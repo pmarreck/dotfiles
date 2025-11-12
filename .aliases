@@ -206,8 +206,6 @@ alias hi="echo \"Hello, ${USER}!\""
 # letter count
 alias lc='wc -l'
 
-# Launch a detached WezTerm window by starting a new session, discarding stdio, and running in the background
-alias newterm='setsid wezterm start --always-new-process </dev/null >/dev/null 2>&1 &'
 alias upgrade_codex='npm install -g --prefix "$HOME/.local" @openai/codex@latest'
 alias update_codex=upgrade_codex
 alias upgrade_claude='npm install -g --prefix "$HOME/.local" @anthropic-ai/claude-code'
@@ -221,4 +219,3 @@ alias home='cd $HOME'
 
 # Use custom mkdir wrapper that supports -c/--cd option
 alias mkdir='mkdir-custom'
-

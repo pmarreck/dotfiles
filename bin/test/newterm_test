@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+
+fails=0
+tests=0
+
+make_stub_dir() {
+	tmpdir=$(mktemp -d)
+	printf '%s' "$tmpdir"
+}
+
+write_stub() {
+	local target="$1" content="$2"
+	printf '%s\n' "$content" >"$STUB_DIR/$target"
+	chmod +x "$STUB_DIR/$target"
+}
+
+setup_common_stubs() {
+	write_stub "wezterm" '#!/usr/bin/env bash
+printf "wezterm:%s\n" "$*" >>"${NEWTERM_TEST_LOG}"'
+	write_stub "nohup" '#!/usr/bin/env bash
+printf "nohup:%s\n" "$*" >>"${NEWTERM_TEST_LOG}"
+"$@"'
+	write_stub "open" '#!/usr/bin/env bash
+printf "open:%s\n" "$*" >>"${NEWTERM_TEST_LOG}"'
+}
+
+run_linux_sets_id_test() {
+	((tests++))
+	echo "Testing: Linux path prefers setsid"
+	STUB_DIR=$(make_stub_dir)
+	NEWTERM_TEST_LOG="$STUB_DIR/log"
+	write_stub "setsid" '#!/usr/bin/env bash
+printf "setsid:%s\n" "$*" >>"${NEWTERM_TEST_LOG}"
+"$@"'
+	setup_common_stubs
+	PATH="$STUB_DIR:/bin" NEWTERM_TEST_LOG="$NEWTERM_TEST_LOG" NEWTERM_PLATFORM=Linux NEWTERM_DEBUG_DETACH=foreground "$HOME/dotfiles/bin/newterm"
+	status=$?
+	if [[ $status -ne 0 ]]; then
+		echo "FAIL: newterm returned $status" >&2
+		((fails++))
+		return
+	fi
+	if ! grep -q 'setsid:wezterm start --always-new-process' "$NEWTERM_TEST_LOG"; then
+		echo "FAIL: Expected setsid invocation not found" >&2
+		((fails++))
+	fi
+	if grep -q '^nohup:' "$NEWTERM_TEST_LOG"; then
+		echo "FAIL: Should not fallback to nohup when setsid exists" >&2
+		((fails++))
+	fi
+	rm -rf "$STUB_DIR"
+}
+
+run_darwin_no_setsid_test() {
+	((tests++))
+	echo "Testing: macOS fallback uses nohup"
+	STUB_DIR=$(make_stub_dir)
+	NEWTERM_TEST_LOG="$STUB_DIR/log"
+	setup_common_stubs
+	PATH="$STUB_DIR:/bin" NEWTERM_TEST_LOG="$NEWTERM_TEST_LOG" NEWTERM_PLATFORM=Darwin NEWTERM_DEBUG_DETACH=foreground "$HOME/dotfiles/bin/newterm"
+	status=$?
+	if [[ $status -ne 0 ]]; then
+		echo "FAIL: newterm returned $status" >&2
+		((fails++))
+		return
+	fi
+	if ! grep -q 'nohup:wezterm start --always-new-process' "$NEWTERM_TEST_LOG"; then
+		echo "FAIL: Expected nohup invocation not found" >&2
+		((fails++))
+	fi
+	rm -rf "$STUB_DIR"
+}
+
+run_darwin_open_fallback_test() {
+	((tests++))
+	echo "Testing: macOS falls back to open when wezterm CLI missing"
+	STUB_DIR=$(make_stub_dir)
+	NEWTERM_TEST_LOG="$STUB_DIR/log"
+	# Provide only open + nohup stubs so CLI lookup fails
+	write_stub "nohup" '#!/usr/bin/env bash
+printf "nohup:%s\n" "$*" >>"${NEWTERM_TEST_LOG}"
+"$@"'
+	write_stub "open" '#!/usr/bin/env bash
+printf "open:%s\n" "$*" >>"${NEWTERM_TEST_LOG}"'
+	PATH="$STUB_DIR:/bin" NEWTERM_TEST_LOG="$NEWTERM_TEST_LOG" NEWTERM_PLATFORM=Darwin NEWTERM_DEBUG_DETACH=foreground "$HOME/dotfiles/bin/newterm"
+	status=$?
+	if [[ $status -ne 0 ]]; then
+		echo "FAIL: newterm returned $status" >&2
+		((fails++))
+		return
+	fi
+	if ! grep -q 'open:-na WezTerm.app --args start --always-new-process' "$NEWTERM_TEST_LOG"; then
+		echo "FAIL: Expected open fallback invocation not found" >&2
+		((fails++))
+	fi
+	rm -rf "$STUB_DIR"
+}
+
+run_linux_sets_id_test
+run_darwin_no_setsid_test
+run_darwin_open_fallback_test
+
+if ((fails == 0)); then
+	echo "All $tests newterm tests passed"
+else
+	echo "$fails of $tests newterm tests failed" >&2
+fi
+
+exit $fails

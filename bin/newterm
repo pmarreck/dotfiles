@@ -1,0 +1,133 @@
+#!/usr/bin/env bash
+
+NEWTERM_VERSION="1.0.0"
+
+newterm_usage() {
+	cat <<'USAGE'
+Usage: newterm [options]
+
+Launch a detached WezTerm window in a cross-platform way.
+
+Options:
+  -h, --help     Show this help message
+  -a, --about    Show a short description
+  -v, --version  Show the script version
+USAGE
+}
+
+newterm_about() {
+	printf '%s\n' "newterm: open a detached WezTerm window on Linux or macOS"
+}
+
+normalize_platform() {
+	if [ -n "${NEWTERM_PLATFORM:-}" ]; then
+		printf '%s' "$NEWTERM_PLATFORM"
+		return
+	fi
+	uname -s 2>/dev/null || printf 'unknown'
+}
+
+wezterm_cli_available() {
+	command -v wezterm >/dev/null 2>&1
+}
+
+mac_open_available() {
+	command -v open >/dev/null 2>&1
+}
+
+run_foreground_detach() {
+	if command -v setsid >/dev/null 2>&1; then
+		setsid "$@"
+	elif command -v nohup >/dev/null 2>&1; then
+		nohup "$@"
+	else
+		"$@"
+	fi
+}
+
+spawn_detached() {
+	local -a cmd=("$@")
+	if [ -n "${NEWTERM_DEBUG_DETACH:-}" ]; then
+		run_foreground_detach "${cmd[@]}"
+		return $?
+	fi
+	if command -v setsid >/dev/null 2>&1; then
+		setsid "${cmd[@]}" </dev/null >/dev/null 2>&1 &
+	elif command -v nohup >/dev/null 2>&1; then
+		nohup "${cmd[@]}" </dev/null >/dev/null 2>&1 &
+	else
+		("${cmd[@]}" </dev/null >/dev/null 2>&1 &)
+	fi
+	disown 2>/dev/null || true
+	return 0
+}
+
+launch_wezterm_cli() {
+	local -a cmd=("wezterm" "start" "--always-new-process")
+	spawn_detached "${cmd[@]}"
+}
+
+launch_open_fallback() {
+	local -a cmd=("open" "-na" "WezTerm.app" "--args" "start" "--always-new-process")
+	spawn_detached "${cmd[@]}"
+}
+
+newterm() {
+	local args=()
+	while [ "$#" -gt 0 ]; do
+		case "$1" in
+			-h|--help)
+				newterm_usage
+				return 0
+				;;
+			-a|--about)
+				newterm_about
+				return 0
+				;;
+			-v|--version)
+				printf '%s\n' "$NEWTERM_VERSION"
+				return 0
+				;;
+			--)
+				shift
+				break
+				;;
+			-*)
+				echo "newterm: unknown option '$1'" >&2
+				return 1
+				;;
+			*)
+				args+=("$1")
+				;;
+		esac
+		shift
+	done
+	if [ "${#args[@]}" -gt 0 ]; then
+		echo "newterm: this command does not accept positional arguments" >&2
+		return 1
+	fi
+	if wezterm_cli_available; then
+		launch_wezterm_cli
+		return $?
+	fi
+	case "$(normalize_platform)" in
+		Darwin|darwin)
+			if mac_open_available; then
+				launch_open_fallback
+				return $?
+			fi
+			;;
+	esac
+	echo "newterm: wezterm CLI not found and no platform fallback available" >&2
+	return 1
+}
+
+if ! (return 0 2>/dev/null); then
+	if [ "${1:-}" = "--test" ]; then
+		shift
+		"$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test" "$@" >/dev/null
+		exit $?
+	fi
+	newterm "$@"
+	exit $?
+fi

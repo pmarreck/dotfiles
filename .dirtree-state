@@ -5,6 +5,9 @@ depth=3
 
 open=[
 	bin
+]
+
+close=[
 	bin/src
 	bin/test
 ]
@@ -13,9 +16,9 @@ hide=[
 	.git
 	.gitconfig.old-possibly-useful
 	.jj
-	Library
 	.netrc.gpg
-	of_historical_note
 	.secrets
 	.secrets.gpg
+	Library
+	of_historical_note
 ]
