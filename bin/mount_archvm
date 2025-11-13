@@ -1,1 +1,0 @@
-sudo sshfs -o allow_other,defer_permissions,IdentityFile=~/.ssh/id_rsa pmarreck@archvm:/home/pmarreck/Documents/ /Volumes/archvmDocuments
