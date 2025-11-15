@@ -1,0 +1,153 @@
+#!/usr/bin/env bash
+
+set -uo pipefail
+
+fails=0
+tests=0
+
+fixtures_dir=$(mktemp -d)
+trap 'rm -rf "$fixtures_dir"' EXIT
+
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+cpuhogs_cmd=${CPUHOGS_BIN:-"$script_dir/../cpuhogs"}
+if [[ ! -x "$cpuhogs_cmd" ]]; then
+	echo "cpuhogs_test: unable to locate cpuhogs executable at $cpuhogs_cmd" >&2
+	exit 1
+fi
+
+make_group_fixture() {
+	cat <<'DATA' >"$fixtures_dir/group_ps"
+310.0 /usr/lib/firefox/firefox -contentproc
+125.5 /usr/bin/python3 worker.py
+300.0 /usr/lib/firefox/firefox -contentproc
+100.0 /usr/bin/node server.js
+45.0 /usr/bin/python3 helper.py
+DATA
+}
+
+make_individual_fixture() {
+	cat <<'DATA' >"$fixtures_dir/individual_ps"
+4321 alice 310.0 /usr/lib/firefox/firefox -contentproc -childID 1
+4322 alice 300.0 /usr/lib/firefox/firefox -contentproc -childID 2
+9876 bob 125.5 /usr/bin/python3 worker.py
+6543 carol 100.0 /usr/bin/node server.js
+DATA
+}
+
+make_detail_fixture() {
+	cat <<'DATA' >"$fixtures_dir/detail_ps"
+310.0 4321 /usr/lib/firefox/firefox -contentproc -childID 1
+300.0 4322 /usr/lib/firefox/firefox -contentproc -childID 2
+125.5 9876 /usr/bin/python3 worker.py
+100.0 6543 /usr/bin/node server.js
+DATA
+}
+
+make_state_fixture() {
+	cat <<'DATA' >"$fixtures_dir/state_ps"
+R 4321 firefox
+D 4322 firefox
+D 5000 cat
+Z 7000 python3
+T 8000 node
+DATA
+}
+
+make_group_fixture
+make_individual_fixture
+make_detail_fixture
+make_state_fixture
+
+run_cpuhogs() {
+	local extra_env=()
+	while [[ $# -gt 0 && "$1" == *=* ]]; do
+		extra_env+=("$1")
+		shift
+	done
+	env \
+		CPUHOGS_GROUP_CMD="cat $fixtures_dir/group_ps" \
+		CPUHOGS_INDIVIDUAL_CMD="cat $fixtures_dir/individual_ps" \
+		CPUHOGS_DETAIL_CMD="cat $fixtures_dir/detail_ps" \
+		CPUHOGS_STATE_CMD="cat $fixtures_dir/state_ps" \
+		CPUHOGS_TOTAL_CORES=16 \
+		"${extra_env[@]}" \
+		"$cpuhogs_cmd" "$@"
+}
+
+((tests++))
+echo "Testing: cpuhogs --help shows usage..."
+if run_cpuhogs --help >/tmp/cpuhogs_help 2>&1; then
+	if grep -q "Usage: cpuhogs" /tmp/cpuhogs_help; then
+		echo "✓ Test passed: help text present"
+	else
+		echo "✗ Test failed: help text missing" >&2
+		((fails++))
+	fi
+else
+	echo "✗ Test failed: cpuhogs --help exited with non-zero" >&2
+	((fails++))
+fi
+
+((tests++))
+echo "Testing: cpuhogs grouped output aggregates CPU and normalizes system share..."
+if output=$(run_cpuhogs -n 2); then
+	if grep -q "%SYS" <<<"$output" && grep -q "firefox" <<<"$output" && grep -q "python3" <<<"$output"; then
+		if grep -q "firefox" <<<"$output" && grep -q "38.12" <<<"$output"; then
+			echo "✓ Test passed: grouped view includes normalized CPU percentages"
+		else
+			echo "✗ Test failed: normalized column missing expected value" >&2
+			((fails++))
+		fi
+	else
+		echo "✗ Test failed: grouped output missing expected rows" >&2
+		((fails++))
+	fi
+else
+	echo "✗ Test failed: cpuhogs grouped view exited non-zero" >&2
+	((fails++))
+fi
+
+((tests++))
+echo "Testing: cpuhogs -i shows individual process metrics..."
+if output=$(run_cpuhogs -i -n 2); then
+	if grep -q "PID" <<<"$output" && grep -q "alice" <<<"$output"; then
+		echo "✓ Test passed: individual view shows pid/user rows"
+	else
+		echo "✗ Test failed: individual output missing expected headers or data" >&2
+		((fails++))
+	fi
+else
+	echo "✗ Test failed: cpuhogs -i exited non-zero" >&2
+	((fails++))
+fi
+
+((tests++))
+echo "Testing: cpuhogs -F emits detail summary for busiest executable..."
+if output=$(run_cpuhogs -F -n 2); then
+	if grep -q "spans" <<<"$output" && grep -q "PID" <<<"$output"; then
+		echo "✓ Test passed: detail summary present"
+	else
+		echo "✗ Test failed: detail summary missing" >&2
+		((fails++))
+	fi
+else
+	echo "✗ Test failed: cpuhogs -F exited non-zero" >&2
+	((fails++))
+fi
+
+((tests++))
+echo "Testing: cpuhogs FYI section highlights pegged and stalled processes..."
+if output=$(run_cpuhogs CPUHOGS_PEG_THRESHOLD=200); then
+	if grep -q "FYI" <<<"$output" && grep -qi "pegged" <<<"$output" && grep -q "uninterruptible" <<<"$output"; then
+		echo "✓ Test passed: FYI includes pegged + D-state insights"
+	else
+		echo "✗ Test failed: FYI section missing expected diagnostics" >&2
+		((fails++))
+	fi
+else
+	echo "✗ Test failed: cpuhogs FYI run exited non-zero" >&2
+	((fails++))
+fi
+
+echo "All $tests tests completed"
+exit $fails

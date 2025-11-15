@@ -71,6 +71,7 @@ IGNORE_PREPEND_PATH_WARNINGS=true prepend_path "$DOCUMENTS/jumpscript/bin"
 IGNORE_PREPEND_PATH_WARNINGS=true prepend_path "$DOCUMENTS/yt-transcriber"
 IGNORE_PREPEND_PATH_WARNINGS=true prepend_path "$DOCUMENTS/baseN"
 IGNORE_PREPEND_PATH_WARNINGS=true prepend_path "$DOCUMENTS/printable-binary"
+IGNORE_PREPEND_PATH_WARNINGS=true prepend_path "$DOCUMENTS/dirtree"
 
 # Now exclude every path from PATH that does not actually exist.
 # I don't like this way of doing it, but it was the only way that worked easily.
