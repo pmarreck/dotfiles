@@ -245,6 +245,10 @@ export CHARSET_ALNUM_SANE="$(printf "%s" "$CHARSET_ALNUM" | tr -d 'OlI')"
 export CHARSET_PUNC='!@#$%^&*'
 export CHARSET_HEX="${CHARSET_NUM}abcdef"
 
+# global TMPDIR which is on /tmp (in memory on my OS'es) and unique to this process
+export TMPDIR=${TMPDIR:-/tmp/$$}
+mkdir -p "$TMPDIR" # I don't like doing this, but future mktemp's that assume TMPDIR will fail otherwise
+
 # Bash integer handling
 _bash_int_max_helper() {
 	local n=1 next
