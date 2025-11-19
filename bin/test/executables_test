@@ -20,6 +20,10 @@ echo "test2"' > "$test_dir/bin1/test2.sh"
   
   # Create a symlink
   ln -s "$test_dir/bin1/test1" "$test_dir/bin2/test1_symlink"
+
+  echo '#!/bin/bash
+echo "bin2"' > "$test_dir/bin2/bin2_only"
+  chmod +x "$test_dir/bin2/bin2_only"
   
   # Test with our test PATH
   local old_path="$PATH"
@@ -38,6 +42,30 @@ echo "test2"' > "$test_dir/bin1/test2.sh"
     return 1
   fi
   
+  # Test -h/--help alias
+  echo "Testing -h alias..."
+  if ! help_alias_output=$("$HOME/dotfiles/bin/executables" -h 2>/dev/null); then
+    echo "FAIL: -h alias failed"
+    return 1
+  fi
+
+  if ! diff <(printf '%s\n' "$output") <(printf '%s\n' "$help_alias_output") >/dev/null; then
+    echo "FAIL: -h output did not match --help"
+    return 1
+  fi
+
+  echo "Testing -a/--about output..."
+  if ! about_output=$("$HOME/dotfiles/bin/executables" -a 2>/dev/null); then
+    echo "FAIL: -a option failed"
+    return 1
+  fi
+
+  if [[ "$about_output" != "Print out the names of all executables available in your PATH" ]]; then
+    echo "FAIL: -a output incorrect"
+    echo "Got: $about_output"
+    return 1
+  fi
+
   # Test actual functionality with a quick search in test directories only
   echo "Testing actual search functionality..."
   # Build limited PATH with test dirs plus directories containing essential utilities
@@ -62,11 +90,60 @@ echo "test2"' > "$test_dir/bin1/test2.sh"
     echo "FAIL: Did not find test2.sh executable"
     return 1
   fi
+
+  if ! echo "$search_output" | grep -Fx 'test1_symlink (symlinked)'; then
+    echo "FAIL: Did not find symlinked executable annotation"
+    return 1
+  fi
   
   # Test --scripts flag
   echo "Testing --scripts flag..."
   if ! scripts_output=$(PATH="$limited_path" "$HOME/dotfiles/bin/executables" --scripts 2>/dev/null); then
     echo "FAIL: --scripts flag failed"
+    return 1
+  fi
+
+  # Test path-constrained output using an absolute path
+  echo "Testing path-constrained filtering with absolute path..."
+  if ! filtered_output=$(PATH="$limited_path" "$HOME/dotfiles/bin/executables" "$test_dir/bin1" 2>/dev/null); then
+    echo "FAIL: Path-constrained command failed"
+    return 1
+  fi
+
+  if ! echo "$filtered_output" | grep -q '^test1$'; then
+    echo "FAIL: Path filter did not include test1"
+    return 1
+  fi
+
+  if ! echo "$filtered_output" | grep -q '^test2.sh$'; then
+    echo "FAIL: Path filter did not include test2.sh"
+    return 1
+  fi
+
+  if echo "$filtered_output" | grep -Fx 'test1_symlink (symlinked)'; then
+    echo "FAIL: Path filter included files outside of $test_dir/bin1"
+    return 1
+  fi
+
+  # Test relative path handling (".")
+  echo "Testing path-constrained filtering with relative path..."
+  if ! relative_output=$(cd "$test_dir" && PATH="$limited_path" "$HOME/dotfiles/bin/executables" ./bin2 2>/dev/null); then
+    echo "FAIL: Relative path-constrained command failed"
+    return 1
+  fi
+  
+  if ! echo "$relative_output" | grep -q '^bin2_only$'; then
+    echo "FAIL: Relative path filter did not include bin2_only"
+    return 1
+  fi
+
+  if ! echo "$relative_output" | grep -Fx 'test1_symlink (symlinked)'; then
+    echo "FAIL: Relative path filter did not show symlink as expected"
+    return 1
+  fi
+
+  if echo "$relative_output" | grep -q '^test1$'; then
+    echo "FAIL: Relative path filter included executables outside ./bin2"
     return 1
   fi
   

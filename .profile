@@ -174,6 +174,11 @@ fi
 # claude function/wrapper
 . $HOME/dotfiles/bin/src/claude.bash
 
+# capture function/wrapper
+. $HOME/dotfiles/bin/src/capture.bash
+
+# steam utilities
+. $HOME/dotfiles/bin/src/kill-steam-proton-pids.bash
 
 SIXEL_ENV=$(DEBUG_SHELLCONFIG=1 check_sixel_support 2>&1)
 SIXEL_CAPABLE=$?
