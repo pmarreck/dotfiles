@@ -219,3 +219,4 @@ alias home='cd $HOME'
 
 # Use custom mkdir wrapper that supports -c/--cd option
 alias mkdir='mkdir-custom'
+alias md='glow'
