@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 
+if [ "$DRANDOM_TEST_DEPTH" = "1" ]; then
+	exit 0
+fi
+
 # Test the drandom function for determinism and statistical properties
 test_drandom() {
 	local fails=0
@@ -16,6 +20,50 @@ test_drandom() {
 	local expected_mean=50
 
 	echo "Testing drandom deterministic RNG..."
+
+	# Test 0: About/Help/Test flags
+	(( tests++ ))
+	echo "Testing --about/-a flags..."
+
+	local about_output
+	about_output=$(drandom --about 2>/dev/null)
+	local about_lines
+	about_lines=$(printf '%s\n' "$about_output" | wc -l | tr -d ' ')
+
+	if [ -n "$about_output" ] && [ "$about_lines" -eq 1 ] && echo "$about_output" | grep -qi "deterministic"; then
+		echo "✓ About flag test passed"
+	else
+		echo "✗ About flag test failed: output='$about_output' (lines: $about_lines)" >&2
+		(( fails++ ))
+	fi
+
+	(( tests++ ))
+	echo "Testing --help/-h flags..."
+
+	local help_output
+	help_output=$(drandom --help)
+	local help_status=$?
+
+	if [ $help_status -eq 0 ] && echo "$help_output" | grep -q "Usage: drandom"; then
+		echo "✓ Help flag test passed"
+	else
+		echo "✗ Help flag test failed: status=$help_status" >&2
+		(( fails++ ))
+	fi
+
+	(( tests++ ))
+	echo "Testing --test flag..."
+
+	local test_output
+	test_output=$(DRANDOM_TEST_DEPTH=1 DRANDOM_TEST_SAMPLE_SIZE=20 DRANDOM_TEST_BINARY_SIZE=20 drandom --test 2>&1)
+	local test_status=$?
+
+	if [ $test_status -eq 0 ] && [ -z "$test_output" ]; then
+		echo "✓ --test flag test passed"
+	else
+		echo "✗ --test flag test failed: status=$test_status, output='$test_output'" >&2
+		(( fails++ ))
+	fi
 
 	# Test 1: Determinism - same seed should produce same sequence
 	(( tests++ ))

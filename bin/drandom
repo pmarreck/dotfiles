@@ -90,6 +90,9 @@ if ! (return 0 2>/dev/null); then
 			echo "Test file not found: $test_file" >&2
 			exit 1
 		fi
+	elif [ "$1" = "--about" ] || [ "$1" = "-a" ]; then
+		echo "Deterministic LCG-based RNG with per-context persisted seeds for reproducible numbers"
+		exit 0
 	elif [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
 		cat <<-EOF
 		Usage: drandom [start] [end]
@@ -113,6 +116,11 @@ if ! (return 0 2>/dev/null); then
 		  - If a seed consists solely of hex digits and includes letters (A-F),
 		    but lacks the 0x prefix (e.g., DEADBEEF), a warning is printed and it
 		    is interpreted as hexadecimal.
+
+		Options:
+		  -a, --about  Show a short description
+		  -h, --help   Show this help message
+		      --test   Run the associated test suite
 
 		Persistence details:
 		  - State dir: ${DRANDOM_STATE_HOME:-/tmp}/drandom/${USER}

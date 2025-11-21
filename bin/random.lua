@@ -68,7 +68,16 @@ show_help = function()
 	print("If <end> is not specified, it defaults to 99")
 	print("")
 	print("Sources entropy directly from /dev/urandom (with /dev/random fallback)")
-	return print("and uses rejection sampling for perfect uniform distribution.")
+	print("and uses rejection sampling for perfect uniform distribution.")
+	print("")
+	print("Options:")
+	print("  -a, --about  Show a short description")
+	print("  -h, --help   Show this help message")
+	return print("      --test   Run the test suite")
+end
+local show_about
+show_about = function()
+	return print("Uniform random integer generator using /dev/urandom with rejection sampling")
 end
 local run_test
 run_test = function()
@@ -84,7 +93,9 @@ main = function()
 		return print(random())
 	else
 		local _exp_1 = arg[1]
-		if "--help" == _exp_1 or "-h" == _exp_1 then
+		if "--about" == _exp_1 or "-a" == _exp_1 then
+			return show_about()
+		elseif "--help" == _exp_1 or "-h" == _exp_1 then
 			return show_help()
 		elseif "--test" == _exp_1 then
 			return run_test()

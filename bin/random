@@ -65,6 +65,15 @@ show_help = ->
 	print ""
 	print "Sources entropy directly from /dev/urandom (with /dev/random fallback)"
 	print "and uses rejection sampling for perfect uniform distribution."
+	print ""
+	print "Options:"
+	print "  -a, --about  Show a short description"
+	print "  -h, --help   Show this help message"
+	print "      --test   Run the test suite"
+
+-- Show a one-line description
+show_about = ->
+	print "Uniform random integer generator using /dev/urandom with rejection sampling"
 
 -- Test function
 run_test = ->
@@ -82,6 +91,8 @@ main = ->
 			print random!
 		else
 			switch arg[1]
+				when "--about", "-a"
+					show_about!
 				when "--help", "-h"
 					show_help!
 				when "--test"

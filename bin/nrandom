@@ -30,6 +30,15 @@ show_help = ->
 	print "Outputs a normally-distributed random number between <start> and <end>"
 	print "If <start> is not specified, it defaults to 0"
 	print "If <end> is not specified, it defaults to 99"
+	print ""
+	print "Options:"
+	print "  -a, --about  Show a short description"
+	print "  -h, --help   Show this help message"
+	print "      --test   Run the test suite"
+
+-- About function
+show_about = ->
+	print "Normally distributed random integer between bounds via Box-Muller sampling"
 
 -- Test function (runs the test from the test file)
 run_test = ->
@@ -50,6 +59,8 @@ main = ->
 			print nrandom!
 		else
 			switch arg[1]
+				when "--about", "-a"
+					show_about!
 				when "--help", "-h"
 					show_help!
 				when "--test"

@@ -24,7 +24,16 @@ show_help = function()
 	print("Usage: nrandom <start> <end>")
 	print("Outputs a normally-distributed random number between <start> and <end>")
 	print("If <start> is not specified, it defaults to 0")
-	return print("If <end> is not specified, it defaults to 99")
+	print("If <end> is not specified, it defaults to 99")
+	print("")
+	print("Options:")
+	print("  -a, --about  Show a short description")
+	print("  -h, --help   Show this help message")
+	return print("      --test   Run the test suite")
+end
+local show_about
+show_about = function()
+	return print("Normally distributed random integer between bounds via Box-Muller sampling")
 end
 local run_test
 run_test = function()
@@ -41,7 +50,9 @@ main = function()
 		return print(nrandom())
 	else
 		local _exp_1 = arg[1]
-		if "--help" == _exp_1 or "-h" == _exp_1 then
+		if "--about" == _exp_1 or "-a" == _exp_1 then
+			return show_about()
+		elseif "--help" == _exp_1 or "-h" == _exp_1 then
 			return show_help()
 		elseif "--test" == _exp_1 then
 			return run_test()

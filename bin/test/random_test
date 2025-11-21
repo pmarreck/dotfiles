@@ -1,11 +1,62 @@
 #!/usr/bin/env bash
 
+if [ "$RANDOM_TEST_DEPTH" = "1" ]; then
+	exit 0
+fi
+
 # Test the random function
 test_random() {
 	local fails=0
 	local tests=0
 
 	echo "Testing uniform random number generator..."
+
+	# Test 0: About flag should return a single-line summary
+	(( tests++ ))
+	echo "Testing --about/-a flags..."
+
+	local about_output
+	about_output=$(random --about 2>/dev/null)
+
+	local about_lines
+	about_lines=$(printf '%s\n' "$about_output" | wc -l | tr -d ' ')
+
+	if [ -n "$about_output" ] && [ "$about_lines" -eq 1 ] && echo "$about_output" | grep -qi "uniform random"; then
+		echo "✓ About flag test passed: single-line summary present"
+	else
+		echo "✗ About flag test failed: output='$about_output' (lines: $about_lines)" >&2
+		(( fails++ ))
+	fi
+
+	# Test 0b: Help flags should show usage and exit 0
+	(( tests++ ))
+	echo "Testing --help/-h flags..."
+
+	local help_output
+	help_output=$(random -h)
+	local help_status=$?
+
+	if [ $help_status -eq 0 ] && echo "$help_output" | grep -q "Usage: random"; then
+		echo "✓ Help flag test passed"
+	else
+		echo "✗ Help flag test failed: status=$help_status" >&2
+		(( fails++ ))
+	fi
+
+	# Test 0c: --test should run silently and exit 0 when passing
+	(( tests++ ))
+	echo "Testing --test flag..."
+
+	local test_output
+	test_output=$(RANDOM_TEST_DEPTH=1 random --test 2>&1)
+	local test_status=$?
+
+	if [ $test_status -eq 0 ] && [ -z "$test_output" ]; then
+		echo "✓ --test flag test passed: silent success"
+	else
+		echo "✗ --test flag test failed: status=$test_status, output='$test_output'" >&2
+		(( fails++ ))
+	fi
 
 	# Test 1: Basic execution (runs without error)
 	(( tests++ ))

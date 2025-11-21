@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 
+if [ "$NRANDOM_TEST_DEPTH" = "1" ]; then
+	exit 0
+fi
+
 # Test the nrandom function for normal distribution
 test_nrandom() {
 	local fails=0
@@ -11,6 +15,50 @@ test_nrandom() {
 	local expected_stddev=$(echo "scale=2; (100 - 0) / 6" | bc -l)  # range/6 as used in nrandom
 
 	echo "Generating $sample_size samples..."
+
+	# Test 0: About/Help/Test flags
+	(( tests++ ))
+	echo "Testing --about/-a flags..."
+
+	local about_output
+	about_output=$(nrandom --about 2>/dev/null)
+	local about_lines
+	about_lines=$(printf '%s\n' "$about_output" | wc -l | tr -d ' ')
+
+	if [ -n "$about_output" ] && [ "$about_lines" -eq 1 ] && echo "$about_output" | grep -qi "normal"; then
+		echo "✓ About flag test passed"
+	else
+		echo "✗ About flag test failed: output='$about_output' (lines: $about_lines)" >&2
+		(( fails++ ))
+	fi
+
+	(( tests++ ))
+	echo "Testing --help/-h flags..."
+
+	local help_output
+	help_output=$(nrandom -h)
+	local help_status=$?
+
+	if [ $help_status -eq 0 ] && echo "$help_output" | grep -q "Usage: nrandom"; then
+		echo "✓ Help flag test passed"
+	else
+		echo "✗ Help flag test failed: status=$help_status" >&2
+		(( fails++ ))
+	fi
+
+	(( tests++ ))
+	echo "Testing --test flag..."
+
+	local test_output
+	test_output=$(NRANDOM_TEST_DEPTH=1 nrandom --test 2>&1)
+	local test_status=$?
+
+	if [ $test_status -eq 0 ] && [ -z "$test_output" ]; then
+		echo "✓ --test flag test passed"
+	else
+		echo "✗ --test flag test failed: status=$test_status, output='$test_output'" >&2
+		(( fails++ ))
+	fi
 
 	# Generate samples and calculate statistics in one pass using awk
 	local stats=$(for ((i=0; i<sample_size; i++)); do
