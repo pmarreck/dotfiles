@@ -246,7 +246,7 @@ export CHARSET_PUNC='!@#$%^&*'
 export CHARSET_HEX="${CHARSET_NUM}abcdef"
 
 # global TMPDIR which is on /tmp (in memory on my OS'es) and unique to this process
-export TMPDIR=${TMPDIR:-/tmp/$$}
+export TMPDIR=${/tmp/$$}
 mkdir -p "$TMPDIR" # I don't like doing this, but future mktemp's that assume TMPDIR will fail otherwise
 
 # Bash integer handling
