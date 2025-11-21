@@ -1,0 +1,389 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+MDFF_NAME_TERMS=()
+MDFF_EXT_FILTERS=()
+MDFF_MIME_FILTERS=()
+MDFF_SIZE_OP=""
+MDFF_SIZE_LIMIT=""
+MDFF_SEARCH_DIR=""
+MDFF_FORCE_WILDCARD=false
+
+about() {
+	printf '%s\n' "User-friendly Spotlight search wrapper with extension, MIME, and size filters."
+}
+
+usage() {
+	cat <<'USAGE'
+Usage: mdff [OPTIONS] [TERM...]
+
+Search the current directory with Spotlight and optional filters.
+
+Options:
+  -a, --about         Show a short description and exit
+  -h, --help          Show this help message and exit
+  -s, --size FILTER   Restrict by size (e.g. --size '>1M', '<=512K', '==4096')
+  -e, --ext EXT       Restrict to file extensions (repeatable, e.g. --ext txt --ext jpg)
+  -m, --mime TYPE     Restrict to MIME types (repeatable, e.g. --mime text/plain)
+      --in DIR        Search within DIR instead of the current directory
+      --test          Run mdff's test suite
+
+Size filters accept comparison operators (> >= < <= =) followed by a number
+optionally suffixed with K, M, G, or T (case-insensitive). Raw byte counts
+without a suffix are also accepted.
+
+Examples:
+  mdff --ext .txt meeting        # Text files with "meeting" in the name
+  mdff --size '>10M' --mime image/jpeg
+  mdff report                    # Spotlight search for names containing "report"
+USAGE
+}
+
+die() {
+	echo "mdff: $*" >&2
+	exit 1
+}
+
+filter_mdfind_stderr() {
+	local err_file="$1" line
+	[ -s "$err_file" ] || return 0
+	if [ -n "${MDFF_SHOW_MDFIND_LOGS:-}" ]; then
+		cat "$err_file" >&2
+		return 0
+	fi
+	while IFS= read -r line; do
+		case "$line" in
+			*"[UserQueryParser] Loading keywords and predicates for locale "*)
+				continue
+				;;
+			*)
+				printf '%s\n' "$line" >&2
+				;;
+		esac
+	done <"$err_file"
+}
+
+detect_os() {
+	if [ -n "${MDFF_OS_OVERRIDE:-}" ]; then
+		printf '%s' "$MDFF_OS_OVERRIDE"
+		return
+	fi
+	uname -s
+}
+
+ensure_darwin() {
+	local os
+	os=$(detect_os)
+	if [ "$os" != "Darwin" ]; then
+		die "requires macOS Spotlight (mdfind) but detected $os"
+	fi
+}
+
+lowercase() {
+	printf '%s' "$1" | tr 'A-Z' 'a-z'
+}
+
+normalize_extension() {
+	local ext="$1"
+	ext="${ext#.}"
+	printf '%s' "$(lowercase "$ext")"
+}
+
+add_extension_filter() {
+	local ext
+	ext=$(normalize_extension "$1")
+	[ -n "$ext" ] || die "--ext requires a non-empty value"
+	MDFF_EXT_FILTERS+=("$ext")
+}
+
+add_mime_filter() {
+	local mime
+	mime=$(lowercase "$1")
+	[ -n "$mime" ] || die "--mime requires a non-empty value"
+	MDFF_MIME_FILTERS+=("$mime")
+}
+
+set_search_dir() {
+	local dir="$1" abs
+	[ -n "$dir" ] || die "--in requires a directory path"
+	if [ ! -d "$dir" ]; then
+		die "--in path is not a directory: $dir"
+	fi
+	abs=$(cd "$dir" 2>/dev/null && pwd)
+	[ -n "$abs" ] || die "Unable to resolve directory: $dir"
+	MDFF_SEARCH_DIR="$abs"
+}
+
+parse_size_arg() {
+	local raw="$1" op value suffix multiplier number
+	raw=$(printf '%s' "$raw" | tr -d '[:space:]')
+	[ -n "$raw" ] || die "--size requires a comparator and value"
+	case "$raw" in
+		'>='*|'<='*|'=='*)
+			op="${raw:0:2}"
+			value="${raw:2}"
+			;;
+		'='*|'>'*|'<'*)
+			op="${raw:0:1}"
+			value="${raw:1}"
+			;;
+		*)
+			die "Invalid --size filter '$raw'"
+			;;
+	esac
+	[ -n "$value" ] || die "--size value missing"
+	case "$value" in
+		*[!0-9KkMmGgTt]*)
+			die "--size value must be a number optionally suffixed with K/M/G/T"
+			;;
+	esac
+	suffix="${value//[0-9]/}"
+	number="${value%%[KkMmGgTt]*}"
+	if [ -z "$number" ]; then
+		die "--size value missing numeric portion"
+	fi
+	case "$suffix" in
+		"" ) multiplier=1 ;;
+		k|K) multiplier=1024 ;;
+		m|M) multiplier=$((1024 * 1024)) ;;
+		g|G) multiplier=$((1024 * 1024 * 1024)) ;;
+		t|T) multiplier=$((1024 * 1024 * 1024 * 1024)) ;;
+		*) die "Unknown size suffix '$suffix'" ;;
+	esac
+	MDFF_SIZE_OP="$op"
+	MDFF_SIZE_LIMIT=$(( number * multiplier ))
+}
+
+file_size_bytes() {
+	local path="$1" size
+	if size=$(stat -f %z "$path" 2>/dev/null); then
+		printf '%s' "$size"
+		return 0
+	fi
+	if size=$(stat -c %s "$path" 2>/dev/null); then
+		printf '%s' "$size"
+		return 0
+	fi
+	size=$(wc -c <"$path" 2>/dev/null | tr -d '[:space:]') || return 1
+	printf '%s' "$size"
+}
+
+matches_size() {
+	[ -n "$MDFF_SIZE_OP" ] || return 0
+	local path="$1" actual
+	actual=$(file_size_bytes "$path") || return 1
+	case "$MDFF_SIZE_OP" in
+		'>') [ "$actual" -gt "$MDFF_SIZE_LIMIT" ] ;;
+		'<') [ "$actual" -lt "$MDFF_SIZE_LIMIT" ] ;;
+		'>=') [ "$actual" -ge "$MDFF_SIZE_LIMIT" ] ;;
+		'<=') [ "$actual" -le "$MDFF_SIZE_LIMIT" ] ;;
+		'='|'==') [ "$actual" -eq "$MDFF_SIZE_LIMIT" ] ;;
+		*) return 1 ;;
+	esac
+}
+
+matches_extension() {
+	[ ${#MDFF_EXT_FILTERS[@]} -gt 0 ] || return 0
+	local path="$1" ext lowered
+	case "$path" in
+		*.*)
+			ext="${path##*.}"
+			lowered=$(lowercase "$ext")
+			;;
+		*)
+			lowered=""
+			;;
+	esac
+	for ext in "${MDFF_EXT_FILTERS[@]}"; do
+		if [ "$lowered" = "$ext" ]; then
+			return 0
+		fi
+	done
+	return 1
+}
+
+matches_mime() {
+	[ ${#MDFF_MIME_FILTERS[@]} -gt 0 ] || return 0
+	local path="$1" mime_actual desired
+	mime_actual=$(file --mime-type -b "$path" 2>/dev/null || true)
+	[ -n "$mime_actual" ] || return 1
+	mime_actual=$(lowercase "$mime_actual")
+	for desired in "${MDFF_MIME_FILTERS[@]}"; do
+		if [ "$mime_actual" = "$desired" ]; then
+			return 0
+		fi
+	done
+	return 1
+}
+
+path_matches_filters() {
+	local path="$1"
+	[ -e "$path" ] || return 1
+	matches_extension "$path" || return 1
+	matches_size "$path" || return 1
+	matches_mime "$path" || return 1
+	return 0
+}
+
+build_extension_clause() {
+	if [ ${#MDFF_EXT_FILTERS[@]} -eq 0 ]; then
+		printf ''
+		return
+	fi
+	local ext parts=() clause
+	for ext in "${MDFF_EXT_FILTERS[@]}"; do
+		parts+=("kMDItemFSName == \"*.${ext}\"")
+	done
+	if [ ${#parts[@]} -eq 1 ]; then
+		printf '%s' "${parts[0]}"
+		return
+	fi
+	clause="(${parts[0]}"
+	for ((i=1; i<${#parts[@]}; i++)); do
+		clause+=" || ${parts[i]}"
+	done
+	clause+=")"
+	printf '%s' "$clause"
+}
+
+build_query() {
+	local clauses=() term escaped parts=() clause ext_clause query
+	if [ ${#MDFF_NAME_TERMS[@]} -gt 0 ]; then
+		parts=()
+		for term in "${MDFF_NAME_TERMS[@]}"; do
+			escaped=${term//"/\\"}
+			parts+=("kMDItemDisplayName == \"*${escaped}*\"")
+		done
+		if [ ${#parts[@]} -eq 1 ]; then
+			clauses+=("${parts[0]}")
+		else
+			clause="(${parts[0]}"
+			for ((i=1; i<${#parts[@]}; i++)); do
+				clause+=" && ${parts[i]}"
+			done
+			clause+=")"
+			clauses+=("$clause")
+		fi
+	elif $MDFF_FORCE_WILDCARD; then
+		clauses+=("kMDItemDisplayName == \"*\"")
+	fi
+	ext_clause=$(build_extension_clause)
+	if [ -n "$ext_clause" ]; then
+		clauses+=("$ext_clause")
+	fi
+	if [ ${#clauses[@]} -eq 0 ]; then
+		printf '%s' "TRUEPREDICATE"
+		return
+	fi
+	query="${clauses[0]}"
+	for ((i=1; i<${#clauses[@]}; i++)); do
+		query+=" && ${clauses[i]}"
+	done
+	printf '%s' "$query"
+}
+
+mdff_main() {
+    MDFF_NAME_TERMS=()
+    MDFF_EXT_FILTERS=()
+    MDFF_MIME_FILTERS=()
+    MDFF_SIZE_OP=""
+    MDFF_SIZE_LIMIT=""
+    MDFF_SEARCH_DIR="$PWD"
+    MDFF_FORCE_WILDCARD=false
+    local query path
+	while [ $# -gt 0 ]; do
+		case "$1" in
+			-h|--help)
+				usage
+				return 0
+				;;
+			-a|--about)
+				about
+				return 0
+				;;
+			-s|--size)
+				[ $# -ge 2 ] || die "--size requires a value"
+				parse_size_arg "$2"
+				shift
+				;;
+			--size=*)
+				parse_size_arg "${1#*=}"
+				;;
+			-e|--ext)
+				[ $# -ge 2 ] || die "--ext requires a value"
+				add_extension_filter "$2"
+				shift
+				;;
+			--ext=*)
+				add_extension_filter "${1#*=}"
+				;;
+			-m|--mime)
+				[ $# -ge 2 ] || die "--mime requires a value"
+				add_mime_filter "$2"
+				shift
+				;;
+			--mime=*)
+				add_mime_filter "${1#*=}"
+				;;
+			--in)
+				[ $# -ge 2 ] || die "--in requires a directory argument"
+				set_search_dir "$2"
+				shift
+				;;
+			--in=*)
+				set_search_dir "${1#*=}"
+				;;
+			--)
+				shift
+				MDFF_NAME_TERMS+=("$@")
+				break
+				;;
+			-*)
+				die "Unknown option: $1"
+				;;
+			*)
+				MDFF_NAME_TERMS+=("$1")
+				;;
+		esac
+		shift
+	done
+    if [ ${#MDFF_NAME_TERMS[@]} -eq 0 ] && [ ${#MDFF_EXT_FILTERS[@]} -eq 0 ] && \
+         [ ${#MDFF_MIME_FILTERS[@]} -eq 0 ] && [ -z "$MDFF_SIZE_OP" ]; then
+        die "Provide at least one search term or filter (see --help)"
+    fi
+    if [ ${#MDFF_NAME_TERMS[@]} -eq 0 ]; then
+        MDFF_FORCE_WILDCARD=true
+    fi
+	ensure_darwin
+	command -v mdfind >/dev/null 2>&1 || die "mdfind not found in PATH"
+	if [ ${#MDFF_MIME_FILTERS[@]} -gt 0 ] && ! command -v file >/dev/null 2>&1; then
+		die "--mime requires the 'file' command"
+	fi
+	local mdff_tmp_out mdff_tmp_err path
+	mdff_tmp_out=$(mktemp)
+	mdff_tmp_err=$(mktemp)
+	query=$(build_query)
+	if ! mdfind -onlyin "$MDFF_SEARCH_DIR" "$query" >"$mdff_tmp_out" 2>"$mdff_tmp_err"; then
+		cat "$mdff_tmp_err" >&2
+		rm -f "$mdff_tmp_out" "$mdff_tmp_err"
+		return 1
+	fi
+	filter_mdfind_stderr "$mdff_tmp_err"
+	while IFS= read -r path; do
+		[ -z "$path" ] && continue
+		if path_matches_filters "$path"; then
+			printf '%s\n' "$path"
+		fi
+	done <"$mdff_tmp_out"
+	rm -f "$mdff_tmp_out" "$mdff_tmp_err"
+}
+
+if ! (return 0 2>/dev/null); then
+	if [ "${1:-}" = "--test" ]; then
+		shift
+		"$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test" "$@" >/dev/null
+		exit $?
+	fi
+	mdff_main "$@"
+fi

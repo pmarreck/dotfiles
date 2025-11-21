@@ -1,0 +1,336 @@
+#!/usr/bin/env bash
+
+source "$HOME/bin/assert"
+
+tests=0
+fails=0
+tmp_dirs=()
+ORIGINAL_PATH="$PATH"
+
+cleanup() {
+	for dir in "${tmp_dirs[@]}"; do
+		[ -d "$dir" ] && rm -rf "$dir"
+	done
+}
+
+trap cleanup EXIT
+
+create_test_env() {
+	local base
+	base=$(mktemp -d "${TMPDIR:-/tmp}/mdff_test.XXXXXX")
+	tmp_dirs+=("$base")
+	mkdir -p "$base/bin" "$base/work"
+	cat >"$base/bin/mdfind" <<'STUB'
+#!/usr/bin/env bash
+if [ -n "${MDFF_STUB_LOG:-}" ]; then
+	printf '%s\n' "$@" >"$MDFF_STUB_LOG"
+fi
+if [ -n "${MDFF_STUB_OUTPUT:-}" ] && [ -f "$MDFF_STUB_OUTPUT" ]; then
+	cat "$MDFF_STUB_OUTPUT"
+fi
+if [ -n "${MDFF_STUB_ERR_TEXT:-}" ]; then
+	printf '%s\n' "$MDFF_STUB_ERR_TEXT" >&2
+fi
+STUB
+	chmod +x "$base/bin/mdfind"
+	printf '%s' "$base"
+}
+
+run_mdff() {
+	local base="$1"
+	shift
+	: >"$base/mdfind.log"
+	touch "$base/mdfind.out"
+	(
+		cd "$base/work" || exit 1
+		PATH="$base/bin:$ORIGINAL_PATH" \
+			MDFF_OS_OVERRIDE=Darwin \
+			MDFF_STUB_LOG="$base/mdfind.log" \
+			MDFF_STUB_OUTPUT="$base/mdfind.out" \
+			MDFF_STUB_ERR_TEXT="${MDFF_STUB_ERR_TEXT:-}" \
+			"$HOME/bin/mdff" "$@"
+	)
+}
+
+write_stub_output() {
+	local base="$1"
+	shift
+	printf '%s\n' "$@" >"$base/mdfind.out"
+}
+
+make_sample_file() {
+	local path="$1" size="$2"
+	head -c "$size" /dev/zero >"$path"
+}
+
+log_pass() {
+	echo "✓ $1"
+}
+
+log_fail() {
+	echo "✗ $1" >&2
+}
+
+test_extension_filter_matches_dot_prefix() {
+	local env_root work output desc result log
+	env_root=$(create_test_env)
+	work="$env_root/work"
+	touch "$work/notes.txt" "$work/image.png"
+	write_stub_output "$env_root" "$work/notes.txt" "$work/image.png"
+	desc="filters paths by extension even when argument includes dot"
+	echo "Testing $desc..."
+	(( tests++ ))
+	output=$(run_mdff "$env_root" --ext .txt)
+	assert "$output" == "$work/notes.txt" "$desc"
+	result=$?
+	(( fails += result ))
+	log=$(cat "$env_root/mdfind.log")
+	if [ $result -eq 0 ]; then
+	assert "$log" =~ 'kMDItemFSName == "\*\.txt"' "$desc builds extension clause"
+		result=$?
+		(( fails += result ))
+	fi
+	if [ $result -eq 0 ]; then
+		log_pass "$desc"
+	else
+		log_fail "$desc"
+	fi
+	unset MDFF_TEST_FIND_OUTPUT
+}
+
+	test_size_filter_excludes_small_files() {
+	local env_root work output desc result
+	env_root=$(create_test_env)
+	work="$env_root/work"
+	make_sample_file "$work/small.bin" 512
+	make_sample_file "$work/big.bin" 2048
+	write_stub_output "$env_root" "$work/small.bin" "$work/big.bin"
+	desc="size filter removes files below >1K threshold"
+	echo "Testing $desc..."
+	(( tests++ ))
+	output=$(run_mdff "$env_root" --size '>1K')
+	assert "$output" == "$work/big.bin" "$desc"
+	result=$?
+	(( fails += result ))
+	if [ $result -eq 0 ]; then
+		log_pass "$desc"
+	else
+		log_fail "$desc"
+	fi
+}
+
+test_mime_filter_keeps_matching_type() {
+	local env_root work output desc result
+	env_root=$(create_test_env)
+	work="$env_root/work"
+	printf '%s\n' "hello world" >"$work/readme.txt"
+	printf '\x00\x01' >"$work/binary.bin"
+	write_stub_output "$env_root" "$work/readme.txt" "$work/binary.bin"
+	desc="mime filter keeps only text/plain hits"
+	echo "Testing $desc..."
+	(( tests++ ))
+	output=$(run_mdff "$env_root" --mime text/plain)
+	assert "$output" == "$work/readme.txt" "$desc"
+	result=$?
+	(( fails += result ))
+	if [ $result -eq 0 ]; then
+		log_pass "$desc"
+	else
+		log_fail "$desc"
+	fi
+}
+
+test_search_terms_emit_in_query() {
+	local env_root work log desc status_total result
+	env_root=$(create_test_env)
+	work="$env_root/work"
+	touch "$work/notes.txt"
+	write_stub_output "$env_root" "$work/notes.txt"
+	desc="query includes each search term"
+	echo "Testing $desc..."
+	(( tests++ ))
+	run_mdff "$env_root" foo bar >/dev/null
+	log=$(cat "$env_root/mdfind.log")
+	status_total=0
+	assert "$log" =~ 'kMDItemDisplayName == "\*foo\*"' "$desc includes foo"
+	result=$?
+	(( fails += result ))
+	(( status_total += result ))
+	assert "$log" =~ 'kMDItemDisplayName == "\*bar\*"' "$desc includes bar"
+	result=$?
+	(( fails += result ))
+	(( status_total += result ))
+	if [ $status_total -eq 0 ]; then
+		log_pass "$desc"
+	else
+		log_fail "$desc"
+	fi
+}
+
+test_help_mentions_size_option() {
+	local output desc result
+	desc="--help lists --size flag"
+	echo "Testing $desc..."
+	(( tests++ ))
+	output=$(MDFF_OS_OVERRIDE=Darwin "$HOME/bin/mdff" --help)
+	assert "$output" =~ '--size' "$desc"
+	result=$?
+	(( fails += result ))
+	if [ $result -eq 0 ]; then
+		log_pass "$desc"
+	else
+		log_fail "$desc"
+	fi
+}
+
+test_about_outputs_oneliner() {
+	local output desc result
+	desc="--about returns one-liner"
+	echo "Testing $desc..."
+	(( tests++ ))
+	output=$(MDFF_OS_OVERRIDE=Darwin "$HOME/bin/mdff" --about)
+	assert "$output" != "" "$desc"
+	result=$?
+	(( fails += result ))
+	if [ $result -eq 0 ]; then
+		log_pass "$desc"
+	else
+		log_fail "$desc"
+	fi
+}
+
+test_suppresses_mdfind_noise() {
+	local env_root work output desc errfile result
+	env_root=$(create_test_env)
+	work="$env_root/work"
+	touch "$work/notes.txt"
+	write_stub_output "$env_root" "$work/notes.txt"
+	desc="suppresses UserQueryParser chatter"
+	errfile="$env_root/mdfind.err"
+	echo "Testing $desc..."
+	(( tests++ ))
+	MDFF_STUB_ERR_TEXT=$'2025-01-01 message [UserQueryParser] Loading keywords and predicates for locale "en_US"\n2025-01-01 again [UserQueryParser] Loading keywords and predicates for locale "en"' \
+		output=$(run_mdff "$env_root" --ext .txt 2>"$errfile")
+	assert "$output" == "$work/notes.txt" "$desc returns expected output"
+	result=$?
+	(( fails += result ))
+	if [ $result -eq 0 ]; then
+		if [ -s "$errfile" ]; then
+			log_fail "$desc"
+			cat "$errfile" >&2
+			(( fails++ ))
+		else
+			log_pass "$desc"
+		fi
+	else
+		log_fail "$desc"
+	fi
+}
+
+test_in_flag_sets_directory() {
+	local env_root work target target_abs output desc result log
+	env_root=$(create_test_env)
+	work="$env_root/work"
+	target="$env_root/other"
+	mkdir -p "$target"
+	touch "$target/notes.txt"
+	target_abs=$(cd "$target" && pwd)
+	write_stub_output "$env_root" "$target_abs/notes.txt"
+	desc="--in PATH directs mdfind to requested directory"
+	echo "Testing $desc..."
+	(( tests++ ))
+	output=$(run_mdff "$env_root" --in "$target" --ext .txt)
+	assert "$output" == "$target_abs/notes.txt" "$desc"
+	result=$?
+	(( fails += result ))
+	log=$(cat "$env_root/mdfind.log")
+	if [ $result -eq 0 ]; then
+		assert "$log" =~ "$target_abs" "$desc propagates path to mdfind"
+		result=$?
+		(( fails += result ))
+	fi
+	if [ $result -eq 0 ]; then
+		log_pass "$desc"
+	else
+		log_fail "$desc"
+	fi
+}
+
+test_in_flag_accepts_relative_path() {
+	local env_root work target target_abs output desc result log
+	env_root=$(create_test_env)
+	work="$env_root/work"
+	target="$env_root/nested"
+	mkdir -p "$target"
+	touch "$target/todo.txt"
+	target_abs=$(cd "$target" && pwd)
+	write_stub_output "$env_root" "$target_abs/todo.txt"
+	desc="--in handles relative paths from invocation dir"
+	echo "Testing $desc..."
+	(( tests++ ))
+	output=$(run_mdff "$env_root" --in ../nested --ext .txt)
+	assert "$output" == "$target_abs/todo.txt" "$desc"
+	result=$?
+	(( fails += result ))
+	log=$(cat "$env_root/mdfind.log")
+	if [ $result -eq 0 ]; then
+		assert "$log" =~ "$target_abs" "$desc resolves to absolute path"
+		result=$?
+		(( fails += result ))
+	fi
+	if [ $result -eq 0 ]; then
+		log_pass "$desc"
+	else
+		log_fail "$desc"
+	fi
+}
+
+test_defaults_to_wildcard_when_no_terms() {
+	local env_root work output desc log result=0 status
+	env_root=$(create_test_env)
+	work="$env_root/work"
+	printf 'abc' >"$work/file.bin"
+	write_stub_output "$env_root" "$work/file.bin"
+	desc="adds wildcard name clause when no search terms"
+	echo "Testing $desc..."
+	(( tests++ ))
+	output=$(run_mdff "$env_root" --size '>0K')
+	assert "$output" == "$work/file.bin" "$desc returns stub"
+	status=$?
+	(( fails += status ))
+	(( result += status ))
+	log=$(cat "$env_root/mdfind.log")
+	assert "$log" =~ 'kMDItemDisplayName == "\*"' "$desc query contains wildcard"
+	status=$?
+	(( fails += status ))
+	(( result += status ))
+	if [ $result -eq 0 ]; then
+		log_pass "$desc"
+	else
+		log_fail "$desc"
+	fi
+}
+
+main() {
+	test_extension_filter_matches_dot_prefix
+	test_size_filter_excludes_small_files
+	test_mime_filter_keeps_matching_type
+	test_search_terms_emit_in_query
+	test_help_mentions_size_option
+	test_about_outputs_oneliner
+	test_suppresses_mdfind_noise
+	test_in_flag_sets_directory
+	test_in_flag_accepts_relative_path
+	test_defaults_to_wildcard_when_no_terms
+	if [ $fails -eq 0 ]; then
+		echo "All $tests tests passed"
+		return 0
+	else
+		echo "$fails of $tests tests failed" >&2
+		return $fails
+	fi
+}
+
+if ! (return 0 2>/dev/null); then
+	main
+fi
