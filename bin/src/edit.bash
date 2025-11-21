@@ -5,8 +5,11 @@ edit() {
 	if [ $# -eq 0 ]; then
 		set -- "."
 	fi
+	# if the path is a directory, edit the directory without further checks
+	if [ -d "$1" ]; then
+		choose_editor "$1"
 	# if the file is in the current directory, edit it
-	if [ -f "$1" ]; then
+	elif [ -f "$1" ]; then
 		choose_editor "$1"
 	# if the file is a function, edit it by running it with EDIT=1 (which in my bash functions will fire up an editor at that line)
 	elif contains "$(functions)" $1; then

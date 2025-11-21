@@ -15,6 +15,13 @@ choose_editor() {
 	printf '%s\n' "$@" >>"$__edit_test_editor_log"
 }
 
+# Stub executables to detect unintended scans during tests (write marker to log)
+executables_log=""
+executables() {
+	[ -n "$executables_log" ] && echo "called" >>"$executables_log"
+	return 0
+}
+
 ((tests++))
 echo "Testing: edit with no arguments edits the current directory..."
 tmp_dir="$(mktemp -d)"
@@ -31,6 +38,28 @@ if (
 	fi
 else
 	echo "[FAIL] edit command failed when run without arguments" >&2
+	cat /tmp/edit_test_stderr.$$ >&2
+	((fails++))
+fi
+rm -rf "$tmp_dir"
+rm -f /tmp/edit_test_stdout.$$ /tmp/edit_test_stderr.$$
+
+((tests++))
+echo "Testing: edit with a directory argument edits that directory without scanning executables..."
+tmp_dir="$(mktemp -d)"
+__edit_test_editor_log="$tmp_dir/editor.log"
+: >"$__edit_test_editor_log"
+executables_log="$tmp_dir/executables.log"
+: >"$executables_log"
+if edit "$tmp_dir" >/tmp/edit_test_stdout.$$ 2>/tmp/edit_test_stderr.$$; then
+	if [[ "$(cat "$__edit_test_editor_log")" == "$tmp_dir" && ! -s "$executables_log" ]]; then
+		echo "[PASS] edit invoked choose_editor with directory and skipped executables scan"
+	else
+		echo "[FAIL] Expected choose_editor \"$tmp_dir\" and no executables scan; got editor log '$(cat "$__edit_test_editor_log")', executables_log_contents='$(cat "$executables_log")'" >&2
+		((fails++))
+	fi
+else
+	echo "[FAIL] edit command failed for directory argument" >&2
 	cat /tmp/edit_test_stderr.$$ >&2
 	((fails++))
 fi

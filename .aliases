@@ -220,3 +220,6 @@ alias home='cd $HOME'
 # Use custom mkdir wrapper that supports -c/--cd option
 alias mkdir='mkdir-custom'
 alias md='glow'
+alias count-lines='wc -l'
+alias count-words='wc -w'
+alias size='wc -c' # this may shadow a builtin tool used with binary compilation workflows
