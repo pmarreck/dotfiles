@@ -6,7 +6,7 @@ fun_intro() {
 	if [ "$1" == "--test" ]; then
 		test_all=true
 	fi
-	sixel_less="fortune warhammer_quote bashorg_quote chuck mandelbrot asciidragon just_one_taoup times_older_than_samson"
+	sixel_less="fortune warhammer_quote bashorg_quote chuck mandelbrot asciidragon asciidragon_anim just_one_taoup times_older_than_samson"
 	# This one requires a Sixel-capable terminal
 	sixel_ful="inthebeginning"
 	if ! $SIXEL_CAPABLE; then

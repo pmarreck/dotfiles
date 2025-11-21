@@ -8,6 +8,8 @@ trim_leading_heredoc_whitespace() {
 	gawk '
 		BEGIN { shortest = -1 }
 		{
+			# replace all tabs with 2 spaces each
+			gsub(/\t/, "  ")
 			lines[NR] = $0
 			m = match($0, /[^[:space:]]/)
 			if (m) shortest = (shortest < 0 || m - 1 < shortest) ? m - 1 : shortest

@@ -1,0 +1,92 @@
+asciidragon_anim() {
+		# Configuration
+		local duration=3
+		local esc=$'\033'
+		local reset="${esc}[0m"
+		
+		# Hide the cursor to prevent flickering
+		printf "${esc}[?25l"
+		
+		# Define the Art (stored in variable to avoid constant heredoc usage)
+		# Note: I've adjusted indentation slightly to align it within the variable
+		local art='
+												___====-_  _-====___
+									_--~~~#####//      \\#####~~~--_
+							 _-~##########// (    ) \\##########~-_
+							-############//  :\^^/:  \\############-
+						_~############//   (@::@)   \\############~_
+					 ~#############((     \\//     ))#############~
+					-###############\\    (^^)    //###############-
+				 -#################\\  / "" \  //#################-
+				-###################\\/      \//###################-
+			 _#/:##########/\######(   /\   )######/\##########:\#_
+			 :/ :#/\#/\#/\/  \#/\##\  :  :  /##/\#/  \/\#/\#/\#: \:
+			 "  :/  V  V  "   V  \#\: :  : :/#/  V   "  V  V  \:  "
+					"   "  "      "   \ : :  : : /   "      "  "   "
+'
+		art=$(trim_leading_heredoc_whitespace <<< "$art")
+
+		# Calculate height of the art so we know how many lines to jump up
+		# We pipe to wc -l. We add 1 because wc counts newlines, not physical lines.
+		local line_count=$(echo "$art" | wc -l); ((line_count++)); ((line_count++))
+		
+		# Colors to cycle through for the scales (#)
+		# Green, Bright Green, Yellow, Red, Magenta
+		local colors=("32" "92" "33" "31" "35")
+		local start_time=$SECONDS
+		local frame=0
+
+		# Loop until duration expires
+		while (( SECONDS - start_time < duration )); do
+
+				# Move cursor up (If not the first frame)
+				# Instead of clearing screen, we move up N lines
+				if [[ $frame -gt 0 ]]; then
+						printf "${esc}[${line_count}A"
+				fi
+
+				# Calculate Scale Color
+				local color_idx=$(( frame % ${#colors[@]} ))
+				local active_color="${colors[$color_idx]}"
+				
+				# Calculate Eye Blink (Blink every 8 frames)
+				local current_art="$art"
+				if [[ $((frame % 8)) -eq 0 ]]; then
+						# Replace open eyes (@::@) with closed eyes (-::-)
+						current_art="${current_art//(@::@)/(-::-)}"
+				fi
+				
+				# Print the dragon:
+				# We set the base color to Green (32).
+				# We use sed to find runs of '#' and colorize them with the active cycling color.
+				echo -e "${esc}[0;32m" # Set base green
+				echo "$current_art" | sed -E "s/(#+)/${esc}[${active_color}m\1${esc}[0;32m/g"
+				echo -e "${reset}"
+
+				# Check for keypress (read with timeout acts as the frame delay)
+				# -t 0.15 = 150ms per frame
+				# -n 1    = read one char
+				# -s      = silent (don't echo the key pressed)
+				read -t 0.1 -n 1 -s key
+				
+				# If a key was pressed ($? is 0), exit loop
+				if [[ $? -eq 0 ]]; then break; fi
+				
+				((frame++))
+		done
+
+		# Restore cursor and clear attributes
+		printf "${esc}[?25h${reset}\n"
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+		# Check if we are running tests
+		if [ "$1" = "--test" ]; then
+				# Run tests from the test file
+				. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+		else
+				# If called directly, pass all arguments to the function
+				$(basename "${0##\-}") "$@"
+		fi
+fi
