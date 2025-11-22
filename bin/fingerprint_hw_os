@@ -1,0 +1,530 @@
+#!/usr/bin/env luajit
+
+local bit = require("bit")
+local bor, band, bxor, bnot = bit.bor, bit.band, bit.bxor, bit.bnot
+local rshift, lshift, ror = bit.rshift, bit.lshift, bit.ror
+
+local function trim(s)
+	if not s then return nil end
+	return (s:gsub("^%s+", ""):gsub("%s+$", ""))
+end
+
+local function read_file(path)
+	local fh = io.open(path, "rb")
+	if not fh then return nil end
+	local data = fh:read("*a")
+	fh:close()
+	return trim(data or "")
+end
+
+local function run_cmd(cmd)
+	local fh = io.popen(cmd .. " 2>/dev/null", "r")
+	if not fh then return nil end
+	local data = fh:read("*a")
+	fh:close()
+	return trim(data or "")
+end
+
+local function sorted_keys(t)
+	local keys = {}
+	for k in pairs(t) do keys[#keys + 1] = k end
+	table.sort(keys)
+	return keys
+end
+
+local function round_memory_mib(val)
+	if not val then return nil end
+	return math.floor((val + 128) / 256) * 256
+end
+
+local function normalize_arch(a)
+	if not a then return nil end
+	local map = {
+		x64 = "x86_64",
+		x86 = "x86",
+		amd64 = "x86_64",
+		i686 = "x86",
+		arm64 = "aarch64",
+		arm = "arm",
+		aarch64 = "aarch64",
+		ppc = "powerpc",
+		ppc64 = "powerpc64",
+		mips64 = "mips64",
+		riscv64 = "riscv64"
+	}
+	local lower = a:lower()
+	return map[lower] or lower
+end
+
+local function json_escape(str)
+	return str:gsub('[\\"]', {['\\'] = '\\\\', ['"'] = '\\"'})
+		:gsub("\b", "\\b"):gsub("\f", "\\f"):gsub("\n", "\\n"):gsub("\r", "\\r"):gsub("\t", "\\t")
+end
+
+local function encode_json(val)
+	local t = type(val)
+	if t == "table" then
+		if #val > 0 then
+			local parts = {}
+			for i = 1, #val do parts[i] = encode_json(val[i]) end
+			return "[" .. table.concat(parts, ",") .. "]"
+		else
+			local keys = sorted_keys(val)
+			local parts = {}
+			for i, k in ipairs(keys) do
+				parts[i] = '"' .. json_escape(k) .. '":' .. encode_json(val[k])
+			end
+			return "{" .. table.concat(parts, ",") .. "}"
+		end
+	elseif t == "string" then
+		return '"' .. json_escape(val) .. '"'
+	elseif t == "number" then
+		return tostring(val)
+	elseif t == "boolean" then
+		return val and "true" or "false"
+	else
+		return "null"
+	end
+end
+
+local function bytes_from_string(str)
+	local out = {}
+	for i = 1, #str do out[i] = string.byte(str, i) end
+	return out
+end
+
+local sha256_k = {
+	0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+	0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+	0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+	0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+	0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+	0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+	0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+	0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
+}
+
+local function sha256(msg)
+	local bytes = bytes_from_string(msg)
+	local bit_len = #bytes * 8
+	bytes[#bytes + 1] = 0x80
+	while (#bytes % 64) ~= 56 do bytes[#bytes + 1] = 0 end
+	local high = math.floor(bit_len / 0x100000000)
+	local low = bit_len % 0x100000000
+	bytes[#bytes + 1] = band(rshift(high, 24), 0xff)
+	bytes[#bytes + 1] = band(rshift(high, 16), 0xff)
+	bytes[#bytes + 1] = band(rshift(high, 8), 0xff)
+	bytes[#bytes + 1] = band(high, 0xff)
+	bytes[#bytes + 1] = band(rshift(low, 24), 0xff)
+	bytes[#bytes + 1] = band(rshift(low, 16), 0xff)
+	bytes[#bytes + 1] = band(rshift(low, 8), 0xff)
+	bytes[#bytes + 1] = band(low, 0xff)
+
+	local h0, h1, h2, h3 = 0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a
+	local h4, h5, h6, h7 = 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19
+	local w = {}
+	for chunk = 1, #bytes, 64 do
+		for i = 0, 15 do
+			local b0 = bytes[chunk + i * 4] or 0
+			local b1 = bytes[chunk + i * 4 + 1] or 0
+			local b2 = bytes[chunk + i * 4 + 2] or 0
+			local b3 = bytes[chunk + i * 4 + 3] or 0
+			w[i + 1] = bor(lshift(b0, 24), lshift(b1, 16), lshift(b2, 8), b3)
+		end
+		for i = 17, 64 do
+			local s0 = bxor(ror(w[i - 15], 7), ror(w[i - 15], 18), rshift(w[i - 15], 3))
+			local s1 = bxor(ror(w[i - 2], 17), ror(w[i - 2], 19), rshift(w[i - 2], 10))
+			w[i] = band((w[i - 16] + s0 + w[i - 7] + s1) % 0x100000000, 0xffffffff)
+		end
+		local a, b, c, d = h0, h1, h2, h3
+		local e, f, g, h = h4, h5, h6, h7
+		for i = 1, 64 do
+			local s1 = bxor(ror(e, 6), ror(e, 11), ror(e, 25))
+			local ch = bxor(band(e, f), band(bnot(e), g))
+			local temp1 = (h + s1 + ch + sha256_k[i] + w[i]) % 0x100000000
+			local s0 = bxor(ror(a, 2), ror(a, 13), ror(a, 22))
+			local maj = bxor(band(a, b), band(a, c), band(b, c))
+			local temp2 = (s0 + maj) % 0x100000000
+			h, g, f, e, d, c, b, a = g, f, e, (d + temp1) % 0x100000000, c, b, a, (temp1 + temp2) % 0x100000000
+		end
+		h0 = (h0 + a) % 0x100000000
+		h1 = (h1 + b) % 0x100000000
+		h2 = (h2 + c) % 0x100000000
+		h3 = (h3 + d) % 0x100000000
+		h4 = (h4 + e) % 0x100000000
+		h5 = (h5 + f) % 0x100000000
+		h6 = (h6 + g) % 0x100000000
+		h7 = (h7 + h) % 0x100000000
+	end
+	local function tohex(x)
+		return string.format("%08x", x)
+	end
+	return table.concat({tohex(h0), tohex(h1), tohex(h2), tohex(h3), tohex(h4), tohex(h5), tohex(h6), tohex(h7)})
+end
+
+local function hash_hex(msg)
+	local digest = sha256(msg)
+	return digest:sub(1, 16)
+end
+
+local function normalize_flags(flags)
+	if not flags then return nil end
+	local wanted = { "sse4_2", "avx", "avx2", "avx512f", "aes", "sha_ni", "sve", "sve2" }
+	local set = {}
+	for flag in flags:gmatch("%S+") do set[flag:lower()] = true end
+	local picked = {}
+	for _, name in ipairs(wanted) do
+		if set[name] then picked[#picked + 1] = name end
+	end
+	if #picked == 0 then return nil end
+	return picked
+end
+
+local function collect_linux()
+	local facts = {}
+	local cpuinfo = read_file("/proc/cpuinfo") or ""
+	facts.vendor_id = cpuinfo:match("vendor_id%s*:%s*([%w_]+)")
+	facts.cpu_brand = cpuinfo:match("model name%s*:%s*([^\n]+)")
+	facts.cpu_family = tonumber(cpuinfo:match("cpu family%s*:%s*(%d+)"))
+	facts.cpu_model = tonumber(cpuinfo:match("model%s*:%s*(%d+)"))
+	facts.cpu_stepping = tonumber(cpuinfo:match("stepping%s*:%s*(%d+)"))
+	facts.flags = normalize_flags(cpuinfo:match("flags%s*:%s*([^\n]+)") or "")
+	facts.arch = normalize_arch(jit.arch or run_cmd("uname -m"))
+	local cores = tonumber(cpuinfo:match("cpu cores%s*:%s*(%d+)"))
+	local siblings = tonumber(cpuinfo:match("siblings%s*:%s*(%d+)"))
+	if cores and siblings then
+		facts.smt = siblings > cores
+		facts.cores = cores
+		facts.threads_per_core = math.floor((siblings / cores) + 0.5)
+	end
+	local logical = 0
+	for _ in cpuinfo:gmatch("\nprocessor%s*:%s*%d+") do
+		logical = logical + 1
+	end
+	facts.logical_cpus = logical > 0 and logical or nil
+	local phys_ids = {}
+	for id in cpuinfo:gmatch("physical id%s*:%s*(%d+)") do phys_ids[id] = true end
+	local count = 0
+	for _ in pairs(phys_ids) do count = count + 1 end
+	if count > 0 then facts.packages = count end
+	if facts.cores and facts.packages then
+		facts.total_cores = facts.cores * facts.packages
+	elseif facts.cores then
+		facts.total_cores = facts.cores
+	elseif facts.logical_cpus then
+		facts.total_cores = facts.logical_cpus
+	end
+	local function cache_size(level, typ)
+		local path = string.format("/sys/devices/system/cpu/cpu0/cache/index%d", level)
+		local size = read_file(path .. "/size")
+		local ctype = read_file(path .. "/type")
+		if not size or not ctype then return nil end
+		if typ ~= "any" and ctype:lower() ~= typ then return nil end
+		local num = tonumber(size:match("(%d+)"))
+		if not num then return nil end
+		if size:match("[Kk]") then return num end
+		if size:match("[Mm]") then return num * 1024 end
+		return num
+	end
+	facts.cache_l1d_kib = cache_size(0, "data")
+	facts.cache_l1i_kib = cache_size(1, "instruction")
+	facts.cache_l2_kib = cache_size(2, "unified") or cache_size(2, "any")
+	facts.cache_l3_kib = cache_size(3, "unified") or cache_size(3, "any")
+	local mem_total = read_file("/proc/meminfo")
+	if mem_total then
+		local kb = tonumber(mem_total:match("MemTotal:%s*(%d+)"))
+		if kb then facts.memory_mib_256 = round_memory_mib(kb / 1024) end
+	end
+	facts.board = read_file("/sys/devices/virtual/dmi/id/product_name")
+	facts.firmware = read_file("/sys/devices/virtual/dmi/id/bios_version")
+	if cpuinfo:match("hypervisor") then
+		facts.vmm = "present"
+	else
+		facts.vmm = "none"
+	end
+	return facts
+end
+
+local function collect_macos()
+	local facts = {}
+	local function sysctl(key)
+		return run_cmd("sysctl -n " .. key)
+	end
+	facts.arch = normalize_arch(jit.arch or run_cmd("uname -m"))
+	facts.cpu_brand = sysctl("machdep.cpu.brand_string")
+	facts.vendor_id = sysctl("machdep.cpu.vendor")
+	facts.cpu_family = tonumber(sysctl("machdep.cpu.family"))
+	facts.cpu_model = tonumber(sysctl("machdep.cpu.model"))
+	facts.cpu_stepping = tonumber(sysctl("machdep.cpu.stepping"))
+	facts.flags = normalize_flags((sysctl("machdep.cpu.features") or "") .. " " .. (sysctl("machdep.cpu.leaf7_features") or ""))
+	local phys = tonumber(sysctl("hw.physicalcpu_max") or sysctl("hw.physicalcpu"))
+	local logical = tonumber(sysctl("hw.logicalcpu_max") or sysctl("hw.logicalcpu"))
+	if phys then facts.cores = phys end
+	if phys and logical then facts.smt = logical > phys end
+	if logical then facts.logical_cpus = logical end
+	if phys and logical and phys > 0 then
+		facts.threads_per_core = math.floor((logical / phys) + 0.5)
+	end
+	if phys then
+		facts.total_cores = phys
+	elseif logical then
+		facts.total_cores = logical
+	end
+	facts.packages = tonumber(sysctl("hw.packages")) or 1
+	local function cache(key)
+		local val = tonumber(sysctl(key))
+		return val and math.floor(val / 1024) or nil
+	end
+	facts.cache_l1d_kib = cache("hw.l1dcachesize")
+	facts.cache_l1i_kib = cache("hw.l1icachesize")
+	facts.cache_l2_kib = cache("hw.l2cachesize")
+	facts.cache_l3_kib = cache("hw.l3cachesize")
+	local mem = tonumber(sysctl("hw.memsize"))
+	if mem then facts.memory_mib_256 = round_memory_mib(mem / (1024 * 1024)) end
+	facts.board = sysctl("hw.model")
+	facts.firmware = sysctl("kern.osversion")
+	local hv = sysctl("kern.hv_vmm_present")
+	facts.vmm = hv == "1" and "present" or "none"
+	return facts
+end
+
+local function collect_windows()
+	local facts = {}
+	facts.arch = normalize_arch(jit.arch or os.getenv("PROCESSOR_ARCHITECTURE") or "")
+	facts.cpu_brand = os.getenv("PROCESSOR_IDENTIFIER")
+	facts.vendor_id = os.getenv("PROCESSOR_IDENTIFIER")
+	facts.cores = tonumber(os.getenv("NUMBER_OF_PROCESSORS"))
+	facts.logical_cpus = tonumber(os.getenv("NUMBER_OF_PROCESSORS"))
+	facts.total_cores = facts.cores
+	facts.memory_mib_256 = nil
+	facts.flags = nil
+	facts.smt = nil
+	facts.packages = nil
+	facts.board = run_cmd('wmic computersystem get model /value | find "="')
+	facts.firmware = run_cmd('wmic bios get smbiosbiosversion /value | find "="')
+	facts.vmm = "unknown"
+	return facts
+end
+
+local function collect_os_info()
+	local os_family = (jit.os or ""):lower()
+	if os_family == "osx" then os_family = "macos" end
+	local kernel = run_cmd("uname -r") or ""
+	local os_version = ""
+	local distro = nil
+	local wsl = false
+	local container = false
+	local container_runtime = nil
+	local os_build = nil
+	if os_family == "macos" then
+		os_version = run_cmd("sw_vers -productVersion") or ""
+		distro = "macos"
+	elseif os_family == "linux" then
+		local os_release = read_file("/etc/os-release")
+		if os_release then
+			os_version = os_release:match('VERSION_ID="?(.-)"?%s*\n') or ""
+			distro = os_release:match('^NAME="?(.-)"?%s*$')
+			if not distro then
+				distro = os_release:match('\nNAME="?(.-)"?%s*\n')
+			end
+		end
+		local version = read_file("/proc/version") or ""
+		if (read_file("/proc/sys/fs/binfmt_misc/WSLInterop"))
+			or os.getenv("WSL_DISTRO_NAME")
+			or version:match("[Mm]icrosoft")
+			or version:match("WSL") then
+			wsl = true
+		end
+		local cgroup = read_file("/proc/1/cgroup") or ""
+		local container_env = read_file("/run/systemd/container") or ""
+		if read_file("/run/.containerenv") then
+			container = true
+			container_runtime = container_runtime or "podman"
+		end
+		if cgroup:match("docker") or cgroup:match("kubepods") or cgroup:match("containerd") then
+			container = true
+			if cgroup:match("kubepods") then
+				container_runtime = container_runtime or "kubernetes"
+			elseif cgroup:match("docker") then
+				container_runtime = container_runtime or "docker"
+			elseif cgroup:match("containerd") then
+				container_runtime = container_runtime or "containerd"
+			end
+		end
+		if container_env and container_env ~= "" then
+			container = true
+			container_runtime = container_runtime or container_env
+		end
+	elseif os_family == "windows" then
+		distro = "windows"
+		os_version = run_cmd('wmic os get Version /value | find "="')
+		if os_version then os_version = os_version:match("=(.+)") or os_version end
+		os_build = run_cmd('wmic os get BuildNumber /value | find "="')
+		if os_build then os_build = os_build:match("=(.+)") or os_build end
+		-- Detect Docker Desktop (best-effort)
+		if os.getenv("WSL_INTEROP") then
+			wsl = true
+		end
+	end
+	return {
+		os_family = os_family ~= "" and os_family or nil,
+		os_version = os_version ~= "" and os_version or nil,
+		kernel_release = kernel ~= "" and kernel or nil,
+		distro = distro,
+		wsl = wsl,
+		container = container or false,
+		container_runtime = container_runtime or "",
+		os_build = os_build
+	}
+end
+
+local function canonical_table(tbl)
+	local out = {}
+	for k, v in pairs(tbl) do
+		local val = v
+		if type(val) == "string" then
+			val = val:lower()
+			val = val:gsub("%s+", "_")
+		elseif type(val) == "table" then
+			local clone = {}
+			for i = 1, #val do clone[i] = val[i]:lower() end
+			table.sort(clone)
+			val = clone
+		end
+		out[k] = val
+	end
+	return out
+end
+
+local function serialize_kv(tbl)
+	local keys = sorted_keys(tbl)
+	local lines = {}
+	for _, k in ipairs(keys) do
+		local v = tbl[k]
+		if type(v) == "table" then
+			v = table.concat(v, ",")
+		elseif type(v) == "boolean" then
+			v = v and "true" or "false"
+		elseif v == nil then
+			v = ""
+		end
+		lines[#lines + 1] = k .. "=" .. tostring(v)
+	end
+	return table.concat(lines, "\n")
+end
+
+local function make_fingerprints(hardware, os_info, include_os)
+	local canon_hw = canonical_table(hardware)
+	local canon_os = canonical_table(os_info or {})
+	local hw_repr = serialize_kv(canon_hw)
+	local platform_repr = hw_repr
+	if include_os then
+		platform_repr = hw_repr .. "\n" .. serialize_kv(canon_os)
+	end
+	return {
+		hardware_fingerprint = hash_hex(hw_repr),
+		platform_fingerprint = hash_hex(platform_repr),
+		hardware_repr = hw_repr,
+		platform_repr = platform_repr
+	}
+end
+
+local function merge_tables(a, b)
+	local out = {}
+	for k, v in pairs(a) do out[k] = v end
+	for k, v in pairs(b) do out[k] = v end
+	return out
+end
+
+local function usage()
+	print("Usage: fingerprint_hw_os [--format=ini|json|--ini|--json] [--hardware-only] [--help] [--about] [--test] [--sha256=STRING]")
+	print("")
+	print("Emit deterministic hardware and platform fingerprints (hashes) plus canonical facts.")
+	print("By default platform fingerprint includes OS fields; --hardware-only removes OS fields from that hash.")
+	print("--sha256=STRING  Print SHA-256 of STRING (self-test helper) and exit")
+	print("")
+	os.exit(0)
+end
+
+local function about()
+	print("Generate stable hardware+OS fingerprints for cross-host benchmark normalization.")
+	os.exit(0)
+end
+
+local function run_tests()
+	local script_dir = debug.getinfo(1, "S").source:sub(2):match("(.+)/")
+	local test_path = script_dir .. "/test/fingerprint_hw_os_test"
+	local cmd = string.format('PATH="%s:$PATH" "%s" >/dev/null', script_dir, test_path)
+	local ok = os.execute(cmd)
+	if ok == true or ok == 0 then
+		os.exit(0)
+	else
+		os.exit(1)
+	end
+end
+
+local args = {...}
+local format = "ini"
+local include_os = true
+for _, arg in ipairs(args) do
+	if arg == "-h" or arg == "--help" then
+		usage()
+	elseif arg == "-a" or arg == "--about" then
+		about()
+	elseif arg == "--test" then
+		run_tests()
+	elseif arg == "--hardware-only" then
+		include_os = false
+	elseif arg == "--json" then
+		format = "json"
+	elseif arg == "--ini" then
+		format = "ini"
+	elseif arg:match("^--sha256=") then
+		local val = arg:match("^--sha256=(.*)")
+		print(sha256(val or ""))
+		os.exit(0)
+	elseif arg:match("^--format=") then
+		local val = arg:match("^--format=(.+)")
+		if val == "json" or val == "ini" then
+			format = val
+		else
+			io.stderr:write("Unknown format: " .. val .. "\n")
+			os.exit(1)
+		end
+	else
+		io.stderr:write("Unknown argument: " .. arg .. "\n")
+		os.exit(1)
+	end
+end
+
+local os_family = (jit.os or ""):lower()
+local hardware
+if os_family == "linux" then
+	hardware = collect_linux()
+elseif os_family == "osx" then
+	hardware = collect_macos()
+elseif os_family == "windows" then
+	hardware = collect_windows()
+else
+	hardware = collect_linux()
+end
+
+hardware.arch = hardware.arch or normalize_arch(jit.arch)
+if hardware.cpu_brand then
+	hardware.cpu_brand = hardware.cpu_brand:gsub("%s+", "_")
+end
+if hardware.board then
+	hardware.board = hardware.board:gsub("%s+", "_")
+end
+
+local os_info = collect_os_info()
+local fp = make_fingerprints(hardware, os_info, include_os)
+local combined = merge_tables(hardware, os_info)
+combined.hardware_fingerprint = fp.hardware_fingerprint
+combined.platform_fingerprint = fp.platform_fingerprint
+
+if format == "json" then
+	print(encode_json(combined))
+else
+	print(serialize_kv(combined))
+end

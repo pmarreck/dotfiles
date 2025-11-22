@@ -1,0 +1,150 @@
+#!/usr/bin/env bash
+
+set -uo pipefail
+
+tests=0
+fails=0
+
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+cmd="$script_dir/../fingerprint_hw_os"
+
+if [[ ! -x "$cmd" ]]; then
+	echo "fingerprint_hw_os_test: executable not found at $cmd" >&2
+	exit 1
+fi
+
+pass() {
+	echo "✓ $1"
+}
+
+fail() {
+	echo "✗ $1" >&2
+	((fails++))
+}
+
+run_cmd() {
+	"$cmd" "$@"
+}
+
+((tests++))
+echo "Test: --help shows usage..."
+if output=$(run_cmd --help 2>&1); then
+	if echo "$output" | grep -qi "usage: fingerprint_hw_os"; then
+		pass "--help mentions usage"
+	else
+		fail "--help did not mention usage"
+	fi
+else
+	fail "--help exited non-zero"
+fi
+
+((tests++))
+echo "Test: default output is deterministic and includes fingerprints..."
+out1=$(run_cmd)
+status1=$?
+out2=$(run_cmd)
+status2=$?
+if [[ $status1 -ne 0 || $status2 -ne 0 ]]; then
+	fail "default invocation exited non-zero"
+	else
+		brand=$(printf "%s" "$out1" | awk -F= '/^cpu_brand=/{print $2}')
+		distro=$(printf "%s" "$out1" | awk -F= '/^distro=/{print $2}')
+		board=$(printf "%s" "$out1" | awk -F= '/^board=/{print $2}')
+	if ! echo "$out1" | grep -q "^hardware_fingerprint="; then
+		fail "hardware_fingerprint missing from output"
+	elif ! echo "$out1" | grep -q "^platform_fingerprint="; then
+		fail "platform_fingerprint missing from output"
+	elif ! echo "$out1" | grep -q "^distro="; then
+		fail "distro missing from output"
+	elif ! echo "$out1" | grep -q "^wsl="; then
+		fail "wsl missing from output"
+	elif ! echo "$out1" | grep -q "^container="; then
+		fail "container missing from output"
+	elif ! echo "$out1" | grep -q "^container_runtime="; then
+		fail "container_runtime missing from output"
+	elif ! echo "$out1" | grep -q "^logical_cpus="; then
+		fail "logical_cpus missing from output"
+	elif ! echo "$out1" | grep -q "^threads_per_core="; then
+		fail "threads_per_core missing from output"
+	elif ! echo "$out1" | grep -q "^total_cores="; then
+		fail "total_cores missing from output"
+	elif [[ -n "$brand" && "$brand" =~ " " ]]; then
+		fail "cpu_brand contains spaces"
+	elif [[ -n "$distro" && "$distro" =~ " " ]]; then
+		fail "distro contains spaces"
+	elif [[ -n "$board" && "$board" =~ " " ]]; then
+		fail "board contains spaces"
+	elif [[ "$out1" != "$out2" ]]; then
+		fail "two consecutive outputs differed"
+	else
+		pass "default output stable and contains fingerprints"
+	fi
+fi
+
+((tests++))
+echo "Test: json format emits expected keys..."
+if json_out=$(run_cmd --format=json); then
+	if echo "$json_out" | grep -q '"hardware_fingerprint"' \
+		&& echo "$json_out" | grep -q '"platform_fingerprint"' \
+		&& echo "$json_out" | grep -q '"distro"' \
+		&& echo "$json_out" | grep -q '"wsl"' \
+		&& echo "$json_out" | grep -q '"container"' \
+		&& echo "$json_out" | grep -q '"container_runtime"' \
+		&& echo "$json_out" | grep -q '"logical_cpus"' \
+		&& echo "$json_out" | grep -q '"threads_per_core"' \
+		&& echo "$json_out" | grep -q '"total_cores"'; then
+		pass "json output contains key names"
+	else
+		fail "json output missing required keys"
+	fi
+else
+	fail "--format=json exited non-zero"
+fi
+
+((tests++))
+echo "Test: sha256 helper matches system sha256..."
+sys_hash=""
+if command -v sha256sum >/dev/null 2>&1; then
+	test_input=$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 10)
+	sys_hash=$(printf "%s" "$test_input" | sha256sum | awk '{print $1}')
+elif command -v shasum >/dev/null 2>&1; then
+	test_input=$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 10)
+	sys_hash=$(printf "%s" "$test_input" | shasum -a 256 | awk '{print $1}')
+fi
+if [[ -z "$sys_hash" ]]; then
+	echo "Skipping sha256 comparison; no sha256sum/shasum found"
+else
+	script_hash=$(run_cmd --sha256="$test_input")
+	if [[ "$script_hash" == "$sys_hash" ]]; then
+		pass "sha256 helper matches system hash"
+	else
+		echo "Input: $test_input"
+		echo "Script hash: $script_hash"
+		echo "System hash: $sys_hash"
+		fail "sha256 helper mismatch"
+	fi
+fi
+
+((tests++))
+echo "Test: platform fingerprint reflects OS fields..."
+default_pf=$(printf "%s" "$out1" | awk -F= '/^platform_fingerprint=/{print $2}')
+if os_out=$(run_cmd --hardware-only); then
+	hw_only_pf=$(printf "%s" "$os_out" | awk -F= '/^platform_fingerprint=/{print $2}')
+	if [[ -z "$hw_only_pf" ]]; then
+		fail "--hardware-only lacked platform_fingerprint"
+	elif [[ "$hw_only_pf" == "$default_pf" ]]; then
+		fail "platform fingerprint did not change when excluding OS fields"
+	else
+		pass "platform fingerprint changes when OS fields excluded"
+	fi
+else
+	fail "--hardware-only exited non-zero"
+fi
+
+if [[ $fails -eq 0 ]]; then
+	echo "All $tests tests passed"
+else
+	echo "$fails of $tests tests failed" >&2
+fi
+
+exit $fails
