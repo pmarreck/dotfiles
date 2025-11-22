@@ -72,7 +72,7 @@ _test_encrypt_decrypt() {
 	local test_string="This is a test string with special chars: !@#\$%^&*()_+"
 	local test_password="testpassword123"
 	local temp_file
-	temp_file=$(mktemp)
+	temp_file=$(mktemp --tmpdir)
 
 	echo -e "\n${ANSI}${TXTYLW}Running encryption/decryption test...${ANSI}${TXTRST}"
 
@@ -136,7 +136,7 @@ _test_encrypt_decrypt() {
 	# Test asymmetric encryption/decryption via rage
 	echo -e "${ANSI}${TXTYLW}Test 3: Asymmetric (rage) round-trip${ANSI}${TXTRST}"
 	local key_dir
-	key_dir=$(mktemp -d)
+	key_dir=$(mktemp --tmpdir -d encrypt_test_keys.XXXXXX)
 	local key_path="$key_dir/testkey"
 	if ! ssh-keygen -t ed25519 -N "" -f "$key_path" >/dev/null 2>&1; then
 		echo -e "${ANSI}${TXTRED}✗ Failed to create temporary test key${ANSI}${TXTRST}"
@@ -414,7 +414,7 @@ encrypt() {
 					echo "Error: could not derive public key from $identity_src" >&2
 					return 1
 				fi
-				cleanup_recipient_file=$(mktemp)
+				cleanup_recipient_file=$(mktemp --tmpdir encrypt_recipient.XXXXXX)
 				printf '%s\n' "$derived_key" > "$cleanup_recipient_file"
 				recipient_flags=(-R "$cleanup_recipient_file")
 				recipient_display="derived recipient written to $cleanup_recipient_file"

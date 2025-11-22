@@ -127,10 +127,10 @@ protect() {
 
 # Test functions if the script is run with 'test' argument
 test_protect() {
-  echo "Running tests..."
-  local test_dir=$(mktemp -d -t test_protect_dir.XXXXXX)
-  local test_file="$test_dir/testfile.txt"
-  touch "$test_file"
+	echo "Running tests..."
+	local test_dir=$(mktemp --tmpdir -d -t test_protect_dir.XXXXXX)
+	local test_file="$test_dir/testfile.txt"
+	touch "$test_file"
   chmod 644 "$test_file"
   protect chmod u+x "$test_file"
   local current_perms=$(stat -c "%a" "$test_file")

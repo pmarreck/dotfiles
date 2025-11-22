@@ -5,7 +5,7 @@ PATH="$HOME/bin:$PATH"
 fails=0
 tests=0
 
-tmpdir=$(mktemp -d)
+tmpdir=$(mktemp --tmpdir -d sizes_test.XXXXXX)
 cleanup() {
 	rm -rf "$tmpdir"
 }

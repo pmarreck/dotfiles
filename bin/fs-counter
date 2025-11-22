@@ -9,6 +9,8 @@ ffi.cdef[[
     typedef long off_t;
     typedef unsigned long size_t;
     typedef long ssize_t;
+    typedef long int ptrdiff_t;
+    typedef long unsigned int uintptr_t;
     
     // File operations
     int open(const char *pathname, int flags, mode_t mode);
@@ -20,6 +22,8 @@ ffi.cdef[[
     int ftruncate(int fd, off_t length);
     int fchmod(int fd, mode_t mode);
     int mkdir(const char *pathname, mode_t mode);
+    char *realpath(const char *path, char *resolved_path);
+    int fsync(int fd);
     
     // File locking - using more portable approach
     struct flock {
@@ -43,6 +47,8 @@ ffi.cdef[[
     static const int O_CREAT = 0x0200;
     static const int O_RDWR = 0x0002;
     static const int O_EXCL = 0x0800;
+    static const int O_CLOEXEC = 0x1000000; // macOS / Linux (same value on modern libc)
+    static const int O_NOFOLLOW = 0x0100;   // macOS; Linux value differs, guarded in code
     
     static const int F_SETLKW = 9;  // Set lock, wait if blocked
     static const int F_UNLCK = 2;   // Unlock
@@ -56,6 +62,11 @@ ffi.cdef[[
 ]]
 
 local C = ffi.C
+
+local BASE_DIR = os.getenv("FS_COUNTER_DIR") or "/tmp/fs-counter"
+local RESOLVED_BASE_DIR = nil
+local PATH_MAX = 4096
+local NEED_FSYNC = (os.getenv("FS_COUNTER_FSYNC") == "1" or os.getenv("FS_COUNTER_FSYNC") == "true")
 
 -- Cross-platform errno access
 local function get_errno()
@@ -71,10 +82,26 @@ end
 local FsCounter = {}
 FsCounter.__index = FsCounter
 
+local function ensure_base_dir()
+    -- Ensure the fs-counter directory exists (0o755 = 493 decimal = rwxr-xr-x)
+    C.mkdir(BASE_DIR, 493)
+    if not RESOLVED_BASE_DIR then
+        local buf = ffi.new("char[?]", PATH_MAX)
+        local res = C.realpath(BASE_DIR, buf)
+        if res ~= nil then
+            RESOLVED_BASE_DIR = ffi.string(res)
+        else
+            RESOLVED_BASE_DIR = BASE_DIR
+        end
+    end
+    return RESOLVED_BASE_DIR
+end
+
 function FsCounter:new(name)
+    local base_dir = ensure_base_dir()
     local obj = {
         name = name,
-        filepath = "/tmp/fs-counter/" .. name,
+        filepath = base_dir .. "/" .. name,
         fd = nil
     }
     setmetatable(obj, self)
@@ -120,16 +147,24 @@ function FsCounter:write_value(value)
         local errno = get_errno()
         error("Failed to write value: " .. ffi.string(C.strerror(errno)))
     end
+
+    if NEED_FSYNC then
+        C.fsync(self.fd)
+    end
 end
 
 function FsCounter:create(initial_value)
     initial_value = initial_value or 0
-    
-    -- Ensure the fs-counter directory exists (0o755 = 493 decimal = rwxr-xr-x)
-    C.mkdir("/tmp/fs-counter", 493)
+    ensure_base_dir()
     
     -- Create file exclusively (fail if exists)
-    self.fd = C.open(self.filepath, bit.bor(C.O_CREAT, C.O_RDWR, C.O_EXCL), 438)
+    -- Use CLOEXEC to avoid leaking fd to children; macOS O_NOFOLLOW differs from Linux,
+    -- but including it where defined prevents symlink traversal on macOS.
+    local flags = bit.bor(C.O_CREAT, C.O_RDWR, C.O_EXCL, C.O_CLOEXEC)
+    if jit.os == "OSX" then
+        flags = bit.bor(flags, C.O_NOFOLLOW)
+    end
+    self.fd = C.open(self.filepath, flags, 438)
     if self.fd == -1 then
         local errno = get_errno()
         error("Failed to create counter (already exists?): " .. ffi.string(C.strerror(errno)))
@@ -351,7 +386,8 @@ local function main(args)
         
     elseif action == "list" then
         -- List all counters with their values in tab-separated format, sorted by name
-        local handle = io.popen("ls /tmp/fs-counter 2>/dev/null | sort")
+        local base_dir = ensure_base_dir()
+        local handle = io.popen(string.format("ls %q 2>/dev/null | sort", base_dir))
         if handle then
             local result = handle:read("*a")
             handle:close()

@@ -24,7 +24,7 @@ executables() {
 
 ((tests++))
 echo "Testing: edit with no arguments edits the current directory..."
-tmp_dir="$(mktemp -d)"
+tmp_dir="$(mktemp --tmpdir -d edit_test.XXXXXX)"
 __edit_test_editor_log="$tmp_dir/editor.log"
 if (
 	cd "$tmp_dir" || exit 1
@@ -46,7 +46,7 @@ rm -f /tmp/edit_test_stdout.$$ /tmp/edit_test_stderr.$$
 
 ((tests++))
 echo "Testing: edit with a directory argument edits that directory without scanning executables..."
-tmp_dir="$(mktemp -d)"
+tmp_dir="$(mktemp --tmpdir -d edit_test.XXXXXX)"
 __edit_test_editor_log="$tmp_dir/editor.log"
 : >"$__edit_test_editor_log"
 executables_log="$tmp_dir/executables.log"

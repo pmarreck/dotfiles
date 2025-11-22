@@ -118,7 +118,7 @@ create_temp_file() {
 	local temp_file
 
 	# Create a temporary file with X's at the end (as required by mktemp)
-	local base_temp=$(mktemp -t jpegxl.XXXXXX)
+	local base_temp=$(mktemp --tmpdir -t jpegxl.XXXXXX)
 
 	# Rename it to have the correct extension
 	temp_file="${base_temp}.${extension}"

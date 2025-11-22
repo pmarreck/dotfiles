@@ -205,7 +205,7 @@ test_help_flag() {
 
 test_error_without_input() {
 	local stderr_file rc
-	stderr_file=$(mktemp)
+	stderr_file=$(mktemp --tmpdir)
 	if propercase > /dev/null 2>"$stderr_file"; then
 		rc=0
 	else

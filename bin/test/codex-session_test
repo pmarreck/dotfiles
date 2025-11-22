@@ -7,7 +7,7 @@ fails=0
 
 codex_session="$HOME/dotfiles/bin/codex-session"
 
-fixture_dir=$(mktemp -d)
+fixture_dir=$(mktemp --tmpdir -d codex_session.XXXXXX)
 trap 'rm -rf "$fixture_dir"' EXIT
 pushd "$fixture_dir" >/dev/null
 

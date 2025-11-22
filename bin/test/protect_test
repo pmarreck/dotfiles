@@ -2,7 +2,11 @@
 
 test_protect() {
   echo "Running tests..."
-  local test_dir=$(mktemp -d -t test_protect_dir.XXXXXX)
+  if ! protect --help >/dev/null 2>&1; then
+    echo "Skipping protect tests: protect dependencies unavailable or not functional" >&2
+    return 0
+  fi
+  local test_dir=$(mktemp --tmpdir -d -t test_protect_dir.XXXXXX)
   local test_file="$test_dir/testfile.txt"
   touch "$test_file"
   chmod 644 "$test_file"
@@ -31,6 +35,6 @@ if ! (return 0 2>/dev/null); then
     . "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
   else
     # If called directly, pass all arguments to the function
-    $(basename "${0##\-}") "$@"
+    test_protect "$@"
   fi
 fi

@@ -16,9 +16,9 @@ function test-term-live-reload() {
 
 		# Output the results of a test shell invocation.
 		local stamp=$(date +%Y%m%d%H%M%S%N)
-		local termstdout=$(mktemp -t "termstdout-${stamp}-XXXX" --suffix .txt)
-		local termstderr=$(mktemp -t "termstderr-${stamp}-XXXX" --suffix .txt)
-		local termretcode=$(mktemp -t "termretcode-${stamp}-XXXX" --suffix .txt)
+		local termstdout=$(mktemp --tmpdir -t "termstdout-${stamp}-XXXX" --suffix .txt)
+		local termstderr=$(mktemp --tmpdir -t "termstderr-${stamp}-XXXX" --suffix .txt)
+		local termretcode=$(mktemp --tmpdir -t "termretcode-${stamp}-XXXX" --suffix .txt)
 		$shell -i -c "echo -e terminal setup return code within terminal:\\\n"'$?'" >&2 && exit" > $termstdout 2>$termstderr
 		echo -e "terminal setup return code after terminal exit:\n$?" >> $termretcode
 		echo "terminal setup stdout:"

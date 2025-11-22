@@ -39,7 +39,7 @@ myhelp() {
 
 #Create temp unpack dir
 make_unpackdir() {
-  unpackdir=$(mktemp -d -t to7z"$$")
+  unpackdir=$(mktemp --tmpdir -d -t to7z"$$")
   trap "rm -rf '$unpackdir'" EXIT INT HUP TERM
 }
 

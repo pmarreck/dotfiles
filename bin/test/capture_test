@@ -138,7 +138,7 @@ test_7_separator() {
     local test_fail=0
     
     local temp_dir
-    temp_dir=$(mktemp -d)
+    temp_dir=$(mktemp --tmpdir -d capture_test.XXXXXX)
     trap 'rm -rf "$temp_dir"' RETURN
 
     cat > "$temp_dir/-p" <<'EOF'

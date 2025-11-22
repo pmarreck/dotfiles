@@ -10,7 +10,7 @@ test_datetimestamp() {
 	echo "Ensuring single-line output and deterministic timestamp when TIME_SOURCE is provided..."
 
 	local fake_time_source
-	fake_time_source=$(mktemp)
+	fake_time_source=$(mktemp --tmpdir)
 	cat >"$fake_time_source" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "19990101000000.000"

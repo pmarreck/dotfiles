@@ -42,7 +42,7 @@ test_clip() {
 	fi
 	
 	# Save original clipboard content BEFORE any clipboard operations
-	local original_clipboard_file=$(mktemp -t clip_original_$$_XXXXXX)
+	local original_clipboard_file=$(mktemp --tmpdir -t clip_original_$$_XXXXXX)
 	$timeout_cmd 1s clip > "$original_clipboard_file" 2>/dev/null || true
 	local original_clipboard_content=$(cat "$original_clipboard_file")
 	
@@ -73,9 +73,9 @@ test_clip() {
 	local output
 	local verbose=$(truthy VERBOSE && echo "true" || echo "false")
 	export TMPDIR="/tmp"
-	local temptestfile=$(mktemp -t clip_test_$$_XXXXXX)
+	local temptestfile=$(mktemp --tmpdir -t clip_test_$$_XXXXXX)
 	debug "Temp file: $temptestfile"
-	export clipboard_file=$(mktemp -t clip_$$_XXXXXX)
+	export clipboard_file=$(mktemp --tmpdir -t clip_$$_XXXXXX)
 	debug "Clipboard file: $clipboard_file"
 	debug "Original clipboard content captured: '$original_clipboard_content'"
 	

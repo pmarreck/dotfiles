@@ -4,7 +4,7 @@ fails=0
 tests=0
 
 make_stub_dir() {
-	tmpdir=$(mktemp -d)
+	tmpdir=$(mktemp --tmpdir -d newterm_test.XXXXXX)
 	printf '%s' "$tmpdir"
 }
 

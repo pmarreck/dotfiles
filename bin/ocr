@@ -32,11 +32,11 @@ ocr() {
 			echo "Error: Cannot use input from stdin with output '.' (requires filename)." >&2
 			return 1
 		fi
-		temp_image="$(mktemp --suffix=.png)"
+		temp_image="$(mktemp --tmpdir --suffix=.png)"
 		magick - -strip -threshold 30% "$temp_image"
 	else
 		# temp_image="${input%.*}_bw.png"
-		temp_image="$(mktemp --suffix=.png -t ${basename_input%.*}_bw.XXXXXX))"
+		temp_image="$(mktemp --tmpdir --suffix=.png -t ${basename_input%.*}_bw.XXXXXX))"
 		magick "$input" -strip -threshold 30% "$temp_image"
 	fi
 

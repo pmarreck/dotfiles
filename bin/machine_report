@@ -37,7 +37,7 @@ fetch_with_get() {
 
 perform_update() {
 	shopt -s expand_aliases
-	tmp_file=$(mktemp)
+	tmp_file=$(mktemp --tmpdir machine_report.XXXXXX)
 	if fetch_with_get "$update_url" >"$tmp_file"; then
 		mv "$tmp_file" "$report_script"
 		chmod +x "$report_script"

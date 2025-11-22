@@ -5,7 +5,7 @@ set -uo pipefail
 fails=0
 tests=0
 
-fixtures_dir=$(mktemp -d)
+fixtures_dir=$(mktemp --tmpdir -d)
 trap 'rm -rf "$fixtures_dir"' EXIT
 
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)

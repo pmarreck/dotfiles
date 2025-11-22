@@ -8,7 +8,7 @@ test_glob() {
   local output
 
   # Create test directory
-  pushd $(mktemp -d) >/dev/null
+  pushd "$(mktemp --tmpdir -d glob_test.XXXXXX)" >/dev/null
 
   # Test 1: Direct pattern expansion
   (( tests++ ))

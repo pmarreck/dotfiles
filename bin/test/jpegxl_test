@@ -5,9 +5,9 @@ test_jpegxl() {
     local fails=0
     local tests=0
 
-    # Create a test directory
-    local test_dir=$(mktemp -d)
-    echo "Running jpegxl tests in temporary directory: $test_dir"
+	# Create a test directory
+	local test_dir=$(mktemp --tmpdir -d jpegxl_test.XXXXXX)
+	echo "Running jpegxl tests in temporary directory: $test_dir"
 
     # Create test images in the test directory
     (

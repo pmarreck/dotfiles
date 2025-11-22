@@ -9,7 +9,7 @@ elif [ "$PLATFORM" = "linux" ]; then
   pman() {
     [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
     needs evince provided by evince package
-    tmpfile=$(mktemp --suffix=.pdf /tmp/$1.XXXXXX)
+    tmpfile=$(mktemp --tmpdir --suffix=.pdf "${1}.XXXXXX")
     man -Tpdf "$@" >> $tmpfile 2>/dev/null
     evince $tmpfile
   }

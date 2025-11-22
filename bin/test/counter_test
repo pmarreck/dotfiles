@@ -143,8 +143,8 @@ test_counter() {
 
 	# Test 6: Destroy existing counter (should output 1 and exit 0)
 	(( tests++ ))
-	local destroy_stderr_file=$(mktemp)
-	local destroy_stdout_file=$(mktemp)
+	local destroy_stderr_file=$(mktemp --tmpdir counter_destroy_stderr.XXXXXX)
+	local destroy_stdout_file=$(mktemp --tmpdir counter_destroy_stdout.XXXXXX)
 	run_counter destroy "$counter_name" >"$destroy_stdout_file" 2>"$destroy_stderr_file"
 	local destroy_exit=$?
 	local destroy_stdout=$(cat "$destroy_stdout_file")
@@ -159,8 +159,8 @@ test_counter() {
 
 	# Test 7: Destroy non-existent counter (should output 0 and exit 1)
 	(( tests++ ))
-	local destroy2_stderr_file=$(mktemp)
-	local destroy2_stdout_file=$(mktemp)
+	local destroy2_stderr_file=$(mktemp --tmpdir counter_destroy2_stderr.XXXXXX)
+	local destroy2_stdout_file=$(mktemp --tmpdir counter_destroy2_stdout.XXXXXX)
 	run_counter destroy "${counter_name}_nonexistent" >"$destroy2_stdout_file" 2>"$destroy2_stderr_file"
 	local destroy2_exit=$?
 	local destroy2_stdout=$(cat "$destroy2_stdout_file")
@@ -175,8 +175,8 @@ test_counter() {
 
 	# Test 7.5: Destroy non-existent counter with --force (should output 0 and exit 0)
 	(( tests++ ))
-	local destroy3_stderr_file=$(mktemp)
-	local destroy3_stdout_file=$(mktemp)
+	local destroy3_stderr_file=$(mktemp --tmpdir counter_destroy3_stderr.XXXXXX)
+	local destroy3_stdout_file=$(mktemp --tmpdir counter_destroy3_stdout.XXXXXX)
 	run_counter destroy "${counter_name}_nonexistent" --force >"$destroy3_stdout_file" 2>"$destroy3_stderr_file"
 	local destroy3_exit=$?
 	local destroy3_stdout=$(cat "$destroy3_stdout_file")
@@ -264,9 +264,70 @@ test_counter() {
 		echo "  (Skipping list command test - not supported by $COUNTER_TYPE implementation)" >&2
 	fi
 
+	# Test 9.5: Concurrency slam (fs-counter only)
+	if [ "$COUNTER_TYPE" = "fs" ]; then
+		(( tests++ ))
+		local conc_counter="${counter_name}_concurrent"
+		run_counter create "$conc_counter" 0 >/dev/null 2>&1
+
+		local workers=32
+		local per_worker=10
+		for _ in $(seq 1 "$workers"); do
+			(
+				for _ in $(seq 1 "$per_worker"); do
+					run_counter inc "$conc_counter" >/dev/null 2>&1
+				done
+			) &
+		done
+		wait
+
+		local total_expected=$((workers * per_worker))
+		local total_actual
+		total_actual=$(run_counter get "$conc_counter" 2>/dev/null)
+		if [[ "$total_actual" == "$total_expected" ]]; then
+			green_text "✓ Concurrency slam increments correct: $total_actual\n" >&2
+		else
+			red_text "✗ Concurrency slam mismatch: expected $total_expected, got $total_actual\n" >&2
+			(( fails++ ))
+		fi
+
+		# Mixed inc/dec to ensure proper locking symmetry
+		run_counter set "$conc_counter" 0 >/dev/null 2>&1
+		(( tests++ ))
+		local inc_workers=16 dec_workers=8 per_dec=5 per_inc=5
+		for _ in $(seq 1 "$inc_workers"); do
+			(
+				for _ in $(seq 1 "$per_inc"); do
+					run_counter inc "$conc_counter" >/dev/null 2>&1
+				done
+			) &
+		done
+		for _ in $(seq 1 "$dec_workers"); do
+			(
+				for _ in $(seq 1 "$per_dec"); do
+					run_counter dec "$conc_counter" >/dev/null 2>&1
+				done
+			) &
+		done
+		wait
+		local mixed_expected=$((inc_workers * per_inc - dec_workers * per_dec))
+		local mixed_actual
+		mixed_actual=$(run_counter get "$conc_counter" 2>/dev/null)
+		if [[ "$mixed_actual" == "$mixed_expected" ]]; then
+			green_text "✓ Mixed inc/dec concurrency correct: $mixed_actual\n" >&2
+		else
+			red_text "✗ Mixed inc/dec mismatch: expected $mixed_expected, got $mixed_actual\n" >&2
+			(( fails++ ))
+		fi
+
+		run_counter destroy "$conc_counter" >/dev/null 2>&1
+	else
+		echo "  (Skipping concurrency slam test - only for fs-counter)" >&2
+	fi
+
 	# Test 10: Help and about options
 	(( tests++ ))
-	if sysv-counter --help >/dev/null 2>&1; then
+	if run_counter --help >/dev/null 2>&1; then
 		green_text "✓ Help option works\n" >&2
 	else
 		red_text "✗ Help option failed\n" >&2
@@ -274,7 +335,7 @@ test_counter() {
 	fi
 
 	(( tests++ ))
-	if sysv-counter --about >/dev/null 2>&1; then
+	if run_counter --about >/dev/null 2>&1; then
 		green_text "✓ About option works\n" >&2
 	else
 		red_text "✗ About option failed\n" >&2

@@ -140,7 +140,7 @@ else
   tmp_wat=""
   case "$first_line" in
     '#!'*)
-      tmp_wat=$(mktemp)
+      tmp_wat=$(mktemp --tmpdir wasmbuild.XXXXXX)
       tail -n +2 "$wat_abs" > "$tmp_wat"
       input_path=$tmp_wat
       ;;

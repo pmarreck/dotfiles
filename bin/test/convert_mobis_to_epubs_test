@@ -5,7 +5,7 @@ test_convert_mobis_to_epubs() {
 	local tests=0
 	local script="$HOME/dotfiles/bin/convert_mobis_to_epubs"
 	local work_root
-	work_root=$(mktemp -d /tmp/convert_mobis_to_epubs_test.XXXXXX)
+	work_root=$(mktemp --tmpdir -d convert_mobis_to_epubs_test.XXXXXX)
 	local original_path=$PATH
 
 	trap 'PATH="$original_path"; rm -rf "$work_root"' RETURN
@@ -46,7 +46,7 @@ EOF
 	fi
 
 	local case1
-	case1=$(mktemp -d "$work_root/case1.XXXXXX")
+	case1=$(mktemp --tmpdir="$work_root" -d case1.XXXXXX)
 	printf 'alpha edition' >"$case1/Book One.mobi"
 	printf 'beta edition' >"$case1/Book Two.mobi"
 
@@ -64,7 +64,7 @@ EOF
 	fi
 
 	local case2
-	case2=$(mktemp -d "$work_root/case2.XXXXXX")
+	case2=$(mktemp --tmpdir="$work_root" -d case2.XXXXXX)
 	printf 'gamma edition' >"$case2/Chosen.mobi"
 	printf 'delta edition' >"$case2/Skipped.mobi"
 
@@ -82,7 +82,7 @@ EOF
 	fi
 
 	local case3
-	case3=$(mktemp -d "$work_root/case3.XXXXXX")
+	case3=$(mktemp --tmpdir="$work_root" -d case3.XXXXXX)
 	printf 'epsilon edition' >"$case3/Delete Me.mobi"
 
 	((tests++))

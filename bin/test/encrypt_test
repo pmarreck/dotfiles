@@ -4,7 +4,7 @@ test_encrypt_decrypt() {
   local test_string="This is a test string with special chars: !@#\$%^&*()_+"
   local test_password="testpassword123"
   local temp_file
-  temp_file=$(mktemp)
+  temp_file=$(mktemp --tmpdir)
 
   echo -e "\n${ANSI}${TXTYLW}Running encryption/decryption test...${ANSI}${TXTRST}"
 
@@ -67,8 +67,13 @@ test_encrypt_decrypt() {
 
   # Test asymmetric encryption/decryption via rage
   echo -e "${ANSI}${TXTYLW}Test 3: Asymmetric (rage) round-trip${ANSI}${TXTRST}"
+  if ! command -v rage >/dev/null 2>&1; then
+    echo -e "${ANSI}${TXTYLW}Skipping asymmetric test: rage not installed${ANSI}${TXTRST}"
+    rm -f "$temp_file" "$temp_file.gpg"
+    return 0
+  fi
   local key_dir
-  key_dir=$(mktemp -d)
+  key_dir=$(mktemp --tmpdir -d encrypt_test_keys.XXXXXX)
   local key_path="$key_dir/testkey"
   if ! ssh-keygen -t ed25519 -N "" -f "$key_path" >/dev/null 2>&1; then
     echo -e "${ANSI}${TXTRED}✗ Failed to create temporary test key${ANSI}${TXTRST}"

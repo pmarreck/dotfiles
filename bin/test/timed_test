@@ -8,7 +8,7 @@ setup_test() {
     TEST_COUNT=0
     PASS_COUNT=0
     FAIL_COUNT=0
-    TEST_TEMP_DIR=$(mktemp -d)
+    TEST_TEMP_DIR=$(mktemp --tmpdir -d timed_test.XXXXXX)
     cd "$TEST_TEMP_DIR" || exit 1
 }
 

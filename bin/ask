@@ -442,9 +442,9 @@ ask() {
 
 if truthy RUN_DOTFILE_TESTS; then
 	# Set up test environment
-	temp_json_out=$(mktemp)
-	temp_json=$(mktemp)
-	history_file=$(mktemp)
+	temp_json_out=$(mktemp --tmpdir)
+	temp_json=$(mktemp --tmpdir)
+	history_file=$(mktemp --tmpdir)
 	if [[ -f "$history_file" ]]; then
 		cp "$history_file" "${history_file%.json}_backup$$.json"
 	fi

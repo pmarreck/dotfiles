@@ -51,8 +51,8 @@ test_backup_directory() {
 	printf 'Test backups are stored in /tmp/rstt$PID... '
 	local workdir stderr_file stdout_file backup_line backup_path
 	workdir=$(mktemp -d "${TMPDIR:-/tmp}/rstt_test.XXXXXX")
-	stderr_file=$(mktemp)
-	stdout_file=$(mktemp)
+	stderr_file=$(mktemp --tmpdir)
+	stdout_file=$(mktemp --tmpdir)
 	{
 		cd "$workdir"
 		cat <<'EOF' > sample.txt

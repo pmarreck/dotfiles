@@ -39,10 +39,10 @@ clone_checker_c_source() {
 	awk 'p;/^__clone_checker.c__$/{p=1}' "${BASH_SOURCE[0]}"
 }
 
-TMPDIR="$(mktemp -d)"
+TMPDIR="$(mktemp --tmpdir -d apfs_dedup.XXXXXX)"
 
 compile_clone_checker() {
-	local TMPDIR="${TMPDIR:-$(mktemp -d)}"
+	local TMPDIR="${TMPDIR:-$(mktemp --tmpdir -d apfs_dedup.XXXXXX)}"
 	# check to see if it exists already
 	if [ -f "$TMPDIR/clone_checker" ]; then
 		echo "$TMPDIR/clone_checker"
@@ -155,8 +155,8 @@ run_tests() {
 	echo "Running test suite..."
 
 	# Create test directories
-	TEST_DIR=$(mktemp -d)
-	TEST_DUPES_FILE=$(mktemp)
+TEST_DIR=$(mktemp --tmpdir -d apfs_dedup_test.XXXXXX)
+TEST_DUPES_FILE=$(mktemp --tmpdir apfs_dedup_dupes.XXXXXX)
 
 	echo "Creating test files..."
 
@@ -341,7 +341,7 @@ if [[ "$RUN_TESTS" == true ]]; then
 fi
 
 # Temp file for storing duplicates
-DUPES_LIST="${DUPES_LIST:-$(mktemp -t dupes_list.XXXXXX)}"
+DUPES_LIST="${DUPES_LIST:-$(mktemp --tmpdir -t dupes_list.XXXXXX)}"
 
 # Variables for progress tracking
 CURRENT_FILE=""
@@ -360,7 +360,7 @@ cleanup() {
 trap cleanup SIGINT SIGTERM EXIT
 
 # Create a temporary file for metadata preservation
-METADATA_REF=$(mktemp)
+METADATA_REF=$(mktemp --tmpdir metadata_ref.XXXXXX)
 trap 'rm -f "$METADATA_REF"; cleanup' EXIT
 
 # TUI function to show progress without sleeping

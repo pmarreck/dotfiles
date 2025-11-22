@@ -17,7 +17,7 @@ tests=0
 # Test 1: mkdir-custom creates a directory without -c flag
 ((tests++))
 echo "Testing: mkdir-custom creates directory without -c flag..."
-test_dir=$(mktemp -d)/test_dir_no_cd
+test_dir=$(mktemp --tmpdir -d mkdir_custom.XXXXXX)/test_dir_no_cd
 if mkdir-custom "$test_dir" 2>/dev/null && [[ -d "$test_dir" ]]; then
 	echo "✓ Test passed: Directory created without cd"
 	rm -rf "$test_dir"
@@ -29,7 +29,7 @@ fi
 # Test 2: mkdir-custom with -c creates and changes directory
 ((tests++))
 echo "Testing: mkdir-custom with -c flag creates and changes to directory..."
-test_dir=$(mktemp -d)/test_dir_with_cd
+test_dir=$(mktemp --tmpdir -d mkdir_custom.XXXXXX)/test_dir_with_cd
 original_pwd="$PWD"
 (
 	mkdir-custom -c "$test_dir" 2>/dev/null
@@ -50,7 +50,7 @@ rm -rf "$test_dir"
 # Test 3: mkdir-custom with --cd creates and changes directory
 ((tests++))
 echo "Testing: mkdir-custom with --cd flag creates and changes to directory..."
-test_dir=$(mktemp -d)/test_dir_with_long_cd
+test_dir=$(mktemp --tmpdir -d mkdir_custom.XXXXXX)/test_dir_with_long_cd
 (
 	mkdir-custom --cd "$test_dir" 2>/dev/null
 	if [[ "$PWD" == "$test_dir" ]] && [[ -d "$test_dir" ]]; then
@@ -68,7 +68,7 @@ rm -rf "$test_dir"
 # Test 4: mkdir-custom forwards other mkdir flags
 ((tests++))
 echo "Testing: mkdir-custom forwards mkdir flags like -p..."
-test_dir=$(mktemp -d)/parent/child/grandchild
+test_dir=$(mktemp --tmpdir -d mkdir_custom.XXXXXX)/parent/child/grandchild
 if mkdir-custom -p "$test_dir" 2>/dev/null && [[ -d "$test_dir" ]]; then
 	echo "✓ Test passed: Parent directories created with -p flag"
 	rm -rf "$(dirname "$(dirname "$test_dir")")"
@@ -80,7 +80,7 @@ fi
 # Test 5: mkdir-custom with -c and -p
 ((tests++))
 echo "Testing: mkdir-custom with both -c and -p flags..."
-test_dir=$(mktemp -d)/parent2/child2/grandchild2
+test_dir=$(mktemp --tmpdir -d mkdir_custom.XXXXXX)/parent2/child2/grandchild2
 (
 	mkdir-custom -c -p "$test_dir" 2>/dev/null
 	if [[ "$PWD" == "$test_dir" ]] && [[ -d "$test_dir" ]]; then

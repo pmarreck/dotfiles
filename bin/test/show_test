@@ -45,7 +45,7 @@ fi
 # WAT detection suite: verify wasmrun scripts map to WAT highlighting
 ((tests++))
 echo "Testing: determine_language_from_source returns wat for wasmrun shebang..."
-wat_stderr=$(mktemp)
+wat_stderr=$(mktemp --tmpdir)
 output=$(PATH="$repo_dir/bin:$PATH" bash -lc 'source "'"$show_script"'"; determine_language_from_source "'"$repo_dir/bin/ns"'"' 2>"$wat_stderr")
 exit_code=$?
 if [[ $exit_code -eq 0 ]] && [[ "$output" == "wat" ]]; then
@@ -61,7 +61,7 @@ rm -f "$wat_stderr"
 
 ((tests++))
 echo "Testing: show uses lisp highlighting for WAT files via bat..."
-wat_tmp_dir="$(mktemp -d)"
+wat_tmp_dir="$(mktemp --tmpdir -d show_wat.XXXXXX)"
 bat_log="$wat_tmp_dir/bat_args"
 cat >"$wat_tmp_dir/bat" <<EOF
 #!/usr/bin/env bash
@@ -71,7 +71,7 @@ EOF
 chmod +x "$wat_tmp_dir/bat"
 
 show_stderr="$wat_tmp_dir/show_wat_stderr"
-if PATH="$wat_tmp_dir:$repo_dir/bin:$PATH" bash -lc 'source "'"$show_script"'"; show "'"$repo_dir/bin/ns"'"' >"$wat_tmp_dir/show_output" 2>"$show_stderr"; then
+if PATH="$wat_tmp_dir:$repo_dir/bin:$PATH" bash -c 'source "'"$show_script"'"; show "'"$repo_dir/bin/ns"'"' >"$wat_tmp_dir/show_output" 2>"$show_stderr"; then
 	if grep -q "\-l lisp" "$bat_log"; then
 		echo "[PASS] show invoked bat with lisp highlighting for WAT file"
 	else
@@ -90,7 +90,7 @@ rm -rf "$wat_tmp_dir"
 # Node.js detection suite: ensure node-based scripts get JavaScript highlighting
 ((tests++))
 echo "Testing: determine_language_from_source classifies node shebang as JavaScript..."
-node_tmp_dir="$(mktemp -d)"
+node_tmp_dir="$(mktemp --tmpdir -d show_node.XXXXXX)"
 node_script="$node_tmp_dir/demo-node"
 cat >"$node_script" <<'EOF'
 #!/usr/bin/env node
@@ -120,7 +120,7 @@ chmod +x "$node_tmp_dir/bat"
 
 node_show_output="$node_tmp_dir/show_output"
 node_show_stderr="$node_tmp_dir/show_stderr"
-if PATH="$node_tmp_dir:$PATH" show "$node_script" >"$node_show_output" 2>"$node_show_stderr"; then
+if PATH="$node_tmp_dir:$PATH" bash -c 'source "'"$show_script"'"; show "'"$node_script"'"' >"$node_show_output" 2>"$node_show_stderr"; then
 	if grep -q '\-l js' "$node_bat_log"; then
 		echo "[PASS] show invoked bat with JavaScript highlighting for node script"
 	else

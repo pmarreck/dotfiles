@@ -361,8 +361,8 @@ mdff_main() {
 		die "--mime requires the 'file' command"
 	fi
 	local mdff_tmp_out mdff_tmp_err path
-	mdff_tmp_out=$(mktemp)
-	mdff_tmp_err=$(mktemp)
+	mdff_tmp_out=$(mktemp --tmpdir mdff_out.XXXXXX)
+	mdff_tmp_err=$(mktemp --tmpdir mdff_err.XXXXXX)
 	query=$(build_query)
 	if ! mdfind -onlyin "$MDFF_SEARCH_DIR" "$query" >"$mdff_tmp_out" 2>"$mdff_tmp_err"; then
 		cat "$mdff_tmp_err" >&2

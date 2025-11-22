@@ -173,7 +173,7 @@ if [[ "$dry_run" -eq 1 ]]; then
   exit 0
 fi
 
-backup_path="$(mktemp)"
+backup_path="$(mktemp --tmpdir update_nix_git_hash.XXXXXX)"
 cp "$abs_target" "$backup_path"
 restore() {
   cp "$backup_path" "$abs_target"
@@ -248,7 +248,7 @@ else
   build_expr="${build_expr//%FILE%/$abs_target}"
 fi
 
-build_log="$(mktemp)"
+build_log="$(mktemp --tmpdir update_nix_git_hash_build.XXXXXX)"
 if nix build --impure --expr "$build_expr" >"$build_log" 2>&1; then
   actual_hash="$(grep -m1 -o 'sha256-[0-9A-Za-z+/=]\+' "$build_log" || true)"
   cp "$backup_path" "$abs_target"

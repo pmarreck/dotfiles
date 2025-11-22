@@ -175,7 +175,7 @@ unset -f test_exported
 ((tests++))
 echo "Testing: Hook with custom -en entry command..."
 # Create a temp log file
-logfile=$(mktemp)
+logfile=$(mktemp --tmpdir)
 # Hook date with custom entry logging
 hook -en "echo 'ENTRY: __cmd__ called with: __args__' >> $logfile" date >/dev/null 2>&1
 # Call the hooked command
@@ -195,7 +195,7 @@ unhook date 2>/dev/null
 ((tests++))
 echo "Testing: Hook with custom -ex exit command..."
 # Create a temp log file
-logfile=$(mktemp)
+logfile=$(mktemp --tmpdir)
 # Hook false with custom exit logging
 hook -ex "echo 'EXIT: __cmd__ returned __exitcode__' >> $logfile" false >/dev/null 2>&1
 # Call the hooked command (should return 1)
@@ -215,7 +215,7 @@ unhook false 2>/dev/null
 ((tests++))
 echo "Testing: Hook with both -en and -ex commands..."
 # Create a temp log file
-logfile=$(mktemp)
+logfile=$(mktemp --tmpdir)
 # Hook ls with both entry and exit logging
 hook -en "echo 'ENTER __cmd__' >> $logfile" -ex "echo 'EXIT __cmd__ code=__exitcode__' >> $logfile" ls >/dev/null 2>&1
 # Call the hooked command

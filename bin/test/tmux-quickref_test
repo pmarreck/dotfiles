@@ -3,7 +3,7 @@
 fails=0
 tests=0
 
-tmpdir=$(mktemp -d)
+tmpdir=$(mktemp --tmpdir -d tmux_quickref_test.XXXXXX)
 trap 'rm -rf "$tmpdir"' EXIT
 
 config="$tmpdir/tmux.conf"

@@ -17,7 +17,7 @@ trap cleanup EXIT
 
 test_removes_suffix_from_files_with_spaces() {
 	((++tests))
-	tmpdir=$(mktemp -d)
+	tmpdir=$(mktemp --tmpdir -d remove_z_lib.XXXXXX)
 	local cwd
 	cwd=$(pwd)
 	cd "$tmpdir"
@@ -39,7 +39,7 @@ test_removes_suffix_from_files_with_spaces() {
 
 test_noop_when_no_matches() {
 	((++tests))
-	tmpdir=$(mktemp -d)
+	tmpdir=$(mktemp --tmpdir -d remove_z_lib.XXXXXX)
 	local cwd
 	cwd=$(pwd)
 	cd "$tmpdir"

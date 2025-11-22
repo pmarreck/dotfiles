@@ -804,7 +804,7 @@ EOF
 }
 
 test_suite() {
-	test_dir=$(mktemp -d)
+	test_dir=$(mktemp --tmpdir -d par2_dir_test.XXXXXX)
 	test_fails=0
 	test_debug "Testing in directory: $test_dir"
 	test_debug "Testing with $NUM_PAR2_THREADS threads"
@@ -1142,7 +1142,7 @@ test_suite() {
 
 test_corruption_patterns() {
 	local test_dir
-	test_dir=$(mktemp -d)
+	test_dir=$(mktemp --tmpdir -d par2_dir_corruption.XXXXXX)
 	local test_fails=0
 	trap 'rm -rf "$test_dir"' EXIT
 
@@ -1215,7 +1215,7 @@ test_corruption_patterns() {
 
 test_dotfile_handling() {
 	local test_dir
-	test_dir=$(mktemp -d)
+	test_dir=$(mktemp --tmpdir -d par2_dir_dotfiles.XXXXXX)
 	local test_fails=0
 	test_debug "DEBUG: Testing dotfile handling in directory: $test_dir"
 	
@@ -1273,7 +1273,7 @@ test_resource_fork_handling() {
 	fi
 
 	local test_dir
-	test_dir=$(mktemp -d)
+	test_dir=$(mktemp --tmpdir -d par2_dir_rsrc.XXXXXX)
 	local test_fails=0
 	test_debug "Testing in directory: $test_dir"
 
@@ -1313,7 +1313,7 @@ test_resource_fork_handling() {
 
 	# Test repair on file with resource fork
 	# First, record the original modification time
-	local tmpfile_mtime=$(mktemp)
+	local tmpfile_mtime=$(mktemp --tmpdir par2_dir_mtime.XXXXXX)
 	$TOUCH -r "$test_file" "$tmpfile_mtime"
 
 	# local test_file_mtime=$($STAT -c%Y "$test_file") # GNU stat expected!

@@ -101,9 +101,9 @@ test_procstat() {
 	echo "Testing default invocation on $(uname -s)..."
 	case "$(uname -s)" in
 		Linux)
-			tmp_before=$(mktemp)
-			tmp_proc=$(mktemp)
-			tmp_after=$(mktemp)
+			tmp_before=$(mktemp --tmpdir procstat_before.XXXXXX)
+			tmp_proc=$(mktemp --tmpdir procstat_out.XXXXXX)
+			tmp_after=$(mktemp --tmpdir procstat_after.XXXXXX)
 			trap 'rm -f "$tmp_before" "$tmp_proc" "$tmp_after"' EXIT
 
 			local linux_validation_failed=0

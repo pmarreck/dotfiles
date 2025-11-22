@@ -445,7 +445,7 @@ timed_main() {
 
 				if [[ -n "$gnu_time_cmd" ]]; then
 						# Use GNU time with custom format
-						resource_tempfile=$(mktemp)
+						resource_tempfile=$(mktemp --tmpdir timed_resources.XXXXXX)
 						$gnu_time_cmd -f "user:%U sys:%S maxrss:%M" -o "$resource_tempfile" "$@" 2>&1
 						EXIT_CODE=$?
 						resource_output=$(cat "$resource_tempfile" 2>/dev/null)
