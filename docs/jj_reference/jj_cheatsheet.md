@@ -48,8 +48,8 @@ jj git clone --colocate <git-url> <dir>
 jj git init --colocate
 
 # Configure identity (jj uses --user instead of git's --global)
-jj config set --user user.name "Your Name"
-jj config set --user user.email you@example.com
+jj config set --user user.name "Peter Marreck"
+jj config set --user user.email lumbergh@gmail.com
 ```
 
 ### Branching and Naming Commits
