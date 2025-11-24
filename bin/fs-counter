@@ -63,6 +63,18 @@ ffi.cdef[[
 
 local C = ffi.C
 
+-- Allow requiring Lua helpers from bin/src
+do
+	local home = os.getenv("HOME") or ""
+	package.path = table.concat({
+		package.path,
+		home .. "/dotfiles/bin/?.lua",
+		home .. "/dotfiles/bin/src/?.lua"
+	}, ";")
+end
+
+local truthy = require("truthy").truthy
+
 local BASE_DIR = os.getenv("FS_COUNTER_DIR") or "/tmp/fs-counter"
 local RESOLVED_BASE_DIR = nil
 local PATH_MAX = 4096

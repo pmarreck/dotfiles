@@ -180,6 +180,9 @@ fi
 # steam utilities
 . $HOME/dotfiles/bin/src/kill-steam-proton-pids.bash
 
+# universal stdout/stderr/returncode capturing
+. $HOME/dotfiles/bin/src/capture.bash
+
 SIXEL_ENV=$(DEBUG_SHELLCONFIG=1 check_sixel_support 2>&1)
 SIXEL_CAPABLE=$?
 # if retcode is 0 then set SIXEL_CAPABLE to "true" else "false"
