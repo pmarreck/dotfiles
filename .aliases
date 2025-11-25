@@ -223,3 +223,6 @@ alias md='glow'
 alias count-lines='wc -l'
 alias count-words='wc -w'
 alias size='wc -c' # this may shadow a builtin tool used with binary compilation workflows
+
+# vibe-kanban
+alias vk='HOST=0.0.0.0 BACKEND_PORT=10001 TMPDIR=$XDG_CACHE_HOME/vibe-kanban npx vibe-kanban'
