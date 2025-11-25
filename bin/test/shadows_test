@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+
+# Tests for the shadows command
+
+fails=0
+tests=0
+
+old_path="$PATH"
+tmpdir="$(mktemp -d)"
+PATH="$PWD/bin:$HOME/dotfiles/bin:$PATH"
+hash -r 2>/dev/null
+
+shadows_type=$(type -t shadows 2>/dev/null)
+if [ "$shadows_type" != "function" ]; then
+	# shellcheck disable=SC1090
+	. "$PWD/bin/shadows" 2>/dev/null || true
+	shadows_type=$(type -t shadows 2>/dev/null)
+fi
+
+if ! command -v shadows >/dev/null 2>&1; then
+	echo "shadows command not found on PATH" >&2
+	exit 1
+fi
+
+cleanup() {
+	unalias cd 2>/dev/null
+	unalias ls 2>/dev/null
+	unset -f hash 2>/dev/null
+	unset -f shadowexec 2>/dev/null
+	PATH="$old_path"
+	rm -rf "$tmpdir"
+}
+trap cleanup EXIT
+
+# Help flag shows usage
+((tests++))
+echo "Testing: shadows -h shows usage..."
+output="$(shadows -h 2>&1)"
+if [[ $? -eq 0 && "$output" == *"Usage: shadows"* ]]; then
+	echo "✓ Test passed: -h prints usage"
+else
+	echo "✗ Test failed: -h did not print usage" >&2
+	echo "  Output: $output" >&2
+	((fails++))
+fi
+
+# About flag shows one-liner
+((tests++))
+echo "Testing: shadows -a shows about text..."
+output="$(shadows -a 2>&1)"
+if [[ $? -eq 0 && "$output" == *"shadow"* ]]; then
+	echo "✓ Test passed: -a prints about text"
+else
+	echo "✗ Test failed: -a did not print about text" >&2
+	echo "  Output: $output" >&2
+	((fails++))
+fi
+
+# Alias shadowing a builtin is reported
+alias cd='echo alias-cd'
+((tests++))
+echo "Testing: alias shadowing builtin is detected..."
+output="$(shadows)"
+if echo "$output" | grep -q "alias cd" && echo "$output" | grep -qi "builtin"; then
+	echo "✓ Test passed: alias shadowing builtin detected"
+else
+	echo "✗ Test failed: alias shadowing builtin not detected" >&2
+	echo "  Output: $output" >&2
+	((fails++))
+fi
+unalias cd
+
+# Alias shadowing a PATH executable is reported
+alias ls='echo alias-ls'
+((tests++))
+echo "Testing: alias shadowing PATH executable is detected..."
+output="$(shadows)"
+if echo "$output" | grep -q "alias ls" && echo "$output" | grep -q "/ls"; then
+	echo "✓ Test passed: alias shadowing PATH executable detected"
+else
+	echo "✗ Test failed: alias shadowing PATH executable not detected" >&2
+	echo "  Output: $output" >&2
+	((fails++))
+fi
+unalias ls
+
+# Function shadowing a builtin is reported
+hash() { echo "fake hash"; }
+((tests++))
+echo "Testing: function shadowing builtin is detected..."
+output="$(shadows)"
+if echo "$output" | grep -q "function hash" && echo "$output" | grep -qi "builtin"; then
+	echo "✓ Test passed: function shadowing builtin detected"
+else
+	echo "✗ Test failed: function shadowing builtin not detected" >&2
+	echo "  Output: $output" >&2
+	((fails++))
+fi
+unset -f hash
+
+# Function shadowing a PATH executable is reported
+printf '#!/usr/bin/env bash\nprintf "real shadowexec\\n"\n' > "$tmpdir/shadowexec"
+chmod +x "$tmpdir/shadowexec"
+PATH="$tmpdir:$PATH"
+shadowexec() { printf "function shadowexec\n"; }
+export -f shadowexec
+((tests++))
+echo "Testing: function shadowing PATH executable is detected..."
+output="$(PATH=$PATH shadows)"
+if echo "$output" | grep -q "function shadowexec" && echo "$output" | grep -q "$tmpdir/shadowexec"; then
+	echo "✓ Test passed: function shadowing PATH executable detected"
+else
+	echo "✗ Test failed: function shadowing PATH executable not detected" >&2
+	echo "  Output: $output" >&2
+	((fails++))
+fi
+
+if (( fails == 0 )); then
+	echo "All $tests tests passed"
+else
+	echo "$fails of $tests tests failed" >&2
+fi
+
+exit $fails
