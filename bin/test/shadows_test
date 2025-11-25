@@ -5,15 +5,18 @@
 fails=0
 tests=0
 
-old_path="$PATH"
-tmpdir="$(mktemp -d)"
-PATH="$PWD/bin:$HOME/dotfiles/bin:$PATH"
+# get the directory of this function
+script_dir="$(cd -- "$(dirname "${BASH_SOURCE[0]}")/../../" && pwd)"
+tmpdir="$(mktemp -d --tmpdir)"
+mkdir -p "$tmpdir"
+ORIGPATH="$PATH"
+PATH="$script_dir/bin:$HOME/dotfiles/bin:$PATH"
 hash -r 2>/dev/null
 
 shadows_type=$(type -t shadows 2>/dev/null)
 if [ "$shadows_type" != "function" ]; then
 	# shellcheck disable=SC1090
-	. "$PWD/bin/shadows" 2>/dev/null || true
+	. "$script_dir/bin/src/shadows.bash" 2>/dev/null || true
 	shadows_type=$(type -t shadows 2>/dev/null)
 fi
 
@@ -22,12 +25,24 @@ if ! command -v shadows >/dev/null 2>&1; then
 	exit 1
 fi
 
+baseline_output="$(shadows)"
+baseline_count=$?
+((tests++))
+echo "Testing: shadows does not report itself..."
+if echo "$baseline_output" | grep -q "shadows shadows"; then
+	echo "✗ Test failed: shadows reported itself" >&2
+	echo "  Output: $baseline_output" >&2
+	((fails++))
+else
+	echo "✓ Test passed: shadows does not self-report"
+fi
+
 cleanup() {
 	unalias cd 2>/dev/null
 	unalias ls 2>/dev/null
 	unset -f hash 2>/dev/null
 	unset -f shadowexec 2>/dev/null
-	PATH="$old_path"
+	PATH="$ORIGPATH"
 	rm -rf "$tmpdir"
 }
 trap cleanup EXIT
@@ -61,11 +76,13 @@ alias cd='echo alias-cd'
 ((tests++))
 echo "Testing: alias shadowing builtin is detected..."
 output="$(shadows)"
-if echo "$output" | grep -q "alias cd" && echo "$output" | grep -qi "builtin"; then
+status=$?
+if echo "$output" | grep -q "alias cd" && echo "$output" | grep -qi "builtin" && (( status == baseline_count + 1 )); then
 	echo "✓ Test passed: alias shadowing builtin detected"
 else
 	echo "✗ Test failed: alias shadowing builtin not detected" >&2
 	echo "  Output: $output" >&2
+	echo "  Exit: $status (expected $((baseline_count + 1)))" >&2
 	((fails++))
 fi
 unalias cd
@@ -75,25 +92,46 @@ alias ls='echo alias-ls'
 ((tests++))
 echo "Testing: alias shadowing PATH executable is detected..."
 output="$(shadows)"
-if echo "$output" | grep -q "alias ls" && echo "$output" | grep -q "/ls"; then
+status=$?
+if echo "$output" | grep -q "alias ls" && echo "$output" | grep -q "/ls" && (( status == baseline_count + 1 )); then
 	echo "✓ Test passed: alias shadowing PATH executable detected"
 else
 	echo "✗ Test failed: alias shadowing PATH executable not detected" >&2
 	echo "  Output: $output" >&2
+	echo "  Exit: $status (expected $((baseline_count + 1)))" >&2
 	((fails++))
 fi
 unalias ls
+
+# Alias that doesn't shadow anything should not be reported
+unique_alias="shadowstest_alias_no_shadow"
+alias "$unique_alias"='echo just-an-alias'
+((tests++))
+echo "Testing: alias without matching command is ignored..."
+output="$(shadows)"
+status=$?
+if echo "$output" | grep -q "alias $unique_alias" || (( status != baseline_count )); then
+	echo "✗ Test failed: non-shadowing alias was reported" >&2
+	echo "  Output: $output" >&2
+	echo "  Exit: $status (expected $baseline_count)" >&2
+	((fails++))
+else
+	echo "✓ Test passed: non-shadowing alias not reported"
+fi
+unalias "$unique_alias"
 
 # Function shadowing a builtin is reported
 hash() { echo "fake hash"; }
 ((tests++))
 echo "Testing: function shadowing builtin is detected..."
 output="$(shadows)"
-if echo "$output" | grep -q "function hash" && echo "$output" | grep -qi "builtin"; then
+status=$?
+if echo "$output" | grep -q "function hash" && echo "$output" | grep -qi "builtin" && (( status == baseline_count + 1 )); then
 	echo "✓ Test passed: function shadowing builtin detected"
 else
 	echo "✗ Test failed: function shadowing builtin not detected" >&2
 	echo "  Output: $output" >&2
+	echo "  Exit: $status (expected $((baseline_count + 1)))" >&2
 	((fails++))
 fi
 unset -f hash
@@ -101,19 +139,49 @@ unset -f hash
 # Function shadowing a PATH executable is reported
 printf '#!/usr/bin/env bash\nprintf "real shadowexec\\n"\n' > "$tmpdir/shadowexec"
 chmod +x "$tmpdir/shadowexec"
+OLDPATH="$PATH"
 PATH="$tmpdir:$PATH"
 shadowexec() { printf "function shadowexec\n"; }
 export -f shadowexec
 ((tests++))
 echo "Testing: function shadowing PATH executable is detected..."
 output="$(PATH=$PATH shadows)"
-if echo "$output" | grep -q "function shadowexec" && echo "$output" | grep -q "$tmpdir/shadowexec"; then
+status=$?
+if echo "$output" | grep -q "function shadowexec" && echo "$output" | grep -q "$tmpdir/shadowexec" && (( status == baseline_count + 1 )); then
 	echo "✓ Test passed: function shadowing PATH executable detected"
 else
 	echo "✗ Test failed: function shadowing PATH executable not detected" >&2
 	echo "  Output: $output" >&2
+	echo "  Exit: $status (expected $((baseline_count + 1)))" >&2
 	((fails++))
 fi
+PATH="$OLDPATH"
+
+# More than 255 shadows caps exit code and warns
+OLDPATH="$PATH"
+PATH="$tmpdir:$PATH"
+((tests++))
+echo "Testing: exit code caps at 255 with warning when >255 shadows..."
+for i in $(seq 1 260); do
+	printf '#!/usr/bin/env bash\nprintf "real\\n"\n' > "$tmpdir/cmd$i"
+	chmod +x "$tmpdir/cmd$i"
+	eval "cmd$i(){ :; }"
+done
+warn_file="$(mktemp --tmpdir="$tmpdir" warn255.XXXXXX)"
+: > "$warn_file"
+output="$(shadows 2>"$warn_file")"
+status=$?
+warning="$(cat "$warn_file")"
+if (( status == 255 )) && echo "$warning" | grep -qi "capped at 255"; then
+	echo "✓ Test passed: exit code capped with warning"
+else
+	echo "✗ Test failed: cap-at-255 behavior incorrect" >&2
+	echo "  Exit: $status" >&2
+	echo "  Warning: $warning" >&2
+	((fails++))
+fi
+PATH="$OLDPATH"
+rm -rf "$tmpdir"
 
 if (( fails == 0 )); then
 	echo "All $tests tests passed"

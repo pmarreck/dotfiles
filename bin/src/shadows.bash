@@ -2,11 +2,13 @@
 
 shadows() {
 	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-	local about usage script_dir test_file
+
+	local about usage script_dir test_file self_path
 	about="Report aliases and functions that shadow builtins or PATH executables"
 	usage="Usage: shadows [-h|--help] [-a|--about] [--test]"
 	script_dir="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-	test_file="$script_dir/test/$(basename "${0##\-}")_test"
+	test_file="$script_dir/../test/shadows_test"
+	self_path="$(cd "$script_dir/.." && pwd)/shadows"
 
 	case "$1" in
 		-h|--help)
@@ -62,6 +64,9 @@ shadows() {
 		local has_alias=true
 		local line path
 		for line in "${entries[@]}"; do
+			if [[ "$line" == "$name is an alias for"* || "$line" == "$name is aliased to"* ]]; then
+				continue
+			fi
 			if [[ "$line" == "$name is a function"* ]]; then
 				shadows+=("function")
 				continue
@@ -73,17 +78,19 @@ shadows() {
 			if [[ "$line" == "$name is hashed ("* ]]; then
 				path="${line#* (}"
 				path="${path%)*}"
+				[[ "$path" == "$self_path" ]] && continue
 				shadows+=("$path")
 				continue
 			fi
 			if [[ "$line" == "$name is "* ]]; then
 				path="${line#"$name is "}"
+				[[ "$path" == "$self_path" ]] && continue
 				shadows+=("$path")
 			fi
 		done
 		local path_file
 		path_file=$(type -P "$name" 2>/dev/null) || path_file=""
-		[[ -n "$path_file" ]] && shadows+=("$path_file")
+		[[ -n "$path_file" && "$path_file" != "$self_path" ]] && shadows+=("$path_file")
 		if $has_alias && ((${#shadows[@]} > 0)); then
 			results+=("alias $name shadows: $(format_targets "${shadows[@]}")")
 		fi
@@ -107,17 +114,19 @@ shadows() {
 			if [[ "$line" == "$name is hashed ("* ]]; then
 				path="${line#* (}"
 				path="${path%)*}"
+				[[ "$path" == "$self_path" ]] && continue
 				shadows+=("$path")
 				continue
 			fi
 			if [[ "$line" == "$name is "* ]]; then
 				path="${line#"$name is "}"
+				[[ "$path" == "$self_path" ]] && continue
 				shadows+=("$path")
 			fi
 		done
 		local path_file
 		path_file=$(type -P "$name" 2>/dev/null) || path_file=""
-		[[ -n "$path_file" ]] && shadows+=("$path_file")
+		[[ -n "$path_file" && "$path_file" != "$self_path" ]] && shadows+=("$path_file")
 		if $has_function && ((${#shadows[@]} > 0)); then
 			results+=("function $name shadows: $(format_targets "${shadows[@]}")")
 		fi
@@ -129,20 +138,19 @@ shadows() {
 	done
 
 	for name in "${function_names[@]}"; do
+		[[ "$name" == "shadows" ]] && continue
 		collect_function_shadows "$name"
 	done
 
-	if ((${#results[@]} > 0)); then
+	local count=${#results[@]}
+	if ((count > 0)); then
 		printf "%s\n" "${results[@]}" | sort
 	fi
-}
 
-# Run the function if this script is executed directly
-if ! (return 0 2>/dev/null); then
-	if [ "$1" = "--test" ]; then
-		script_dir="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-		"$script_dir/test/$(basename "${0##\-}")_test" >/dev/null
-	else
-		$(basename "${0##\-}") "$@"
+	if ((count > 255)); then
+		printf "Warning: %d shadows detected; exit status capped at 255\n" "$count" >&2
+		return 255
 	fi
-fi
+
+	return "$count"
+}

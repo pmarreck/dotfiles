@@ -177,6 +177,9 @@ fi
 # capture function/wrapper
 . $HOME/dotfiles/bin/src/capture.bash
 
+# shadows function (only in bash)
+in_bash && . "$HOME/dotfiles/bin/src/shadows.bash"
+
 # steam utilities
 . $HOME/dotfiles/bin/src/kill-steam-proton-pids.bash
 
@@ -201,4 +204,3 @@ ${INTERACTIVE_SHELL:-false} && ${LOGIN_SHELL:-false} && fun_intro
 # Added by LM Studio CLI (lms)
 # export PATH="$PATH:/Users/pmarreck/.cache/lm-studio/bin"
 # End of LM Studio CLI section
-
