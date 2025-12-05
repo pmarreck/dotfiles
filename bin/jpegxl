@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
+# set -euo pipefail # Safety first (temporarily disabled to ensure compatibility during refactor, will enable selectively)
 
 ### jpegxl: a bash function to make conversions to/from jpegxl easier!
+
+# Usage: jpegxl [options] file1 [file2 ...]
 
 # Future Improvements:
 # -----------------------------------------------------------------------------------
 # 1. Batch Processing:
-#    - Add ability to process multiple files or entire directories
 #    - Implement a progress indicator for batch operations
 #    - Add statistics summary for batch results
 #
@@ -112,30 +114,49 @@ debug() {
 	[ -n "$DEBUG" ] && echo "DEBUG: $*" >&2
 }
 
-# Create a temporary file with a unique name
+# Global array for temp files to ensure cleanup
+declare -a TEMP_FILES=()
+
+# Cleanup function
+cleanup() {
+	if [[ ${#TEMP_FILES[@]} -gt 0 ]]; then
+		debug "Cleaning up ${#TEMP_FILES[@]} temporary files..."
+		for temp_file in "${TEMP_FILES[@]}"; do
+			if [[ -f "$temp_file" ]]; then
+				rm -f "$temp_file"
+			fi
+		done
+	fi
+}
+
+# Register cleanup trap
+trap cleanup EXIT INT TERM
+
+# Create a temporary file
 create_temp_file() {
 	local extension=$1
 	local temp_file
 
-	# Create a temporary file with X's at the end (as required by mktemp)
-	local base_temp=$(mktemp --tmpdir -t jpegxl.XXXXXX)
+	# Use universal mktemp --tmpdir syntax
+	local base_temp=$(mktemp --tmpdir jpegxl.XXXXXX)
 
 	# Rename it to have the correct extension
 	temp_file="${base_temp}.${extension}"
 	mv "$base_temp" "$temp_file"
 
+	TEMP_FILES+=("$temp_file")
+
 	debug "Created temporary file: $temp_file"
 	echo "$temp_file"
 }
 
-# Compute the output path for a file
+# Compute the output path
 compute_output_path() {
 	local input_file="$1"
 	local extension="${input_file##*.}"
 	extension="${extension,,}"  # Convert to lowercase
 	local to_format="${2:-jxl}"  # Default output format is jxl
-	
-	# Replace the extension with the target format
+
 	local output_path="${input_file%.*}.${to_format}"
 	echo "$output_path"
 }
@@ -144,47 +165,48 @@ compute_output_path() {
 display_compression_ratio() {
 	local original_file="$1"
 	local new_file="$2"
-	
-	# Get file sizes using the detected STAT command
+
 	local original_size=$($STAT -c "%s" "$original_file")
 	local new_size=$($STAT -c "%s" "$new_file")
-	
-	# Calculate percentage
+
+	# Avoid division by zero
+	if [[ "$original_size" -eq 0 ]]; then
+		echo "$original_file (empty) → $new_file ($new_size bytes)"
+		return
+	fi
+
 	local percentage=$(echo "scale=2; 100 * $new_size / $original_size" | bc)
-	
-	# Format sizes for display
+
 	local original_size_display="$original_size"
 	local new_size_display="$new_size"
-	
-	# Use human-readable sizes if NUMFMT is available
+
 	if [[ -n "$NUMFMT" ]]; then
 		original_size_display=$(echo "$original_size" | $NUMFMT --to=iec)
 		new_size_display=$(echo "$new_size" | $NUMFMT --to=iec)
 	fi
-	
-	# Display the result
-	echo "$original_file → $new_file ($new_size_display, ${percentage}% of original $original_size_display)"
+
+	echo "$original_file → $new_file ($new_size_display, ${percentage}% of original)"
 }
 
 print_help() {
 	cat << EOF
-Usage: jpegxl [OPTIONS] FILE...
+Usage: jpegxl [OPTIONS] FILES...
 
-Convert images to and from JPEG XL format.
+Convert images to and from JPEG XL format. Supports batch processing.
 
 Options:
-	--help, -h               Show this help message and exit
+	--help, -h               Show this help message
+	--about                  Show a brief description
 	--effort=N               Set compression effort (1-10, default: 10)
 	--distance=N             Set compression distance (0-15, default: 1)
 													 0 is lossless, higher values = more lossy
 	--quality=N              Set compression quality (1-100, default: 93)
 													 Equivalent to setting distance, but in a more familiar scale
-	--lossy                  Use lossy compression (default: lossless)
+	--lossy                  Use lossy compression
 	--lossless               Use lossless compression
-	--no-hdr                 Disable HDR preservation (default: enabled)
 	--basic                  Use basic compression settings (effort=5, lossy)
 	--to=FORMAT              Convert JXL to another format (jpeg, png, etc.)
-	--preserve-timestamps    Preserve original file creation/modification timestamps
+	--preserve-timestamps    Preserve original timestamps
 	test                     Run self-test
 
 Environment Variables:
@@ -195,6 +217,9 @@ Environment Variables:
 Examples:
 	# Convert a JPEG to JXL (lossless by default)
 	jpegxl image.jpg
+
+	# Convert multiple images to JXL
+	jpegxl image1.jpg image2.png
 
 	# Convert a JPEG to JXL with lossy compression
 	jpegxl --lossy image.jpg
@@ -214,7 +239,6 @@ Examples:
 Notes:
 	- By default, the script preserves as much data as possible (lossless, HDR, metadata)
 	- Use --lossy or --basic to sacrifice quality for compression
-	- Use --no-hdr to disable HDR preservation
 
 Dependencies:
 	- JPEG XL tools (cjxl, djxl)
@@ -223,39 +247,192 @@ Dependencies:
 EOF
 }
 
+# Process a single file
+process_file() {
+	local file="$1"
+	local effort="$2"
+	local distance="$3"
+	local lossy="$4"
+	local preserve_timestamps="$5"
+	local to_format="$6"
+	local quality="$7"
+
+	if [[ ! -f "$file" ]]; then
+		echo "Error: File not found: $file" >&2
+		return 1
+	fi
+
+	local extension="${file##*.}"
+	extension="${extension,,}"
+	debug "Processing $file ($extension)..."
+
+	local original_file="$file"
+	local output=""
+	local temp_png=""
+
+	# Determine output path
+	if [[ "$extension" != "jxl" ]]; then
+		output=$(compute_output_path "$file" "jxl")
+	elif [[ -n "$to_format" ]]; then
+		output=$(compute_output_path "$file" "$to_format")
+	else
+		# JXL input but no target format? Skip.
+		debug "Skipping $file (JXL file, no --to format specified)"
+		return 0
+	fi
+
+	debug "Output file: $output"
+
+	# CASE 1: JXL -> Other Format
+	if [[ "$extension" == "jxl" && -n "$to_format" ]]; then
+		case "$to_format" in
+			jpeg|jpg)
+				debug "Converting JXL to JPEG: $file -> $output"
+				if ! djxl -q "$quality" "$file" "$output" 2>/dev/null; then
+					echo "Error converting $file to JPEG." >&2
+					return 1
+				fi
+				;;
+			png)
+				debug "Converting JXL to PNG: $file -> $output"
+				if ! djxl "$file" "$output" 2>/dev/null; then
+					echo "Error converting $file to PNG." >&2
+					return 1
+				fi
+				;;
+			webp)
+				debug "Converting JXL to WebP (via PNG): $file -> $output"
+				temp_png=$(create_temp_file "png")
+				if ! djxl "$file" "$temp_png" 2>/dev/null; then
+					echo "Error converting $file to intermediate PNG." >&2
+					return 1
+				fi
+				if ! magick "$temp_png" -quality "$quality" "$output" 2>/dev/null; then
+					echo "Error converting intermediate PNG to WebP." >&2
+					return 1
+				fi
+				;;
+			*)
+				echo "Unsupported target format: $to_format" >&2
+				return 1
+				;;
+		esac
+
+	# CASE 2: Other Format -> JXL
+	else
+		# Handle formats needing intermediate conversion (WebP, HEIC)
+		if [[ "$extension" == "webp" || "$extension" == "heic" ]]; then
+			temp_png=$(create_temp_file "png")
+			debug "Converting $extension to intermediate PNG: $file -> $temp_png"
+
+			if [[ "$extension" == "heic" ]]; then
+				# Try ImageMagick first, then heif-convert
+				if ! magick "$file" -alpha off -colorspace sRGB "$temp_png" 2>/dev/null; then
+					if command -v heif-convert &>/dev/null; then
+						if ! heif-convert "$file" "$temp_png" 2>/dev/null; then
+							echo "Error: Failed to convert HEIC file $file to PNG." >&2
+							return 1
+						fi
+					else
+						echo "Error: Failed to convert HEIC $file. Please install heif-convert or update ImageMagick." >&2
+						return 1
+					fi
+				fi
+			elif [[ "$extension" == "webp" ]]; then
+				if ! magick "$file" "$temp_png" 2>/dev/null; then
+					if command -v dwebp &>/dev/null; then
+						if ! dwebp "$file" -o "$temp_png" 2>/dev/null; then
+							echo "Error: Failed to convert WebP $file to PNG." >&2
+							return 1
+						fi
+					else
+						echo "Error: Failed to convert WebP $file. Please install dwebp or update ImageMagick." >&2
+						return 1
+					fi
+				fi
+			fi
+
+			# If intermediate PNG conversion failed, return
+			if [[ ! -f "$temp_png" ]]; then
+				echo "Error: Intermediate PNG file was not created for $original_file." >&2
+				return 1
+			fi
+			file="$temp_png" # Use the intermediate PNG for JXL conversion
+		fi
+
+		# Perform JXL conversion
+		if [[ "$extension" == "jpg" || "$extension" == "jpeg" ]]; then
+			if [[ "$lossy" == "true" ]]; then
+				debug "Converting JPEG to JXL (lossy, d=$distance): $file -> $output"
+				if ! cjxl -e "$effort" -d "$distance" "$file" "$output" 2>/dev/null; then
+					echo "Error converting $original_file to JXL." >&2
+					return 1
+				fi
+			else
+				debug "Converting JPEG to JXL (lossless JPEG transcoding): $file -> $output"
+				if ! cjxl -e "$effort" --lossless_jpeg=1 "$file" "$output" 2>/dev/null; then
+					echo "Error converting $original_file to JXL." >&2
+					return 1
+				fi
+			fi
+		else
+			# For non-JPEG (PNG, or intermediate PNG), use distance
+			# Note: For strict lossless, distance MUST be 0
+			if [[ "$lossy" == "false" ]]; then
+				debug "Converting $extension to JXL (lossless, d=0): $file -> $output"
+				if ! cjxl -e "$effort" -d 0 "$file" "$output" 2>/dev/null; then
+					echo "Error converting $original_file to JXL." >&2
+					return 1
+				fi
+			else
+				debug "Converting $extension to JXL (lossy, d=$distance): $file -> $output"
+				if ! cjxl -e "$effort" -d "$distance" "$file" "$output" 2>/dev/null; then
+					echo "Error converting $original_file to JXL." >&2
+					return 1
+				fi
+			fi
+		fi
+	fi
+
+	# Post-processing
+	if [[ "$preserve_timestamps" == "true" ]]; then
+		debug "Preserving timestamps from $original_file to $output"
+		touch -r "$original_file" "$output"
+	fi
+
+	if [[ -f "$output" ]]; then
+		display_compression_ratio "$original_file" "$output"
+		return 0
+	else
+		echo "Error: Output file not produced for $original_file." >&2
+		return 1
+	fi
+}
+
 jpegxl() {
-	# Check dependencies
 	check_dependencies || return 1
 
-	# Default settings
-	local effort=10
-	local distance=1
+	# Default settings, potentially overridden by environment variables
+	local effort=${JPEGXL_DEFAULT_EFFORT:-10}
+	local distance=${JPEGXL_DEFAULT_DISTANCE:-1}
 	local lossy=false
 	local preserve_timestamps=false
 	local to_format=""
-	local quality=90
-	local output=""  # Initialize output variable
-	local original_output="" # Initialize original output variable
-	local file=""
+	local quality=93 # Default quality for djxl and magick
+	local files=()
 
 	# Parse arguments
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
-			-h|--help)
-				print_help
-				return 0
-				;;
+			-h|--help) print_help; return 0 ;;
+			--about) echo "jpegxl - Convert images to and from JPEG XL format with advanced controls"; return 0 ;;
 			test)
 				# We now defer to the separate test file
 				"$HOME/dotfiles/bin/test/jpegxl_test"
 				return $?
 				;;
-			--effort=*)
-				effort="${1#*=}"
-				;;
-			--distance=*)
-				distance="${1#*=}"
-				;;
+			--effort=*) effort="${1#*=}" ;;
+			--distance=*) distance="${1#*=}" ;;
 			--quality=*)
 				quality="${1#*=}"
 				# Convert quality to distance (inverse relationship)
@@ -266,50 +443,24 @@ jpegxl() {
 					distance=$(echo "scale=2; 15 - ($quality / 100 * 15)" | bc | awk '{printf "%.0f", $0}')
 				fi
 				;;
-			--lossy)
-				lossy=true
-				;;
-			--lossless)
-				lossy=false
-				# When explicitly set to lossless, ensure distance is 0
-				distance=0
-				;;
+			--lossy) lossy=true ;;
+			--lossless) lossy=false; distance=0 ;; # When explicitly set to lossless, ensure distance is 0
 			--no-hdr)
 				# Deprecated and unused now, kept for backward compatibility
 				debug "Option --no-hdr is deprecated and has no effect"
 				;;
-			--basic)
-				effort=5
-				lossy=true
-				;;
-			--preserve-timestamps)
-				preserve_timestamps=true
-				;;
-			--to=*)
-				to_format="${1#*=}"
-				;;
-			-*)
-				echo "Unknown option: $1" >&2
-				print_help
-				return 1
-				;;
-			*)
-				# Assume this is the file path
-				if [[ -z "$file" ]]; then
-					file="$1"
-				else
-					echo "Error: Only one input file can be processed at a time" >&2
-					print_help
-					return 1
-				fi
-				;;
+			--basic) effort=5; lossy=true ;;
+			--preserve-timestamps) preserve_timestamps=true ;;
+			--to=*) to_format="${1#*=}" ;;
+			-*) echo "Unknown option: $1" >&2; print_help; return 1 ;;
+			*) files+=("$1") ;; # Collect all non-option arguments as files
 		esac
 		shift
 	done
 
-	# If no file is provided, show help
-	if [[ -z "$file" ]]; then
-		echo "Error: No input file specified" >&2
+	# If no files are provided, show help
+	if [[ ${#files[@]} -eq 0 ]]; then
+		echo "Error: No input files specified" >&2
 		print_help
 		return 1
 	fi
@@ -333,240 +484,29 @@ jpegxl() {
 		debug "Distance set to: $distance"
 		debug "Lossy mode: $lossy"
 		debug "Preserve timestamps: $preserve_timestamps"
+		debug "Target format: $to_format"
+		debug "Quality: $quality"
+		debug "Files to process: ${files[*]}"
 	fi
 
-	# Check if file exists
-	if [[ ! -f "$file" ]]; then
-		echo "Error: File not found: $file" >&2
-		return 1
-	fi
-
-	# Get file extension
-	local extension="${file##*.}"
-	extension="${extension,,}"  # Convert to lowercase
-	debug "File extension: $extension"
-
-	# Create a temporary PNG for formats that need conversion
-	local temp_files=()
-	local original_file="$file"
-	local conversion_done=false
-
-	# Set output path for all formats
-	if [[ "$extension" != "jxl" || -n "$to_format" ]]; then
-		# For non-JXL files or when converting JXL to another format
-		if [[ "$extension" != "jxl" ]]; then
-			# For non-JXL files, set output to .jxl
-			output=$(compute_output_path "$file" "jxl")
-		fi
-	fi
-	debug "Output file: $output"
-
-	# Skip processing if we're converting from JXL to another format
-	if [[ "$extension" == "jxl" && -n "$to_format" ]]; then
-		# Handle JXL to other format conversion
-		output=$(compute_output_path "$file" "$to_format")
-		debug "Output file: $output"
-
-		case "$to_format" in
-			jpeg|jpg)
-				debug "Converting JXL to JPEG"
-				if ! djxl -q "$quality" "$file" "$output" 2>/tmp/djxl_error.log; then
-					echo "ERROR: Failed to convert JXL to JPEG" >&2
-					cat /tmp/djxl_error.log >&2
-					return 1
-				fi
-				;;
-			png)
-				debug "Converting JXL to PNG"
-				if ! djxl "$file" "$output" 2>/tmp/djxl_error.log; then
-					echo "ERROR: Failed to convert JXL to PNG" >&2
-					cat /tmp/djxl_error.log >&2
-					return 1
-				fi
-				;;
-			webp)
-				debug "Converting JXL to WebP"
-				# First convert to PNG as intermediate format
-				local temp_png=$(create_temp_file "png")
-				temp_files+=("$temp_png")
-				
-				if ! djxl "$file" "$temp_png" 2>/tmp/djxl_error.log; then
-					echo "ERROR: Failed to convert JXL to PNG (intermediate)" >&2
-					cat /tmp/djxl_error.log >&2
-					return 1
-				fi
-				
-				# Then convert PNG to WebP
-				if ! magick "$temp_png" -quality "$quality" "$output" 2>/tmp/magick_error.log; then
-					echo "ERROR: Failed to convert PNG to WebP" >&2
-					cat /tmp/magick_error.log >&2
-					return 1
-				fi
-				;;
-			*)
-				echo "Unsupported output format: $to_format" >&2
-				return 1
-				;;
-		esac
-		
-		# Preserve timestamps if requested
-		if [[ "$preserve_timestamps" == "true" ]]; then
-			debug "Preserving timestamps from $file to $output"
-			touch -r "$file" "$output"
-		fi
-		
-		# Display compression ratio
-		display_compression_ratio "$file" "$output"
-		
-		return 0
-	fi
-
-	# Create a temporary PNG for formats that need conversion (webp/heic only)
-	if [[ "$extension" == "webp" || "$extension" == "heic" ]]; then
-		original_output="$output"
-		debug "Setting output path: $original_output"
-		
-		temp_png=$(create_temp_file "png")
-		temp_files+=("$temp_png")
-		debug "Converting $extension to PNG using ImageMagick: $file -> $temp_png"
-		
-		# Handle HEIC files
-		if [[ "$extension" == "heic" ]]; then
-			debug "Using special handling for HEIC files"
-			
-			ios18_heic=false
-			if magick "$file" -alpha off -colorspace sRGB "$temp_png" 2>/tmp/magick_error.log; then
-				debug "Successfully converted HEIC using ImageMagick with special options"
-			elif command -v heif-convert &>/dev/null; then
-				debug "Trying heif-convert for HEIC conversion"
-				if heif-convert "$file" "$temp_png" 2>/tmp/heif_error.log; then
-					debug "Successfully converted using heif-convert"
-				else
-					if grep -q "Too many auxiliary image references" /tmp/heif_error.log || 
-						 grep -q "Too many auxiliary image references" /tmp/magick_error.log; then
-						ios18_heic=true
-					else
-						echo "heif-convert failed with standard error:" >&2
-						cat /tmp/heif_error.log >&2
-					fi
-					
-					if [[ "$ios18_heic" == "false" ]]; then
-						if magick convert "$file" -colorspace sRGB "$temp_png" 2>/tmp/magick_error2.log; then
-							debug "Successfully converted using alternative ImageMagick options"
-						else
-							echo "All standard HEIC conversion methods failed:" >&2
-							cat /tmp/magick_error.log >&2
-							cat /tmp/magick_error2.log >&2
-							return 1
-						fi
-					fi
-				fi
-			else
-				if grep -q "Too many auxiliary image references" /tmp/magick_error.log; then
-					ios18_heic=true
-				else
-					echo "ERROR: Failed to convert HEIC. Please install heif-convert or update ImageMagick" >&2
-					cat /tmp/magick_error.log >&2
-					return 1
-				fi
-			fi
-			
-			if [[ "$ios18_heic" == "true" ]]; then
-				echo "=== JPEGXL ERROR ===" >&2
-				echo "ERROR: Cannot convert iOS 18 HEIC file with 'Too many auxiliary references'" >&2
-				echo "This is due to a recent iOS 18 format change by Apple that current tools don't support yet" >&2
-				echo "Workaround: Open the HEIC file in a photo editor and save as JPG/PNG first" >&2
-				echo "===================" >&2
-				return 1
-			fi
-		# Handle WebP files
-		elif [[ "$extension" == "webp" ]]; then
-			if ! magick "$file" "$temp_png" 2>/tmp/magick_error.log; then
-				echo "ERROR: Failed to convert WebP to PNG using ImageMagick" >&2
-				
-				if command -v dwebp &>/dev/null; then
-					debug "Using dwebp for conversion"
-					if dwebp "$file" -o "$temp_png"; then
-						debug "Successfully converted using dwebp"
-					else
-						return 1
-					fi
-				else
-					if magick convert "$file" -alpha on "$temp_png" 2>/tmp/magick_error2.log; then
-						debug "Successfully converted using alternative ImageMagick options"
-					else
-						echo "Alternative conversion also failed:" >&2
-						cat /tmp/magick_error2.log >&2
-						return 1
-					fi
-				fi
-			fi
-		fi
-		
-		if [[ ! -f "$temp_png" ]]; then
-			echo "ERROR: Temporary PNG file was not created: $temp_png" >&2
-			return 1
-		fi
-		debug "Temporary PNG file size: $($STAT -c "%s" "$temp_png") bytes"
-		file="$temp_png"
-		extension="png"
-		output="$original_output"
-		debug "Using temporary file: $file"
-		debug "Output will be saved to: $output"
-	fi
-
-	# Perform the conversion based on file type and options
-	if [[ "$extension" == "jpg" || "$extension" == "jpeg" ]]; then
-		if [[ "$lossy" == "true" ]]; then
-			debug "Using lossy mode for JPEG conversion with distance $distance"
-			debug "cjxl -e $effort -d $distance \"$file\" \"$output\""
-			cjxl -e "$effort" -d "$distance" "$file" "$output"
-		else
-			debug "Using lossless JPEG transcoding"
-			debug "cjxl -e $effort --lossless_jpeg=1 \"$file\" \"$output\""
-			cjxl -e "$effort" --lossless_jpeg=1 "$file" "$output"
-		fi
-	elif [[ "$lossy" == "true" ]]; then
-		debug "Using lossy mode for $extension conversion with distance $distance"
-		debug "cjxl -e $effort -d $distance \"$file\" \"$output\""
-		cjxl -e "$effort" -d "$distance" "$file" "$output"
-	else
-		debug "Using lossless mode for $extension conversion"
-		debug "cjxl -e $effort -d 0 \"$file\" \"$output\""
-		cjxl -e "$effort" -d 0 "$file" "$output"
-	fi
-
-	# Preserve timestamps if requested
-	if [[ "$preserve_timestamps" == "true" ]]; then
-		debug "Preserving timestamps from $file to $output"
-		touch -r "$original_file" "$output"
-	fi
-
-	# Show compression ratio
-	if [[ -f "$output" ]]; then
-		display_compression_ratio "$original_file" "$output"
-	fi
-
-	# Clean up temporary files
-	for temp_file in "${temp_files[@]}"; do
-		if [[ -f "$temp_file" ]]; then
-			debug "Removing temporary file: $temp_file"
-			rm -f "$temp_file"
+	local failures=0
+	for file in "${files[@]}"; do
+		if ! process_file "$file" "$effort" "$distance" "$lossy" "$preserve_timestamps" "$to_format" "$quality"; then
+			((failures++))
 		fi
 	done
+
+	if [[ "$failures" -gt 0 ]]; then
+		echo "Completed with $failures failures." >&2
+		return 1
+	else
+		echo "All files processed successfully."
+		return 0
+	fi
 }
 
 # Run the function if this script is executed directly, avoiding double execution
 if ! (return 0 2>/dev/null); then
-	# We're being run directly, not sourced
-	_me=$(basename "${0##\-}")
-	# Check if we are running tests
-	if [ "$1" = "--test" ]; then
-		# Run tests from the test file
-		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
-	else
-		# If called directly, pass all arguments to the function
-		jpegxl "$@"
-	fi
+	# If called directly, pass all arguments to the function
+	jpegxl "$@"
 fi
-unset _me

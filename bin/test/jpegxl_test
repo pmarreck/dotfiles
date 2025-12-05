@@ -12,13 +12,13 @@ test_jpegxl() {
     # Create test images in the test directory
     (
         cd "$test_dir"
-        
+
         # Create a test JPEG image
         magick -size 100x100 gradient:green-yellow "$test_dir/test_jpg.jpg"
-        
+
         # Create a test PNG image
         magick -size 100x100 gradient:blue-red "$test_dir/test_png.png"
-        
+
         # Create a test PNG with alpha channel
         magick -size 100x100 xc:none -fill red -draw "circle 50,50 20,30" "$test_dir/alpha_test_png.png"
     )
@@ -94,6 +94,30 @@ test_jpegxl() {
         echo "✓ Quality setting test passed"
     else
         echo "✗ Quality setting test failed"
+        (( fails++ ))
+    fi
+
+    # Test 8: About flag
+    (( tests++ ))
+    if jpegxl --about | grep -q "jpegxl - Convert images"; then
+        echo "✓ About flag test passed"
+    else
+        echo "✗ About flag test failed"
+        (( fails++ ))
+    fi
+
+    # Test 9: Batch processing
+    (( tests++ ))
+    # Create copies for batch test
+    cp "$test_dir/test_jpg.jpg" "$test_dir/batch_1.jpg"
+    cp "$test_dir/test_jpg.jpg" "$test_dir/batch_2.jpg"
+
+    DEBUG=true jpegxl "$test_dir/batch_1.jpg" "$test_dir/batch_2.jpg" >/dev/null 2>&1
+
+    if [[ -f "$test_dir/batch_1.jxl" && -f "$test_dir/batch_2.jxl" ]]; then
+        echo "✓ Batch processing test passed"
+    else
+        echo "✗ Batch processing test failed"
         (( fails++ ))
     fi
 
