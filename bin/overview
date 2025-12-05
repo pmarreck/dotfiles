@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+
+# Check for dependencies
+if ! command -v rg >/dev/null 2>&1; then
+    echo "Error: 'rg' (ripgrep) is not installed." >&2
+    exit 1
+fi
+
+if ! command -v strings >/dev/null 2>&1; then
+    echo "Error: 'strings' is not installed." >&2
+    exit 1
+fi
+
+# Show a list of all commands that support the --about flag, with their descriptions
+overview() {
+  if [[ "$1" == "--about" ]]; then
+      echo "Scans executables for --about support and lists them"
+      return 0
+  fi
+  local all_commands
+
+  # Concatenate output of executables and functions, discarding stderr
+  {
+      executables 2>/dev/null
+      if command -v functions >/dev/null 2>&1; then
+          functions 2>/dev/null
+      else
+          # Fallback: try to find src/functions.bash relative to this script
+          local script_dir
+          script_dir="$(dirname "${BASH_SOURCE[0]}")"
+          if [[ -x "$script_dir/src/functions.bash" ]]; then
+              "$script_dir/src/functions.bash" 2>/dev/null
+          elif [[ -f "$script_dir/src/functions.bash" ]]; then
+              bash "$script_dir/src/functions.bash" 2>/dev/null
+          fi
+      fi
+  } | sort -u | while read -r cmd; do
+      # Skip empty lines
+      [[ -z "$cmd" ]] && continue
+
+      # Safety Check: Does the command actually support --about?
+      # We check the source (or binary strings) before running it.
+
+      local is_safe=false
+      local function_def
+
+      # Check if it's a function
+      if function_def=$(declare -f "$cmd" 2>/dev/null); then
+          # It's a function, check definition
+          if echo "$function_def" | rg -F -q -- "--about"; then
+              is_safe=true
+          fi
+      else
+          # It's an executable, find its path
+          local path
+          if path=$(command -v "$cmd" 2>/dev/null); then
+             if [[ -f "$path" ]]; then
+                 # Check if it looks like a script (text) or binary
+                 # using 'file' command is one way, or just try rg first.
+                 # 'rg' handles binary files by default "binary file matches" but -a treats as text?
+                 # Actually user suggested: strings `which bash` | rg ...
+
+                 # If it is a script, simple grep/rg should work.
+                 # If it is a binary, we need strings.
+
+                 # We can just always use strings? running strings on text file is fine too,
+                 # just less efficient maybe.
+                 # But 'rg' is fast.
+
+                 # Let's try rg directly first. If rg detects binary, it might fail or print "Binary file matches".
+                 # To be safe and thorough as requested:
+                 if strings "$path" 2>/dev/null | rg -F -q -- "--about"; then
+                     is_safe=true
+                 fi
+             fi
+          fi
+      fi
+
+      if $is_safe; then
+          local description
+          # Run with --about, capturing stdout, discarding stderr
+          if description=$("$cmd" --about 2>/dev/null); then
+              if [[ -n "$description" ]]; then
+                   printf "%-30s %s\n" "$cmd" "$description"
+              fi
+          fi
+      else
+          : # Skip unsafe commands
+      fi
+  done
+}
+
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    overview "$@"
+fi

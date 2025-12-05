@@ -18,7 +18,8 @@ OPTIONS:
   --file FILE     File to search for (default: flake.nix)
   -h, --help      Show this help message
   --test          Run tests
-  --about         Show detailed information about this tool
+  --about         Show brief description
+  --details       Show detailed information about this tool
 
 EXAMPLES:
   $SCRIPT_NAME microsoft/vscode
@@ -33,6 +34,11 @@ EOF
 
 # About function
 show_about() {
+	echo "find_github_forks_with_file - Searches for a specific file across all forks of a GitHub repository"
+}
+
+# Detailed info function
+show_details() {
 	cat << EOF
 find_github_forks_with_file - GitHub Fork File Finder
 
@@ -109,6 +115,10 @@ while [[ $# -gt 0 ]]; do
 			;;
 		--about)
 			show_about
+			exit 0
+			;;
+		--details)
+			show_details
 			exit 0
 			;;
 		-*)

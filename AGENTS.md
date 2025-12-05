@@ -33,6 +33,7 @@ Most executables in `bin/` support a `--test` flag:
   - With `assert`: `assert condition; ((fails+=$?))`
   - With explicit checks: `if condition; then success_msg; else error_details >&2; ((fails++)); fi`
 - See `bin/test/expand_test` for assert pattern, `bin/test/hook_test` for if/then pattern
+- **Use `mktemp -d --tmpdir`** for creating temporary directories in tests to ensure cross-platform compatibility and respect for `$TMPDIR`
 
 #### Output Standards
 

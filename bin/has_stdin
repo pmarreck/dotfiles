@@ -9,8 +9,7 @@ local args = {...}
 
 -- 🧠 Argument handling
 local function print_about()
-	print("has_stdin: check if stdin is ready (non-blocking), without consuming input.")
-	print("Written in LuaJIT using select(2) (works across macOS & Linux). Exits 0 if stdin is ready, 1 otherwise.")
+	print("has_stdin: check if stdin is ready (non-blocking, using select(2) which works across macOS & Linux). Exits 0 if stdin is ready, 1 otherwise, without consuming input.")
 	os.exit(0)
 end
 

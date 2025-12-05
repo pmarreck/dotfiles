@@ -16,7 +16,8 @@ USAGE:
 	webping [--about|--help]
 
 OPTIONS:
-	--about, --help    Show this help message
+	--about            Show brief description
+	--help             Show this help message
 
 KEYBINDS:
 	q                  Quit and kill the entire session
@@ -116,7 +117,11 @@ check_dependencies() {
 webping() {
 	# Parse arguments before checking dependencies
 	case "${1:-}" in
-		--about|--help)
+		--about)
+			echo "webping - Multi-site HTTP response time monitor using tmux and gping"
+			return 0
+			;;
+		--help)
 			show_help
 			return 0
 			;;
