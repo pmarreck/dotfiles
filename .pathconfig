@@ -57,6 +57,9 @@ IGNORE_PREPEND_PATH_WARNINGS=true prepend_path "$HOME/.codeium/windsurf/bin"
 # export PATH=$PATH:~/bin
 prepend_path $HOME/bin
 
+# Added by Antigravity
+[ -d "$HOME/.antigravity/antigravity/bin" ] && prepend_path "$HOME/.antigravity/antigravity/bin"
+
 # include the custom project executables I usually like in PATH
 # Due to race condition issues with iCloud backup, on my Mac, my Github projects are in Documents-CloudManaged (alias dcm)
 # and not in ~/Documents, which is where they still live on my Linux installs
