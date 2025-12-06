@@ -97,7 +97,39 @@ test_jpegxl() {
         (( fails++ ))
     fi
 
-    # Test 8: About flag
+    # Helper to fetch mtime using available stat implementation
+    local stat_mtime
+    if command -v gstat >/dev/null 2>&1; then
+        stat_mtime() { gstat -c %Y "$1"; }
+    else
+        stat_mtime() { stat -f %m "$1"; }
+    fi
+
+    # Test 8: Default preserves timestamps
+    (( tests++ ))
+    local ts_file="$test_dir/mtime_default.jpg"
+    magick -size 50x50 gradient:red-blue "$ts_file"
+    # Give the file a deterministic timestamp far in the past
+    touch -t 200001010000 "$ts_file"
+    local original_mtime
+    original_mtime=$(stat_mtime "$ts_file")
+    DEBUG=true jpegxl "$ts_file" >/dev/null 2>&1
+    local ts_output="$test_dir/mtime_default.jxl"
+    if [[ -f "$ts_output" ]]; then
+        local converted_mtime
+        converted_mtime=$(stat_mtime "$ts_output")
+        if [[ "$converted_mtime" == "$original_mtime" ]]; then
+            echo "✓ Default timestamp preservation test passed"
+        else
+            echo "✗ Default timestamp preservation test failed (expected $original_mtime, got $converted_mtime)" >&2
+            (( fails++ ))
+        fi
+    else
+        echo "✗ Default timestamp preservation test failed (no output file)" >&2
+        (( fails++ ))
+    fi
+
+    # Test 9: About flag
     (( tests++ ))
     if jpegxl --about | grep -q "jpegxl - Convert images"; then
         echo "✓ About flag test passed"
@@ -106,7 +138,7 @@ test_jpegxl() {
         (( fails++ ))
     fi
 
-    # Test 9: Batch processing
+    # Test 10: Batch processing
     (( tests++ ))
     # Create copies for batch test
     cp "$test_dir/test_jpg.jpg" "$test_dir/batch_1.jpg"

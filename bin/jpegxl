@@ -206,7 +206,8 @@ Options:
 	--lossless               Use lossless compression
 	--basic                  Use basic compression settings (effort=5, lossy)
 	--to=FORMAT              Convert JXL to another format (jpeg, png, etc.)
-	--preserve-timestamps    Preserve original timestamps
+	--preserve-timestamps    Preserve original timestamps (default)
+	--no-preserve-timestamps Do not preserve original timestamps
 	test                     Run self-test
 
 Environment Variables:
@@ -416,7 +417,7 @@ jpegxl() {
 	local effort=${JPEGXL_DEFAULT_EFFORT:-10}
 	local distance=${JPEGXL_DEFAULT_DISTANCE:-1}
 	local lossy=false
-	local preserve_timestamps=false
+	local preserve_timestamps=true
 	local to_format=""
 	local quality=93 # Default quality for djxl and magick
 	local files=()
@@ -451,6 +452,7 @@ jpegxl() {
 				;;
 			--basic) effort=5; lossy=true ;;
 			--preserve-timestamps) preserve_timestamps=true ;;
+			--no-preserve-timestamps) preserve_timestamps=false ;;
 			--to=*) to_format="${1#*=}" ;;
 			-*) echo "Unknown option: $1" >&2; print_help; return 1 ;;
 			*) files+=("$1") ;; # Collect all non-option arguments as files
