@@ -23,11 +23,13 @@ USAGE:
 
 OPTIONS:
 	-i, --ignore-case                Case-insensitive pattern matching
+	--double-quote                   Newline-separated, double-quoted output with embedded quotes escaped
 	-n                               Space-separated output with shell escaping
 	-0                               Null-separated output without escaping
 
 EXAMPLES:
 	glob "*.jpg"                   glob and print all jpg files (newline-separated)
+	glob --double-quote "*.jpg"    glob jpg files (double-quoted newline-separated)
 	glob -n "*.jpg"                glob jpg files (space-separated with escaping)
 	glob -0 "*.jpg"                glob jpg files (null-separated)
 	glob -i "*.JPG"                glob jpg files ignoring case
@@ -110,6 +112,9 @@ EOF
 	# Parse flags
 	local ignore_case=false
 	local output_format="newline"  # default: newline-separated
+	local double_quote=false
+	local space_flag=false
+	local null_flag=false
 	local processed_argv=()
 	
 	# Process arguments to extract flags
@@ -119,11 +124,18 @@ EOF
 				ignore_case=true
 				shift
 				;;
+			--double-quote)
+				output_format="double-quote"
+				double_quote=true
+				shift
+				;;
 			-n)
+				space_flag=true
 				output_format="space"
 				shift
 				;;
 			-0)
+				null_flag=true
 				output_format="null"
 				shift
 				;;
@@ -137,6 +149,17 @@ EOF
 	
 	# Restore arguments without flags
 	set -- "${processed_argv[@]}"
+
+	# If double-quote is requested, it overrides other output formats; warn if conflicts
+	if $double_quote; then
+		if $space_flag; then
+			echo "Warning: -n is ignored when --double-quote is used" >&2
+		fi
+		if $null_flag; then
+			echo "Warning: -0 is ignored when --double-quote is used" >&2
+		fi
+		output_format="double-quote"
+	fi
 	
 	if [[ $# -eq 0 ]]; then
 		_show_help
@@ -247,6 +270,19 @@ EOF
 		else
 			debug "which could not resolve '${args[0]}' - treating as pattern"
 		fi
+	fi
+	if [[ -n "$exec_command" && "$double_quote" == true ]]; then
+		echo "Error: --double-quote cannot be used with command execution" >&2
+		# Restore original settings before exiting
+		if $glob_disabled; then set -f; fi
+		if $ignore_case; then
+			if $nocaseglob_set; then
+				shopt -s nocaseglob
+			else
+				shopt -u nocaseglob
+			fi
+		fi
+		return 2
 	fi
 
 	local processed_args=()
@@ -609,6 +645,13 @@ EOF
 		else
 			# Print results according to output format
 			case "$output_format" in
+				"double-quote")
+					if ! command -v quote_lines >/dev/null 2>&1; then
+						echo "Error: quote_lines not found on PATH" >&2
+						return 2
+					fi
+					printf "%s\n" "${processed_args[@]}" | LC_ALL=C sort | quote_lines
+					;;
 				"space")
 					# Space-separated output with quoting (original behavior)
 					while IFS= read -r item; do

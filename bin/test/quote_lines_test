@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+
+test_quote_lines() {
+	local fails=0
+	local tests=0
+	local output
+
+	# Simple quoting
+	(( tests++ ))
+	output=$(printf 'one\ntwo\n' | quote_lines)
+	expected=$'"one"\n"two"'
+	assert "$output" == "$expected" "quote_lines should wrap each line in double quotes"
+	(( fails += $? ))
+
+	# Escape embedded quotes
+	(( tests++ ))
+	output=$(printf 'a "b"\n' | quote_lines)
+	expected='"a \"b\""'
+	assert "$output" == "$expected" "quote_lines should escape embedded double quotes"
+	(( fails += $? ))
+
+	# Preserve empty lines
+	(( tests++ ))
+	output=$(printf '\n' | quote_lines)
+	expected='""'
+	assert "$output" == "$expected" "quote_lines should handle empty lines"
+	(( fails += $? ))
+
+	# Multiple lines with mixed content
+	(( tests++ ))
+	output=$(printf 'plain\nmix "ed"\n""already""\n' | quote_lines)
+	expected=$'"plain"\n"mix \\"ed\\""\n"\\"\\"already\\"\\""'
+	assert "$output" == "$expected" "quote_lines should handle mixed content"
+	(( fails += $? ))
+
+	if [ $fails -gt 0 ]; then
+		red_text "$fails of $tests quote_lines tests failed!\n" >&2
+	else
+		green_text "All $tests quote_lines tests passed!\n" >&2
+	fi
+	return $fails
+}
+
+if ! (return 0 2>/dev/null); then
+	test_quote_lines
+fi

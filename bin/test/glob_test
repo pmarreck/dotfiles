@@ -520,6 +520,38 @@ EOF
   (( fails += $? ))
   rm -rf project lib shared
 
+  # Test 43: --double-quote should wrap output and escape embedded quotes
+  (( tests++ ))
+  touch 'plain.txt' 'file "quote".txt'
+  output=$(glob --double-quote "*.txt" 2>/dev/null)
+  expected_output=$'"file \\\"quote\\\".txt"\n"plain.txt"'
+  assert "$output" == "$expected_output" "glob --double-quote should double-quote results"
+  (( fails += $? ))
+  rm -f 'plain.txt' 'file "quote".txt'
+
+  # Test 44: --double-quote should ignore -n with warning
+  (( tests++ ))
+  touch warn.txt
+  warning=$(glob --double-quote -n "*.txt" 2>&1 >/dev/null)
+  assert "$warning" == "Warning: -n is ignored when --double-quote is used" "glob should warn when -n is combined with --double-quote"
+  (( fails += $? ))
+  rm -f warn.txt
+
+  # Test 45: --double-quote should ignore -0 with warning
+  (( tests++ ))
+  touch warn0.txt
+  warning=$(glob --double-quote -0 "*.txt" 2>&1 >/dev/null)
+  assert "$warning" == "Warning: -0 is ignored when --double-quote is used" "glob should warn when -0 is combined with --double-quote"
+  (( fails += $? ))
+  rm -f warn0.txt
+  
+  # Test 46: --double-quote should not be allowed in command mode
+  (( tests++ ))
+  glob --double-quote echo "*.txt" >/dev/null 2>&1
+  exit_code=$?
+  assert "$exit_code" == "2" "glob --double-quote should error in command mode"
+  (( fails += $? ))
+
   # Leave temp dir (mktemp -d creates a temporary directory that will be cleaned up by the system)
   popd >/dev/null
 

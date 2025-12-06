@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+
+quote_lines() {
+	_show_help() {
+		cat << 'EOF'
+quote_lines: Read newline-separated input from stdin and emit each line double-quoted,
+escaping any embedded double quotes.
+
+USAGE:
+	quote_lines [OPTIONS]
+
+OPTIONS:
+	-h, --help   Show this help message
+	--test       Run associated tests
+
+EXAMPLES:
+	printf 'a\nb "c"\n' | quote_lines
+	# => "a"
+	# => "b \"c\""
+EOF
+	}
+
+	if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+		_show_help
+		return 0
+	fi
+
+	if [[ "$1" == "--test" ]]; then
+		local test_file
+		test_file="$(dirname "${BASH_SOURCE[0]}")/test/quote_lines_test"
+		if [[ -f "$test_file" ]]; then
+			"$test_file"
+		else
+			echo "Error: Test file not found: $test_file" >&2
+			return 1
+		fi
+		return $?
+	fi
+
+	if [[ $# -gt 0 ]]; then
+		echo "Error: Unknown option: $1" >&2
+		_show_help >&2
+		return 2
+	fi
+
+	# Read stdin and quote each line, escaping embedded quotes
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		line=${line//\"/\\\"}
+		printf '"%s"\n' "$line"
+	done
+}
+
+if ! (return 0 2>/dev/null); then
+	quote_lines "$@"
+fi
