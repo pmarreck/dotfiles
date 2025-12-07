@@ -5,12 +5,14 @@ steam-procs() {
 }
 
 steam-pids() {
-  steam-procs | cut -d ' ' -f 1
+  # ps inserts variable-width spacing; awk is safer than cut for extracting PID
+  steam-procs | awk '{print $1}'
 }
 
 steam-kill() {
   steam-procs > /dev/stderr
-  steam-pids | xargs -I {} kill $1 {}
+  # -r avoids calling kill with no arguments if there are no Steam PIDs
+  steam-pids | xargs -r -I {} kill $1 {}
 }
 
 kill-steam-proton-pids() {
@@ -26,7 +28,7 @@ kill-steam-proton-pids() {
   # 3. It pipes this output to 'awk', an underrated text-stream-oriented scripting language,
   #    where it checks if the string 'steam' (case-insensitive) is present in any of the lines.
   # 4. It also filters out the 'awk' command itself and the 'ipcserver' process, which is Steam-related.
-  # 5. Pipes the output to another command (cut -d ' ' -f 1) which prints only the first column (the process ID).
+  # 5. Pipes the output to awk again to print only the first column (the process ID) safely, regardless of spacing.
   # 6. Finally, it pipes these process IDs to 'xargs' which executes the 'kill' command for each ID, terminating the processes.
   steam-kill
   sleep 2 # give it a chance to seppuku
