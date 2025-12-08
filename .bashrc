@@ -111,14 +111,19 @@ export LANG=en_US.UTF-8
 
 # Preferred editor with logic for local and remote sessions
 unset VISUAL EDITOR
-if [[ -n $SSH_CONNECTION ]]; then
-	needs micro "please install the micro editor; defaulting to nano" && export EDITOR='micro' || export EDITOR='nano'
-	unset VISUAL # note: this indicates to other tooling later on that we are not in a GUI context
-else
-	needs micro "please install the micro editor; defaulting to nano for EDITOR" && export EDITOR='micro' || export EDITOR='nano'
-	needs code "please install the VSCode editor and commandline access for it" && export VISUAL='code' || export VISUAL="$EDITOR"
-	needs windsurf "please install the Codeium Windsurf editor and commandline access for it" && export VISUAL='windsurf -g' || export VISUAL="${VISUAL:-$EDITOR}"
-fi
+	if [[ -n $SSH_CONNECTION ]]; then
+		needs micro "please install the micro editor; defaulting to nano" && export EDITOR='micro' || export EDITOR='nano'
+		unset VISUAL # note: this indicates to other tooling later on that we are not in a GUI context
+	else
+		needs micro "please install the micro editor; defaulting to nano for EDITOR" && export EDITOR='micro' || export EDITOR='nano'
+		if needs agy "please install the Antigravity editor CLI (agy)"; then
+			export VISUAL='agy'
+		elif needs code "please install the VSCode editor and commandline access for it"; then
+			export VISUAL='code'
+		else
+			export VISUAL="$EDITOR"
+		fi
+	fi
 
 # Compilation flags
 # export ARCHFLAGS="-arch arm64"
@@ -260,6 +265,9 @@ set +H
 
 # mkdir-custom function for enhanced mkdir with -c/--cd option
 . "$HOME/dotfiles/bin/src/mkdir-custom"
+
+# pman for pretty man pages
+. "$HOME/dotfiles/bin/src/pman_nice_man_pages.sh"
 
 # activate ble.sh/blesh
 # [[ ! ${BLE_VERSION-} ]] || ble-attach
