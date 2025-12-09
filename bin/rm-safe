@@ -340,10 +340,37 @@ show_help() {
 		  shell configuration (e.g., .bashrc, .zshrc):
 		    alias rm='rm-safe'
 
-		  For background scripts or non-interactive environments where you want this
-		  protection, ensure the alias is expanded or call 'rm-safe' directly.
-		  Note that 'rm-safe' will fail if it cannot move a file to trash, which
-		  is safer than silently deleting it if that was not intended.
+		  If you install an 'rm' shim that execs rm-safe (recommended) you may wish
+		  to remove any rm alias to avoid double-wrapping.
+
+		  Background scripts or non-interactive runs should invoke 'rm-safe'
+		  directly; aliases are not expanded there. If 'rm-safe' cannot move a file
+		  to trash it will fail rather than delete.
+
+		  Caution: scripts that expect 'rm' to permanently delete (e.g., log rotate/
+		  compress jobs) will move files to trash when this shim is on PATH; trash
+		  may grow until emptied. Such scripts should call the system rm explicitly
+		  (e.g., /bin/rm or REAL_RM=/bin/rm rm) if deletion is intended.
+
+		  Sudo Integration (portable guidance):
+		    - macOS defaults keep user PATH: putting a wrapper 'rm' in ~/bin that
+		      execs rm-safe will be honored by sudo.
+		    - Common Linux sudoers set secure_path (drop user PATH): create a
+		      root-owned override dir (e.g., /usr/bin/overrides), place a wrapper
+		      'rm' -> rm-safe there, and prepend that dir in secure_path:
+		        Defaults secure_path="/usr/bin/overrides:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+		      Prefer a dedicated overrides dir instead of broadening secure_path to
+		      /usr/local/bin to avoid exposing extra binaries.
+		    - NixOS: declare a root-owned path containing the wrapper and include
+		      it in secure_path, e.g.:
+		        security.sudo.extraConfig = ''
+		          Defaults secure_path=/run/wrappers/bin:/usr/bin:/bin
+		        '';
+		      Ensure rm-safe (or a wrapper) is built into /run/wrappers/bin.
+
+		  Implementation detail:
+		    rm-safe calls the system rm via 'command -p rm' to avoid recursion when
+		    installed as an override.
 
 		Features:
 		  - Atomic directory operations (entire directories moved as single units)
@@ -391,7 +418,7 @@ run_tests() {
 	cleanup_tests() {
 		# Use native rm to avoid testing rm-safe during cleanup if user has aliased rm to rm-safe in their environment
 		if [[ -n "$TEST_DIR" && "$TEST_DIR" != "/" && -d "$TEST_DIR" ]]; then
-			command rm -rf "$TEST_DIR" 2>/dev/null || true
+		command -p rm -rf "$TEST_DIR" 2>/dev/null || true
 		fi
 
 		# Clean up test files from trash directories
@@ -435,7 +462,7 @@ run_tests() {
 	local unique=$(get_unique_name "test_collision")
 	test_case "Unique name generation" [[ $unique != "test_collision" ]]
 	if [[ -e "$TRASH_FILES_DIR/test_collision" ]]; then
-		command rm -f "$TRASH_FILES_DIR/test_collision"
+		command -p rm -f "$TRASH_FILES_DIR/test_collision"
 	else
 		echo "Error: Expected '$TRASH_FILES_DIR/test_collision' to exist during cleanup" >&2
 		((fail++))
@@ -488,7 +515,7 @@ run_tests() {
 
 	# Test: Force flag behavior
 	touch "$TEST_DIR/rm_safe_test_nonexistent"
-	command rm -f "$TEST_DIR/rm_safe_test_nonexistent"  # Remove it to test nonexistent file
+	command -p rm -f "$TEST_DIR/rm_safe_test_nonexistent"  # Remove it to test nonexistent file
 	if FORCE=true trash_item "$TEST_DIR/rm_safe_test_nonexistent" 2>/dev/null; then
 		test_case "Force flag handles nonexistent files" true
 	else

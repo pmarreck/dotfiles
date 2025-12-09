@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+
+# Test the rm override shim
+
+fails=0
+tests=0
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+RM_SHIM="$REPO_ROOT/bin/rm"
+SELF="$RM_SHIM"
+
+test_dir=$(mktemp -d --tmpdir rm-override-test.XXXXXX)
+trap 'rm -rf "$test_dir"' EXIT
+
+# helper: run command, capture stdout/stderr, exit status
+run_cmd() {
+	local cmd="$1"; shift
+	local outfile="$test_dir/out"; local errfile="$test_dir/err"
+	( "$cmd" "$@" ) >"$outfile" 2>"$errfile"
+	echo "$outfile" "$errfile" $?
+}
+
+# Test 1: Uses rm-safe when present
+((tests++))
+rm_safe_fake="$test_dir/rm-safe"
+cat >"$rm_safe_fake" <<'EOF'
+#!/usr/bin/env bash
+echo "rm-safe invoked" >"$TMPDIR/rm-safe-called"
+EOF
+chmod +x "$rm_safe_fake"
+
+TMPDIR="$test_dir" PATH="$test_dir:$PATH" REAL_RM="/bin/rm" bash -c "$RM_SHIM >/dev/null" 2>/dev/null
+
+if [[ -f "$test_dir/rm-safe-called" ]]; then
+	echo "✓ rm-safe invoked when available"
+else
+	echo "✗ rm-safe not invoked when available" >&2
+	((fails++))
+fi
+
+# Test 2: Falls back and warns when rm-safe missing
+((tests++))
+real_rm_fake="$test_dir/real-rm"
+cat >"$real_rm_fake" <<'EOF'
+#!/usr/bin/env bash
+echo "real rm used" >"$TMPDIR/real-rm-called"
+EOF
+chmod +x "$real_rm_fake"
+
+mkdir -p "$test_dir/empty"
+
+# PATH must still contain bash for the shim's shebang; avoid rm-safe presence
+PATH="$test_dir/empty:/run/current-system/sw/bin:/usr/bin:/bin"
+TMPDIR="$test_dir" REAL_RM="$real_rm_fake" "$RM_SHIM" >/dev/null 2>"$test_dir/stderr.txt"
+
+if [[ -f "$test_dir/real-rm-called" ]]; then
+	echo "✓ Fallback rm invoked when rm-safe missing"
+else
+	echo "✗ Fallback rm not invoked" >&2
+	((fails++))
+fi
+
+if grep -q "rm-safe not found" "$test_dir/stderr.txt"; then
+	echo "✓ Warning emitted when rm-safe missing"
+else
+	echo "✗ Warning missing when rm-safe absent" >&2
+	((fails++))
+fi
+
+# Test 3: Guard against recursion when SAFE_RM/REAL_RM point to shim
+((tests++))
+PATH="$test_dir/empty:/run/current-system/sw/bin:/usr/bin:/bin"
+TMPDIR="$test_dir" SAFE_RM="$SELF" REAL_RM="$SELF" "$RM_SHIM" >/dev/null 2>"$test_dir/stderr2.txt" || true
+
+if grep -q "recursive" "$test_dir/stderr2.txt"; then
+	echo "✓ Recursion detected and warned"
+else
+	echo "✗ Recursion guard did not warn" >&2
+	((fails++))
+fi
+
+echo "=== Test Summary ==="
+echo "Passed: $((tests - fails))"
+echo "Failed: $fails" >&2
+exit $fails
