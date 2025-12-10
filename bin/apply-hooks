@@ -141,6 +141,11 @@ if command -v starship >/dev/null 2>&1; then
 	report_prompt_commands "after" "starship init"
 fi
 
+# Ensure starship preexec hook is registered (critical for timing!)
+if declare -F starship_preexec_all >/dev/null && ! array_contains_element preexec_functions starship_preexec_all; then
+	preexec_functions+=(starship_preexec_all)
+fi
+
 # Add custom hooks directly to precmd_functions (bash-preexec API)
 if ! array_contains_element precmd_functions __wezterm_osc7_home; then
 	precmd_functions+=(__wezterm_osc7_home)
