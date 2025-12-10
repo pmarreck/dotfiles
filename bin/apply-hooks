@@ -146,7 +146,55 @@ if ! array_contains_element precmd_functions __wezterm_osc7_home; then
 	precmd_functions+=(__wezterm_osc7_home)
 fi
 
-report_prompt_commands "final" "all hooks installed"
+report_prompt_commands "after" "custom hooks"
+
+# ==============================================================================
+# FINAL CONFIGURATION NORMALIZATION
+# ==============================================================================
+# Strategy: "Harvest and Normalize"
+# 1. Harvest any hook functions currently in PROMPT_COMMAND (e.g. from VS Code, mcfly)
+# 2. Add them to precmd_functions if not already present
+# 3. Declaratively force PROMPT_COMMAND to use ONLY bash-preexec
+# ==============================================================================
+
+# Function to safely add a command to precmd_functions
+add_to_precmd() {
+	local cmd="$1"
+	# Skip empty, pure bash-preexec calls, or internal delimiters
+	[[ -z "$cmd" ]] && return
+	[[ "$cmd" == ":" ]] && return
+	[[ "$cmd" == "__bp_precmd_invoke_cmd" ]] && return
+	[[ "$cmd" == "__bp_interactive_mode" ]] && return
+
+	if ! array_contains_element precmd_functions "$cmd"; then
+		precmd_functions+=("$cmd")
+	fi
+}
+
+# 1. Harvest from PROMPT_COMMAND (handle both Array and String types)
+if [[ "$(declare -p PROMPT_COMMAND 2>&1)" == "declare -a"* ]]; then
+	# It's an array
+	for entry in "${PROMPT_COMMAND[@]}"; do
+		# Split potential multi-command strings (semicolon or newline separated)
+		IFS=$';\n' read -ra subcmds <<< "$entry"
+		for subcmd in "${subcmds[@]}"; do
+			add_to_precmd "${subcmd}"
+		done
+	done
+else
+	# It's a string
+	IFS=$';\n' read -ra subcmds <<< "$PROMPT_COMMAND"
+	for subcmd in "${subcmds[@]}"; do
+		add_to_precmd "${subcmd}"
+	done
+fi
+
+# 2. Declaratively set PROMPT_COMMAND to bash-preexec ONLY
+# This ensures a clean, deterministic state regardless of what previous initializers did
+PROMPT_COMMAND=('__bp_precmd_invoke_cmd' '__bp_interactive_mode')
+
+report_prompt_commands "final" "normalized"
+
 
 
 [ -n "${DEBUG_SHELLCONFIG}" ] && echo "Exiting $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")"
