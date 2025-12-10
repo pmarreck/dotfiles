@@ -74,10 +74,7 @@ source $HOME/dotfiles/bin/src/inspect.bash
 ##### Guix integration
 # [[ -s "$HOME/.guix-profile/etc/profile" ]] && source "$HOME/.guix-profile/etc/profile"
 
-# TTY Bypassing for Integrated Terminals
-# In VS Code / WezTerm integrated terminals, 'test -t 1' often fails.
-# This flag tells bash-preexec to skip the TTY check and run hooks anyway.
-export __bp_delay_install="true"
+
 
 BASH_PREEXEC_LOCATION="$HOME/dotfiles/lib/bash-preexec.sh"
 
@@ -213,7 +210,15 @@ PROMPT_COMMAND=('__bp_precmd_invoke_cmd' '__bp_interactive_mode')
 
 report_prompt_commands "final" "normalized"
 
-
+# CRITICAL: Disable DEBUG trap (preexec) to prevent hangs
+# We don't need it anymore because:
+# 1. Starship uses PS0 for timing (native bash)
+# 2. Mcfly uses readline bindings
+# 3. Direnv/WezTerm use PROMPT_COMMAND (precmd)
+#
+# The DEBUG trap in bash-preexec runs history expansion which can hang
+# in integrated terminals. Killing it solves the hang.
+trap - DEBUG
 
 [ -n "${DEBUG_SHELLCONFIG}" ] && echo "Exiting $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")"
 [ -n "${DEBUG_PATHCONFIG}" ] && echo "$PATH" || :
