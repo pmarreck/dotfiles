@@ -165,6 +165,7 @@ add_to_precmd() {
 	[[ "$cmd" == ":" ]] && return
 	[[ "$cmd" == "__bp_precmd_invoke_cmd" ]] && return
 	[[ "$cmd" == "__bp_interactive_mode" ]] && return
+	[[ "$cmd" == *"trap -p DEBUG"* ]] && return # Exclude bash-preexec internal artifact
 
 	if ! array_contains_element precmd_functions "$cmd"; then
 		precmd_functions+=("$cmd")
