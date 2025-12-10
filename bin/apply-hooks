@@ -146,6 +146,15 @@ if declare -F starship_preexec_all >/dev/null && ! array_contains_element preexe
 	preexec_functions+=(starship_preexec_all)
 fi
 
+# Force STARSHIP_PREEXEC_READY=true in precmd to ensure next command is timed
+# This fixes issues where the flag might get stuck or lost
+force_starship_ready() {
+	STARSHIP_PREEXEC_READY=true
+}
+if ! array_contains_element precmd_functions force_starship_ready; then
+	precmd_functions+=(force_starship_ready)
+fi
+
 # Add custom hooks directly to precmd_functions (bash-preexec API)
 if ! array_contains_element precmd_functions __wezterm_osc7_home; then
 	precmd_functions+=(__wezterm_osc7_home)
