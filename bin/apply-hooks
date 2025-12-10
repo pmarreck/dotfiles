@@ -141,18 +141,16 @@ if command -v starship >/dev/null 2>&1; then
 	report_prompt_commands "after" "starship init"
 fi
 
-# Ensure starship preexec hook is registered (critical for timing!)
-if declare -F starship_preexec_all >/dev/null && ! array_contains_element preexec_functions starship_preexec_all; then
-	preexec_functions+=(starship_preexec_all)
-fi
-
-# Force STARSHIP_PREEXEC_READY=true in precmd to ensure next command is timed
-# This fixes issues where the flag might get stuck or lost
-force_starship_ready() {
-	STARSHIP_PREEXEC_READY=true
+# Manual Starship Timing Hook
+# Bypass Starship's complex conditional logic (intended for raw DEBUG traps)
+# and rely on bash-preexec to call this exactly once per command.
+manual_starship_timing() {
+	# Just set the start time directly. bash-preexec handles the "once per command" guarantee.
+	STARSHIP_START_TIME=$(command starship time)
+	# Note: assuming starship is in PATH or using explicit path found in init
 }
-if ! array_contains_element precmd_functions force_starship_ready; then
-	precmd_functions+=(force_starship_ready)
+if declare -F manual_starship_timing >/dev/null && ! array_contains_element preexec_functions manual_starship_timing; then
+	preexec_functions+=(manual_starship_timing)
 fi
 
 # Add custom hooks directly to precmd_functions (bash-preexec API)
