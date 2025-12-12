@@ -1,0 +1,221 @@
+#!/usr/bin/env bash
+
+# Source testing utilities
+# We need 'capture' from bin/src/capture.bash
+# We assume 'expect' or 'assert' style functions might be useful, or we just use raw logic.
+
+set -euo pipefail
+
+# Ensure tmux is available
+if ! command -v tmux &>/dev/null; then
+	echo "Test requires tmux. Please install it."
+	exit 1
+fi
+
+# Locate resources
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DOTFILES_ROOT="$(cd "$DIR/../../" && pwd)"
+CAPTURE_LIB="$DOTFILES_ROOT/bin/src/capture.bash"
+
+if [[ ! -f "$CAPTURE_LIB" ]]; then
+	echo "Error: capture.bash not found at $CAPTURE_LIB"
+	exit 1
+fi
+
+source "$CAPTURE_LIB"
+
+# Temporary directory for test artifacts
+TEST_TMP=$(mktemp -d --tmpdir terminal_test_XXXXXX)
+trap 'rm -rf "$TEST_TMP"' EXIT
+
+LOG_FILE="$TEST_TMP/log.txt"
+
+log() {
+	echo "$@" | tee -a "$LOG_FILE"
+}
+
+# Helper to run a test in a tmux session
+# Arguments:
+#   1. Session Name
+#   2. Environment Variables (array or string export)
+#   3. Scenarios (commands to run)
+#   4. Expected Output Pattern (grep regex)
+run_tmux_test() {
+	local session_name="$1"
+	local env_vars="$2"
+	local description="$3"
+
+	log "Running Test: $description ($session_name)"
+
+	# Start detached session with specific environment
+	# We use 'env -i' or explicitly pass vars to control the environment?
+	# Better to let it inherit but override specific ones.
+
+	# We construct a command that sets env vars then starts bash
+	local start_cmd="env $env_vars $DOTFILES_ROOT/bin/bash" # Use system bash? Or just bash.
+	# Actually, use 'tmux new-session' with environment args?
+	# Tmux inherits from current shell. We can set vars via 'tmux set-environment'.
+
+	tmux new-session -d -s "$session_name" -n shell "bash --login"
+
+	# Inject environment variables into the RUNNING shell?
+	# No, environments are set at start.
+	# Better: Start tmux with specific env vars using 'env VAR=val tmux new ...'
+	# But tmux server might already be running.
+	# "tmux new-session" inherits from the CLIENT (us).
+	# So:
+	# env VAR=val tmux new-session -d ... works.
+}
+
+# Instead of complex wrapper, let's write 3 distinct tests.
+
+# TEST 1: Standard Terminal (No special env)
+# Expectation: Hooks LOADED. Prompt has timing.
+test_standard_terminal() {
+	local session="test_standard"
+	log "TEST: Standard Terminal"
+
+	# Spawn session
+	env -i HOME="$HOME" PATH="$PATH" TERM="xterm-256color" PROMPT_COMMAND="" \
+		tmux new-session -d -s "$session" "bash --login"
+
+	# Wait for prompt (heuristic)
+	sleep 2
+
+	# Send a command
+	tmux send-keys -t "$session" "echo 'Standard Terminal Check'" C-m
+	sleep 1
+
+	# Check hooks
+	tmux send-keys -t "$session" "declare -p precmd_functions" C-m
+	sleep 1
+
+	# Capture
+	tmux capture-pane -t "$session" -p > "$TEST_TMP/${session}.txt"
+
+	# Kill
+	tmux kill-session -t "$session"
+
+	# Assertions
+	# 1. Check if hooks are loaded (precmd_functions should contain __bp_precmd_invoke_cmd implies it's working?)
+	# Actually, we want to see 'manual_starship_timing' or 'starship_preexec_ps0' logic?
+	# In correct setup (PS0), we replaced hooks.
+	# We want to check if PROMPT_COMMAND is normalized.
+
+	capture_content=$(cat "$TEST_TMP/${session}.txt")
+
+	if echo "$capture_content" | grep -q "Standard Terminal Check"; then
+		log "  [PASS] Shell is interactive"
+	else
+		log "  [FAIL] Shell output missing"
+		return 1
+	fi
+
+	# Verify PS0 timing or normalized hooks
+	# This is hard to grep from generic output.
+	# Better: `declare -p PS0`
+}
+
+# We need a robust "Assert Tmux Shell State" function.
+check_shell_state() {
+	local session="$1"
+	local context="$2"
+	local expected_hooks_status="$3" # "LOADED" or "SKIPPED"
+
+	local dump_file="$TEST_TMP/${session}_dump.txt"
+
+	# Send commands to verify state
+	# We use a marker to find the output.
+	tmux send-keys -t "$session" "echo MARKER_START" C-m
+	tmux send-keys -t "$session" "if [[ -n \"\$PS0\" ]]; then echo 'PS0_PRESENT'; else echo 'PS0_MISSING'; fi" C-m
+	tmux send-keys -t "$session" "if [[ \"\$PROMPT_COMMAND\" == *'__bp_'* ]]; then echo 'PROMPT_NORMALIZED'; else echo 'PROMPT_RAW'; fi" C-m
+	tmux send-keys -t "$session" "echo MARKER_END" C-m
+	sleep 1
+
+	tmux capture-pane -t "$session" -p > "$dump_file"
+
+	local content
+	content=$(cat "$dump_file")
+
+	log "Analyzing $context ($session)..."
+
+	if [[ "$expected_hooks_status" == "LOADED" ]]; then
+		if echo "$content" | grep -q "PS0_PRESENT"; then
+			log "  [PASS] PS0 is present (Hooks Loaded)"
+		else
+			log "  [FAIL] PS0 is missing (Expected Loaded)"
+			return 1
+		fi
+		if echo "$content" | grep -q "PROMPT_NORMALIZED"; then
+			log "  [PASS] PROMPT_COMMAND normalized"
+		else
+			log "  [FAIL] PROMPT_COMMAND not normalized"
+			return 1
+		fi
+	else
+		# SKIPPED
+		if echo "$content" | grep -q "PS0_MISSING"; then
+			log "  [PASS] PS0 is missing (Hooks Skipped)"
+		else
+			log "  [FAIL] PS0 is present (Expected Skipped)"
+			return 1
+		fi
+	fi
+}
+
+
+# --- ACTUAL TESTS ---
+
+# 1. Standard Terminal
+# Simulates a normal user opening a terminal (Terminal.app, iTerm)
+log "=== Test Case 1: Standard Terminal ==="
+tmux new-session -d -s "sess_standard" "bash --login"
+sleep 2
+check_shell_state "sess_standard" "Standard Terminal" "LOADED"
+tmux kill-session -t "sess_standard"
+
+
+# 2. VS Code Agent (Run Command)
+# Simulates the Antigravity Agent or background task
+# Condition: TERM_PROGRAM=vscode AND __vsc_prompt_cmd MISSING
+log "=== Test Case 2: VS Code Agent ==="
+# We launch tmux with TERM_PROGRAM=vscode.
+# We ensure __vsc_prompt_cmd is NOT injected (which is default for vanilla bash).
+env TERM_PROGRAM="vscode" tmux new-session -d -s "sess_agent" "bash --login"
+sleep 2
+check_shell_state "sess_agent" "VS Code Agent" "SKIPPED"
+tmux kill-session -t "sess_agent"
+
+
+# 3. VS Code Integrated Terminal
+# Simulates the user opening a terminal inside VS Code
+# Condition: TERM_PROGRAM=vscode AND __vsc_prompt_cmd PRESENT
+# To simulate "PRESENT", we must define it properly BEFORE hooks load?
+# Or relying on the check seeing it in PROMPT_COMMAND.
+#
+# Challenge: We can't easily inject a function definition into the "parent" environment
+# of bash --login before .bashrc runs, unless we use BASH_ENV.
+log "=== Test Case 3: VS Code Integrated Terminal ==="
+
+# Create a fake shell integration script
+FAKE_INTEGRATION="$TEST_TMP/fake_vsc.sh"
+echo "function __vsc_prompt_cmd() { :; }; PROMPT_COMMAND='__vsc_prompt_cmd'" > "$FAKE_INTEGRATION"
+
+# We use BASH_ENV to load it before .bashrc (for non-interactive)
+# OR --init-file for interactive.
+# bash --login uses ~/.bash_profile.
+# We need to ensure __vsc_prompt_cmd is visible to .bashrc.
+# If we assume VS Code appends to .bashrc or uses --init-file.
+# Let's verify what .bashrc checks.
+# It checks: `! declare -F __vsc_prompt_cmd` AND `PROMPT_COMMAND != *__vsc*`
+#
+# If we inject it via PROMPT_COMMAND env var?
+env TERM_PROGRAM="vscode" PROMPT_COMMAND="__vsc_prompt_cmd" tmux new-session -d -s "sess_integrated" "bash --login"
+# Note: bash might overwrite PROMPT_COMMAND on start?
+# Ideally, we want .bashrc to see it.
+sleep 2
+check_shell_state "sess_integrated" "Integrated Terminal" "LOADED"
+tmux kill-session -t "sess_integrated"
+
+log "ALL TESTS PASSED"
+exit 0

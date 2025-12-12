@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+
 # shellcheck disable=SC2001
 
 # So for debug switches, we will check whether they are even set using [[ -v VARNAME ]]
@@ -225,23 +226,46 @@ needs delta "cargo install git-delta"
 
 # Load hooks (skip during rehash to avoid issues)
 # Skip all hook loading for LLM assistants to prevent hangs
-if [[ "${SKIP_COMPLEX_SHELL_SETUP:-false}" == "true" ]]; then
-	# Minimal setup for LLM assistants - just basic prompt
-	PS1='\u@\h:\w\$ '
-elif [[ "${REHASHING:-false}" != "true" ]] && [[ "${ENABLE_COMPLEX_HOOKS:-false}" == "true" ]]; then
-	if [[ -f "$HOME/bin/apply-hooks" ]]; then
-		source "$HOME/bin/apply-hooks" || echo "Problem when sourcing $HOME/bin/apply-hooks"
-	else
-		echo "apply-hooks not found at $HOME/bin/apply-hooks" >&2
+# Generic detection of VS Code Agent/Background context
+# If we are in VS Code (TERM_PROGRAM=vscode) but lack the shell integration (__vsc_prompt_cmd),
+# we assume we are in a background agent (run_command) and should skip complex hooks.
+# This supports forks of VS Code/Antigravity without relying on specific env vars.
+IS_VSCODE_AGENT=false
+if [[ "${TERM_PROGRAM}" == "vscode" ]]; then
+	if ! declare -F __vsc_prompt_cmd >/dev/null && [[ "${PROMPT_COMMAND:-}" != *"__vsc_prompt_cmd"* ]]; then
+		IS_VSCODE_AGENT=true
 	fi
-elif [[ "${REHASHING:-false}" != "true" ]]; then
-	# Use simplified hooks that won't hang
-	if [[ -f "$HOME/dotfiles/bin/apply-hooks" ]]; then
-		source "$HOME/dotfiles/bin/apply-hooks" || echo "Problem when sourcing apply-hooks"
-	else
-		# Fallback: basic prompt if nothing else works
+fi
+
+
+if $INTERACTIVE_SHELL && [[ "$IS_VSCODE_AGENT" == "false" ]]; then
+	if [[ "${SKIP_COMPLEX_SHELL_SETUP:-false}" == "true" ]]; then
+		# Minimal setup for LLM assistants - just basic prompt
 		PS1='\u@\h:\w\$ '
+		unset PROMPT_COMMAND PS0 precmd_functions preexec_functions
+		trap - DEBUG
+	elif [[ "${REHASHING:-false}" != "true" ]] && [[ "${ENABLE_COMPLEX_HOOKS:-false}" == "true" ]]; then
+		if [[ -f "$HOME/bin/apply-hooks" ]]; then
+			source "$HOME/bin/apply-hooks" || echo "Problem when sourcing $HOME/bin/apply-hooks"
+		else
+			echo "apply-hooks not found at $HOME/bin/apply-hooks" >&2
+		fi
+	elif [[ "${REHASHING:-false}" != "true" ]]; then
+		# Use simplified hooks that won't hang
+		if [[ -f "$HOME/dotfiles/bin/apply-hooks" ]]; then
+			source "$HOME/dotfiles/bin/apply-hooks" || echo "Problem when sourcing apply-hooks"
+		else
+			# Fallback: basic prompt if nothing else works
+			PS1='\u@\h:\w\$ '
+		fi
 	fi
+else
+	# Non-interactive or Agent environment: Encapsulate and sanitize!
+	# We typically inherit env vars from the parent shell which might have
+	# complex hooks (PS0, PROMPT_COMMAND). We must unset them to prevent
+	# "function not found" errors and output corruption.
+	unset PROMPT_COMMAND PS0 precmd_functions preexec_functions
+	trap - DEBUG
 fi
 
 # aliases- source these on every interactive shell because they do not inherit

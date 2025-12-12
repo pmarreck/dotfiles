@@ -152,7 +152,6 @@ if [[ -n "${BASH_VERSION-}" ]] && [[ "${BASH_VERSINFO[0]}" -gt 4 || ( "${BASH_VE
 	}
 	# Magic string that sets STARSHIP_START_TIME when PS0 is expanded
 	PS0='${STARSHIP_START_TIME:$((STARSHIP_START_TIME="$(starship_preexec_ps0)",0)):0}'"${PS0-}"
-	export PS0
 fi
 
 # Add custom hooks directly to precmd_functions (bash-preexec API)
