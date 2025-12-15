@@ -1,3 +1,5 @@
+#!/usr/bin/env luajit
+
 local ffi = require("ffi")
 ffi.cdef([[	typedef long time_t;
 	typedef struct timeval {
