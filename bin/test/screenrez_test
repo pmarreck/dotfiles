@@ -1,0 +1,114 @@
+#!/usr/bin/env bash
+
+if [ "$SCREENREZ_TEST_DEPTH" = "1" ]; then
+	exit 0
+fi
+
+test_screenrez() {
+	local fails=0
+	local tests=0
+
+	echo "Testing screenrez..."
+
+	(( tests++ ))
+	echo "Testing --about/-a flags..."
+
+	local about_output
+	about_output=$(SCREENREZ_FORCE="111x222" screenrez --about 2>/dev/null)
+	local about_status=$?
+	local about_lines
+	about_lines=$(printf '%s\n' "$about_output" | wc -l | tr -d ' ')
+
+	if [ $about_status -eq 0 ] && [ -n "$about_output" ] && [ "$about_lines" -eq 1 ] && echo "$about_output" | grep -qi "resolution"; then
+		echo "✓ About flag test passed"
+	else
+		echo "✗ About flag test failed: status=$about_status, lines=$about_lines, output='$about_output'" >&2
+		(( fails++ ))
+	fi
+
+	(( tests++ ))
+	echo "Testing --help/-h flags..."
+
+	local help_output
+	help_output=$(screenrez -h)
+	local help_status=$?
+
+	if [ $help_status -eq 0 ] && echo "$help_output" | grep -qi "Usage: screenrez"; then
+		echo "✓ Help flag test passed"
+	else
+		echo "✗ Help flag test failed: status=$help_status" >&2
+		(( fails++ ))
+	fi
+
+	(( tests++ ))
+	echo "Testing --version/-v flags..."
+
+	local version_output
+	version_output=$(screenrez --version 2>/dev/null)
+	local version_status=$?
+
+	if [ $version_status -eq 0 ] && [ -n "$version_output" ]; then
+		echo "✓ Version flag test passed"
+	else
+		echo "✗ Version flag test failed: status=$version_status, output='$version_output'" >&2
+		(( fails++ ))
+	fi
+
+	(( tests++ ))
+	echo "Testing --test flag..."
+
+	local test_output
+	test_output=$(SCREENREZ_TEST_DEPTH=1 SCREENREZ_FORCE="300x400" screenrez --test 2>&1)
+	local test_status=$?
+
+	if [ $test_status -eq 0 ] && [ -z "$test_output" ]; then
+		echo "✓ --test flag test passed: silent success"
+	else
+		echo "✗ --test flag test failed: status=$test_status, output='$test_output'" >&2
+		(( fails++ ))
+	fi
+
+	(( tests++ ))
+	echo "Testing basic execution with override..."
+
+	local forced="1280x720"
+	local basic_output
+	basic_output=$(SCREENREZ_FORCE="$forced" screenrez 2>/dev/null)
+	local basic_status=$?
+
+	if [ $basic_status -eq 0 ] && [ "$basic_output" = "$forced" ]; then
+		echo "✓ Basic execution test passed"
+	else
+		echo "✗ Basic execution test failed: status=$basic_status, output='$basic_output'" >&2
+		(( fails++ ))
+	fi
+
+	(( tests++ ))
+	echo "Testing invalid override handling..."
+
+	local bad_output
+	bad_output=$(SCREENREZ_FORCE="not-a-size" screenrez 2>&1 >/dev/null)
+	local bad_status=$?
+
+	if [ $bad_status -ne 0 ] && echo "$bad_output" | grep -qi "invalid"; then
+		echo "✓ Invalid override test passed"
+	else
+		echo "✗ Invalid override test failed: status=$bad_status, output='$bad_output'" >&2
+		(( fails++ ))
+	fi
+
+	if [ $fails -gt 0 ]; then
+		echo ""
+		echo "screenrez test FAILED: $fails of $tests tests failed" >&2
+		return $fails
+	else
+		echo ""
+		echo "screenrez test PASSED: All $tests tests passed"
+		return 0
+	fi
+}
+
+if ! (return 0 2>/dev/null); then
+	test_screenrez
+	exit $?
+fi

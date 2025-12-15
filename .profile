@@ -180,9 +180,6 @@ fi
 # shadows function (only in bash)
 in_bash && . "$HOME/dotfiles/bin/src/shadows.bash"
 
-# steam utilities
-. $HOME/dotfiles/bin/src/kill-steam-proton-pids.bash
-
 # universal stdout/stderr/returncode capturing
 . $HOME/dotfiles/bin/src/capture.bash
 

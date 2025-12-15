@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# List Steam-related processes (excluding awk and ipcserver), newest first
+PS_PERSONALITY=linux ps -eo pid,args \
+  | tail -n +2 \
+  | awk -v filter="steam" 'tolower($0) ~ filter && $0 !~ " awk " && $0 !~ "/ipcserver" && $0 !~ "/steam-procs"' \
+  | sort -nr

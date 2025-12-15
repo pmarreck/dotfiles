@@ -1,0 +1,197 @@
+#!/usr/bin/env luajit
+
+local ffi = require("ffi")
+local jit = require("jit")
+
+local VERSION = "0.1.0"
+
+local function show_about()
+	print("Report primary screen resolution (widthxheight) on macOS or Linux")
+end
+
+local function show_help()
+	print([[Usage: screenrez [options]
+
+Report the current primary screen resolution as WIDTHxHEIGHT.
+
+Options:
+  -a, --about     Show a short description
+  -h, --help      Show this help message
+  -v, --version   Show version information
+      --test      Run the associated test suite (stdout muted)
+
+Environment:
+  SCREENREZ_FORCE   Override detection with a literal size like 1920x1080
+]])
+end
+
+local function show_version()
+	print(VERSION)
+end
+
+local function parse_override()
+	local override = os.getenv("SCREENREZ_FORCE")
+	if not override or override == "" then
+		return nil, nil, nil
+	end
+	local w, h = override:match("^(%d+)[xX](%d+)$")
+	if not w then
+		return nil, nil, "invalid SCREENREZ_FORCE format; expected WIDTHxHEIGHT"
+	end
+	return tonumber(w), tonumber(h), nil
+end
+
+local function detect_macos()
+	ffi.cdef[[
+		typedef unsigned int uint32_t;
+		typedef double CGFloat;
+		typedef struct CGPoint { CGFloat x; CGFloat y; } CGPoint;
+		typedef struct CGSize { CGFloat width; CGFloat height; } CGSize;
+		typedef struct CGRect { CGPoint origin; CGSize size; } CGRect;
+		typedef uint32_t CGDirectDisplayID;
+		CGRect CGDisplayBounds(CGDirectDisplayID display);
+		CGDirectDisplayID CGMainDisplayID(void);
+	]]
+
+	local ok, core = pcall(ffi.load, "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")
+	if not ok then
+		return nil, nil, "failed to load CoreGraphics: " .. tostring(core)
+	end
+	local id = core.CGMainDisplayID()
+	local rect = core.CGDisplayBounds(id)
+	return math.floor(rect.size.width + 0.5), math.floor(rect.size.height + 0.5), nil
+end
+
+local function detect_linux()
+	ffi.cdef[[
+		typedef struct _XDisplay Display;
+		Display *XOpenDisplay(const char *display_name);
+		int XDefaultScreen(Display *display);
+		int XDisplayWidth(Display *display, int screen_number);
+		int XDisplayHeight(Display *display, int screen_number);
+		int XCloseDisplay(Display *display);
+	]]
+
+	local ok, x11 = pcall(ffi.load, "X11")
+	if ok then
+		local display = x11.XOpenDisplay(nil)
+		if display ~= nil then
+			local screen = x11.XDefaultScreen(display)
+			local w = x11.XDisplayWidth(display, screen)
+			local h = x11.XDisplayHeight(display, screen)
+			x11.XCloseDisplay(display)
+			return tonumber(w), tonumber(h), nil
+		end
+	end
+
+	local function parse_any(text)
+		local w, h
+		w, h = text:match("current%s+(%d+)%s*x%s*(%d+)")
+		if w then return tonumber(w), tonumber(h) end
+		w, h = text:match("primary%s+(%d+)x(%d+)")
+		if w then return tonumber(w), tonumber(h) end
+		w, h = text:match("connected%s+[^%s]+%s+(%d+)x(%d+)")
+		if w then return tonumber(w), tonumber(h) end
+		w, h = text:match("(%d+)x(%d+)%s+@%s+%d+%.?%d*%s*Hz")
+		if w then return tonumber(w), tonumber(h) end
+		return nil, nil
+	end
+
+	local function first_available(cmd)
+		local h = io.popen(cmd)
+		if not h then return nil end
+		local out = h:read("*a")
+		h:close()
+		if out and #out > 0 then return out end
+		return nil
+	end
+
+	local xr_out = first_available("xrandr --current 2>/dev/null")
+	if xr_out then
+		local w, h = parse_any(xr_out)
+		if w and h then
+			return w, h, nil
+		end
+	end
+
+	local sway_out = first_available("swaymsg -t get_outputs 2>/dev/null")
+	if sway_out then
+		local w, h = sway_out:match('"current_mode"%s*:%s*{[^}]-"width"%s*:%s*(%d+)%s*,%s*"height"%s*:%s*(%d+)')
+		if not w then
+			w, h = sway_out:match('"rect"%s*:%s*{[^}]-"width"%s*:%s*(%d+)%s*,%s*"height"%s*:%s*(%d+)')
+		end
+		if w and h then
+			return tonumber(w), tonumber(h), nil
+		end
+	end
+
+	local wlr_out = first_available("wlr-randr 2>/dev/null")
+	if wlr_out then
+		local w, h = parse_any(wlr_out)
+		if w and h then
+			return w, h, nil
+		end
+	end
+
+	return nil, nil, "could not determine resolution (libX11 unavailable and no xrandr/swaymsg/wlr-randr fallback)"
+end
+
+local function detect()
+	local ow, oh, override_err = parse_override()
+	if ow and oh then
+		return ow, oh, nil
+	end
+	if override_err then
+		return nil, nil, override_err
+	end
+
+	local osname = jit.os
+	if osname == "OSX" then
+		return detect_macos()
+	elseif osname == "Linux" then
+		return detect_linux()
+	else
+		return nil, nil, "unsupported OS: " .. tostring(osname)
+	end
+end
+
+local function run_test()
+	local test_file = os.getenv("HOME") .. "/dotfiles/bin/test/screenrez_test"
+	local cmd = string.format("SCREENREZ_TEST_DEPTH=1 SCREENREZ_FORCE=128x128 %q >/dev/null", test_file)
+	local result = os.execute(cmd)
+	os.exit(result and 0 or 1)
+end
+
+local function main()
+	local args = arg or {}
+	local i = 1
+	while i <= #args do
+		local a = args[i]
+		if a == "--help" or a == "-h" then
+			show_help()
+			return
+		elseif a == "--about" or a == "-a" then
+			show_about()
+			return
+		elseif a == "--version" or a == "-v" then
+			show_version()
+			return
+		elseif a == "--test" then
+			run_test()
+		elseif a then
+			io.stderr:write("screenrez: unknown option '" .. a .. "'\n")
+			os.exit(1)
+		end
+		i = i + 1
+	end
+
+	local w, h, err = detect()
+	if not w or not h then
+		io.stderr:write("screenrez error: " .. tostring(err or "unknown error") .. "\n")
+		os.exit(1)
+	end
+
+	print(string.format("%dx%d", w, h))
+end
+
+main()
