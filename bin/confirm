@@ -1,10 +1,18 @@
 #!/usr/bin/env bash
 
-# The idea here is to use this as a pipe, like so:
-#  echo "some code" | confirm | ssh user@host
-#  or
-#  curl "some URL with raw code" | confirm | bash
 confirm() {
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+		echo "Usage: confirm"
+		echo
+		echo "The idea here is to use this as a pipe in situations where you want to confirm before running code,"
+		echo "like so:"
+		echo " echo \"some code\" | confirm | ssh user@host"
+		echo "or"
+		echo " curl \"some URL with raw code\" | confirm | bash"
+		return 0
+	fi
+
 	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	tmpfile=$(mktemp --tmpdir)
 	# use tee to split stdin to stderr and the temporary file
@@ -13,7 +21,7 @@ confirm() {
 	# Prompt the user.
 	>&2 read -p "Do you want to pass this code along? [Y/n] " response < /dev/tty
 	case "$response" in
-		[nN]*) 
+		[nN]*)
 			echo "Operation cancelled." >&2
 			rm "$tmpfile"
 			return 1
@@ -31,17 +39,15 @@ confirm() {
 # which is apparently an old convention (which also broke the basename call on OS X)
 _me=$(basename "${0##\-}")
 if [ "$_me" = "confirm" ]; then
-	$_me "$@"
-fi
-unset _me
-# Run the function if this script is executed directly
-if ! (return 0 2>/dev/null); then
-	# Check if we are running tests
-	if [ "$1" = "--test" ]; then
-		# Run tests from the test file
-		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
-	else
-		# If called directly, pass all arguments to the function
-		$(basename "${0##\-}") "$@"
+	# Run the function if this script is executed directly
+	if ! (return 0 2>/dev/null); then
+		# Check if we are running tests
+		if [ "$1" = "--test" ]; then
+			# Run tests from the test file
+			exec "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+		else
+			# If called directly, pass all arguments to the function
+			$_me "$@"
+		fi
 	fi
 fi
