@@ -6,15 +6,31 @@ mac_os_version_number_to_name() {
 	local version
 	local distribution
 
-	# If a version is provided as an argument, use it, otherwise try to get it from the system
-	if [ -n "$1" ]; then
-		version="$1"
-	elif command -v sw_vers >/dev/null 2>&1; then
-		version=$(sw_vers -productVersion)
-	else
-		echo "Error: This is not macOS and no version was provided as an argument" >&2
-		return 1
+	# If no version is provided, print the known version map from this script
+	if [ -z "$1" ]; then
+		local script_path
+
+		script_path="${BASH_SOURCE[0]}"
+		if [ "${script_path#/}" = "$script_path" ]; then
+			script_path="$(command -v "$script_path" 2>/dev/null)"
+		fi
+
+		if [ -z "$script_path" ] || [ ! -f "$script_path" ]; then
+			echo "Error: Unable to locate script for version list" >&2
+			return 1
+		fi
+
+		awk '
+			/^[[:space:]]*case \$version in/ { printing=1 }
+			printing { print }
+			printing && /^[[:space:]]*esac/ { exit }
+		' "$script_path"
+
+		return 0
 	fi
+
+	# If a version is provided as an argument, use it
+	version="$1"
 
 	# Map macOS version to distribution name
 	case $version in

@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+
+fails=0
+tests=0
+
+PATH="$HOME/bin:$PATH"
+script="mac_os_version_number_to_name"
+
+if ! command -v "$script" >/dev/null 2>&1; then
+	echo "FAIL: $script not found in PATH" >&2
+	exit 1
+fi
+
+((tests++))
+echo "Testing: no-arg output matches case block..."
+expected="$(awk '
+	/^[[:space:]]*case \$version in/ { printing=1 }
+	printing { print }
+	printing && /^[[:space:]]*esac/ { exit }
+' "$HOME/dotfiles/bin/mac_os_version_number_to_name")"
+output="$($script)"
+if [ "$output" = "$expected" ]; then
+	echo "PASS: no-arg output matches case block"
+else
+	echo "FAIL: no-arg output does not match case block" >&2
+	echo "  Expected:" >&2
+	echo "$expected" >&2
+	echo "  Got:" >&2
+	echo "$output" >&2
+	((fails++))
+fi
+
+((tests++))
+echo "Testing: known version maps to marketing name..."
+output="$($script 10.15.7)"
+if [ "$output" = "10.15.7 (Catalina)" ]; then
+	echo "PASS: known version maps correctly"
+else
+	echo "FAIL: known version mapping incorrect" >&2
+	echo "  Output was: $output" >&2
+	((fails++))
+fi
+
+((tests++))
+echo "Testing: unknown version maps to Unknown..."
+output="$($script 9.9)"
+if [ "$output" = "9.9 (Unknown)" ]; then
+	echo "PASS: unknown version maps to Unknown"
+else
+	echo "FAIL: unknown version mapping incorrect" >&2
+	echo "  Output was: $output" >&2
+	((fails++))
+fi
+
+if [ "$fails" -eq 0 ]; then
+	echo "All $tests tests passed"
+else
+	echo "$fails of $tests tests failed" >&2
+fi
+
+exit "$fails"
