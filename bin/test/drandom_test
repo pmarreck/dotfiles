@@ -65,7 +65,21 @@ test_drandom() {
 		(( fails++ ))
 	fi
 
-	# Test 1: Determinism - same seed should produce same sequence
+	# Test 1: PCG32 known output (ensures algorithm change)
+	(( tests++ ))
+	echo "Testing PCG32 known output..."
+
+	local pcg_output
+	pcg_output=$(DRANDOM_SEED=42 drandom 0 99 2>/dev/null)
+
+	if [ "$pcg_output" = "26" ]; then
+		echo "✓ PCG32 known output test passed"
+	else
+		echo "✗ PCG32 known output test failed: expected 26, got $pcg_output" >&2
+		(( fails++ ))
+	fi
+
+	# Test 2: Determinism - same seed should produce same sequence
 	(( tests++ ))
 	echo "Testing determinism..."
 
@@ -82,7 +96,7 @@ test_drandom() {
 		(( fails++ ))
 	fi
 
-	# Test 2: Different seeds produce different sequences
+	# Test 3: Different seeds produce different sequences
 	(( tests++ ))
 	echo "Testing seed variation..."
 
@@ -98,7 +112,7 @@ test_drandom() {
 		(( fails++ ))
 	fi
 
-	# Test 3: Range bounds - all values should be within specified range
+	# Test 4: Range bounds - all values should be within specified range
 	(( tests++ ))
 	echo "Testing range bounds..."
 
@@ -120,7 +134,7 @@ test_drandom() {
 		(( fails++ ))
 	fi
 
-	# Test 4: Statistical properties - should be reasonably uniform over large sample
+	# Test 5: Statistical properties - should be reasonably uniform over large sample
 	(( tests++ ))
 	echo "Testing statistical uniformity (this may take a moment)..."
 
@@ -194,7 +208,7 @@ test_drandom() {
 		(( fails++ ))
 	fi
 
-	# Test 5: Binary range test (0-1 should not alternate mechanically AND should be statistically balanced)
+	# Test 6: Binary range test (0-1 should not alternate mechanically AND should be statistically balanced)
 	(( tests++ ))
 	echo "Testing binary range for quality..."
 
@@ -258,7 +272,7 @@ test_drandom() {
 		(( fails++ ))
 	fi
 
-	# Test 6: Hex seed support
+	# Test 7: Hex seed support
 	(( tests++ ))
 	echo "Testing hex seed support..."
 
@@ -296,7 +310,7 @@ test_drandom() {
 		(( fails++ ))
 	fi
 
-	# Test 7: Cross-invocation determinism when seeding once per terminal
+	# Test 8: Cross-invocation determinism when seeding once per terminal
 	(( tests++ ))
 	echo "Testing cross-invocation determinism (seed once, then call again)..."
 

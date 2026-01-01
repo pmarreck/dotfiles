@@ -1,153 +1,327 @@
-#!/usr/bin/env bash
+#!/usr/bin/env luajit
 
-drandom() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+local argv = arg or {}
 
-	local start=${1:-0}
-	local end=${2:-99}
+local function stderr_write(msg)
+	io.stderr:write(msg)
+end
 
-	# Per-terminal persistent seed storage
-	# Default to XDG state dir, fallback to ~/.local/state
-	local _state_home="${DRANDOM_STATE_HOME:-/tmp}"
-	local _context="${DRANDOM_CONTEXT:-$PPID}"
-	local _state_dir="$_state_home/drandom/${USER:-unknown}"
-	local _seed_file="$_state_dir/${_context}.seed"
+local function shell_quote(s)
+	return "'" .. s:gsub("'", "'\\''") .. "'"
+end
 
-	# Define BASH_INT_MAX if not already defined (for when run as script)
-	if [ -z "$BASH_INT_MAX" ]; then
-		local BASH_INT_MAX=$((2**31 - 1))
-	fi
+local function exec_status(cmd)
+	local ok, reason, code = os.execute(cmd)
+	if type(ok) == "number" then
+		return ok
+	end
+	if ok == true then
+		return 0
+	end
+	if reason == "exit" and type(code) == "number" then
+		return code
+	end
+	return 1
+end
 
-	# Track whether seed came from environment (for hex handling and warnings)
-	local _env_seed_set=0
-	[ -n "${DRANDOM_SEED+x}" ] && _env_seed_set=1
+local function print_about()
+	print("Deterministic PCG32-based RNG with per-context persisted seeds for reproducible numbers")
+end
 
-	# Initialize DRANDOM_SEED
-	# Priority: explicit env var -> persisted state file -> time/RANDOM
-	if [ -z "$DRANDOM_SEED" ]; then
-		if [ -f "$_seed_file" ]; then
-			# Read last seed from state file
-			DRANDOM_SEED=$(sed -n '1p' "$_seed_file" 2>/dev/null)
-		fi
-		if [ -z "$DRANDOM_SEED" ]; then
-			# Use nanoseconds from date if available, otherwise use RANDOM
-			if command -v date >/dev/null 2>&1 && date +%N >/dev/null 2>&1; then
-				DRANDOM_SEED=$(($(date +%s%N) % BASH_INT_MAX))
-			else
-				DRANDOM_SEED=$((RANDOM * 65536 + RANDOM))
-			fi
-		fi
-	fi
+local function print_help()
+	print([[
+Usage: drandom [start] [end]
+       DRANDOM_SEED=<seed> drandom [start] [end]
+       DRANDOM_CONTEXT=<name> drandom [start] [end]
 
-	# If user supplied an environment seed, handle hex forms and warnings
-	if [ $_env_seed_set -eq 1 ]; then
-		# Accept 0x-prefixed hexadecimal seeds
-		if [[ "$DRANDOM_SEED" =~ ^0[xX][0-9A-Fa-f]+$ ]]; then
-			:
-		# If seed looks like hex but lacks 0x prefix, warn and interpret as hex
-		elif [[ "$DRANDOM_SEED" =~ ^[0-9A-Fa-f]+$ && "$DRANDOM_SEED" =~ [A-Fa-f] ]]; then
-			echo "Warning: DRANDOM_SEED '$DRANDOM_SEED' looks like hex without 0x prefix; interpreting as hex" >&2
-			DRANDOM_SEED=$((16#$DRANDOM_SEED))
-		fi
-	fi
+Deterministic random number generator using PCG32.
+Outputs a random integer between start and end (inclusive).
 
-	# LCG parameters (same as Numerical Recipes)
-	# These work well within bash's integer range
-	local a=1664525
-	local c=1013904223
+If start is not specified, it defaults to 0
+If end is not specified, it defaults to 99
 
-	# Update seed using LCG formula
-	# We need to handle potential overflow carefully
-	DRANDOM_SEED=$(( (a * DRANDOM_SEED + c) & 0x7FFFFFFF ))
+Set DRANDOM_SEED environment variable for reproducible sequences.
+The seed is persisted per-terminal and automatically updated after each call,
+so setting it once at the beginning of a sequence produces deterministic
+results across subsequent invocations in the same terminal.
 
-	# Persist updated seed for this terminal context
-	mkdir -p "$_state_dir" 2>/dev/null || true
-	echo "$DRANDOM_SEED" >"$_seed_file" 2>/dev/null || true
+Seed formats:
+  - Decimal (e.g., 12345)
+  - Hex with 0x prefix (e.g., 0xDEADBEEF)
+  - If a seed consists solely of hex digits and includes letters (A-F),
+    but lacks the 0x prefix (e.g., DEADBEEF), a warning is printed and it
+    is interpreted as hexadecimal.
 
-	# Calculate range
-	local range=$((end - start + 1))
+Options:
+  -a, --about  Show a short description
+  -h, --help   Show this help message
+      --test   Run the associated test suite
 
-	# Generate result in the requested range
-	if [ $range -le 1 ]; then
-		echo $start
+Persistence details:
+  - State dir: ${DRANDOM_STATE_HOME:-/tmp}/drandom/${USER}
+  - File name: <context>.seed (context defaults to parent shell PID, PPID)
+  - Override: DRANDOM_CONTEXT and/or DRANDOM_STATE_HOME to isolate sequences
+
+Examples:
+  drandom           # Random number from 0-99
+  drandom 1 6       # Roll a die (1-6)
+  drandom 0 1       # Coin flip (0 or 1)
+
+  # Deterministic sequence:
+  DRANDOM_SEED=12345
+  drandom           # First number (deterministic)
+  drandom           # Second number (deterministic)
+
+  # Isolated sequence in scripts/tests:
+  DRANDOM_CONTEXT=myjob DRANDOM_SEED=42 drandom; DRANDOM_CONTEXT=myjob drandom
+]])
+end
+
+local first_arg = argv[1]
+if first_arg == "--test" then
+	local script_path = argv[0] or "drandom"
+	local script_name = script_path:match("([^/]+)$") or script_path
+	local test_file = (os.getenv("HOME") or "") .. "/dotfiles/bin/test/" .. script_name .. "_test"
+	local f = io.open(test_file, "r")
+	if f then
+		f:close()
+		local cmd = "FAST=1 " .. shell_quote(test_file) .. " >/dev/null"
+		local status = exec_status(cmd)
+		os.exit(status)
 	else
-		# Use modulo to get value in range
-		# For better distribution, we could implement rejection sampling
-		# but for most use cases, simple modulo is sufficient
-		echo $((start + (DRANDOM_SEED % range)))
-	fi
-}
+		stderr_write("Test file not found: " .. test_file .. "\n")
+		os.exit(1)
+	end
+elseif first_arg == "--about" or first_arg == "-a" then
+	print_about()
+	os.exit(0)
+elseif first_arg == "--help" or first_arg == "-h" then
+	print_help()
+	os.exit(0)
+end
 
-# Run the function if this script is executed directly
-if ! (return 0 2>/dev/null); then
-	# Check if we are running tests
-	if [ "$1" = "--test" ]; then
-		# Run tests from the test file with stdout muted
-		test_file="$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
-		if [ -f "$test_file" ]; then
-			FAST=1 exec "$test_file" >/dev/null
+local ffi = require("ffi")
+local bit = require("bit")
+
+ffi.cdef[[
+	int getppid(void);
+	int gettimeofday(struct timeval *tv, void *tz);
+	typedef long time_t;
+	struct timeval {
+		time_t tv_sec;
+		long tv_usec;
+	};
+]]
+
+local u64 = ffi.typeof("uint64_t")
+
+local function parse_uint64_dec(s)
+	local value = ffi.new(u64, 0)
+	for i = 1, #s do
+		local c = s:byte(i)
+		if c < 48 or c > 57 then
+			return nil
+		end
+		value = value * 10 + (c - 48)
+	end
+	return value
+end
+
+local function parse_uint64_hex(s)
+	local value = ffi.new(u64, 0)
+	s = s:gsub("^0[xX]", "")
+	for i = 1, #s do
+		local c = s:byte(i)
+		local digit
+		if c >= 48 and c <= 57 then
+			digit = c - 48
+		elseif c >= 65 and c <= 70 then
+			digit = c - 55
+		elseif c >= 97 and c <= 102 then
+			digit = c - 87
 		else
-			echo "Test file not found: $test_file" >&2
-			exit 1
-		fi
-	elif [ "$1" = "--about" ] || [ "$1" = "-a" ]; then
-		echo "Deterministic LCG-based RNG with per-context persisted seeds for reproducible numbers"
-		exit 0
-	elif [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
-		cat <<-EOF
-		Usage: drandom [start] [end]
-		       DRANDOM_SEED=<seed> drandom [start] [end]
-	       DRANDOM_CONTEXT=<name> drandom [start] [end]
+			return nil
+		end
+		value = value * 16 + digit
+	end
+	return value
+end
 
-		Deterministic random number generator using Linear Congruential Generator.
-		Outputs a random integer between start and end (inclusive).
+local function trim(s)
+	return (s:gsub("^%s+", ""):gsub("%s+$", ""))
+end
 
-		If start is not specified, it defaults to 0
-		If end is not specified, it defaults to 99
+local function parse_seed(seed_str, env_seed_set)
+	if not seed_str then
+		return nil
+	end
+	local seed = trim(seed_str)
+	if seed == "" then
+		return nil
+	end
+	if seed:match("^0[xX][0-9A-Fa-f]+$") then
+		return parse_uint64_hex(seed)
+	end
+	if seed:match("^[0-9A-Fa-f]+$") and seed:match("[A-Fa-f]") then
+		if env_seed_set then
+			stderr_write("Warning: DRANDOM_SEED '" .. seed .. "' looks like hex without 0x prefix; interpreting as hex\n")
+		end
+		return parse_uint64_hex(seed)
+	end
+	return parse_uint64_dec(seed)
+end
 
-		Set DRANDOM_SEED environment variable for reproducible sequences.
-		The seed is persisted per-terminal and automatically updated after each call,
-		so setting it once at the beginning of a sequence produces deterministic
-		results across subsequent invocations in the same terminal.
+local function u64_to_hex(value)
+	if value == nil then
+		return "0x0"
+	end
+	local digits = {}
+	local tmp = ffi.new(u64, value)
+	if tmp == 0 then
+		return "0x0"
+	end
+	while tmp > 0 do
+		local nibble = tonumber(tmp % 16)
+		if nibble < 10 then
+			digits[#digits + 1] = string.char(48 + nibble)
+		else
+			digits[#digits + 1] = string.char(87 + nibble)
+		end
+		tmp = tmp / 16
+	end
+	return "0x" .. table.concat(digits):reverse()
+end
 
-		Seed formats:
-		  - Decimal (e.g., 12345)
-		  - Hex with 0x prefix (e.g., 0xDEADBEEF)
-		  - If a seed consists solely of hex digits and includes letters (A-F),
-		    but lacks the 0x prefix (e.g., DEADBEEF), a warning is printed and it
-		    is interpreted as hexadecimal.
+local function now_seed()
+	local tv = ffi.new("struct timeval")
+	if ffi.C.gettimeofday(tv, nil) == 0 then
+		local seconds = ffi.new(u64, tv.tv_sec)
+		local micros = ffi.new(u64, tv.tv_usec)
+		return seconds * 1000000 + micros
+	end
+	return ffi.new(u64, os.time())
+end
 
-		Options:
-		  -a, --about  Show a short description
-		  -h, --help   Show this help message
-		      --test   Run the associated test suite
+local function get_context()
+	local env_ctx = os.getenv("DRANDOM_CONTEXT")
+	if env_ctx and env_ctx ~= "" then
+		return env_ctx
+	end
+	local ok, ppid = pcall(function()
+		return ffi.C.getppid()
+	end)
+	if ok and ppid then
+		return tostring(ppid)
+	end
+	return tostring(os.getenv("PPID") or "unknown")
+end
 
-		Persistence details:
-		  - State dir: ${DRANDOM_STATE_HOME:-/tmp}/drandom/${USER}
-		  - File name: <context>.seed (context defaults to parent shell PID, PPID)
-		  - Override: DRANDOM_CONTEXT and/or DRANDOM_STATE_HOME to isolate sequences
+local function get_user()
+	local user = os.getenv("USER")
+	if user and user ~= "" then
+		return user
+	end
+	return "unknown"
+end
 
-		Examples:
-		  drandom           # Random number from 0-99
-		  drandom 1 6       # Roll a die (1-6)
-		  drandom 0 1       # Coin flip (0 or 1)
+local state = ffi.new(u64, 0)
+local inc = ffi.new(u64, 1442695040888963407ULL)
+local mult = ffi.new(u64, 6364136223846793005ULL)
 
-		  # Deterministic sequence:
-		  DRANDOM_SEED=12345
-		  drandom           # First number (deterministic)
-		  drandom           # Second number (deterministic)
+local function pcg32_random()
+	local old = state
+	state = old * mult + inc
+	local xorshifted = bit.rshift(bit.bxor(bit.rshift(old, 18), old), 27)
+	local rot = tonumber(bit.rshift(old, 59))
+	local x = tonumber(ffi.cast("uint32_t", xorshifted))
+	local res = bit.bor(bit.rshift(x, rot), bit.lshift(x, bit.band(-rot, 31)))
+	return tonumber(ffi.cast("uint32_t", res))
+end
 
-		  # Isolated sequence in scripts/tests:
-		  DRANDOM_CONTEXT=myjob DRANDOM_SEED=42 drandom; DRANDOM_CONTEXT=myjob drandom
-		EOF
+local function pcg32_seed(seed)
+	state = ffi.new(u64, 0)
+	inc = ffi.new(u64, 1442695040888963407ULL)
+	pcg32_random()
+	state = state + seed
+	pcg32_random()
+end
+
+local function rand_range(start, ending)
+	local range = ending - start + 1
+	if range <= 1 then
+		return start
+	end
+	local bound = 4294967296 - (4294967296 % range)
+	while true do
+		local r = pcg32_random()
+		if r < bound then
+			return start + (r % range)
+		end
+	end
+end
+
+local function read_seed_file(path)
+	local f = io.open(path, "r")
+	if not f then
+		return nil
+	end
+	local line = f:read("*l")
+	f:close()
+	if not line then
+		return nil
+	end
+	return parse_seed(line, false)
+end
+
+local function write_seed_file(path, value)
+	local f = io.open(path, "w")
+	if not f then
+		return
+	end
+	f:write(u64_to_hex(value))
+	f:write("\n")
+	f:close()
+end
+
+local start = tonumber(argv[1]) or 0
+local ending = tonumber(argv[2]) or 99
+
+local state_home = os.getenv("DRANDOM_STATE_HOME") or "/tmp"
+local context = get_context()
+local state_dir = state_home .. "/drandom/" .. get_user()
+local seed_file = state_dir .. "/" .. context .. ".seed"
+
+local env_seed_raw = os.getenv("DRANDOM_SEED")
+local env_seed_set = env_seed_raw ~= nil
+
+if env_seed_set and env_seed_raw == "" then
+	env_seed_set = false
+	env_seed_raw = nil
+end
+
+local seed
+if env_seed_set then
+	seed = parse_seed(env_seed_raw, true)
+	if not seed then
+		seed = ffi.new(u64, 0)
+	end
+	pcg32_seed(seed)
+else
+	local persisted = read_seed_file(seed_file)
+	if persisted then
+		state = persisted
 	else
-		# Source ourselves to get the function
-		source "$0"
-		# If called directly with no arguments, show the range note
-		if [ $# -eq 0 ]; then
-			echo "(with a start of 0 and an end of 99)" >&2
-		fi
-		# Pass all arguments to the function
-		drandom "$@"
-	fi
-fi
+		seed = now_seed()
+		pcg32_seed(seed)
+	end
+end
+
+if #argv == 0 then
+	stderr_write("(with a start of 0 and an end of 99)\n")
+end
+
+local result = rand_range(start, ending)
+print(result)
+
+os.execute("mkdir -p " .. shell_quote(state_dir) .. " 2>/dev/null")
+write_seed_file(seed_file, state)
