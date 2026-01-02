@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+
+fails=0
+tests=0
+
+PATH="$HOME/bin:$PATH"
+script="$HOME/dotfiles/bin/distro_pretty"
+
+if [ ! -x "$script" ]; then
+	echo "FAIL: $script is not executable" >&2
+	exit 1
+fi
+
+tmpdir=$(mktemp -d --tmpdir)
+trap 'rm -rf "$tmpdir"' EXIT
+
+cat >"$tmpdir/uname" <<'EOF'
+#!/usr/bin/env bash
+echo "Darwin"
+EOF
+
+cat >"$tmpdir/sw_vers" <<'EOF'
+#!/usr/bin/env bash
+if [ "$1" = "-productVersion" ]; then
+	echo "10.15.7"
+fi
+EOF
+
+cat >"$tmpdir/mac_os_version_number_to_name" <<'EOF'
+#!/usr/bin/env bash
+if [ -z "$1" ]; then
+	echo "NOARG"
+else
+	echo "$1 (MockOS)"
+fi
+EOF
+
+chmod +x "$tmpdir/uname" "$tmpdir/sw_vers" "$tmpdir/mac_os_version_number_to_name"
+
+((tests++))
+echo "Testing: macOS pretty name uses version argument..."
+output="$(PATH="$tmpdir:$PATH" "$script")"
+if [ "$output" = "macOS MockOS" ]; then
+	echo "PASS: macOS pretty name uses version argument"
+else
+	echo "FAIL: macOS pretty name did not use version argument" >&2
+	echo "  Output was: $output" >&2
+	((fails++))
+fi
+
+if [ "$fails" -eq 0 ]; then
+	echo "All $tests tests passed"
+else
+	echo "$fails of $tests tests failed" >&2
+fi
+
+exit "$fails"

@@ -144,7 +144,17 @@ case $OSTYPE in
 	darwin*)
 		export PLATFORM="osx"
 		export DISTRO="macOS"
-		export DISTRO_PRETTY="$DISTRO $(mac_os_version_number_to_name)"
+		if command -v mac_os_version_number_to_name >/dev/null 2>&1 && command -v sw_vers >/dev/null 2>&1; then
+			MACOS_VERSION="$(sw_vers -productVersion 2>/dev/null)"
+			if [ -n "$MACOS_VERSION" ]; then
+				export DISTRO_PRETTY="$DISTRO $(mac_os_version_number_to_name "$MACOS_VERSION")"
+			else
+				export DISTRO_PRETTY="$DISTRO"
+			fi
+		else
+			export DISTRO_PRETTY="$DISTRO"
+		fi
+		unset MACOS_VERSION
 		export DISTRO_VERSION="$(distro_version)"
 		# Initialize RAM disk for /private/tmp if interactive login shell
 		# NOTE: This is now handled by a LaunchAgent (com.pmarreck.ramdisk.plist)

@@ -9,8 +9,14 @@ distro_pretty() {
 	
 	# Check if we're on macOS
 	if [ "$(uname)" = "Darwin" ]; then
-		if command -v mac_os_version_number_to_name >/dev/null 2>&1; then
-			echo "macOS $(mac_os_version_number_to_name | $SED 's/^[0-9.]* (\(.*\))$/\1/')"
+		if command -v mac_os_version_number_to_name >/dev/null 2>&1 && command -v sw_vers >/dev/null 2>&1; then
+			local version
+			version=$(sw_vers -productVersion 2>/dev/null)
+			if [ -n "$version" ]; then
+				echo "macOS $(mac_os_version_number_to_name "$version" | $SED 's/^[0-9.]* (\(.*\))$/\1/')"
+			else
+				echo "macOS"
+			fi
 		else
 			echo "macOS"
 		fi
