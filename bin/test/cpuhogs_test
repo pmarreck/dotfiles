@@ -17,11 +17,12 @@ fi
 
 make_group_fixture() {
 	cat <<'DATA' >"$fixtures_dir/group_ps"
-310.0 /usr/lib/firefox/firefox -contentproc
-125.5 /usr/bin/python3 worker.py
-300.0 /usr/lib/firefox/firefox -contentproc
-100.0 /usr/bin/node server.js
-45.0 /usr/bin/python3 helper.py
+310.0 firefox
+125.5 python3
+300.0 firefox
+200.0 ChatGPT Atlas
+100.0 node
+45.0 python3
 DATA
 }
 
@@ -91,7 +92,7 @@ fi
 ((tests++))
 echo "Testing: cpuhogs grouped output aggregates CPU and normalizes system share..."
 if output=$(run_cpuhogs -n 2); then
-	if grep -q "%SYS" <<<"$output" && grep -q "firefox" <<<"$output" && grep -q "python3" <<<"$output"; then
+	if grep -q "%SYS" <<<"$output" && grep -q "firefox" <<<"$output" && grep -q "ChatGPT Atlas" <<<"$output"; then
 		if grep -q "firefox" <<<"$output" && grep -q "38.12" <<<"$output"; then
 			echo "✓ Test passed: grouped view includes normalized CPU percentages"
 		else

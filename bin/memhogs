@@ -2,10 +2,35 @@
 
 set -euo pipefail
 
+if [[ "${1:-}" == "--test" ]]; then
+	shift || true
+	if [[ $# -gt 0 ]]; then
+		echo "memhogs: --test does not accept additional arguments" >&2
+		exit 1
+	fi
+	test_file="$HOME/dotfiles/bin/test/memhogs_test"
+	if [[ ! -x "$test_file" ]]; then
+		echo "memhogs: missing test file $test_file" >&2
+		exit 1
+	fi
+	"$test_file" >/dev/null
+	exit $?
+fi
+
 AWK_BIN=${MEMHOGS_AWK:-gawk}
 if ! command -v "$AWK_BIN" >/dev/null 2>&1; then
   echo "memhogs: required awk interpreter '$AWK_BIN' not found" >&2
   exit 1
+fi
+
+platform=$(uname -s)
+PS_BIN=${MEMHOGS_PS:-ps}
+if [[ -z "${MEMHOGS_PS:-}" && "$platform" == "Darwin" && -x /bin/ps ]]; then
+	PS_BIN=/bin/ps
+fi
+if ! command -v "$PS_BIN" >/dev/null 2>&1; then
+	echo "memhogs: required ps binary '$PS_BIN' not found" >&2
+	exit 1
 fi
 
 count=15
@@ -23,10 +48,13 @@ Options:
   -F, --detail  Append a detailed summary for the heaviest multi-process executable.
   -h, --help   Show this help text.
   -a, --about  Describe what this tool does.
+  --test       Run the memhogs test suite (stdout muted) and exit.
 
 Environment:
   MEMHOGS_ALERT_THRESHOLD  Minimum process count to flag as an outlier (default 10).
   MEMHOGS_AWK              awk interpreter to use (default gawk).
+  MEMHOGS_PS               ps executable to use (defaults to /bin/ps on macOS).
+  MEMHOGS_TOTAL_KB         Override detected total system memory (in KB).
 EOF
 }
 
@@ -86,22 +114,25 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-platform=$(uname -s)
-case "$platform" in
-  Linux)
-    mem_total_kb=$("$AWK_BIN" '/^MemTotal:/ {print $2}' /proc/meminfo)
-    ;;
-  Darwin)
-    mem_total_bytes=$(sysctl -n hw.memsize 2>/dev/null || true)
-    if [[ -n "${mem_total_bytes:-}" ]]; then
-      mem_total_kb=$((mem_total_bytes / 1024))
-    fi
-    ;;
-  *)
-    echo "memhogs: unsupported platform '$platform'" >&2
-    exit 1
-    ;;
-esac
+if [[ -n "${MEMHOGS_TOTAL_KB:-}" ]]; then
+  mem_total_kb=$MEMHOGS_TOTAL_KB
+else
+  case "$platform" in
+    Linux)
+      mem_total_kb=$("$AWK_BIN" '/^MemTotal:/ {print $2}' /proc/meminfo)
+      ;;
+    Darwin)
+      mem_total_bytes=$(sysctl -n hw.memsize 2>/dev/null || true)
+      if [[ -n "${mem_total_bytes:-}" ]]; then
+        mem_total_kb=$((mem_total_bytes / 1024))
+      fi
+      ;;
+    *)
+      echo "memhogs: unsupported platform '$platform'" >&2
+      exit 1
+      ;;
+  esac
+fi
 
 if [[ -z "${mem_total_kb:-}" || "$mem_total_kb" == 0 ]]; then
   echo "memhogs: unable to determine total memory" >&2
@@ -110,7 +141,7 @@ fi
 
 print_group_view() {
   printf "%-32s %5s %10s %7s\n" "COMMAND" "PROC" "RSS" "%MEM"
-  ps axo rss=,command= | "$AWK_BIN" -v total="$mem_total_kb" -v limit="$count" '
+  "$PS_BIN" axo rss=,comm= | "$AWK_BIN" -v total="$mem_total_kb" -v limit="$count" '
   function humanize(kb) {
     if (kb >= 1073741824) {
       return sprintf("%.2fT", kb / 1073741824);
@@ -124,8 +155,8 @@ print_group_view() {
   {
     rss = $1 + 0;
     cmd = substr($0, index($0, $2));
-    split(cmd, parts, /[[:space:]]+/);
-    exe = parts[1];
+    gsub(/^[[:space:]]+|[[:space:]]+$/, "", cmd);
+    exe = cmd;
     if (exe == "") {
       exe = "[unknown]";
     }
@@ -150,7 +181,7 @@ print_group_view() {
 
 print_individual_view() {
   printf "%7s %-12s %10s %7s %s\n" "PID" "USER" "RSS" "%MEM" "COMMAND"
-  ps axo pid=,user=,rss=,command= | sort -k3,3nr | "$AWK_BIN" -v total="$mem_total_kb" -v limit="$count" '
+  "$PS_BIN" axo pid=,user=,rss=,command= | sort -k3,3nr | "$AWK_BIN" -v total="$mem_total_kb" -v limit="$count" '
   function humanize(kb) {
     if (kb >= 1073741824) {
       return sprintf("%.2fT", kb / 1073741824);
@@ -187,13 +218,14 @@ humanize_kb() {
 
 print_detail_summary() {
   local detail_info detail_exe detail_rss_kb detail_count
+  local comm_file
 
-  detail_info=$(ps axo rss=,command= | "$AWK_BIN" '
+  detail_info=$("$PS_BIN" axo rss=,comm= | "$AWK_BIN" '
   {
     rss = $1 + 0;
     cmd = substr($0, index($0, $2));
-    split(cmd, parts, /[[:space:]]+/);
-    exe = parts[1];
+    gsub(/^[[:space:]]+|[[:space:]]+$/, "", cmd);
+    exe = cmd;
     if (exe == "")
       exe = "[unknown]";
     rss_map[exe] += rss;
@@ -227,7 +259,10 @@ print_detail_summary() {
   printf "\nFYI: %s spans %d processes consuming %s RSS in total.\n" \
     "$detail_exe" "$detail_count" "$(humanize_kb "$detail_rss_kb")"
 
-  ps axo pid=,rss=,command= | sort -k2,2nr | "$AWK_BIN" -v total="$mem_total_kb" -v limit="$count" -v exe="$detail_exe" '
+  comm_file=$(mktemp --tmpdir memhogs-comm.XXXXXX)
+  "$PS_BIN" axo pid=,comm= >"$comm_file"
+
+  "$PS_BIN" axo pid=,rss=,command= | sort -k2,2nr | "$AWK_BIN" -v total="$mem_total_kb" -v limit="$count" -v exe="$detail_exe" -v comm_file="$comm_file" '
   function humanize(kb) {
     if (kb >= 1073741824) {
       return sprintf("%.2fT", kb / 1073741824);
@@ -238,11 +273,28 @@ print_detail_summary() {
     }
     return sprintf("%dK", kb);
   }
+  function trim(s) {
+    gsub(/^[[:space:]]+|[[:space:]]+$/, "", s);
+    return s;
+  }
+  BEGIN {
+    while ((getline < comm_file) > 0) {
+      pid = $1;
+      comm = $2;
+      for (i = 3; i <= NF; ++i) {
+        comm = comm " " $i;
+      }
+      comm = trim(comm);
+      if (comm == "")
+        comm = "[unknown]";
+      comm_map[pid] = comm;
+    }
+    close(comm_file);
+  }
   {
     cmd = substr($0, index($0, $3));
-    split(cmd, parts, /[[:space:]]+/);
-    exe_path = parts[1];
-    if (exe_path == exe) {
+    pid = $1;
+    if (comm_map[pid] == exe) {
       if (!printed_header) {
         printf "\n%-7s %10s %7s %s\n", "PID", "RSS", "%MEM", "COMMAND";
         printed_header = 1;
@@ -253,12 +305,14 @@ print_detail_summary() {
     }
   }
   '
+
+  rm -f "$comm_file" 2>/dev/null || true
 }
 
 print_outliers() {
   local outliers
   outliers=$(
-    ps axo comm= | "$AWK_BIN" -v threshold="$outlier_threshold" '
+    "$PS_BIN" axo comm= | "$AWK_BIN" -v threshold="$outlier_threshold" '
     {
       cmd = $1;
       for (i = 2; i <= NF; ++i) {

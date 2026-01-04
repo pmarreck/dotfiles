@@ -40,10 +40,10 @@ Outputs a random integer between start and end (inclusive).
 If start is not specified, it defaults to 0
 If end is not specified, it defaults to 99
 
-Set DRANDOM_SEED environment variable for reproducible sequences.
-The seed is persisted per-terminal and automatically updated after each call,
-so setting it once at the beginning of a sequence produces deterministic
-results across subsequent invocations in the same terminal.
+Set DRANDOM_SEED to start a reproducible sequence for this invocation.
+After each run, the RNG state is saved to a per-context seed file, and
+subsequent invocations without DRANDOM_SEED continue from that file.
+Setting DRANDOM_SEED again resets the sequence for that context.
 
 Seed formats:
   - Decimal (e.g., 12345)

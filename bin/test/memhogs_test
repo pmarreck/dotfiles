@@ -1,0 +1,190 @@
+#!/usr/bin/env bash
+
+set -uo pipefail
+
+fails=0
+tests=0
+
+fixtures_dir=$(mktemp -d --tmpdir)
+trap 'rm -rf "$fixtures_dir"' EXIT
+
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+memhogs_cmd=${MEMHOGS_BIN:-"$script_dir/../memhogs"}
+if [[ ! -x "$memhogs_cmd" ]]; then
+	echo "memhogs_test: unable to locate memhogs executable at $memhogs_cmd" >&2
+	exit 1
+fi
+
+make_group_fixture() {
+	cat <<'DATA' >"$fixtures_dir/group_ps"
+200000 firefox
+150000 firefox
+120000 ChatGPT Atlas
+80000 node
+50000 python3
+DATA
+}
+
+make_individual_fixture() {
+	cat <<'DATA' >"$fixtures_dir/individual_ps"
+4321 alice 200000 /usr/lib/firefox/firefox -contentproc -childID 1
+4322 alice 150000 /usr/lib/firefox/firefox -contentproc -childID 2
+9876 bob 50000 /usr/bin/python3 worker.py
+6543 carol 80000 /usr/bin/node server.js
+DATA
+}
+
+make_detail_fixture() {
+	cat <<'DATA' >"$fixtures_dir/detail_ps"
+4321 200000 /usr/lib/firefox/firefox -contentproc -childID 1
+4322 150000 /usr/lib/firefox/firefox -contentproc -childID 2
+9876 50000 /usr/bin/python3 worker.py
+6543 80000 /usr/bin/node server.js
+DATA
+}
+
+make_comm_fixture() {
+	cat <<'DATA' >"$fixtures_dir/comm_ps"
+firefox
+firefox
+firefox
+ChatGPT Atlas
+node
+python3
+DATA
+}
+
+make_comm_pid_fixture() {
+	cat <<'DATA' >"$fixtures_dir/comm_pid_ps"
+4321 firefox
+4322 firefox
+9876 python3
+6543 node
+DATA
+}
+
+make_group_fixture
+make_individual_fixture
+make_detail_fixture
+make_comm_fixture
+make_comm_pid_fixture
+
+ps_stub="$fixtures_dir/ps_stub"
+cat <<'EOF' >"$ps_stub"
+#!/usr/bin/env bash
+set -euo pipefail
+
+case "$*" in
+	"axo rss=,comm=")
+		cat "$PS_FIXTURES_DIR/group_ps"
+		;;
+	"axo pid=,user=,rss=,command=")
+		cat "$PS_FIXTURES_DIR/individual_ps"
+		;;
+	"axo pid=,rss=,command=")
+		cat "$PS_FIXTURES_DIR/detail_ps"
+		;;
+	"axo comm=")
+		cat "$PS_FIXTURES_DIR/comm_ps"
+		;;
+	"axo pid=,comm=")
+		cat "$PS_FIXTURES_DIR/comm_pid_ps"
+		;;
+	"axo pid=,comm=")
+		cat "$PS_FIXTURES_DIR/comm_pid_ps"
+		;;
+	*)
+		echo "ps_stub: unexpected args: $*" >&2
+		exit 1
+		;;
+esac
+EOF
+chmod +x "$ps_stub"
+
+run_memhogs() {
+	local extra_env=()
+	while [[ $# -gt 0 && "$1" == *=* ]]; do
+		extra_env+=("$1")
+		shift
+	done
+	env \
+		MEMHOGS_PS="$ps_stub" \
+		MEMHOGS_TOTAL_KB=1000000 \
+		MEMHOGS_ALERT_THRESHOLD=2 \
+		PS_FIXTURES_DIR="$fixtures_dir" \
+		"${extra_env[@]}" \
+		"$memhogs_cmd" "$@"
+}
+
+((tests++))
+echo "Testing: memhogs --help shows usage..."
+if run_memhogs --help >/tmp/memhogs_help 2>&1; then
+	if grep -q "Usage: memhogs" /tmp/memhogs_help; then
+		echo "✓ Test passed: help text present"
+	else
+		echo "✗ Test failed: help text missing" >&2
+		((fails++))
+	fi
+else
+	echo "✗ Test failed: memhogs --help exited with non-zero" >&2
+	((fails++))
+fi
+
+((tests++))
+echo "Testing: memhogs grouped output aggregates RSS and percentages..."
+if output=$(run_memhogs -n 2); then
+	if grep -q "%MEM" <<<"$output" && grep -q "firefox" <<<"$output" && grep -q "ChatGPT Atlas" <<<"$output" && grep -q "35.00" <<<"$output"; then
+		echo "✓ Test passed: grouped view includes normalized memory percentages"
+	else
+		echo "✗ Test failed: grouped output missing expected rows or percentages" >&2
+		((fails++))
+	fi
+else
+	echo "✗ Test failed: memhogs grouped view exited non-zero" >&2
+	((fails++))
+fi
+
+((tests++))
+echo "Testing: memhogs -i shows individual process metrics..."
+if output=$(run_memhogs -i -n 2); then
+	if grep -q "PID" <<<"$output" && grep -q "alice" <<<"$output"; then
+		echo "✓ Test passed: individual view shows pid/user rows"
+	else
+		echo "✗ Test failed: individual output missing expected headers or data" >&2
+		((fails++))
+	fi
+else
+	echo "✗ Test failed: memhogs -i exited non-zero" >&2
+	((fails++))
+fi
+
+((tests++))
+echo "Testing: memhogs -F emits detail summary for busiest executable..."
+if output=$(run_memhogs -F -n 2); then
+	if grep -q "spans 2 processes" <<<"$output" && grep -q "PID" <<<"$output"; then
+		echo "✓ Test passed: detail summary present"
+	else
+		echo "✗ Test failed: detail summary missing" >&2
+		((fails++))
+	fi
+else
+	echo "✗ Test failed: memhogs -F exited non-zero" >&2
+	((fails++))
+fi
+
+((tests++))
+echo "Testing: memhogs outlier notice highlights process storms..."
+if output=$(run_memhogs); then
+	if grep -q "FYI" <<<"$output" && grep -q "over 2 firefox processes" <<<"$output"; then
+		echo "✓ Test passed: outlier summary present"
+	else
+		echo "✗ Test failed: outlier summary missing" >&2
+		((fails++))
+	fi
+else
+	echo "✗ Test failed: memhogs outlier run exited non-zero" >&2
+	((fails++))
+fi
+
+echo "All $tests tests completed"
+exit $fails

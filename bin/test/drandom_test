@@ -8,6 +8,13 @@ fi
 test_drandom() {
 	local fails=0
 	local tests=0
+	local state_home
+	state_home=$(mktemp -d --tmpdir drandom-test.XXXXXX)
+	if [ ! -d "$state_home" ]; then
+		echo "✗ Failed to create temp state dir for tests" >&2
+		return 1
+	fi
+	trap 'rm -rf "$state_home"' EXIT
 	# Sample sizes (FAST mode reduces iterations for quick --test runs)
 	local sample_size=${DRANDOM_TEST_SAMPLE_SIZE:-1000}
 	local binary_sample_size=${DRANDOM_TEST_BINARY_SIZE:-1000}
@@ -302,7 +309,7 @@ test_drandom() {
 
 	# 6c: Raw hex without 0x should emit a warning on stderr
 	local warn_ctx="warnctx-$$-$RANDOM"
-	local warn_output=$(DRANDOM_STATE_HOME="$HOME/dotfiles/.state" DRANDOM_CONTEXT="$warn_ctx" DRANDOM_SEED="DEADBEEF" drandom 2>&1 >/dev/null)
+	local warn_output=$(DRANDOM_STATE_HOME="$state_home" DRANDOM_CONTEXT="$warn_ctx" DRANDOM_SEED="DEADBEEF" drandom 2>&1 >/dev/null)
 	if echo "$warn_output" | grep -qi "warning.*hex.*0x"; then
 		echo "✓ Hex seed warning test passed: warning emitted for raw hex without 0x"
 	else
@@ -316,8 +323,6 @@ test_drandom() {
 
 	# Use a unique context per test run to avoid interference
 	local ctx="testctx-$$-$RANDOM"
-	local state_home="$HOME/dotfiles/.state"
-
 	# First pair: seed, then call again (two separate invocations)
 	DRANDOM_STATE_HOME="$state_home" DRANDOM_CONTEXT="$ctx" DRANDOM_SEED=12345 drandom >/dev/null 2>/dev/null
 	local second1=$(DRANDOM_STATE_HOME="$state_home" DRANDOM_CONTEXT="$ctx" drandom 2>/dev/null)
@@ -328,9 +333,6 @@ test_drandom() {
 	# Second pair: repeat the above; with proper persistence, the second value should match
 	DRANDOM_STATE_HOME="$state_home" DRANDOM_CONTEXT="$ctx" DRANDOM_SEED=12345 drandom >/dev/null 2>/dev/null
 	local second2=$(DRANDOM_STATE_HOME="$state_home" DRANDOM_CONTEXT="$ctx" drandom 2>/dev/null)
-
-	# Cleanup test seed file
-	rm -f "$state_home/drandom/$USER/${ctx}.seed" 2>/dev/null || true
 
 	if [ "$second1" = "$second2" ]; then
 		echo "✓ Cross-invocation determinism test passed"

@@ -23,6 +23,16 @@ if ! command -v "$AWK_BIN" >/dev/null 2>&1; then
 	exit 1
 fi
 
+platform=$(uname -s)
+PS_BIN=${CPUHOGS_PS:-ps}
+if [[ -z "${CPUHOGS_PS:-}" && "$platform" == "Darwin" && -x /bin/ps ]]; then
+	PS_BIN=/bin/ps
+fi
+if ! command -v "$PS_BIN" >/dev/null 2>&1; then
+	echo "cpuhogs: required ps binary '$PS_BIN' not found" >&2
+	exit 1
+fi
+
 count=15
 mode="group"
 show_detail=0
@@ -43,6 +53,7 @@ Options:
 
 Environment:
   CPUHOGS_AWK             awk interpreter to use (default gawk).
+  CPUHOGS_PS              ps executable to use (defaults to /bin/ps on macOS).
   CPUHOGS_TOTAL_CORES     Override detected logical CPU count.
   CPUHOGS_ALERT_THRESHOLD Minimum process count to flag in FYI alerts (default 10).
   CPUHOGS_PEG_THRESHOLD   Minimum per-core %CPU to treat as "pegged" (default 400).
@@ -109,8 +120,6 @@ detect_cpu_cores() {
 		echo "$override"
 		return
 	fi
-	local platform
-	platform=$(uname -s)
 	case "$platform" in
 		Linux)
 			if command -v nproc >/dev/null 2>&1; then
@@ -150,16 +159,16 @@ run_data_source() {
 	fi
 	case "$mode" in
 		GROUP)
-			ps axo pcpu=,command=
+			"$PS_BIN" axo pcpu=,comm=
 			;;
 		INDIVIDUAL)
-			ps axo pid=,user=,pcpu=,command=
+			"$PS_BIN" axo pid=,user=,pcpu=,command=
 			;;
 		DETAIL)
-			ps axo pcpu=,pid=,command=
+			"$PS_BIN" axo pcpu=,pid=,command=
 			;;
 		STATE)
-			ps axo state=,pid=,comm=
+			"$PS_BIN" axo state=,pid=,comm=
 			;;
 		*)
 			echo "cpuhogs: unknown data mode $mode" >&2
@@ -181,11 +190,8 @@ print_group_view() {
 	{
 		cpu = $1 + 0;
 		cmd = substr($0, index($0, $2));
-		split(cmd, parts, /[[:space:]]+/);
-		exe = parts[1];
-		if (exe == "") {
-			exe = "[unknown]";
-		}
+		gsub(/^[[:space:]]+|[[:space:]]+$/, "", cmd);
+		exe = (cmd == "") ? "[unknown]" : cmd;
 		cpu_map[exe] += cpu;
 		count_map[exe] += 1;
 	}
@@ -225,18 +231,14 @@ print_individual_view() {
 
 print_detail_summary() {
 	local detail_info detail_exe detail_cpu detail_count
-	detail_info=$(run_data_source DETAIL | "$AWK_BIN" '
+	local comm_file
+
+	detail_info=$(run_data_source GROUP | "$AWK_BIN" '
 	{
 		cpu = $1 + 0;
-		cmd = $3;
-		for (i = 4; i <= NF; ++i) {
-			cmd = cmd " " $i;
-		}
-		split(cmd, parts, /[[:space:]]+/);
-		exe = parts[1];
-		if (exe == "") {
-			exe = "[unknown]";
-		}
+		cmd = substr($0, index($0, $2));
+		gsub(/^[[:space:]]+|[[:space:]]+$/, "", cmd);
+		exe = (cmd == "") ? "[unknown]" : cmd;
 		cpu_map[exe] += cpu;
 		count_map[exe] += 1;
 	}
@@ -271,7 +273,29 @@ print_detail_summary() {
 	printf "\nFYI: %s spans %d processes consuming %.2f%% CPU total (%.2f%% of system).\n" \
 		"$detail_exe" "$detail_count" "$detail_cpu" "$detail_sys"
 
-	run_data_source DETAIL | sort -k1,1nr | "$AWK_BIN" -v exe="$detail_exe" -v limit="$count" -v cores="$total_cores" '
+	comm_file=$(mktemp --tmpdir cpuhogs-comm.XXXXXX)
+	run_data_source STATE >"$comm_file"
+
+	run_data_source DETAIL | sort -k1,1nr | "$AWK_BIN" -v exe="$detail_exe" -v limit="$count" -v cores="$total_cores" -v comm_file="$comm_file" '
+	function trim(s) {
+		gsub(/^[[:space:]]+|[[:space:]]+$/, "", s);
+		return s;
+	}
+	BEGIN {
+		while ((getline < comm_file) > 0) {
+			state = $1;
+			pid = $2;
+			comm = $3;
+			for (i = 4; i <= NF; ++i) {
+				comm = comm " " $i;
+			}
+			comm = trim(comm);
+			if (comm == "")
+				comm = "[unknown]";
+			comm_map[pid] = comm;
+		}
+		close(comm_file);
+	}
 	{
 		cpu = $1 + 0;
 		pid = $2;
@@ -279,9 +303,7 @@ print_detail_summary() {
 		for (i = 4; i <= NF; ++i) {
 			cmd = cmd " " $i;
 		}
-		split(cmd, parts, /[[:space:]]+/);
-		exe_path = parts[1];
-		if (exe_path == exe) {
+		if (comm_map[pid] == exe) {
 			if (!printed_header) {
 				printf "\n%-7s %9s %9s %s\n", "PID", "%CPU", "%SYS", "COMMAND";
 				printed_header = 1;
@@ -293,6 +315,8 @@ print_detail_summary() {
 		}
 	}
 	'
+
+	rm -f "$comm_file" 2>/dev/null || true
 }
 
 print_state_block() {
