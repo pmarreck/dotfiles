@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ "${1:-}" == "--test" ]]; then
+	shift || true
+	if [[ $# -gt 0 ]]; then
+		echo "hr: --test does not accept additional arguments" >&2
+		exit 1
+	fi
+	test_file="$HOME/dotfiles/bin/test/hr_test"
+	if [[ ! -x "$test_file" ]]; then
+		echo "hr: missing test file $test_file" >&2
+		exit 1
+	fi
+	"$test_file" >/dev/null
+	exit $?
+fi
+
+usage() {
+	cat <<'USAGE'
+Usage: hr
+
+Description:
+  Print a horizontal rule across the terminal width using "─".
+
+Options:
+  -h, --help   Show this help text.
+  -a, --about  Describe this tool.
+  --test       Run the hr test suite (stdout muted) and exit.
+
+Environment:
+  HR_WIDTH     Override detected terminal width.
+USAGE
+}
+
+about() {
+	echo "hr: print a horizontal rule across the terminal width."
+}
+
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+		-h|--help)
+			usage
+			exit 0
+			;;
+		-a|--about)
+			about
+			exit 0
+			;;
+		--*)
+			echo "hr: invalid option $1" >&2
+			usage >&2
+			exit 1
+			;;
+		-*)
+			echo "hr: invalid option $1" >&2
+			usage >&2
+			exit 1
+			;;
+		*)
+			echo "hr: unexpected positional argument '$1'" >&2
+			usage >&2
+			exit 1
+			;;
+	esac
+done
+
+width=${HR_WIDTH:-}
+if [[ -z "$width" ]]; then
+	if [[ -r /dev/tty ]]; then
+		if size=$(stty size </dev/tty 2>/dev/null); then
+			width=${size##* }
+		fi
+		if [[ -z "$width" ]]; then
+			width=$(tput cols </dev/tty 2>/dev/null || true)
+		fi
+	fi
+fi
+if [[ -z "$width" ]]; then
+	width=$(tput cols 2>/dev/null || true)
+fi
+if [[ -z "$width" ]]; then
+	width=${COLUMNS:-}
+fi
+width=${width//[[:space:]]/}
+if [[ -z "$width" || ! "$width" =~ ^[0-9]+$ || "$width" -le 0 ]]; then
+	width=80
+fi
+
+for ((i = 0; i < width; i++)); do
+	printf '─'
+done
+printf '\n'

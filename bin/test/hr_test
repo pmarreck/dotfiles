@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+
+set -uo pipefail
+
+fails=0
+tests=0
+
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+hr_cmd=${HR_BIN:-"$script_dir/../hr"}
+if [[ ! -x "$hr_cmd" ]]; then
+	echo "hr_test: unable to locate hr executable at $hr_cmd" >&2
+	exit 1
+fi
+
+((tests++))
+echo "Testing: hr --help shows usage..."
+if "$hr_cmd" --help >/tmp/hr_help 2>&1; then
+	if grep -q "Usage: hr" /tmp/hr_help; then
+		echo "✓ Test passed: help text present"
+	else
+		echo "✗ Test failed: help text missing" >&2
+		((fails++))
+	fi
+else
+	echo "✗ Test failed: hr --help exited non-zero" >&2
+	((fails++))
+fi
+
+((tests++))
+echo "Testing: hr honors HR_WIDTH for output length..."
+output=$(HR_WIDTH=5 "$hr_cmd")
+strip=$(printf '%s' "$output" | tr -d '\n')
+count=$(printf '%s' "$strip" | wc -m | tr -d ' ')
+if [[ "$count" == "5" ]]; then
+	if [[ "$strip" == "─────" ]]; then
+		echo "✓ Test passed: width and fill match"
+	else
+		echo "✗ Test failed: output does not match expected line" >&2
+		((fails++))
+	fi
+else
+	echo "✗ Test failed: expected length 5, got $count" >&2
+	((fails++))
+fi
+
+((tests++))
+echo "Testing: hr matches terminal width when TTY is available..."
+tty_width=""
+if [[ -r /dev/tty ]]; then
+	if size=$(stty size </dev/tty 2>/dev/null); then
+		tty_width=${size##* }
+	fi
+	if [[ -z "$tty_width" ]]; then
+		tty_width=$(tput cols </dev/tty 2>/dev/null || true)
+	fi
+fi
+if [[ -n "$tty_width" && "$tty_width" =~ ^[0-9]+$ && "$tty_width" -gt 0 ]]; then
+	tty_line=$("$hr_cmd")
+	tty_count=$(printf '%s' "$tty_line" | wc -m | tr -d ' ')
+	if [[ "$tty_count" == "$tty_width" ]]; then
+		echo "✓ Test passed: terminal width respected"
+	else
+		echo "✗ Test failed: expected width $tty_width, got $tty_count" >&2
+		((fails++))
+	fi
+else
+	echo "⚠ Skipping: no TTY width available for validation"
+fi
+
+echo "All $tests tests completed"
+exit $fails

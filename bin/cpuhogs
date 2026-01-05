@@ -436,6 +436,9 @@ print_fyi() {
 		if [[ -n "${outlier_lines:-}" ]]; then
 			printf "  Command storms (> %d processes):\n" "$alert_threshold"
 			printf '%s\n' "$outlier_lines" | sort -t $'\t' -k2,2nr | while IFS=$'\t' read -r cmd cnt; do
+				if [[ -z "$cmd" || -z "$cnt" || ! "$cnt" =~ ^[0-9]+$ ]]; then
+					continue
+				fi
 				printf "    %s (%d processes)\n" "$cmd" "$cnt"
 			done
 		fi
