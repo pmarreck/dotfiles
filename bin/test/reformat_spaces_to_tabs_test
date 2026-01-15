@@ -53,14 +53,14 @@ test_backup_directory() {
 	workdir=$(mktemp -d "${TMPDIR:-/tmp}/rstt_test.XXXXXX")
 	stderr_file=$(mktemp --tmpdir)
 	stdout_file=$(mktemp --tmpdir)
-	{
+	(
 		cd "$workdir"
 		cat <<'EOF' > sample.txt
   def foo
     puts "hello"
 EOF
 		reformat_spaces_to_tabs -i sample.txt >"$stdout_file" 2>"$stderr_file"
-	} || true
+	) || true
 	if grep -q '\.maybe-no-tabs' "$workdir"/sample.txt*; then
 		print_result 1
 		printf 'Unexpected backup alongside original file\n' >&2
