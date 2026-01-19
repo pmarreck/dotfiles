@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 
-source $HOME/dotfiles/bin/glob
+PATH="$HOME/bin:$PATH"
 
 test_glob() {
   local fails=0
   local tests=0
   local output
+  local glob_path
+
+  glob_path=$(command -v glob)
 
   # Create test directory
   pushd "$(mktemp --tmpdir -d glob_test.XXXXXX)" >/dev/null
@@ -112,23 +115,13 @@ test_glob() {
   (( tests++ ))
   # Create test file for this test
   touch aafirst.jpg
-  # Save current nullglob setting
-  local old_nullglob_setting
-  [[ -o nullglob ]] && old_nullglob_setting=true || old_nullglob_setting=false
-  
-  # Enable nullglob
-  shopt -s nullglob
-  
   # Test with ls command and nullglob enabled
   # When nullglob is set, non-matching patterns should be removed completely
-  output=$(glob ls "nonexistent*.jpg" "a*.jpg" 2>/dev/null)
+  output=$(bash -O nullglob "$glob_path" ls "nonexistent*.jpg" "a*.jpg" 2>/dev/null)
   # Should only include aafirst.jpg, not the nonexistent pattern
   expected_files="aafirst.jpg"
   assert "$output" == "$expected_files" "glob should respect nullglob setting (enabled)"
   (( fails += $? ))
-  
-  # Restore original nullglob setting
-  $old_nullglob_setting || shopt -u nullglob
   # Clean up test file
   rm -f aafirst.jpg
   
@@ -137,33 +130,49 @@ test_glob() {
   # Create test files including a hidden file
   touch ".hidden.jpg" aafirst.jpg "test with spaces.jpg" test1.jpg test2.jpg zzlast.jpg
   
-  # Save current dotglob setting
-  local old_dotglob_setting
-  [[ -o dotglob ]] && old_dotglob_setting=true || old_dotglob_setting=false
-  
-  # Enable dotglob
-  shopt -s dotglob
-  output=$(glob "*.jpg" 2>/dev/null)
+  output=$(bash -O dotglob "$glob_path" "*.jpg" 2>/dev/null)
   # Should include the hidden file
   expected_files=$'.hidden.jpg\naafirst.jpg\ntest with spaces.jpg\ntest1.jpg\ntest2.jpg\nzzlast.jpg'
   assert "$output" == "$expected_files" "glob should respect dotglob setting (enabled)"
   (( fails += $? ))
   
-  # Disable dotglob
-  shopt -u dotglob
-  output=$(glob "*.jpg" 2>/dev/null)
+  output=$(bash "$glob_path" "*.jpg" 2>/dev/null)
   # Should NOT include the hidden file
   expected_files=$'aafirst.jpg\ntest with spaces.jpg\ntest1.jpg\ntest2.jpg\nzzlast.jpg'
   assert "$output" == "$expected_files" "glob should respect dotglob setting (disabled)"
   (( fails += $? ))
   
-  # Restore original dotglob setting
-  $old_dotglob_setting && shopt -s dotglob || shopt -u dotglob
-  
   # Clean up all test files
   rm -f ".hidden.jpg" aafirst.jpg "test with spaces.jpg" test1.jpg test2.jpg zzlast.jpg
-  
-  # Test 12: Recursive globbing with ** pattern
+
+  # Test 12: --dotglob includes dotfiles even when dotglob is disabled
+  (( tests++ ))
+  touch ".hidden.par2"
+  output=$(bash "$glob_path" --dotglob "**/*.par2" 2>/dev/null)
+  expected_files=".hidden.par2"
+  assert "$output" == "$expected_files" "glob --dotglob should include dotfiles even when dotglob is disabled"
+  (( fails += $? ))
+  rm -f ".hidden.par2"
+
+  # Test 13: --dotfiles is a synonym for --dotglob
+  (( tests++ ))
+  touch ".hidden.par2"
+  output=$(bash "$glob_path" --dotfiles "**/*.par2" 2>/dev/null)
+  expected_files=".hidden.par2"
+  assert "$output" == "$expected_files" "glob --dotfiles should include dotfiles like --dotglob"
+  (( fails += $? ))
+  rm -f ".hidden.par2"
+
+  # Test 14: --all includes dotfiles even when dotglob is disabled
+  (( tests++ ))
+  touch ".hidden1.par2" ".hidden2.par2"
+  output=$(bash "$glob_path" --all "**/*.par2" 2>/dev/null)
+  expected_files=$'.hidden1.par2\n.hidden2.par2'
+  assert "$output" == "$expected_files" "glob --all should include dotfiles even when dotglob is disabled"
+  (( fails += $? ))
+  rm -f ".hidden1.par2" ".hidden2.par2"
+
+  # Test 15: Recursive globbing with ** pattern
   (( tests++ ))
   # Create a subdirectory structure and files
   mkdir -p subdir1/subdir2
@@ -178,8 +187,8 @@ test_glob() {
   # Clean up test files and directories
   rm -f aafirst.jpg "test with spaces.jpg" test1.jpg test2.jpg zzlast.jpg
   rm -rf subdir1
-  
-  # Test 13: Recursive globbing with set -f (globbing disabled)
+
+  # Test 16: Recursive globbing with set -f (globbing disabled)
   (( tests++ ))
   # Create a subdirectory structure and files
   mkdir -p subdir1/subdir2
@@ -202,7 +211,7 @@ test_glob() {
   rm -f aafirst.jpg "test with spaces.jpg" test1.jpg test2.jpg zzlast.jpg
   rm -rf subdir1
   
-  # Test 14: Command with recursive pattern
+  # Test 17: Command with recursive pattern
   (( tests++ ))
   # Create a subdirectory structure and files
   mkdir -p subdir1/subdir2
@@ -216,26 +225,17 @@ test_glob() {
   rm -f aafirst.jpg "test with spaces.jpg" test1.jpg test2.jpg zzlast.jpg
   rm -rf subdir1
   
-  # Test 15: Recursive pattern with nullglob
+  # Test 18: Recursive pattern with nullglob
   (( tests++ ))
-  # Save current nullglob setting
-  local old_nullglob_setting
-  [[ -o nullglob ]] && old_nullglob_setting=true || old_nullglob_setting=false
-  
-  # Enable nullglob
-  shopt -s nullglob
   # Test with a non-matching recursive pattern and command mode
   # When nullglob is set, non-matching patterns should be removed completely
-  output=$(glob ls "**/nonexistent*.jpg" 2>/dev/null)
+  output=$(bash -O nullglob "$glob_path" ls "**/nonexistent*.jpg" 2>/dev/null)
   # Should be empty with nullglob
   expected_files=""
   assert "$output" == "$expected_files" "glob should respect nullglob with recursive patterns"
   (( fails += $? ))
   
-  # Restore original nullglob setting
-  $old_nullglob_setting || shopt -u nullglob
-  
-  # Test 16: Case-insensitive matching with --ignore-case
+  # Test 19: Case-insensitive matching with --ignore-case
   (( tests++ ))
   # Create test files with mixed case (including lowercase files for case-sensitive test)
   touch "Test.JPG" "test.Jpg" "TEST.jpg" "other.png" "test with spaces.jpg" "test1.jpg" "test2.jpg"
@@ -253,14 +253,14 @@ test_glob() {
   assert "$output" == "$expected_files" "glob should match case-insensitively with --ignore-case"
   (( fails += $? ))
   
-  # Test 18: Case-insensitive matching with -i (shorthand)
+  # Test 21: Case-insensitive matching with -i (shorthand)
   (( tests++ ))
   output=$(glob -i "test*.jpg" 2>/dev/null)
   expected_files=$'TEST.jpg\nTest.JPG\ntest with spaces.jpg\ntest.Jpg\ntest1.jpg\ntest2.jpg'
   assert "$output" == "$expected_files" "glob should match case-insensitively with -i shorthand"
   (( fails += $? ))
   
-  # Test 19: Case-insensitive with command execution
+  # Test 22: Case-insensitive with command execution
   (( tests++ ))
   output=$(glob -i echo "test*.jpg" 2>/dev/null)
   expected_files="TEST.jpg Test.JPG test with spaces.jpg test.Jpg test1.jpg test2.jpg"
@@ -270,7 +270,7 @@ test_glob() {
   # Clean up case-insensitive test files
   rm -f "Test.JPG" "test.Jpg" "TEST.jpg" "other.png" "test with spaces.jpg" "test1.jpg" "test2.jpg"
   
-  # Test 20: Mixed matching and non-matching patterns
+  # Test 23: Mixed matching and non-matching patterns
   (( tests++ ))
   # Create test files for this test
   touch test1.jpg test2.jpg
@@ -281,14 +281,14 @@ test_glob() {
   # Clean up test files
   rm -f test1.jpg test2.jpg
   
-  # Test 21: All patterns non-matching should return empty and exit 1
+  # Test 24: All patterns non-matching should return empty and exit 1
   (( tests++ ))
   glob "nonexistent1*.jpg" "nonexistent2*.png" >/dev/null 2>&1
   exit_code=$?
   assert "$exit_code" == "1" "glob should return exit code 1 when no patterns match"
   (( fails += $? ))
   
-  # Test 22: Mixed patterns with command execution
+  # Test 25: Mixed patterns with command execution
   (( tests++ ))
   # Create test files for this test
   touch test1.jpg test2.jpg
@@ -299,7 +299,7 @@ test_glob() {
   # Clean up test files
   rm -f test1.jpg test2.jpg
   
-  # Test 23: Quoted brace expansion with simple patterns
+  # Test 26: Quoted brace expansion with simple patterns
   (( tests++ ))
   # Create test files for brace expansion
   touch test1.jpg test2.jpg test.png
@@ -310,7 +310,7 @@ test_glob() {
   # Clean up test files
   rm -f test1.jpg test2.jpg test.png
   
-  # Test 24: Quoted brace expansion with spaces in paths
+  # Test 27: Quoted brace expansion with spaces in paths
   (( tests++ ))
   # Create directory and files with spaces for this test
   mkdir -p "dir with spaces"
@@ -322,7 +322,7 @@ test_glob() {
   # Clean up test files and directory
   rm -rf "dir with spaces"
   
-  # Test 25: Quoted brace expansion with command execution
+  # Test 28: Quoted brace expansion with command execution
   (( tests++ ))
   # Create test files for command mode brace expansion
   touch test1.jpg test2.jpg test.png
@@ -333,7 +333,7 @@ test_glob() {
   # Clean up test files
   rm -f test1.jpg test2.jpg test.png
   
-  # Test 26: Complex brace expansion with multiple braces
+  # Test 29: Complex brace expansion with multiple braces
   (( tests++ ))
   touch "a.txt" "b.txt" "c.log" "d.log"
   output=$(glob "*.{txt,log}" 2>/dev/null)
@@ -343,7 +343,7 @@ test_glob() {
   # Clean up test files
   rm -f "a.txt" "b.txt" "c.log" "d.log"
   
-  # Test 27: Nested brace expansion (if supported by bash)
+  # Test 30: Nested brace expansion (if supported by bash)
   (( tests++ ))
   touch "file1.jpg" "file2.jpg" "file1.png" "file2.png"
   output=$(glob "file{1,2}.{jpg,png}" 2>/dev/null)
@@ -353,7 +353,7 @@ test_glob() {
   # Clean up test files
   rm -f "file1.jpg" "file2.jpg" "file1.png" "file2.png"
   
-  # Test 28: Case-insensitive with quoted brace expansion and wildcards
+  # Test 31: Case-insensitive with quoted brace expansion and wildcards
   (( tests++ ))
   touch "CaseTest.jpg" "CaseTest.png"
   output=$(glob -i "casetest*.{jpg,png}" 2>/dev/null)
@@ -363,7 +363,7 @@ test_glob() {
   # Clean up test files
   rm -f "CaseTest.jpg" "CaseTest.png"
   
-  # Test 29: Case-insensitive recursive brace expansion should not treat first result as command
+  # Test 32: Case-insensitive recursive brace expansion should not treat first result as command
   (( tests++ ))
   # Create test files in subdirectories (recursive patterns only match subdirectories)
   mkdir -p "subdir with spaces"
@@ -375,7 +375,7 @@ test_glob() {
   # Clean up test files
   rm -rf "subdir with spaces"
   
-  # Test 30: Relative path to executable should work in command mode
+  # Test 33: Relative path to executable should work in command mode
   (( tests++ ))
   # Create a substantial executable script that file will recognize
   cat > my-script << 'EOF'
@@ -394,7 +394,7 @@ EOF
   # Clean up
   rm -f my-script test.txt other.txt
   
-  # Test 31: Absolute path to executable should work in command mode  
+  # Test 34: Absolute path to executable should work in command mode  
   (( tests++ ))
   touch test.txt other.txt
   # Use the actual path to echo on this system
@@ -406,7 +406,7 @@ EOF
   # Clean up
   rm -f test.txt other.txt
   
-  # Test 32: Non-executable file should be treated as pattern (direct mode)
+  # Test 35: Non-executable file should be treated as pattern (direct mode)
   (( tests++ ))
   echo "not a script" > not-executable
   touch test.txt
@@ -417,7 +417,7 @@ EOF
   # Clean up
   rm -f not-executable test.txt
   
-  # Test 33: File path with spaces should be direct mode (not treated as command)
+  # Test 36: File path with spaces should be direct mode (not treated as command)
   (( tests++ ))
   touch "file with spaces.jpg" "other.txt"
   output=$(glob "file with spaces.jpg" "*.txt" 2>/dev/null)
@@ -427,7 +427,7 @@ EOF
   # Clean up
   rm -f "file with spaces.jpg" "other.txt"
   
-  # Test 34: Executable file with path separators should be direct mode when it's clearly a filename
+  # Test 37: Executable file with path separators should be direct mode when it's clearly a filename
   (( tests++ ))
   mkdir -p subdir
   # Create a file that looks like a data file but is technically executable
@@ -447,7 +447,7 @@ EOF
   # Clean up
   rm -rf subdir test.txt
   
-  # Test 35: Relative pattern with spaces and slashes globs correctly (direct mode)
+  # Test 38: Relative pattern with spaces and slashes globs correctly (direct mode)
   (( tests++ ))
   mkdir -p "sys (twserver)/system/SAGA"
   touch "sys (twserver)/system/SAGA/A.md" "sys (twserver)/system/SAGA/B.txt" "sys (twserver)/system/SAGA/C.MD"
@@ -456,7 +456,7 @@ EOF
   assert "$output" == "$expected_files" "glob should glob relative pattern with spaces and slashes (case-sensitive)"
   (( fails += $? ))
   
-  # Test 36: Relative pattern with spaces and slashes with --ignore-case (direct mode)
+  # Test 39: Relative pattern with spaces and slashes with --ignore-case (direct mode)
   (( tests++ ))
   output=$(glob --ignore-case "sys (twserver)/system/SAGA/*.md" 2>/dev/null)
   expected_files=$'sys (twserver)/system/SAGA/A.md\nsys (twserver)/system/SAGA/C.MD'
@@ -466,7 +466,7 @@ EOF
   # Cleanup for tests 35/36
   rm -rf "sys (twserver)"
   
-  # Test 37: Default output format should be newline-separated without escaping
+  # Test 40: Default output format should be newline-separated without escaping
   (( tests++ ))
   touch "test with spaces.jpg" "other.txt"
   output=$(glob "*.jpg" "*.txt" 2>/dev/null)
@@ -475,7 +475,7 @@ EOF
   (( fails += $? ))
   rm -f "test with spaces.jpg" "other.txt"
   
-  # Test 38: -n flag should produce space-separated output with escaping (old behavior)
+  # Test 41: -n flag should produce space-separated output with escaping (old behavior)
   (( tests++ ))
   touch "test with spaces.jpg" "other.txt"
   output=$(glob -n "*.jpg" "*.txt" 2>/dev/null)
@@ -484,7 +484,7 @@ EOF
   (( fails += $? ))
   rm -f "test with spaces.jpg" "other.txt"
   
-  # Test 39: -0 flag should produce null-separated output without escaping
+  # Test 42: -0 flag should produce null-separated output without escaping
   (( tests++ ))
   touch "test with spaces.jpg" "other.txt"
   output=$(glob -0 "*.jpg" "*.txt" 2>/dev/null | tr '\0' '|')
@@ -493,7 +493,7 @@ EOF
   (( fails += $? ))
   rm -f "test with spaces.jpg" "other.txt"
   
-  # Test 40: Last flag wins (-0 after -n)
+  # Test 43: Last flag wins (-0 after -n)
   (( tests++ ))
   touch "test with spaces.jpg" "other.txt"
   output=$(glob -n -0 "*.jpg" "*.txt" 2>/dev/null | tr '\0' '|')
@@ -502,7 +502,7 @@ EOF
   (( fails += $? ))
   rm -f "test with spaces.jpg" "other.txt"
   
-  # Test 41: Last flag wins (-n after -0)
+  # Test 44: Last flag wins (-n after -0)
   (( tests++ ))
   touch "test with spaces.jpg" "other.txt"  
   output=$(glob -0 -n "*.jpg" "*.txt" 2>/dev/null)
@@ -511,7 +511,7 @@ EOF
   (( fails += $? ))
   rm -f "test with spaces.jpg" "other.txt"
 
-  # Test 42: Recursive globbing should include directories (e.g. **/node_modules)
+  # Test 45: Recursive globbing should include directories (e.g. **/node_modules)
   (( tests++ ))
   mkdir -p project/node_modules lib/components/node_modules shared/plugins
   output=$(glob "**/node_modules" 2>/dev/null)
@@ -520,7 +520,7 @@ EOF
   (( fails += $? ))
   rm -rf project lib shared
 
-  # Test 43: --double-quote should wrap output and escape embedded quotes
+  # Test 46: --double-quote should wrap output and escape embedded quotes
   (( tests++ ))
   touch 'plain.txt' 'file "quote".txt'
   output=$(glob --double-quote "*.txt" 2>/dev/null)
@@ -529,7 +529,7 @@ EOF
   (( fails += $? ))
   rm -f 'plain.txt' 'file "quote".txt'
 
-  # Test 44: --double-quote should ignore -n with warning
+  # Test 47: --double-quote should ignore -n with warning
   (( tests++ ))
   touch warn.txt
   warning=$(glob --double-quote -n "*.txt" 2>&1 >/dev/null)
@@ -537,7 +537,7 @@ EOF
   (( fails += $? ))
   rm -f warn.txt
 
-  # Test 45: --double-quote should ignore -0 with warning
+  # Test 48: --double-quote should ignore -0 with warning
   (( tests++ ))
   touch warn0.txt
   warning=$(glob --double-quote -0 "*.txt" 2>&1 >/dev/null)
@@ -545,12 +545,73 @@ EOF
   (( fails += $? ))
   rm -f warn0.txt
   
-  # Test 46: --double-quote should not be allowed in command mode
+  # Test 49: --double-quote should not be allowed in command mode
   (( tests++ ))
   glob --double-quote echo "*.txt" >/dev/null 2>&1
   exit_code=$?
   assert "$exit_code" == "2" "glob --double-quote should error in command mode"
   (( fails += $? ))
+
+  # Test 50: Command mode should error when argument list is too long without --batch
+  (( tests++ ))
+  mkdir -p many-args
+  local too_many_files=()
+  for i in {1..12}; do
+    printf -v filename "many-args/file_%02d_with_a_very_long_name.par2" "$i"
+    touch "$filename"
+    too_many_files+=("$filename")
+  done
+  output=$(GLOB_ARG_MAX=200 glob rm "many-args/*.par2" 2>&1 >/dev/null)
+  exit_code=$?
+  assert "$exit_code" == "2" "glob should error when arguments exceed ARG_MAX without --batch"
+  (( fails += $? ))
+  assert "$output" =~ "--batch" "glob should suggest --batch when arguments are too long"
+  (( fails += $? ))
+  rm -rf many-args
+
+  # Test 51: --batch should split command executions to stay under ARG_MAX
+  (( tests++ ))
+  mkdir -p many-args
+  local batched_files=()
+  for i in {1..12}; do
+    printf -v filename "many-args/file_%02d_with_a_very_long_name.par2" "$i"
+    touch "$filename"
+    batched_files+=("$filename")
+  done
+  cat > "print-args" << 'EOF'
+#!/usr/bin/env bash
+if [ -n "$RUN_LOG" ]; then
+	echo "run" >> "$RUN_LOG"
+fi
+printf "%s\n" "$@"
+EOF
+  chmod +x "print-args"
+  run_log="$PWD/run-log.txt"
+  batch_err_file="$PWD/batch-err.txt"
+  output=$(RUN_LOG="$run_log" GLOB_ARG_MAX=200 glob --batch "$PWD/print-args" "many-args/*.par2" 2>"$batch_err_file")
+  expected_output=$(printf "%s\n" "${batched_files[@]}" | LC_ALL=C sort)
+  assert "$output" == "$expected_output" "glob --batch should return all arguments across chunks"
+  (( fails += $? ))
+  run_count=$(wc -l < "$run_log" | tr -d ' ')
+  if (( run_count >= 2 )); then
+    :
+  else
+    echo "Expected --batch to run command multiple times (got $run_count)" >&2
+    (( fails++ ))
+  fi
+  batch_err=$(cat "$batch_err_file")
+  assert "$batch_err" =~ "batching results into" "glob --batch should announce batching"
+  (( fails += $? ))
+  batch_lines=$(printf "%s" "$batch_err" | grep -c "Batch [0-9][0-9]*/[0-9][0-9]* done")
+  if (( batch_lines == run_count )); then
+    :
+  else
+    echo "Expected $run_count batch messages (got $batch_lines)" >&2
+    (( fails++ ))
+  fi
+  assert "$batch_err" =~ "ETA" "glob --batch should include ETA after first batch"
+  (( fails += $? ))
+  rm -rf many-args "print-args" "$run_log" "$batch_err_file"
 
   # Leave temp dir (mktemp -d creates a temporary directory that will be cleaned up by the system)
   popd >/dev/null

@@ -23,6 +23,10 @@ USAGE:
 
 OPTIONS:
 	-i, --ignore-case                Case-insensitive pattern matching
+	--dotglob                       Include dotfiles in matches (overrides shell dotglob setting)
+	--dotfiles                      Synonym for --dotglob
+	--all                           No restrictions (includes dotfiles)
+	--batch                         Run command in chunks to avoid ARG_MAX limits
 	--double-quote                   Newline-separated, double-quoted output with embedded quotes escaped
 	-n                               Space-separated output with shell escaping
 	-0                               Null-separated output without escaping
@@ -51,6 +55,8 @@ EXAMPLES:
 	# Dotfiles (hidden files):
 	glob ".*"                      Find dotfiles in current directory
 	glob "**/.git"                 Find all .git directories recursively
+	glob --dotglob "**/*.par2"     Include dotfile matches like .file.par2
+	glob --batch rm "**/*.par2"    Run rm in batches when many matches
 	
 	# Non-matching pattern behavior:
 	glob "*.nonexistent"           Empty output, exit code 1
@@ -70,7 +76,8 @@ DESCRIPTION:
 	PATTERN BEHAVIOR:
 	- Standard glob patterns: * ? [abc]
 	- Recursive patterns: ** (matches subdirectories)
-	- Dotfiles: Hidden files (.*) are excluded by default unless explicitly matched
+	- Dotfiles: Hidden files (.*) are excluded by default unless explicitly matched,
+	  or when --dotglob/--all is used
 	- Case sensitivity: Patterns are case-sensitive by default
 	- Brace expansion: Use quoted patterns like "*.{png,jpg}" for multiple types
 	
@@ -96,6 +103,22 @@ DESCRIPTION:
 
 	The -i/--ignore-case option enables case-insensitive pattern matching,
 	so "*.jpg" will match "*.JPG", "*.Jpg", etc.
+
+	When globbing requires filesystem traversal, glob prefers fd/fdfind if
+	available and falls back to find (with a warning) if not.
+
+	If command execution would exceed ARG_MAX, glob errors and recommends
+	using --batch to split the command into chunks.
+
+	FD INSTALL (recommended for fast traversal):
+	- macOS (Homebrew): brew install fd
+	- Debian/Ubuntu: sudo apt install fd-find   (binary: fdfind)
+	- Fedora/RHEL: sudo dnf install fd-find
+	- Arch: sudo pacman -S fd
+	- Nix (nix profile): nix profile install nixpkgs#fd
+	- Nix (nix-shell): nix-shell -p fd
+	- NixOS: environment.systemPackages = with pkgs; [ fd ];
+	- Home Manager: home.packages = [ pkgs.fd ];
 EOF
 	}
 
@@ -111,6 +134,8 @@ EOF
 
 	# Parse flags
 	local ignore_case=false
+	local include_dotfiles=false
+	local batch_mode=false
 	local output_format="newline"  # default: newline-separated
 	local double_quote=false
 	local space_flag=false
@@ -122,6 +147,18 @@ EOF
 		case "$1" in
 			-i|--ignore-case)
 				ignore_case=true
+				shift
+				;;
+			--dotglob|--dotfiles)
+				include_dotfiles=true
+				shift
+				;;
+			--all)
+				include_dotfiles=true
+				shift
+				;;
+			--batch)
+				batch_mode=true
 				shift
 				;;
 			--double-quote)
@@ -214,13 +251,356 @@ EOF
 	fi
 
 	# Store other globbing options
-	[[ -o nullglob ]] && nullglob_set=true || nullglob_set=false
-	[[ -o dotglob ]] && dotglob_set=true || dotglob_set=false
+	shopt -q nullglob && nullglob_set=true || nullglob_set=false
+	shopt -q dotglob && dotglob_set=true || dotglob_set=false
 	shopt -q nocaseglob && nocaseglob_set=true || nocaseglob_set=false
+	
+	local dotglob_effective=$dotglob_set
+	local dotglob_forced=false
+	if $include_dotfiles; then
+		dotglob_effective=true
+	fi
+	
+	local finder_cmd="find"
+	local finder_kind="find"
+	local finder_warned=false
+	if command -v fd >/dev/null 2>&1; then
+		finder_cmd="fd"
+		finder_kind="fd"
+	elif command -v fdfind >/dev/null 2>&1; then
+		finder_cmd="fdfind"
+		finder_kind="fd"
+	fi
+	
+	_warn_find_fallback() {
+		if [[ "$finder_kind" == "find" && "$finder_warned" == false ]]; then
+			echo "Warning: fd/fdfind not found; falling back to find" >&2
+			finder_warned=true
+		fi
+	}
+	
+	_get_arg_max() {
+		if [[ -n "$GLOB_ARG_MAX" && "$GLOB_ARG_MAX" =~ ^[0-9]+$ ]]; then
+			echo "$GLOB_ARG_MAX"
+			return 0
+		fi
+		local arg_max
+		arg_max=$(getconf ARG_MAX 2>/dev/null)
+		if [[ -n "$arg_max" && "$arg_max" =~ ^[0-9]+$ ]]; then
+			echo "$arg_max"
+			return 0
+		fi
+		return 1
+	}
+	
+	_get_arg_budget() {
+		local arg_max
+		arg_max=$(_get_arg_max) || return 1
+		local percent_buffer=$((arg_max / 10))
+		local min_buffer=4096
+		local buffer=$min_buffer
+		if (( percent_buffer > min_buffer )); then
+			buffer=$percent_buffer
+		fi
+		if (( arg_max > buffer )); then
+			echo $((arg_max - buffer))
+		else
+			echo "$arg_max"
+		fi
+	}
+	
+	_arg_total_bytes() {
+		local total=0
+		local item
+		for item in "$@"; do
+			(( total += ${#item} + 1 ))
+		done
+		echo "$total"
+	}
+
+	_format_duration() {
+		local seconds="$1"
+		local hours=$((seconds / 3600))
+		local minutes=$(((seconds % 3600) / 60))
+		local secs=$((seconds % 60))
+		if (( hours > 0 )); then
+			printf "%dh%02dm%02ds" "$hours" "$minutes" "$secs"
+		elif (( minutes > 0 )); then
+			printf "%dm%02ds" "$minutes" "$secs"
+		else
+			printf "%ds" "$secs"
+		fi
+	}
+	
+	_run_batched() {
+		local cmd="$1"
+		shift
+		
+		local arg_max
+		arg_max=$(_get_arg_max) || arg_max=""
+		local budget
+		budget=$(_get_arg_budget) || budget=""
+		local chunk_budget
+		if [[ -n "$budget" ]]; then
+			chunk_budget=$((budget / 2))
+			if (( chunk_budget <= 0 || chunk_budget <= ${#cmd} + 1 )); then
+				chunk_budget=$budget
+			fi
+		else
+			chunk_budget=""
+		fi
+		local total_bytes
+		local batch_count=0
+		local batch_durations=()
+		
+		local overall_status=0
+		local chunk=()
+		local base_size=$(( ${#cmd} + 1 ))
+		local current_size=$base_size
+		
+		if [[ -z "$budget" ]]; then
+			echo "Warning: ARG_MAX unavailable; batching one argument per command" >&2
+			batch_count=$#
+			local batch_index=0
+			for item in "$@"; do
+				local batch_start=$SECONDS
+				"$cmd" "$item"
+				local status=$?
+				if (( status != 0 )); then
+					overall_status=$status
+				fi
+				batch_index=$((batch_index + 1))
+				local batch_seconds=$((SECONDS - batch_start))
+				if (( batch_seconds <= 0 )); then
+					batch_seconds=1
+				fi
+				batch_durations+=("$batch_seconds")
+				if (( ${#batch_durations[@]} > 5 )); then
+					batch_durations=("${batch_durations[@]:1}")
+				fi
+				local eta_text=""
+				if (( batch_index < batch_count )); then
+					local sum=0
+					local d
+					for d in "${batch_durations[@]}"; do
+						(( sum += d ))
+					done
+					local avg=$((sum / ${#batch_durations[@]}))
+					if (( avg <= 0 )); then
+						avg=1
+					fi
+					local remaining_batches=$((batch_count - batch_index))
+					local eta_seconds=$((avg * remaining_batches))
+					eta_text=" (ETA ~$(_format_duration "$eta_seconds"))"
+				fi
+				echo "Batch $batch_index/$batch_count done$eta_text" >&2
+			done
+			return $overall_status
+		fi
+		
+		total_bytes=$(_arg_total_bytes "$cmd" "$@")
+		local item
+		local item_size
+		local chunk_size=0
+		for item in "$@"; do
+			item_size=$(( ${#item} + 1 ))
+			if (( item_size + base_size > budget )); then
+				echo "Error: argument too long for system ARG_MAX; cannot batch safely: $item" >&2
+				return 2
+			fi
+			if (( item_size + base_size > chunk_budget )); then
+				if (( chunk_size > 0 )); then
+					batch_count=$((batch_count + 1))
+					current_size=$base_size
+					chunk_size=0
+				fi
+				batch_count=$((batch_count + 1))
+				continue
+			fi
+			
+			if (( current_size + item_size > chunk_budget )) && (( chunk_size > 0 )); then
+				batch_count=$((batch_count + 1))
+				current_size=$base_size
+				chunk_size=0
+			fi
+			
+			current_size=$(( current_size + item_size ))
+			chunk_size=$(( chunk_size + 1 ))
+		done
+		if (( chunk_size > 0 )); then
+			batch_count=$((batch_count + 1))
+		fi
+		
+		if (( batch_count > 1 )); then
+			if (( total_bytes > budget )); then
+				echo "Results > ARG_MAX; batching results into $batch_count batches:" >&2
+			else
+				echo "Batching results into $batch_count batches:" >&2
+			fi
+		fi
+		
+		local batch_index=0
+		for item in "$@"; do
+			item_size=$(( ${#item} + 1 ))
+			if (( item_size + base_size > budget )); then
+				echo "Error: argument too long for system ARG_MAX; cannot batch safely: $item" >&2
+				return 2
+			fi
+			if (( item_size + base_size > chunk_budget )); then
+				if [[ ${#chunk[@]} -gt 0 ]]; then
+					local batch_start=$SECONDS
+					"$cmd" "${chunk[@]}"
+					local status=$?
+					if (( status != 0 )); then
+						overall_status=$status
+					fi
+					batch_index=$((batch_index + 1))
+					local eta_text=""
+					if (( batch_index < batch_count )); then
+						local batch_seconds=$((SECONDS - batch_start))
+						if (( batch_seconds <= 0 )); then
+							batch_seconds=1
+						fi
+						batch_durations+=("$batch_seconds")
+						if (( ${#batch_durations[@]} > 5 )); then
+							batch_durations=("${batch_durations[@]:1}")
+						fi
+						local sum=0
+						local d
+						for d in "${batch_durations[@]}"; do
+							(( sum += d ))
+						done
+						local avg=$((sum / ${#batch_durations[@]}))
+						if (( avg <= 0 )); then
+							avg=1
+						fi
+						local remaining_batches=$((batch_count - batch_index))
+						local eta_seconds=$((avg * remaining_batches))
+						eta_text=" (ETA ~$(_format_duration "$eta_seconds"))"
+					fi
+					echo "Batch $batch_index/$batch_count done$eta_text" >&2
+					chunk=()
+					current_size=$base_size
+				fi
+				
+				local batch_start=$SECONDS
+				"$cmd" "$item"
+				local status=$?
+				if (( status != 0 )); then
+					overall_status=$status
+				fi
+				batch_index=$((batch_index + 1))
+				local eta_text=""
+				if (( batch_index < batch_count )); then
+					local batch_seconds=$((SECONDS - batch_start))
+					if (( batch_seconds <= 0 )); then
+						batch_seconds=1
+					fi
+					batch_durations+=("$batch_seconds")
+					if (( ${#batch_durations[@]} > 5 )); then
+						batch_durations=("${batch_durations[@]:1}")
+					fi
+					local sum=0
+					local d
+					for d in "${batch_durations[@]}"; do
+						(( sum += d ))
+					done
+					local avg=$((sum / ${#batch_durations[@]}))
+					if (( avg <= 0 )); then
+						avg=1
+					fi
+					local remaining_batches=$((batch_count - batch_index))
+					local eta_seconds=$((avg * remaining_batches))
+					eta_text=" (ETA ~$(_format_duration "$eta_seconds"))"
+				fi
+				echo "Batch $batch_index/$batch_count done$eta_text" >&2
+				continue
+			fi
+			
+			if (( current_size + item_size > chunk_budget )) && [[ ${#chunk[@]} -gt 0 ]]; then
+				local batch_start=$SECONDS
+				"$cmd" "${chunk[@]}"
+				local status=$?
+				if (( status != 0 )); then
+					overall_status=$status
+				fi
+				batch_index=$((batch_index + 1))
+				local batch_seconds=$((SECONDS - batch_start))
+				if (( batch_seconds <= 0 )); then
+					batch_seconds=1
+				fi
+				batch_durations+=("$batch_seconds")
+				if (( ${#batch_durations[@]} > 5 )); then
+					batch_durations=("${batch_durations[@]:1}")
+				fi
+				local eta_text=""
+				if (( batch_index < batch_count )); then
+					local sum=0
+					local d
+					for d in "${batch_durations[@]}"; do
+						(( sum += d ))
+					done
+					local avg=$((sum / ${#batch_durations[@]}))
+					if (( avg <= 0 )); then
+						avg=1
+					fi
+					local remaining_batches=$((batch_count - batch_index))
+					local eta_seconds=$((avg * remaining_batches))
+					eta_text=" (ETA ~$(_format_duration "$eta_seconds"))"
+				fi
+				echo "Batch $batch_index/$batch_count done$eta_text" >&2
+				chunk=()
+				current_size=$base_size
+			fi
+			
+			chunk+=("$item")
+			current_size=$(( current_size + item_size ))
+		done
+		
+		if [[ ${#chunk[@]} -gt 0 ]]; then
+			local batch_start=$SECONDS
+			"$cmd" "${chunk[@]}"
+			local status=$?
+			if (( status != 0 )); then
+				overall_status=$status
+			fi
+			batch_index=$((batch_index + 1))
+			local batch_seconds=$((SECONDS - batch_start))
+			if (( batch_seconds <= 0 )); then
+				batch_seconds=1
+			fi
+			batch_durations+=("$batch_seconds")
+			if (( ${#batch_durations[@]} > 5 )); then
+				batch_durations=("${batch_durations[@]:1}")
+			fi
+			local eta_text=""
+			if (( batch_index < batch_count )); then
+				local sum=0
+				local d
+				for d in "${batch_durations[@]}"; do
+					(( sum += d ))
+				done
+				local avg=$((sum / ${#batch_durations[@]}))
+				if (( avg <= 0 )); then
+					avg=1
+				fi
+				local remaining_batches=$((batch_count - batch_index))
+				local eta_seconds=$((avg * remaining_batches))
+				eta_text=" (ETA ~$(_format_duration "$eta_seconds"))"
+			fi
+			echo "Batch $batch_index/$batch_count done$eta_text" >&2
+		fi
+		
+		return $overall_status
+	}
 
 	# Enable globbing but respect existing nullglob and dotglob settings
 	set +f           # Enable globbing
-	# We don't change nullglob and dotglob settings - respect user's preferences
+	# We don't change nullglob; dotglob may be enabled temporarily with --dotglob/--all
+	if $include_dotfiles && ! $dotglob_set; then
+		shopt -s dotglob
+		dotglob_forced=true
+	fi
 	
 	# Enable nocaseglob if ignore_case flag is set
 	if $ignore_case; then
@@ -275,6 +655,25 @@ EOF
 		echo "Error: --double-quote cannot be used with command execution" >&2
 		# Restore original settings before exiting
 		if $glob_disabled; then set -f; fi
+		if $dotglob_forced; then
+			shopt -u dotglob
+		fi
+		if $ignore_case; then
+			if $nocaseglob_set; then
+				shopt -s nocaseglob
+			else
+				shopt -u nocaseglob
+			fi
+		fi
+		return 2
+	fi
+	if $batch_mode && [[ -z "$exec_command" ]]; then
+		echo "Error: --batch requires a command" >&2
+		# Restore original settings before exiting
+		if $glob_disabled; then set -f; fi
+		if $dotglob_forced; then
+			shopt -u dotglob
+		fi
 		if $ignore_case; then
 			if $nocaseglob_set; then
 				shopt -s nocaseglob
@@ -310,12 +709,34 @@ EOF
 				fi
 				
 				if [[ "$arg" == *" "* ]]; then
-					# For patterns with spaces, use find
-					while IFS= read -r -d $'\0' file; do
-						# Remove ./ prefix if present
-						file="${file#./}"
-						matches+=("$file")
-					done < <(find . -maxdepth 1 -name "$arg" -print0 2>/dev/null)
+					# For patterns with spaces, use fd/fdfind or find
+					if [[ "$finder_kind" == "fd" ]]; then
+						local fd_args=("$finder_cmd" "--glob" "$arg" "--max-depth" "1" "--print0" "--no-ignore" ".")
+						if $dotglob_effective; then
+							fd_args=("$finder_cmd" "--hidden" "--glob" "$arg" "--max-depth" "1" "--print0" "--no-ignore" ".")
+						fi
+						while IFS= read -r -d $'\0' file; do
+							# Remove ./ prefix if present
+							file="${file#./}"
+							file="${file%/}"
+							matches+=("$file")
+						done < <("${fd_args[@]}" 2>/dev/null)
+					else
+						_warn_find_fallback
+						if $dotglob_effective; then
+							while IFS= read -r -d $'\0' file; do
+								# Remove ./ prefix if present
+								file="${file#./}"
+								matches+=("$file")
+							done < <(find . -maxdepth 1 -name "$arg" -print0 2>/dev/null)
+						else
+							while IFS= read -r -d $'\0' file; do
+								# Remove ./ prefix if present
+								file="${file#./}"
+								matches+=("$file")
+							done < <(find . -maxdepth 1 -name "$arg" -not -path "*/\.*" -print0 2>/dev/null)
+						fi
+					fi
 				else
 					# For patterns without spaces, use bash globbing
 					matches=($arg)
@@ -395,8 +816,8 @@ EOF
 						continue
 					fi
 				else
-					# Relative path with spaces - use find
-					debug "Relative pattern with spaces, using find"
+					# Relative path with spaces - use fd/fdfind or find
+					debug "Relative pattern with spaces, using fd/fdfind or find"
 					
 					# Check if pattern contains slash - if so, handle it specially
 					if [[ "$arg" == */* ]]; then
@@ -452,29 +873,57 @@ EOF
 						debug "Detected recursive globbing pattern with **"
 					fi
 
-					# Adjust find command based on recursive flag
-					local find_cmd="find ."
-					if ! $is_recursive; then
-						find_cmd="$find_cmd -maxdepth 1"
-					fi
+					if [[ "$finder_kind" == "fd" ]]; then
+						local fd_args=("$finder_cmd" "--glob" "$arg" "--print0" "--no-ignore" ".")
+						if ! $is_recursive; then
+							fd_args=("$finder_cmd" "--glob" "$arg" "--max-depth" "1" "--print0" "--no-ignore" ".")
+						fi
+						if $dotglob_effective; then
+							if ! $is_recursive; then
+								fd_args=("$finder_cmd" "--hidden" "--glob" "$arg" "--max-depth" "1" "--print0" "--no-ignore" ".")
+							else
+								fd_args=("$finder_cmd" "--hidden" "--glob" "$arg" "--print0" "--no-ignore" ".")
+							fi
+						fi
 
-					# If dotglob is set, include hidden files
-					if $dotglob_set; then
-						debug "dotglob is set, including hidden files in find"
-						find_cmd="$find_cmd -name \"$arg\" -print0"
+						while IFS= read -r -d $'\0' file; do
+							# Remove ./ prefix if present
+							file="${file#./}"
+							file="${file%/}"
+							found_files+=("$file")
+						done < <("${fd_args[@]}" 2>/dev/null)
 					else
-						debug "dotglob is not set, excluding hidden files in find"
-						# Exclude files that start with a dot
-						find_cmd="$find_cmd -name \"$arg\" -not -path \"*/\.*\" -print0"
+						_warn_find_fallback
+						if ! $is_recursive; then
+							if $dotglob_effective; then
+								while IFS= read -r -d $'\0' file; do
+									# Remove ./ prefix if present
+									file="${file#./}"
+									found_files+=("$file")
+								done < <(find . -maxdepth 1 -name "$arg" -print0 2>/dev/null)
+							else
+								while IFS= read -r -d $'\0' file; do
+									# Remove ./ prefix if present
+									file="${file#./}"
+									found_files+=("$file")
+								done < <(find . -maxdepth 1 -name "$arg" -not -path "*/\.*" -print0 2>/dev/null)
+							fi
+						else
+							if $dotglob_effective; then
+								while IFS= read -r -d $'\0' file; do
+									# Remove ./ prefix if present
+									file="${file#./}"
+									found_files+=("$file")
+								done < <(find . -name "$arg" -print0 2>/dev/null)
+							else
+								while IFS= read -r -d $'\0' file; do
+									# Remove ./ prefix if present
+									file="${file#./}"
+									found_files+=("$file")
+								done < <(find . -name "$arg" -not -path "*/\.*" -print0 2>/dev/null)
+							fi
+						fi
 					fi
-
-					debug "Find command: $find_cmd"
-
-					while IFS= read -r -d $'\0' file; do
-						# Remove ./ prefix if present
-						file="${file#./}"
-						found_files+=("$file")
-					done < <(eval "$find_cmd" 2>/dev/null)
 				fi
 
 				# If no matches found, skip the pattern (new default behavior for all modes)
@@ -490,17 +939,26 @@ EOF
 				if [[ "$arg" == *"**"* ]]; then
 					debug "Detected recursive globbing pattern with **: $arg"
 
-					# For recursive patterns, we use find to handle the traversal
+					# For recursive patterns, use fd/fdfind or find to handle the traversal
 					local found_files=()
 
 					# Special handling for command mode with nullglob
 					if [[ -n "$exec_command" ]] && $nullglob_set; then
-						# First check if there are any matches using a quick find command
-						local test_pattern="${arg//\*\*/\*}"
-						local test_cmd="find . -path \"$test_pattern\" -print -quit 2>/dev/null"
-						debug "Testing recursive pattern with nullglob: $test_cmd"
-
-						local test_result=$(eval "$test_cmd")
+						# First check if there are any matches using a quick command
+						local test_result=""
+						if [[ "$finder_kind" == "fd" ]]; then
+							if $dotglob_effective; then
+								test_result=$("$finder_cmd" --hidden --glob "$arg" --no-ignore . 2>/dev/null | head -n 1)
+							else
+								test_result=$("$finder_cmd" --glob "$arg" --no-ignore . 2>/dev/null | head -n 1)
+							fi
+						else
+							_warn_find_fallback
+							local test_pattern="${arg//\*\*/\*}"
+							local test_cmd="find . -path \"$test_pattern\" -print -quit 2>/dev/null"
+							debug "Testing recursive pattern with nullglob: $test_cmd"
+							test_result=$(eval "$test_cmd")
+						fi
 						if [[ -z "$test_result" ]]; then
 							debug "No matches found for recursive pattern with nullglob - skipping: $arg"
 							continue
@@ -508,33 +966,48 @@ EOF
 						debug "Found matches for recursive pattern, proceeding: $arg"
 					fi
 
-					# Convert the pattern to something find can use with -path
-					# We need to handle the ** pattern specially
-					local find_pattern="$arg"
+					if [[ "$finder_kind" == "fd" ]]; then
+						local fd_args=("$finder_cmd" "--glob" "$arg" "--print0" "--no-ignore" ".")
+						if $dotglob_effective; then
+							fd_args=("$finder_cmd" "--hidden" "--glob" "$arg" "--print0" "--no-ignore" ".")
+						fi
 
-					# Replace ** with a wildcard that find's -path can use
-					# This handles the common case of **/*.ext
-					find_pattern="${find_pattern//\*\*/\*}"
+						while IFS= read -r -d $'\0' file; do
+							# Remove ./ prefix if present
+							file="${file#./}"
+							file="${file%/}"
+							found_files+=("$file")
+						done < <("${fd_args[@]}" 2>/dev/null)
+					else
+						# Convert the pattern to something find can use with -path
+						# We need to handle the ** pattern specially
+						local find_pattern="$arg"
 
-					# Build the find command
-					local find_cmd="find ."
+						# Replace ** with a wildcard that find's -path can use
+						# This handles the common case of **/*.ext
+						find_pattern="${find_pattern//\*\*/\*}"
 
-					# Add dotglob handling
-					if ! $dotglob_set; then
-						find_cmd="$find_cmd -not -path \"*/\.*\""
+						# Build the find command
+						local find_cmd="find ."
+
+						# Add dotglob handling
+						if ! $dotglob_effective; then
+							find_cmd="$find_cmd -not -path \"*/\.*\""
+						fi
+
+						# Add the pattern matching
+						find_cmd="$find_cmd -path \"$find_pattern\" -print0"
+
+						debug "Recursive find command: $find_cmd"
+
+						_warn_find_fallback
+						# Execute the find command and collect results
+						while IFS= read -r -d $'\0' file; do
+							# Remove ./ prefix if present
+							file="${file#./}"
+							found_files+=("$file")
+						done < <(eval "$find_cmd" 2>/dev/null)
 					fi
-
-					# Add the pattern matching
-					find_cmd="$find_cmd -path \"$find_pattern\" -print0"
-
-					debug "Recursive find command: $find_cmd"
-
-					# Execute the find command and collect results
-					while IFS= read -r -d $'\0' file; do
-						# Remove ./ prefix if present
-						file="${file#./}"
-						found_files+=("$file")
-					done < <(eval "$find_cmd" 2>/dev/null)
 
 					# Handle the results based on whether we found matches
 					if [[ ${#found_files[@]} -eq 0 ]]; then
@@ -590,6 +1063,9 @@ EOF
 		debug "No matches found for any patterns"
 		# Restore globbing states before returning
 		if $glob_disabled; then set -f; fi
+		if $dotglob_forced; then
+			shopt -u dotglob
+		fi
 		if $ignore_case; then
 			if $nocaseglob_set; then
 				shopt -s nocaseglob
@@ -625,12 +1101,46 @@ EOF
 				sorted_args+=("$line")
 			done <<< "$sorted_output"
 
-			debug "Executing: $exec_command ${sorted_args[*]}"
-			"$exec_command" "${sorted_args[@]}"
-			local retcode=$?
+			if $batch_mode; then
+				debug "Executing in batch mode: $exec_command ${sorted_args[*]}"
+				_run_batched "$exec_command" "${sorted_args[@]}"
+				local retcode=$?
+			else
+				local arg_max
+				arg_max=$(_get_arg_max) || arg_max=""
+				local budget
+				budget=$(_get_arg_budget) || budget=""
+				if [[ -n "$arg_max" && -n "$budget" ]]; then
+					local total_bytes
+					total_bytes=$(_arg_total_bytes "$exec_command" "${sorted_args[@]}")
+					if (( total_bytes > budget )); then
+						echo "Error: expanded arguments exceed safe ARG_MAX budget (${total_bytes} bytes > ${budget}; system ARG_MAX ${arg_max}). Re-run with --batch." >&2
+						if $glob_disabled; then set -f; fi
+						if $dotglob_forced; then
+							shopt -u dotglob
+						fi
+						if $ignore_case; then
+							if $nocaseglob_set; then
+								shopt -s nocaseglob
+							else
+								shopt -u nocaseglob
+							fi
+						fi
+						return 2
+					fi
+				fi
+
+				debug "Executing: $exec_command ${sorted_args[*]}"
+				"$exec_command" "${sorted_args[@]}"
+				local retcode=$?
+			fi
 
 			# Only restore the globbing state (noglob) since we didn't change nullglob or dotglob
 			if $glob_disabled; then set -f; fi
+			
+			if $dotglob_forced; then
+				shopt -u dotglob
+			fi
 			
 			# Restore original nocaseglob setting
 			if $ignore_case; then
@@ -648,6 +1158,17 @@ EOF
 				"double-quote")
 					if ! command -v quote_lines >/dev/null 2>&1; then
 						echo "Error: quote_lines not found on PATH" >&2
+						if $glob_disabled; then set -f; fi
+						if $dotglob_forced; then
+							shopt -u dotglob
+						fi
+						if $ignore_case; then
+							if $nocaseglob_set; then
+								shopt -s nocaseglob
+							else
+								shopt -u nocaseglob
+							fi
+						fi
 						return 2
 					fi
 					printf "%s\n" "${processed_args[@]}" | LC_ALL=C sort | quote_lines
@@ -690,6 +1211,10 @@ EOF
 
 	# Only restore the globbing state (noglob) since we didn't change nullglob or dotglob
 	if $glob_disabled; then set -f; fi
+	
+	if $dotglob_forced; then
+		shopt -u dotglob
+	fi
 	
 	# Restore original nocaseglob setting
 	if $ignore_case; then
