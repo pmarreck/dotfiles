@@ -1,0 +1,164 @@
+#!/usr/bin/env luajit
+
+local function print_usage()
+	print("Usage: list_most_common_file_extensions [--count N] [--help] [--about] [--version] [--test]")
+	print("")
+	print("Recursively count file extensions in the current directory and report the most common.")
+	print("")
+	print("Options:")
+	print("\t--count N   Show only the top N extensions (default: 50)")
+	print("\t-h, --help  Show this help message")
+	print("\t--about     Show a short description")
+	print("\t--version   Show version information")
+	print("\t--test      Run the test suite (stdout suppressed)")
+	print("")
+	print("Notes:")
+	print("\tExtensions are the suffix after the last dot in the filename.")
+	print("\tDotfiles without another dot are counted as <no extension>.")
+end
+
+local function print_about()
+	print("List the most common file extensions in a directory tree")
+end
+
+local function print_version()
+	print("list_most_common_file_extensions 0.1.0")
+end
+
+local function run_tests()
+	local home = os.getenv("HOME")
+	if not home or home == "" then
+		io.stderr:write("list_most_common_file_extensions: HOME is not set; cannot locate tests\n")
+		return 1
+	end
+	local test_script = home .. "/dotfiles/bin/test/list_most_common_file_extensions_test"
+	local cmd = string.format("%q >/dev/null", test_script)
+	local ok, why, status = os.execute(cmd)
+	if ok == true or ok == 0 then
+		return 0
+	end
+	if why == "exit" and status then
+		return status
+	end
+	if type(ok) == "number" and ok > 0 then
+		return ok
+	end
+	return 1
+end
+
+local function extract_extension(filename)
+	local last_dot = filename:match("^.*()%." )
+	if not last_dot then
+		return "<no extension>"
+	end
+	if last_dot == 1 and not filename:find("%.", 2) then
+		return "<no extension>"
+	end
+	local ext = filename:sub(last_dot + 1)
+	if ext == "" then
+		return "<no extension>"
+	end
+	return ext
+end
+
+local function count_extensions()
+	local handle, err = io.popen("find . -type f -print")
+	if not handle then
+		io.stderr:write("list_most_common_file_extensions: unable to run find: " .. (err or "unknown error") .. "\n")
+		return nil, 1
+	end
+
+	local counts = {}
+	for line in handle:lines() do
+		if line ~= "" then
+			local filename = line:match("([^/]+)$") or line
+			local ext = extract_extension(filename)
+			counts[ext] = (counts[ext] or 0) + 1
+		end
+	end
+
+	local ok, why, status = handle:close()
+	local exit_code = 0
+	if not ok then
+		io.stderr:write(string.format("list_most_common_file_extensions: find failed (%s, %s)\n", tostring(why), tostring(status)))
+		exit_code = 1
+	end
+
+	return counts, exit_code
+end
+
+local function print_counts(counts, limit)
+	local items = {}
+	for ext, count in pairs(counts) do
+		table.insert(items, { ext = ext, count = count })
+	end
+
+	table.sort(items, function(a, b)
+		if a.count ~= b.count then
+			return a.count > b.count
+		end
+		return a.ext < b.ext
+	end)
+
+	local max_items = math.min(limit, #items)
+	for i = 1, max_items do
+		io.write(string.format("%d\t%s\n", items[i].count, items[i].ext))
+	end
+end
+
+local function main(argv)
+	local limit = 50
+
+	local idx = 1
+	while idx <= #argv do
+		local argval = argv[idx]
+		if argval == "-h" or argval == "--help" then
+			print_usage()
+			return 0
+		elseif argval == "-a" or argval == "--about" then
+			print_about()
+			return 0
+		elseif argval == "-v" or argval == "--version" then
+			print_version()
+			return 0
+		elseif argval == "--test" then
+			return run_tests()
+		elseif argval == "--count" then
+			idx = idx + 1
+			local value = argv[idx]
+			if not value then
+				io.stderr:write("list_most_common_file_extensions: --count requires a number\n")
+				return 1
+			end
+			local num = tonumber(value)
+			if not num or num < 1 or num ~= math.floor(num) then
+				io.stderr:write("list_most_common_file_extensions: --count must be a positive integer\n")
+				return 1
+			end
+			limit = num
+		elseif argval:match("^%-%-count=") then
+			local value = argval:match("^%-%-count=(.+)$")
+			local num = tonumber(value)
+			if not num or num < 1 or num ~= math.floor(num) then
+				io.stderr:write("list_most_common_file_extensions: --count must be a positive integer\n")
+				return 1
+			end
+			limit = num
+		else
+			io.stderr:write("list_most_common_file_extensions: unknown option: " .. argval .. "\n")
+			io.stderr:write("Try 'list_most_common_file_extensions --help' for usage.\n")
+			return 1
+		end
+		idx = idx + 1
+	end
+
+	local counts, exit_code = count_extensions()
+	if not counts then
+		return exit_code or 1
+	end
+
+	print_counts(counts, limit)
+	return exit_code or 0
+end
+
+os.exit(main(arg))

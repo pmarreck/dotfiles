@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+
+set -uo pipefail
+
+fails=0
+tests=0
+
+fixtures_dir=$(mktemp -d --tmpdir)
+trap 'rm -rf "$fixtures_dir"' EXIT
+
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+list_cmd=${LIST_MOST_COMMON_FILE_EXTENSIONS_BIN:-"$script_dir/../list_most_common_file_extensions"}
+if [[ ! -x "$list_cmd" ]]; then
+	echo "list_most_common_file_extensions_test: unable to locate executable at $list_cmd" >&2
+	exit 1
+fi
+
+mkdir -p "$fixtures_dir/nested/inner"
+
+touch "$fixtures_dir/a.txt"
+touch "$fixtures_dir/b.txt"
+touch "$fixtures_dir/c.txt"
+touch "$fixtures_dir/doc.md"
+touch "$fixtures_dir/README"
+touch "$fixtures_dir/.gitignore"
+touch "$fixtures_dir/nested/.env"
+touch "$fixtures_dir/nested/one.js"
+touch "$fixtures_dir/nested/two.js"
+touch "$fixtures_dir/nested/inner/code.lua"
+touch "$fixtures_dir/nested/inner/archive.tar.gz"
+
+((tests++))
+echo "Testing: --help shows usage..."
+if output=$("$list_cmd" --help 2>&1); then
+	if [[ "$output" == *"Usage: list_most_common_file_extensions"* ]]; then
+		echo "OK: usage text present"
+	else
+		echo "FAIL: usage text missing" >&2
+		((fails++))
+	fi
+else
+	echo "FAIL: --help exited non-zero" >&2
+	((fails++))
+fi
+
+((tests++))
+echo "Testing: counts and sorts extensions..."
+if output=$(cd "$fixtures_dir" && "$list_cmd"); then
+	sorted_ok=1
+	prev_count=999999
+	while read -r count ext; do
+		if [[ -z "$count" ]]; then
+			continue
+		fi
+		if (( count > prev_count )); then
+			sorted_ok=0
+			break
+		fi
+		prev_count=$count
+	done <<< "$output"
+	if (( sorted_ok == 1 )); then
+		echo "OK: output sorted by count desc"
+	else
+		echo "FAIL: output not sorted by count desc" >&2
+		((fails++))
+	fi
+
+	if grep -q $'^3\t<no extension>' <<< "$output" \
+		&& grep -q $'^3\ttxt' <<< "$output" \
+		&& grep -q $'^2\tjs' <<< "$output" \
+		&& grep -q $'^1\tgz' <<< "$output" \
+		&& grep -q $'^1\tlua' <<< "$output" \
+		&& grep -q $'^1\tmd' <<< "$output"; then
+		echo "OK: expected extension counts present"
+	else
+		echo "FAIL: expected extension counts missing" >&2
+		((fails++))
+	fi
+else
+	echo "FAIL: command exited non-zero" >&2
+	((fails++))
+fi
+
+((tests++))
+echo "Testing: --count limits output..."
+if output=$(cd "$fixtures_dir" && "$list_cmd" --count 2); then
+	line_count=$(printf '%s\n' "$output" | wc -l | tr -d ' ')
+	if [[ "$line_count" == "2" ]]; then
+		echo "OK: --count limits output"
+	else
+		echo "FAIL: --count did not limit output (got $line_count lines)" >&2
+		((fails++))
+	fi
+else
+	echo "FAIL: --count exited non-zero" >&2
+	((fails++))
+fi
+
+((tests++))
+echo "Testing: --count rejects non-numeric values..."
+if output=$(cd "$fixtures_dir" && "$list_cmd" --count nope 2>&1 >/dev/null); then
+	echo "FAIL: --count accepted non-numeric value" >&2
+	((fails++))
+else
+	if [[ "$output" == *"--count"* && "$output" == *"positive integer"* ]]; then
+		echo "OK: --count rejects non-numeric values"
+	else
+		echo "FAIL: error message for invalid --count missing" >&2
+		((fails++))
+	fi
+fi
+
+if (( fails == 0 )); then
+	echo "All $tests tests passed"
+else
+	echo "$fails of $tests tests failed" >&2
+fi
+
+exit "$fails"

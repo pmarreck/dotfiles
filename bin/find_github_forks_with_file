@@ -241,7 +241,7 @@ export STAT_CMD
 export errors_file # Make the main error log path available to children
 
 # Run checks in parallel in the background. Error logging is handled inside check_fork.
-printf '%s\n' "${forks[@]}" | xargs -s "$(getconf ARG_MAX)" -n 1 -P "$MAX_JOBS" -I {} bash -c 'check_fork "$@"' _ {} "$FILE_TO_SEARCH" "$results_file" "$progress_file" &
+printf '%s\n' "${forks[@]}" | xargs -P "$MAX_JOBS" -I {} bash -c 'check_fork "$@"' _ {} "$FILE_TO_SEARCH" "$results_file" "$progress_file" &
 xargs_pid=$!
 
 # Progress bar
