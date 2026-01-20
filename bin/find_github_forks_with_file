@@ -3,9 +3,41 @@
 
 # Default values
 REPO=""
-FILE_TO_SEARCH="flake.nix"
+DEFAULT_PATH="flake.nix"
+if [[ -n "${FIND_GH_FORKS_DEFAULT_PATH:-}" ]]; then
+	FILE_TO_SEARCH="$FIND_GH_FORKS_DEFAULT_PATH"
+else
+	FILE_TO_SEARCH="$DEFAULT_PATH"
+fi
 MAX_JOBS=10
 SCRIPT_NAME=$(basename "$0")
+RECURSIVE=false
+
+# Run tests immediately if requested, ignoring all other arguments.
+for arg in "$@"; do
+	if [[ "$arg" == "--test" ]]; then
+		exec "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test" >/dev/null
+	fi
+done
+
+# Detect non-interactive output (e.g., piped output or LLM capture)
+NON_INTERACTIVE=false
+if [[ ! -t 1 ]]; then
+	NON_INTERACTIVE=true
+fi
+
+format_duration() {
+	local total_seconds="$1"
+	local hours=$((total_seconds / 3600))
+	local minutes=$(((total_seconds % 3600) / 60))
+	local seconds=$((total_seconds % 60))
+
+	if [[ $hours -gt 0 ]]; then
+		printf "%dh%02dm%02ds" "$hours" "$minutes" "$seconds"
+	else
+		printf "%dm%02ds" "$minutes" "$seconds"
+	fi
+}
 
 # Help function
 show_help() {
@@ -15,20 +47,28 @@ Usage: $SCRIPT_NAME [OPTIONS] owner/repo
 Search for a specific file across all forks of a GitHub repository.
 
 OPTIONS:
-  --file FILE     File to search for (default: flake.nix)
+  --file FILE     File or path to search for (default: \$FIND_GH_FORKS_DEFAULT_PATH or flake.nix)
+  --path FILE     Synonym for --file
+  --recursive     Search for the file anywhere in the repository tree
   -h, --help      Show this help message
+  -a, --about     Show brief description
   --test          Run tests
-  --about         Show brief description
   --details       Show detailed information about this tool
 
 EXAMPLES:
   $SCRIPT_NAME microsoft/vscode
   $SCRIPT_NAME --file package.json facebook/react
+  $SCRIPT_NAME --file src/build.zig OpenMPT/openmpt
+  $SCRIPT_NAME --recursive --file build.zig OpenMPT/openmpt
   $SCRIPT_NAME --file Dockerfile kubernetes/kubernetes
 
 REQUIREMENTS:
   - gh (GitHub CLI) must be installed and authenticated
   - Authenticated users have 5000 API requests/hour limit
+
+OUTPUT:
+  - Interactive terminals show a live progress bar
+  - Non-interactive output emits a single ETA line after ~10% completion
 EOF
 }
 
@@ -52,6 +92,9 @@ FEATURES:
 - API rate limit warnings for large repositories
 - Proper error handling and progress feedback
 - Constructs direct URLs to found files using correct default branch
+- Optional recursive search using the repository tree API
+- Accepts repo-relative paths (exact match unless --recursive is used)
+- Default file can be overridden with FIND_GH_FORKS_DEFAULT_PATH
 
 DEPENDENCIES:
 - gh (GitHub CLI): For accessing GitHub API
@@ -59,12 +102,13 @@ DEPENDENCIES:
 
 TECHNICAL DETAILS:
 - Uses GitHub API via 'gh' CLI tool
-- Handles command line length limits with xargs -s
 - Uses an atomic, dependency-free method for progress tracking:
   Each parallel worker appends a single byte to a temporary file upon completion.
   The main script polls the size of this file using 'stat' (a fast metadata
   operation) to update the progress bar without race conditions.
 - Only fetches default branch info when files are found (efficient)
+- With --recursive, a path containing '/' is treated as exact; otherwise the
+  filename is matched anywhere in the tree
 
 AUTHOR: Built for efficient Nix ecosystem exploration
 EOF
@@ -101,19 +145,19 @@ fi
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
 	case $1 in
-		--file)
+		--file|--path)
 			FILE_TO_SEARCH="$2"
 			shift 2
+			;;
+		--recursive)
+			RECURSIVE=true
+			shift
 			;;
 		-h|--help)
 			show_help
 			exit 0
 			;;
-		--test)
-			# Run tests from the test file
-			exec "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
-			;;
-		--about)
+		-a|--about)
 			show_about
 			exit 0
 			;;
@@ -199,6 +243,44 @@ check_fork() {
 	local results_file_path="$3"
 	local progress_file_path="$4"
 
+	if [[ "$RECURSIVE" == true ]]; then
+		local branch_output
+		branch_output=$(gh api "repos/$fork" --jq '.default_branch' 2>&1)
+		if [[ $? -ne 0 ]]; then
+			echo "Error getting default branch for '$fork': $branch_output" >> "$errors_file"
+			echo -n "." >> "$progress_file_path"
+			return
+		fi
+
+		local default_branch="$branch_output"
+		local tree_output
+		tree_output=$(gh api "repos/$fork/git/trees/$default_branch?recursive=1" 2>&1)
+		if [[ $? -ne 0 ]]; then
+			echo "Error getting tree for '$fork': $tree_output" >> "$errors_file"
+			echo -n "." >> "$progress_file_path"
+			return
+		fi
+
+		if echo "$tree_output" | jq -e '.truncated == true' >/dev/null 2>&1; then
+			echo "Warning: Tree truncated for '$fork' on branch '$default_branch'. Results may be incomplete. Consider using 'gh search code' or direct API inspection for full coverage." >> "$errors_file"
+		fi
+
+		local matched_path
+		if [[ "$file_to_search" == */* ]]; then
+			matched_path=$(echo "$tree_output" | jq -r --arg path "$file_to_search" '[.tree[]? | select(.type == "blob" and .path == $path) | .path][0] // empty')
+		else
+			matched_path=$(echo "$tree_output" | jq -r --arg file "$file_to_search" '[.tree[]? | select(.type == "blob" and (.path == $file or (.path | endswith("/" + $file)))) | .path][0] // empty')
+		fi
+
+		if [[ -n "$matched_path" ]]; then
+			local url="https://github.com/$fork/blob/$default_branch/$matched_path"
+			echo "$fork|$url" >> "$results_file_path"
+		fi
+
+		echo -n "." >> "$progress_file_path"
+		return
+	fi
+
 	# Execute the command, capturing combined stdout/stderr and the exit code.
 	# This avoids creating any temporary files for error handling.
 	local combined_output
@@ -238,43 +320,82 @@ check_fork() {
 export -f check_fork
 export FILE_TO_SEARCH
 export STAT_CMD
+export RECURSIVE
 export errors_file # Make the main error log path available to children
 
 # Run checks in parallel in the background. Error logging is handled inside check_fork.
 printf '%s\n' "${forks[@]}" | xargs -P "$MAX_JOBS" -I {} bash -c 'check_fork "$@"' _ {} "$FILE_TO_SEARCH" "$results_file" "$progress_file" &
 xargs_pid=$!
 
-# Progress bar
-echo # newline before progress bar
-while kill -0 "$xargs_pid" 2>/dev/null; do
-	completed_count=$($STAT_CMD "$progress_file" 2>/dev/null || echo 0)
-	# Ensure completed_count is a number, default to 0 if not
-	[[ "$completed_count" =~ ^[0-9]+$ ]] || completed_count=0
+start_time=$SECONDS
 
-	# Avoid division by zero
-	if [[ $total_forks -gt 0 ]]; then
-		percent=$((completed_count * 100 / total_forks))
-	else
-		percent=100
+if [[ "$NON_INTERACTIVE" == true ]]; then
+	progress_shown=false
+	progress_threshold=$(( (total_forks + 9) / 10 ))
+
+	while kill -0 "$xargs_pid" 2>/dev/null; do
+		completed_count=$($STAT_CMD "$progress_file" 2>/dev/null || echo 0)
+		[[ "$completed_count" =~ ^[0-9]+$ ]] || completed_count=0
+
+		if [[ "$progress_shown" == false && "$completed_count" -ge "$progress_threshold" ]]; then
+			elapsed=$((SECONDS - start_time))
+			[[ $elapsed -gt 0 ]] || elapsed=1
+			remaining=$((total_forks - completed_count))
+			eta=$((remaining * elapsed / completed_count))
+			echo "Estimate: elapsed $(format_duration "$elapsed"), remaining ~$(format_duration "$eta") ($completed_count/$total_forks)"
+			progress_shown=true
+		fi
+		sleep 0.2
+	done
+
+	wait "$xargs_pid"
+
+	if [[ "$progress_shown" == false ]]; then
+		completed_count=$($STAT_CMD "$progress_file" 2>/dev/null || echo 0)
+		[[ "$completed_count" =~ ^[0-9]+$ ]] || completed_count=$total_forks
+		elapsed=$((SECONDS - start_time))
+		[[ $elapsed -gt 0 ]] || elapsed=1
+		remaining=$((total_forks - completed_count))
+		if [[ $completed_count -gt 0 ]]; then
+			eta=$((remaining * elapsed / completed_count))
+		else
+			eta=0
+		fi
+		echo "Estimate: elapsed $(format_duration "$elapsed"), remaining ~$(format_duration "$eta") ($completed_count/$total_forks)"
 	fi
+else
+	# Progress bar
+	echo # newline before progress bar
+	while kill -0 "$xargs_pid" 2>/dev/null; do
+		completed_count=$($STAT_CMD "$progress_file" 2>/dev/null || echo 0)
+		# Ensure completed_count is a number, default to 0 if not
+		[[ "$completed_count" =~ ^[0-9]+$ ]] || completed_count=0
 
-	bar_len=40
-	filled_len=$((bar_len * percent / 100))
-	bar=$(printf "%${filled_len}s" | tr ' ' '#')
-	empty=$(printf "%$(($bar_len - filled_len))s")
+		# Avoid division by zero
+		if [[ $total_forks -gt 0 ]]; then
+			percent=$((completed_count * 100 / total_forks))
+		else
+			percent=100
+		fi
 
-	# \r moves cursor to beginning of line, -n prevents newline
-	printf "\rProgress: [%s%s] %d%% (%d/%d) " "$bar" "$empty" "$percent" "$completed_count" "$total_forks"
-	sleep 0.2
-done
+		bar_len=40
+		filled_len=$((bar_len * percent / 100))
+		bar=$(printf "%${filled_len}s" | tr ' ' '#')
+		empty=$(printf "%$(($bar_len - filled_len))s")
 
-# Ensure the progress bar shows 100% at the end and move to the next line
-printf "\rProgress: [%s] 100%% (%d/%d)\n" "$(printf "%${bar_len}s" | tr ' ' '#')" "$total_forks" "$total_forks"
+		# \r moves cursor to beginning of line, -n prevents newline
+		printf "\rProgress: [%s%s] %d%% (%d/%d) " "$bar" "$empty" "$percent" "$completed_count" "$total_forks"
+		sleep 0.2
+	done
 
-# Wait for xargs and all its children to finish completely
-wait "$xargs_pid"
+	# Ensure the progress bar shows 100% at the end and move to the next line
+	printf "\rProgress: [%s] 100%% (%d/%d)\n" "$(printf "%${bar_len}s" | tr ' ' '#')" "$total_forks" "$total_forks"
 
-echo
+	# Wait for xargs and all its children to finish completely
+	wait "$xargs_pid"
+
+	echo
+fi
 
 # Read results from the file
 readarray -t results < "$results_file"

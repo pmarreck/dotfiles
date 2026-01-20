@@ -38,11 +38,35 @@ case "$endpoint" in
 		printf '%s\n' "alice/openmpt" "bob/openmpt"
 		exit 0
 		;;
+	repos/alice/openmpt/contents/flake.nix)
+		echo '{"type":"file"}'
+		exit 0
+		;;
+	repos/bob/openmpt/contents/flake.nix)
+		echo "Not Found (HTTP 404)" >&2
+		exit 1
+		;;
+	repos/alice/openmpt/contents/config/default.conf)
+		echo '{"type":"file"}'
+		exit 0
+		;;
+	repos/bob/openmpt/contents/config/default.conf)
+		echo "Not Found (HTTP 404)" >&2
+		exit 1
+		;;
 	repos/alice/openmpt/contents/build.zig)
 		echo '{"type":"file"}'
 		exit 0
 		;;
+	repos/alice/openmpt/contents/src/build.zig)
+		echo '{"type":"file"}'
+		exit 0
+		;;
 	repos/bob/openmpt/contents/build.zig)
+		echo "Not Found (HTTP 404)" >&2
+		exit 1
+		;;
+	repos/bob/openmpt/contents/src/build.zig)
 		echo "Not Found (HTTP 404)" >&2
 		exit 1
 		;;
@@ -52,6 +76,18 @@ case "$endpoint" in
 		;;
 	repos/bob/openmpt)
 		echo "master"
+		exit 0
+		;;
+	repos/alice/openmpt/git/trees/main?recursive=1)
+		cat <<'TREE_EOF'
+{"truncated":false,"tree":[{"path":"nested/build.zig","type":"blob"},{"path":"README.md","type":"blob"}]}
+TREE_EOF
+		exit 0
+		;;
+	repos/bob/openmpt/git/trees/master?recursive=1)
+		cat <<'TREE_EOF'
+{"truncated":false,"tree":[{"path":"src/main.c","type":"blob"}]}
+TREE_EOF
 		exit 0
 		;;
 	*)
@@ -98,7 +134,100 @@ exec "\$real_xargs" "\$@"
 EOF
 chmod +x "$tmp_dir/xargs"
 
-# Test 1: No xargs warnings and expected output
+# Test 0: About output
+((tests++))
+echo "Testing: --about shows one-line description..."
+if output=$(find_github_forks_with_file --about 2>&1); then
+	if [[ "$output" == *"find_github_forks_with_file - Searches for a specific file across all forks of a GitHub repository"* ]]; then
+		echo "OK: --about outputs description"
+	else
+		echo "FAIL: --about output did not match expectations" >&2
+		echo "Output: $output" >&2
+		((fails++))
+	fi
+else
+	echo "FAIL: --about exited non-zero" >&2
+	((fails++))
+fi
+
+echo
+
+# Test 1: Default falls back to flake.nix when env var is unset
+((tests++))
+echo "Testing: default uses flake.nix when FIND_GH_FORKS_DEFAULT_PATH is unset..."
+stdout_file=$(mktemp --tmpdir)
+stderr_file=$(mktemp --tmpdir)
+
+PATH="$tmp_dir:$PATH" find_github_forks_with_file owner/repo >"$stdout_file" 2>"$stderr_file"
+exit_code=$?
+
+if [[ $exit_code -eq 0 ]] && ! grep -q "xargs:" "$stderr_file"; then
+	if grep -q "Found flake.nix in 1 out of 2 forks:" "$stdout_file" && \
+		grep -q "alice/openmpt" "$stdout_file" && \
+		grep -q "https://github.com/alice/openmpt/blob/main/flake.nix" "$stdout_file" && \
+		! grep -q "bob/openmpt" "$stdout_file"; then
+		echo "OK: default fell back to flake.nix"
+	else
+		echo "FAIL: default flake.nix output did not match expectations" >&2
+		echo "--- stdout ---" >&2
+		cat "$stdout_file" >&2
+		echo "--- stderr ---" >&2
+		cat "$stderr_file" >&2
+		((fails++))
+	fi
+else
+	echo "FAIL: default flake.nix command failed or xargs warnings detected" >&2
+	echo "Exit code: $exit_code" >&2
+	echo "--- stdout ---" >&2
+	cat "$stdout_file" >&2
+	echo "--- stderr ---" >&2
+	cat "$stderr_file" >&2
+	((fails++))
+fi
+
+rm -f "$stdout_file" "$stderr_file"
+
+echo
+
+# Test 2: Default uses FIND_GH_FORKS_DEFAULT_PATH when set
+((tests++))
+echo "Testing: default uses FIND_GH_FORKS_DEFAULT_PATH when set..."
+stdout_file=$(mktemp --tmpdir)
+stderr_file=$(mktemp --tmpdir)
+
+PATH="$tmp_dir:$PATH" FIND_GH_FORKS_DEFAULT_PATH="config/default.conf" \
+	find_github_forks_with_file owner/repo >"$stdout_file" 2>"$stderr_file"
+exit_code=$?
+
+if [[ $exit_code -eq 0 ]] && ! grep -q "xargs:" "$stderr_file"; then
+	if grep -q "Found config/default.conf in 1 out of 2 forks:" "$stdout_file" && \
+		grep -q "alice/openmpt" "$stdout_file" && \
+		grep -q "https://github.com/alice/openmpt/blob/main/config/default.conf" "$stdout_file" && \
+		! grep -q "bob/openmpt" "$stdout_file"; then
+		echo "OK: default used FIND_GH_FORKS_DEFAULT_PATH"
+	else
+		echo "FAIL: default env var output did not match expectations" >&2
+		echo "--- stdout ---" >&2
+		cat "$stdout_file" >&2
+		echo "--- stderr ---" >&2
+		cat "$stderr_file" >&2
+		((fails++))
+	fi
+else
+	echo "FAIL: default env var command failed or xargs warnings detected" >&2
+	echo "Exit code: $exit_code" >&2
+	echo "--- stdout ---" >&2
+	cat "$stdout_file" >&2
+	echo "--- stderr ---" >&2
+	cat "$stderr_file" >&2
+	((fails++))
+fi
+
+rm -f "$stdout_file" "$stderr_file"
+
+echo
+
+# Test 3: No xargs warnings and expected output
 ((tests++))
 echo "Testing: find_github_forks_with_file runs without xargs warnings..."
 stdout_file=$(mktemp --tmpdir)
@@ -123,6 +252,80 @@ if [[ $exit_code -eq 0 ]] && ! grep -q "xargs:" "$stderr_file"; then
 	fi
 else
 	echo "FAIL: Command failed or xargs warnings detected" >&2
+	echo "Exit code: $exit_code" >&2
+	echo "--- stdout ---" >&2
+	cat "$stdout_file" >&2
+	echo "--- stderr ---" >&2
+	cat "$stderr_file" >&2
+	((fails++))
+fi
+
+rm -f "$stdout_file" "$stderr_file"
+
+echo
+
+# Test 4: --path supports repo-relative paths without --recursive
+((tests++))
+echo "Testing: --path accepts repo-relative paths..."
+stdout_file=$(mktemp --tmpdir)
+stderr_file=$(mktemp --tmpdir)
+
+PATH="$tmp_dir:$PATH" find_github_forks_with_file --path src/build.zig owner/repo >"$stdout_file" 2>"$stderr_file"
+exit_code=$?
+
+if [[ $exit_code -eq 0 ]] && ! grep -q "xargs:" "$stderr_file"; then
+	if grep -q "Found src/build.zig in 1 out of 2 forks:" "$stdout_file" && \
+		grep -q "alice/openmpt" "$stdout_file" && \
+		grep -q "https://github.com/alice/openmpt/blob/main/src/build.zig" "$stdout_file" && \
+		! grep -q "bob/openmpt" "$stdout_file"; then
+		echo "OK: --path accepted repo-relative path"
+	else
+		echo "FAIL: --path output did not match expectations" >&2
+		echo "--- stdout ---" >&2
+		cat "$stdout_file" >&2
+		echo "--- stderr ---" >&2
+		cat "$stderr_file" >&2
+		((fails++))
+	fi
+else
+	echo "FAIL: --path command failed or xargs warnings detected" >&2
+	echo "Exit code: $exit_code" >&2
+	echo "--- stdout ---" >&2
+	cat "$stdout_file" >&2
+	echo "--- stderr ---" >&2
+	cat "$stderr_file" >&2
+	((fails++))
+fi
+
+rm -f "$stdout_file" "$stderr_file"
+
+echo
+
+# Test 5: Recursive search finds nested paths
+((tests++))
+echo "Testing: --recursive finds nested paths without warnings..."
+stdout_file=$(mktemp --tmpdir)
+stderr_file=$(mktemp --tmpdir)
+
+PATH="$tmp_dir:$PATH" find_github_forks_with_file --recursive --file build.zig owner/repo >"$stdout_file" 2>"$stderr_file"
+exit_code=$?
+
+if [[ $exit_code -eq 0 ]] && ! grep -q "xargs:" "$stderr_file"; then
+	if grep -q "Found build.zig in 1 out of 2 forks:" "$stdout_file" && \
+		grep -q "alice/openmpt" "$stdout_file" && \
+		grep -q "https://github.com/alice/openmpt/blob/main/nested/build.zig" "$stdout_file" && \
+		! grep -q "bob/openmpt" "$stdout_file"; then
+		echo "OK: Recursive search found nested build.zig"
+	else
+		echo "FAIL: Recursive output did not match expectations" >&2
+		echo "--- stdout ---" >&2
+		cat "$stdout_file" >&2
+		echo "--- stderr ---" >&2
+		cat "$stderr_file" >&2
+		((fails++))
+	fi
+else
+	echo "FAIL: Recursive command failed or xargs warnings detected" >&2
 	echo "Exit code: $exit_code" >&2
 	echo "--- stdout ---" >&2
 	cat "$stdout_file" >&2
