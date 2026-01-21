@@ -9,10 +9,14 @@ function git_commit_ai() {
 
   local model request response timeout diff temp_json temp_json_out commit_message http_status \
     openai_host openai_path openai_protocol openai_url local_llm \
-    top_k top_p temperature system_prompt user_prompt repeat_penalty num_ctx
-  diff=$(git diff)
-  if [[ -z "$diff" ]]; then
-    diff=$(git diff --cached)
+    top_k top_p temperature system_prompt user_prompt repeat_penalty num_ctx \
+    staged_diff unstaged_diff
+  unstaged_diff=$(git diff)
+  staged_diff=$(git diff --cached)
+  if [[ -n "$unstaged_diff" && -n "$staged_diff" ]]; then
+    diff="$staged_diff"
+  else
+    diff="${unstaged_diff:-$staged_diff}"
   fi
   if [[ -z "$diff" ]]; then
     echo "No changes to commit." >&2

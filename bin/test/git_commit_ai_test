@@ -1,0 +1,125 @@
+#!/usr/bin/env bash
+
+fails=0
+tests=0
+
+((tests++))
+echo "Testing: git_commit_ai prefers staged diff when staged and unstaged exist..."
+
+temp_dir=$(mktemp -d --tmpdir)
+stub_bin=$(mktemp -d --tmpdir)
+
+cleanup() {
+	rm -rf "$temp_dir" "$stub_bin"
+}
+trap cleanup EXIT
+
+cat > "$stub_bin/curl" <<'STUB'
+#!/usr/bin/env bash
+
+output_file=""
+write_out=""
+data_arg=""
+
+while (( "$#" )); do
+	case "$1" in
+		-o)
+			output_file="$2"
+			shift 2
+			;;
+		-w)
+			write_out="$2"
+			shift 2
+			;;
+		-d)
+			data_arg="$2"
+			shift 2
+			;;
+		*)
+			shift
+			;;
+	esac
+done
+
+if [[ -n "$data_arg" && "$data_arg" == @* && -n "$GIT_COMMIT_AI_CAPTURE" ]]; then
+	data_file="${data_arg#@}"
+	cat "$data_file" > "$GIT_COMMIT_AI_CAPTURE"
+fi
+
+if [[ -n "$output_file" ]]; then
+	printf '%s\n' '{"message":{"content":"git commit -m \"Test\""}}' > "$output_file"
+	if [[ -n "$GIT_COMMIT_AI_RESPONSE_CAPTURE" ]]; then
+		cp "$output_file" "$GIT_COMMIT_AI_RESPONSE_CAPTURE"
+	fi
+fi
+
+echo "200"
+STUB
+chmod +x "$stub_bin/curl"
+
+cat > "$stub_bin/clip" <<'STUB'
+#!/usr/bin/env bash
+exit 0
+STUB
+chmod +x "$stub_bin/clip"
+
+capture_file="$temp_dir/capture.txt"
+response_file="$temp_dir/response.json"
+export GIT_COMMIT_AI_CAPTURE="$capture_file"
+export GIT_COMMIT_AI_RESPONSE_CAPTURE="$response_file"
+export OPENAI_API_KEY="test"
+export OPENAI_HOST="localhost"
+export OPENAI_PATH="/api/chat"
+export OPENAI_PROTOCOL="http"
+
+PATH="$stub_bin:$HOME/dotfiles/bin:$PATH"
+export PATH
+run_status=0
+(
+	cd "$temp_dir" || exit 1
+	git init -q
+	printf "base\n" > file.txt
+	git add file.txt
+	GIT_AUTHOR_NAME="Test" GIT_AUTHOR_EMAIL="test@example.com" \
+	GIT_COMMITTER_NAME="Test" GIT_COMMITTER_EMAIL="test@example.com" \
+		git commit -m "base" -q
+
+	printf "base\nSTAGED\n" > file.txt
+	git add file.txt
+	printf "base\nSTAGED\nUNSTAGED\n" > file.txt
+
+	git_commit_ai >/dev/null 2>"$temp_dir/git_commit_ai_err.log"
+	exit "$?"
+)
+run_status=$?
+if (( run_status != 0 )); then
+	echo "✗ Test failed: git_commit_ai execution failed (status $run_status)" >&2
+	if [[ -s "$temp_dir/git_commit_ai_err.log" ]]; then
+		cat "$temp_dir/git_commit_ai_err.log" >&2
+	fi
+	if [[ -s "$response_file" ]]; then
+		echo "Response payload:" >&2
+		cat "$response_file" >&2
+	fi
+	((fails++))
+fi
+
+if [[ ! -f "$capture_file" ]]; then
+	echo "✗ Test failed: did not capture request content" >&2
+	((fails++))
+else
+	if grep -q "UNSTAGED" "$capture_file"; then
+		echo "✗ Test failed: request included unstaged diff when both staged/unstaged exist" >&2
+		((fails++))
+	else
+		echo "✓ Test passed: request ignored unstaged diff when both staged/unstaged exist"
+	fi
+fi
+
+if (( fails == 0 )); then
+	echo "All $tests tests passed"
+else
+	echo "$fails of $tests tests failed" >&2
+fi
+
+exit "$fails"
