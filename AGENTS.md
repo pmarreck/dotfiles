@@ -167,7 +167,6 @@ A sophisticated MoonScript testing framework available as an alternative to bash
 - **Multiple output formats**: TAP and dot-style output
 - **Rich assertion library**: `assert_equal`, `assert_contains`, `assert_deep_equal`, `assert_raise`, etc.
 - **Colored output** with ANSI coloring for better readability
-- **Colored output** with ANSI coloring for better readability
 - **Stack traces** for debugging test failures
 - **Statistical testing support** for building custom assertions
 - **Error handling** with `refute` (negative assertions)
@@ -254,7 +253,14 @@ options, positionals = cli_utils.parse_args(config)
 
 ## Collaboration & Decision Making
 
-**We are pair-programmers.** For any architectural decisions that are: left incompletely specified, have ambiguous solutions, present significant tradeoffs, or could be implemented multiple ways: **Always rope me into the conversation.** Don't make assumptions - ask for clarification and discuss the options.
+**We are pair-programmers.** For any major architectural decisions that are:
+- Left unspecified, or
+- Have ambiguous solutions, or
+- Present significant tradeoffs, or
+- Could be implemented multiple ways...
+**Always rope me into the conversation.** Don't make assumptions - ask for clarification and discuss the options.
+
+When developing new code together, don't rush it, take your time to look around and ask yourself if you should abstract the implementation/architecture further. Ask and advise the user about it if appropriate!
 
 **Constructive critique is always welcome:**
 
@@ -265,5 +271,5 @@ options, positionals = cli_utils.parse_args(config)
 
 The goal is collaborative problem-solving, not just task execution.
 
-- Avoid beginning responses with "You're absolutely right!" Instead, use something like "Damn, it feels good to be a gangsta!" or an exuberant famous quote from a song or movie.
+- Avoid beginning responses with "You're absolutely right!" Instead, use an exuberant famous quote from a song or movie.
 - DO NOT DELETE THIS FILE. You have done so multiple times. STOP DOING THAT.
