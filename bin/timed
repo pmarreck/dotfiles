@@ -19,6 +19,9 @@ FORMAT="default"
 SHOW_RESOURCES=1
 UPDATE_INLINE=1
 UPDATE_INTERVAL="0.1"  # Default to 10Hz (100ms) updates
+NON_INTERACTIVE=0
+FORCE_INTERACTIVE=0
+FORCE_NON_INTERACTIVE=0
 
 # Color codes (will be disabled if NO_COLOR=1)
 COLOR_GRAY=""
@@ -62,6 +65,12 @@ OPTIONS:
 		-r, --no-resources  Don't show resource usage statistics
 		-s, --static        Show timer updates on new lines (don't update inline)
 		-i, --interval SEC  Update interval in seconds (default: 0.1, min: 0.01)
+		--interactive     Force interactive timer behavior even when stdout is not a TTY
+		--non-interactive Force line-prefixed output even when stdout is a TTY
+
+NOTES:
+		When stdout is not a TTY, timed prefixes each stdout line with the elapsed time
+		instead of emitting the inline timer (unless --quiet is set).
 
 FORMATS:
 		default    Traditional time-like output with resource usage
@@ -178,6 +187,7 @@ run_timer() {
 				fi
 
 				local formatted=$(format_duration "$elapsed" "$precision")
+				local display="${formatted} "
 
 				if [[ $UPDATE_INLINE -eq 1 ]]; then
 						# Clear previous output and print new time on same line
@@ -189,12 +199,25 @@ run_timer() {
 										printf "\r%-${#last_output}s\r" " " >&2
 								fi
 						fi
-						printf "%s%s%s" "$COLOR_GRAY" "$formatted" "$COLOR_RESET" >&2
-						last_output="$formatted"
+						printf "%s%s%s" "$COLOR_GRAY" "$display" "$COLOR_RESET" >&2
+						last_output="$display"
 				else
 						# Print on new lines
-						printf "%s%s%s\n" "$COLOR_GRAY" "$formatted" "$COLOR_RESET" >&2
+						printf "%s%s%s\n" "$COLOR_GRAY" "$display" "$COLOR_RESET" >&2
 				fi
+		done
+}
+
+# Prefix stdout lines with elapsed time (non-interactive mode)
+prefix_stdout_lines() {
+		local start_epoch=$1
+		local line
+
+		while IFS= read -r line; do
+				local current_time=$(get_time_ns)
+				local elapsed=$(calculate_duration "$start_epoch" "$current_time")
+				local formatted=$(format_duration "$elapsed")
+				printf "%s %s\n" "$formatted" "$line"
 		done
 }
 
@@ -359,6 +382,14 @@ timed_main() {
 								UPDATE_INLINE=0
 								shift
 								;;
+						--interactive)
+								FORCE_INTERACTIVE=1
+								shift
+								;;
+						--non-interactive)
+								FORCE_NON_INTERACTIVE=1
+								shift
+								;;
 						-i|--interval)
 								if [[ -z "${2:-}" ]]; then
 										printf "Error: --interval requires an argument\n" >&2
@@ -408,6 +439,22 @@ timed_main() {
 		# Setup colors based on terminal capabilities
 		setup_colors
 
+		if [[ $FORCE_INTERACTIVE -eq 1 ]] && [[ $FORCE_NON_INTERACTIVE -eq 1 ]]; then
+				printf "Error: --interactive and --non-interactive cannot be used together\n" >&2
+				return 1
+		fi
+
+		# Detect non-interactive stdout (pipes/files)
+		NON_INTERACTIVE=0
+		if [[ ! -t 1 ]]; then
+				NON_INTERACTIVE=1
+		fi
+		if [[ $FORCE_NON_INTERACTIVE -eq 1 ]]; then
+				NON_INTERACTIVE=1
+		elif [[ $FORCE_INTERACTIVE -eq 1 ]]; then
+				NON_INTERACTIVE=0
+		fi
+
 		# Set up signal handlers
 		trap 'cleanup INT' INT
 		trap 'cleanup TERM' TERM
@@ -417,8 +464,8 @@ timed_main() {
 		# Start timing
 		START_TIME=$(get_time_ns)
 
-		# Start background timer if not in quiet mode
-		if [[ $QUIET_MODE -eq 0 ]]; then
+		# Start background timer if not in quiet mode and interactive
+		if [[ $QUIET_MODE -eq 0 ]] && [[ $NON_INTERACTIVE -eq 0 ]]; then
 				# Export UPDATE_INTERVAL so the background process can see it
 				export UPDATE_INTERVAL
 				run_timer "$START_TIME" &
@@ -429,6 +476,11 @@ timed_main() {
 		local resource_output=""
 		local resource_tempfile=""
 		local gnu_time_cmd=""
+
+		local use_line_prefix=0
+		if [[ $NON_INTERACTIVE -eq 1 ]] && [[ $QUIET_MODE -eq 0 ]]; then
+				use_line_prefix=1
+		fi
 
 		if [[ $SHOW_RESOURCES -eq 1 ]]; then
 				# Check for GNU time command (avoid shell builtin)
@@ -446,19 +498,34 @@ timed_main() {
 				if [[ -n "$gnu_time_cmd" ]]; then
 						# Use GNU time with custom format
 						resource_tempfile=$(mktemp --tmpdir timed_resources.XXXXXX)
-						$gnu_time_cmd -f "user:%U sys:%S maxrss:%M" -o "$resource_tempfile" "$@" 2>&1
-						EXIT_CODE=$?
+						if [[ $use_line_prefix -eq 1 ]]; then
+								$gnu_time_cmd -f "user:%U sys:%S maxrss:%M" -o "$resource_tempfile" "$@" | prefix_stdout_lines "$START_TIME"
+								EXIT_CODE=${PIPESTATUS[0]}
+						else
+								$gnu_time_cmd -f "user:%U sys:%S maxrss:%M" -o "$resource_tempfile" "$@" 2>&1
+								EXIT_CODE=$?
+						fi
 						resource_output=$(cat "$resource_tempfile" 2>/dev/null)
 						rm -f "$resource_tempfile"
 				else
 						# Run without resource tracking (BSD time output is too messy to parse reliably)
-						"$@"
-						EXIT_CODE=$?
+						if [[ $use_line_prefix -eq 1 ]]; then
+								"$@" | prefix_stdout_lines "$START_TIME"
+								EXIT_CODE=${PIPESTATUS[0]}
+						else
+								"$@"
+								EXIT_CODE=$?
+						fi
 				fi
 		else
 				# Run without resource tracking
-				"$@"
-				EXIT_CODE=$?
+				if [[ $use_line_prefix -eq 1 ]]; then
+						"$@" | prefix_stdout_lines "$START_TIME"
+						EXIT_CODE=${PIPESTATUS[0]}
+				else
+						"$@"
+						EXIT_CODE=$?
+				fi
 		fi
 
 		# Stop timing

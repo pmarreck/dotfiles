@@ -146,15 +146,28 @@ test_clip() {
 	assert "$output" == "$test_string" "$this_test"
 	(( fails += $? ))
 
-	# Test 6: Reading from clipboard - should match what we just put in
+	# Test 6: Delayed piped input should still be treated as stdin
+	(( tests++ ))
+	debug "Test $tests"
+	this_test="clip should wait for delayed piped input and not paste clipboard contents"
+	$verbose && echo "TEST: $this_test"
+	clip "baseline clipboard" >/dev/null
+	output=$( (sleep 0.2; printf "delayed piped input") | clip )
+	assert "$output" == "delayed piped input" "$this_test"
+	(( fails += $? ))
+	assert "$(clip)" == "delayed piped input" "$this_test"
+	(( fails += $? ))
+
+	# Test 7: Reading from clipboard - should match what we just put in
 	(( tests++ ))
 	debug "Test $tests"
 	this_test="clip should retrieve from clipboard when not piped to"
 	$verbose && echo "TEST: $this_test"
+	clip "$test_string" >/dev/null
 	assert "$(clip)" == "$test_string" "$this_test"
 	(( fails += $? ))
 
-	# Test 7: Empty clipboard
+	# Test 8: Empty clipboard
 	(( tests++ ))
 	debug "Test $tests"
 	this_test="clip should return empty string when clipboard is empty"
@@ -163,7 +176,7 @@ test_clip() {
 	assert "$(clip)" == "" "$this_test"
 	(( fails += $? ))
 
-	# Test 8: Multiple args should be echoed as-is after copying
+	# Test 9: Multiple args should be echoed as-is after copying
 	(( tests++ ))
 	debug "Test $tests"
 	this_test="clip should copy multiple args to clipboard and echo them as-is"
@@ -172,7 +185,7 @@ test_clip() {
 	assert "$(clip)" == "foo bar" "$this_test"
 	(( fails += $? ))
 
-	# Test 9: --quiet option should suppress output
+	# Test 10: --quiet option should suppress output
 	(( tests++ ))
 	debug "Test $tests"
 	this_test="clip --quiet should not output anything"
@@ -186,7 +199,7 @@ test_clip() {
 	assert "$output" == "" "$this_test"
 	(( fails += $? ))
 
-	# Test 10: --quiet option should still copy to clipboard
+	# Test 11: --quiet option should still copy to clipboard
 	(( tests++ ))
 	debug "Test $tests"
 	this_test="clip --quiet should still copy to clipboard"
@@ -195,7 +208,7 @@ test_clip() {
 	assert "$(clip)" == "quiet test" "$this_test"
 	(( fails += $? ))
 
-	# Test 11: -q short option should work the same as --quiet
+	# Test 12: -q short option should work the same as --quiet
 	(( tests++ ))
 	debug "Test $tests"
 	this_test="clip -q should not output anything (short option)"
@@ -207,7 +220,7 @@ test_clip() {
 	assert "$output" == "" "$this_test"
 	(( fails += $? ))
 
-	# Test 12: --quiet with piped input should suppress output
+	# Test 13: --quiet with piped input should suppress output
 	(( tests++ ))
 	debug "Test $tests"
 	this_test="clip --quiet should not output anything with piped input"
@@ -217,7 +230,7 @@ test_clip() {
 	assert "$output" == "" "$this_test"
 	(( fails += $? ))
 
-	# Test 13: --quiet with piped input should still copy to clipboard
+	# Test 14: --quiet with piped input should still copy to clipboard
 	(( tests++ ))
 	debug "Test $tests"
 	this_test="clip -q should still copy piped input to clipboard"
@@ -226,7 +239,7 @@ test_clip() {
 	assert "$(clip)" == "piped quiet test" "$this_test"
 	(( fails += $? ))
 
-	# Test 14: --help should show usage
+	# Test 15: --help should show usage
 	(( tests++ ))
 	debug "Test $tests"
 	this_test="clip --help should show usage information"
@@ -235,7 +248,7 @@ test_clip() {
 	assert "$output" == "Usage: clip [OPTIONS] [TEXT...]" "$this_test"
 	(( fails += $? ))
 
-	# Test 15: -h short option should show usage
+	# Test 16: -h short option should show usage information
 	(( tests++ ))
 	debug "Test $tests"
 	this_test="clip -h should show usage information"

@@ -178,9 +178,9 @@ clip() {
 			printf "%s" "$joined_args"
 			debug "Finished output to stdout"
 		fi
-	elif has_stdin; then
-		debug "Path: Piped input with data available"
-		# Stream stdin to clipboard
+	elif [ ! -t 0 ]; then
+		debug "Path: Stdin is not a TTY (pipe or redirect)"
+		# Stream stdin to clipboard, even if it isn't ready yet
 		if $quiet; then
 			debug "About to call clip_copy_stdin in quiet mode"
 			# Copy stdin to clipboard without echoing to stdout

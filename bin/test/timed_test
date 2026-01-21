@@ -234,6 +234,89 @@ test_static_mode() {
     assert_exit_code 0 "$exit_code" "Static mode: command executes successfully"
 }
 
+test_non_interactive_line_prefix() {
+	printf "\n=== Testing non-interactive line prefix ===\n"
+
+	# Reset global variables that might be set from previous tests
+	OUTPUT_FILE=""
+	FORMAT="default"
+	QUIET_MODE=0
+	NO_COLOR=0
+	SHOW_RESOURCES=1
+	UPDATE_INLINE=1
+
+	cat > "$TEST_TEMP_DIR/line_script.sh" << 'EOF'
+#!/usr/bin/env bash
+printf "alpha\nbeta\n"
+EOF
+	chmod +x "$TEST_TEMP_DIR/line_script.sh"
+
+	local output
+	output=$(timed_main --no-resources "$TEST_TEMP_DIR/line_script.sh" 2>/dev/null)
+
+	local line_count
+	line_count=$(printf '%s' "$output" | sed -n '$=')
+	assert_equal 2 "$line_count" "Non-interactive: outputs one line per stdout line"
+
+	local first_line second_line
+	first_line=$(printf '%s\n' "$output" | sed -n '1p')
+	second_line=$(printf '%s\n' "$output" | sed -n '2p')
+
+	if [[ "$first_line" == *" alpha" ]]; then
+		assert_equal 0 0 "Non-interactive: prefix has space before alpha"
+	else
+		assert_equal 0 1 "Non-interactive: prefix has space before alpha"
+	fi
+
+	if [[ "$second_line" == *" beta" ]]; then
+		assert_equal 0 0 "Non-interactive: prefix has space before beta"
+	else
+		assert_equal 0 1 "Non-interactive: prefix has space before beta"
+	fi
+}
+
+test_force_interactive_mode() {
+	printf "\n=== Testing force interactive mode ===\n"
+
+	# Reset global variables that might be set from previous tests
+	OUTPUT_FILE=""
+	FORMAT="default"
+	QUIET_MODE=0
+	NO_COLOR=0
+	SHOW_RESOURCES=1
+	UPDATE_INLINE=1
+
+	cat > "$TEST_TEMP_DIR/force_interactive.sh" << 'EOF'
+#!/usr/bin/env bash
+printf "alpha\nbeta\n"
+EOF
+	chmod +x "$TEST_TEMP_DIR/force_interactive.sh"
+
+	local output
+	output=$(timed_main --interactive --no-resources "$TEST_TEMP_DIR/force_interactive.sh" 2>/dev/null)
+
+	assert_equal $'alpha\nbeta' "$output" "Force interactive: stdout not prefixed"
+}
+
+test_conflicting_interactive_flags() {
+	printf "\n=== Testing conflicting interactive flags ===\n"
+
+	# Reset global variables that might be set from previous tests
+	OUTPUT_FILE=""
+	FORMAT="default"
+	QUIET_MODE=0
+	NO_COLOR=0
+	SHOW_RESOURCES=1
+	UPDATE_INLINE=1
+
+	local output
+	output=$(timed_main --interactive --non-interactive true 2>&1)
+	local exit_code=$?
+
+	assert_exit_code 1 "$exit_code" "Conflicting flags: exit code"
+	assert_contains "$output" "interactive" "Conflicting flags: error message"
+}
+
 test_help_and_version() {
     printf "\n=== Testing help and version flags ===\n"
 
@@ -384,6 +467,9 @@ run_all_tests() {
     test_command_not_found
     test_no_resources_flag
     test_static_mode
+    test_non_interactive_line_prefix
+    test_force_interactive_mode
+    test_conflicting_interactive_flags
     test_help_and_version
     test_complex_command
     test_format_duration
