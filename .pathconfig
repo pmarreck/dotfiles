@@ -74,6 +74,7 @@ IGNORE_PREPEND_PATH_WARNINGS=true prepend_path "$DOCUMENTS/dirtree/bin"
 # dirtree needs to be AFTER printable-binary in PATH (and thus BEFORE it in this list) or the wrong printable_binary will be used
 IGNORE_PREPEND_PATH_WARNINGS=true prepend_path "$DOCUMENTS/printable-binary/bin"
 IGNORE_PREPEND_PATH_WARNINGS=true prepend_path "$DOCUMENTS/rm-safe/bin"
+IGNORE_PREPEND_PATH_WARNINGS=true prepend_path "$DOCUMENTS/codescan/zig-out/bin"
 
 
 # Now exclude every path from PATH that does not actually exist.

@@ -150,6 +150,23 @@ fetch = "origin"
 push = "origin"
 ```
 
+### Troubleshooting: remotes + detached HEAD
+
+```bash
+# jj does NOT use git's remotes unless configured in jj:
+jj git remote list
+jj git remote add origin <ssh-url>
+
+# If git shows "HEAD (no branch)", reattach:
+git switch -c <branch>
+# then export jj state into git (if needed)
+jj git export
+```
+
+Notes:
+- In a colocated repo, `jj git push` uses jj's remote list, not git's. Add the remote in jj or set `[git] fetch/push` in `.jj/repo/config`.
+- If you already have git remotes, copy the SSH URL from `git remote -v` into `jj git remote add`.
+
 ### Keeping jj, Git, and GitHub in Sync
 
 1. Run `jj git fetch` to bring down the latest remote refs.

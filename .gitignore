@@ -17,4 +17,5 @@ bin/*launcher
 
 **/.claude/settings.local.json
 .jj/
+.codescan/
 .resume*
