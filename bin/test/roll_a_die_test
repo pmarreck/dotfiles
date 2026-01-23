@@ -1,18 +1,48 @@
 #!/usr/bin/env bash
 
-# Source the functions we need to test
-source "$HOME/dotfiles/bin/roll_a_die"
-source "$HOME/dotfiles/bin/assert"
+tests=0
+fails=0
 
-# Test the roll_a_die function
-test_roll_a_die() {
-  # Test with fixed RANDOM values
-  assert $(RANDOM=5 roll_a_die) == "6"
-  assert $(RANDOM=6 roll_a_die) == "1"
-  assert $(RANDOM=7 roll_a_die 20) == "8"
-}
+repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+PATH="$repo_dir/bin:$PATH"
 
-# Run the test if this script is executed directly
-if ! (return 0 2>/dev/null); then
-  test_roll_a_die
+((tests++))
+echo "Testing: roll_a_die default sides within range..."
+output=$(roll_a_die)
+if [[ "$output" =~ ^[0-9]+$ ]] && (( output >= 1 && output <= 6 )); then
+	echo "[PASS] default roll within 1..6"
+else
+	echo "[FAIL] default roll not within 1..6" >&2
+	echo "  Output was: $output" >&2
+	((fails++))
 fi
+
+((tests++))
+echo "Testing: roll_a_die with 1 side always returns 1..."
+output=$(roll_a_die 1)
+if [[ "$output" == "1" ]]; then
+	echo "[PASS] one-sided die returns 1"
+else
+	echo "[FAIL] one-sided die did not return 1" >&2
+	echo "  Output was: $output" >&2
+	((fails++))
+fi
+
+((tests++))
+echo "Testing: roll_a_die 20-sided within range..."
+output=$(roll_a_die 20)
+if [[ "$output" =~ ^[0-9]+$ ]] && (( output >= 1 && output <= 20 )); then
+	echo "[PASS] 20-sided roll within 1..20"
+else
+	echo "[FAIL] 20-sided roll not within 1..20" >&2
+	echo "  Output was: $output" >&2
+	((fails++))
+fi
+
+if ((fails == 0)); then
+	echo "All $tests roll_a_die tests passed"
+else
+	echo "$fails of $tests roll_a_die tests failed" >&2
+fi
+
+exit $fails

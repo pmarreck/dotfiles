@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+
+tests=0
+fails=0
+
+repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+resolve_script="$repo_dir/bin/src/resolve.bash"
+
+if [[ ! -f "$resolve_script" ]]; then
+	echo "[FAIL] resolve source not found: $resolve_script" >&2
+	exit 1
+fi
+
+run_resolve() {
+	local setup="${1-}"
+	shift || true
+	local tmpdir stdout_file stderr_file
+	tmpdir=$(mktemp -d --tmpdir resolve_test.XXXXXX)
+	stdout_file="$tmpdir/stdout"
+	stderr_file="$tmpdir/stderr"
+	bash -c 'source "$1"; eval "$2"; shift 2; resolve "$@"' bash "$resolve_script" "$setup" "$@" >"$stdout_file" 2>"$stderr_file"
+	RESOLVE_STATUS=$?
+	RESOLVE_STDOUT=$(cat "$stdout_file")
+	RESOLVE_STDERR=$(cat "$stderr_file")
+	rm -rf "$tmpdir"
+}
+
+echo_path=$(type -P echo 2>/dev/null || true)
+expected_echo="${echo_path:-echo}"
+
+((tests++))
+echo "Testing: resolve -h shows usage..."
+run_resolve "" -h
+if [[ $RESOLVE_STATUS -eq 0 ]] && [[ "$RESOLVE_STDOUT" == *"Usage:"* ]] && [[ -z "$RESOLVE_STDERR" ]]; then
+	echo "[PASS] help output includes Usage"
+else
+	echo "[FAIL] help output unexpected" >&2
+	echo "  status=$RESOLVE_STATUS" >&2
+	echo "  stdout: $RESOLVE_STDOUT" >&2
+	echo "  stderr: $RESOLVE_STDERR" >&2
+	((fails++))
+fi
+
+((tests++))
+echo "Testing: resolve --about prints description..."
+run_resolve "" --about
+expected_about="Resolve a command by recursively expanding Bash alias chains (first word only) and printing the fully flattened command invocation."
+if [[ $RESOLVE_STATUS -eq 0 ]] && [[ "$RESOLVE_STDOUT" == "$expected_about" ]] && [[ -z "$RESOLVE_STDERR" ]]; then
+	echo "[PASS] about output matches"
+else
+	echo "[FAIL] about output unexpected" >&2
+	echo "  status=$RESOLVE_STATUS" >&2
+	echo "  stdout: $RESOLVE_STDOUT" >&2
+	echo "  stderr: $RESOLVE_STDERR" >&2
+	((fails++))
+fi
+
+((tests++))
+echo "Testing: resolve with no args returns error and usage..."
+run_resolve ""
+if [[ $RESOLVE_STATUS -eq 2 ]] && [[ "$RESOLVE_STDERR" == *"resolve: missing <cmd>"* ]] && [[ "$RESOLVE_STDERR" == *"Usage:"* ]]; then
+	echo "[PASS] missing command reports error"
+else
+	echo "[FAIL] missing command handling unexpected" >&2
+	echo "  status=$RESOLVE_STATUS" >&2
+	echo "  stdout: $RESOLVE_STDOUT" >&2
+	echo "  stderr: $RESOLVE_STDERR" >&2
+	((fails++))
+fi
+
+((tests++))
+echo "Testing: resolve expands alias chains and resolves path..."
+run_resolve "alias r1='echo'; alias r2='r1 -n'" r2 hi
+expected_chain="$expected_echo -n hi"
+if [[ $RESOLVE_STATUS -eq 0 ]] && [[ "$RESOLVE_STDOUT" == "$expected_chain "* ]] && [[ -z "$RESOLVE_STDERR" ]]; then
+	echo "[PASS] alias chain expanded"
+else
+	echo "[FAIL] alias chain output unexpected" >&2
+	echo "  status=$RESOLVE_STATUS" >&2
+	echo "  stdout: $RESOLVE_STDOUT" >&2
+	echo "  stderr: $RESOLVE_STDERR" >&2
+	((fails++))
+fi
+
+((tests++))
+echo "Testing: resolve --raw warns on whitespace and prints raw output..."
+run_resolve "" --raw echo "a b"
+expected_raw="$expected_echo a b"
+if [[ $RESOLVE_STATUS -eq 0 ]] && [[ "$RESOLVE_STDOUT" == "$expected_raw" ]] && [[ "$RESOLVE_STDERR" == *"warning: --raw output contains whitespace"* ]]; then
+	echo "[PASS] raw output warning emitted"
+else
+	echo "[FAIL] raw output warning missing or output unexpected" >&2
+	echo "  status=$RESOLVE_STATUS" >&2
+	echo "  stdout: $RESOLVE_STDOUT" >&2
+	echo "  stderr: $RESOLVE_STDERR" >&2
+	((fails++))
+fi
+
+((tests++))
+echo "Testing: resolve detects alias cycles..."
+run_resolve $'alias a=b\nalias b=a' a
+if [[ $RESOLVE_STATUS -eq 1 ]] && [[ "$RESOLVE_STDERR" == *"alias cycle detected"* ]]; then
+	echo "[PASS] alias cycle reported"
+else
+	echo "[FAIL] alias cycle handling unexpected" >&2
+	echo "  status=$RESOLVE_STATUS" >&2
+	echo "  stdout: $RESOLVE_STDOUT" >&2
+	echo "  stderr: $RESOLVE_STDERR" >&2
+	((fails++))
+fi
+
+((tests++))
+echo "Testing: resolve --unsafe honors quoted alias arguments..."
+run_resolve $'alias q=\'echo "a b"\'' --unsafe q
+expected_unsafe="$expected_echo a\\ b"
+if [[ $RESOLVE_STATUS -eq 0 ]] && [[ "$RESOLVE_STDOUT" == "$expected_unsafe "* ]]; then
+	echo "[PASS] unsafe mode preserves quoted argument"
+else
+	echo "[FAIL] unsafe mode output unexpected" >&2
+	echo "  status=$RESOLVE_STATUS" >&2
+	echo "  stdout: $RESOLVE_STDOUT" >&2
+	echo "  stderr: $RESOLVE_STDERR" >&2
+	((fails++))
+fi
+
+if ((fails == 0)); then
+	echo "All $tests resolve tests passed"
+else
+	echo "$fails of $tests resolve tests failed" >&2
+fi
+
+exit $fails

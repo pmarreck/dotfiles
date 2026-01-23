@@ -183,6 +183,9 @@ in_bash && . "$HOME/dotfiles/bin/src/shadows.bash"
 # universal stdout/stderr/returncode capturing
 . $HOME/dotfiles/bin/src/capture.bash
 
+# resolve function for expanding aliases and resolved paths recursively
+. $HOME/dotfiles/bin/src/resolve.bash
+
 SIXEL_ENV=$(DEBUG_SHELLCONFIG=1 check_sixel_support 2>&1)
 SIXEL_CAPABLE=$?
 # if retcode is 0 then set SIXEL_CAPABLE to "true" else "false"
