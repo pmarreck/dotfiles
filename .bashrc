@@ -314,3 +314,5 @@ set +H
 export PNPM_HOME="$HOME/.local/share/pnpm"
 prepend_path "$PNPM_HOME"
 # pnpm end
+# Append Warp and McFly history to shell history
+warp-history --shell bash

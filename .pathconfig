@@ -66,6 +66,7 @@ if [[ "$OSTYPE" == "darwin"* ]]; then
 else
   DOCUMENTS="$HOME/Documents"
 fi
+export DOCUMENTS
 IGNORE_PREPEND_PATH_WARNINGS=true prepend_path "$DOCUMENTS/ixnay"
 IGNORE_PREPEND_PATH_WARNINGS=true prepend_path "$DOCUMENTS/jumpscript/bin"
 IGNORE_PREPEND_PATH_WARNINGS=true prepend_path "$DOCUMENTS/yt-transcriber"
