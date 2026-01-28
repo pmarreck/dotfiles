@@ -76,6 +76,7 @@ IGNORE_PREPEND_PATH_WARNINGS=true prepend_path "$DOCUMENTS/dirtree/bin"
 IGNORE_PREPEND_PATH_WARNINGS=true prepend_path "$DOCUMENTS/printable-binary/bin"
 IGNORE_PREPEND_PATH_WARNINGS=true prepend_path "$DOCUMENTS/rm-safe/bin"
 IGNORE_PREPEND_PATH_WARNINGS=true prepend_path "$DOCUMENTS/codescan/zig-out/bin"
+IGNORE_PREPEND_PATH_WARNINGS=true prepend_path "$DOCUMENTS/validate/zig-out/bin"
 
 
 # Now exclude every path from PATH that does not actually exist.

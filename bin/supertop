@@ -9,9 +9,9 @@ supertop() {
 	local session_name;
 	session_name="split_session_$$";
 
-	# Create the tmux session
+	# Create the tmux session with htop, split, add btop, then attach
 	tmux new-session -d -s "${session_name}" 'htop';
-	tmux split-window -h 'btop';
+	tmux split-window -h -t "${session_name}" 'btop';
 	tmux attach-session -t "${session_name}";
 }
 

@@ -46,7 +46,7 @@ EOF
 }
 
 parse_sites() {
-	local sites_string="${WEBPING_SITES:-google.com;reddit.com;chatgpt.com;facebook.com;x.com;github.com;amazon.com}"
+	local sites_string="${WEBPING_SITES:-google.com;youtube.com;chatgpt.com;facebook.com;x.com;github.com;amazon.com}"
 	IFS=';' read -ra sites <<< "$sites_string"
 	printf '%s\n' "${sites[@]}"
 }
@@ -159,6 +159,7 @@ webping() {
 	tmux new-session -d -s "${session_name}" "gping -n 1 --cmd \"$(build_curl_command "${resolved_sites[0]}")\""
 
 	# Set up key binding to kill the entire session with 'q'
+	# Note: This is a global binding, so we must unbind it when done
 	tmux bind-key -n q kill-session -t "${session_name}"
 
 	# Split horizontally for remaining sites (creates horizontal stripes)
@@ -169,8 +170,11 @@ webping() {
 		tmux select-layout even-vertical
 	done
 
-	# Attach to the session
+	# Attach to the session (blocks until session ends or detach)
 	tmux attach-session -t "${session_name}"
+
+	# Clean up: remove the global 'q' binding so it doesn't affect other sessions
+	tmux unbind-key -n q 2>/dev/null
 }
 
 # Run the function if this script is executed directly
