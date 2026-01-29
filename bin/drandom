@@ -30,12 +30,12 @@ end
 
 local function print_help()
 	print([[
-Usage: drandom [start] [end]
-       DRANDOM_SEED=<seed> drandom [start] [end]
-       DRANDOM_CONTEXT=<name> drandom [start] [end]
+Usage: drandom [options] [start] [end]
+       DRANDOM_SEED=<seed> drandom [options] [start] [end]
+       DRANDOM_CONTEXT=<name> drandom [options] [start] [end]
 
 Deterministic random number generator using PCG32.
-Outputs a random integer between start and end (inclusive).
+Outputs random integers between start and end (inclusive).
 
 If start is not specified, it defaults to 0
 If end is not specified, it defaults to 99
@@ -53,9 +53,11 @@ Seed formats:
     is interpreted as hexadecimal.
 
 Options:
-  -a, --about  Show a short description
-  -h, --help   Show this help message
-      --test   Run the associated test suite
+  -a, --about         Show a short description
+  -b, --binaryoutput  Output binary bytes (default 0-255, custom range allowed)
+  -c, --count N       Output N numbers (default: 1, or 1024 with -b)
+  -h, --help          Show this help message
+      --test          Run the associated test suite
 
 Persistence details:
   - State dir: ${DRANDOM_STATE_HOME:-/tmp}/drandom/${USER}
@@ -66,6 +68,8 @@ Examples:
   drandom           # Random number from 0-99
   drandom 1 6       # Roll a die (1-6)
   drandom 0 1       # Coin flip (0 or 1)
+  drandom -b        # 1024 random bytes to stdout
+  drandom -b -c 64  # 64 random bytes to stdout
 
   # Deterministic sequence:
   DRANDOM_SEED=12345
@@ -283,8 +287,101 @@ local function write_seed_file(path, value)
 	f:close()
 end
 
-local start = tonumber(argv[1]) or 0
-local ending = tonumber(argv[2]) or 99
+-- Parse command line arguments
+local function parse_args()
+	local options = {
+		binary_output = false,
+		count = nil,
+		start = nil,
+		ending = nil
+	}
+	local positionals = {}
+	local i = 1
+
+	while i <= #argv do
+		local arg_val = argv[i]
+		if arg_val == "--binaryoutput" or arg_val == "-b" then
+			options.binary_output = true
+		elseif arg_val == "--count" or arg_val == "-c" then
+			i = i + 1
+			if i > #argv then
+				stderr_write("Error: --count requires a number argument\n")
+				os.exit(1)
+			end
+			options.count = tonumber(argv[i])
+			if not options.count then
+				stderr_write("Error: --count value must be a number\n")
+				os.exit(1)
+			end
+		else
+			-- Collect positional arguments
+			table.insert(positionals, arg_val)
+		end
+		i = i + 1
+	end
+
+	-- Parse positional arguments as start and end
+	if #positionals >= 1 then
+		options.start = tonumber(positionals[1])
+		if not options.start then
+			stderr_write("Error: start value must be a number\n")
+			os.exit(1)
+		end
+	end
+	if #positionals >= 2 then
+		options.ending = tonumber(positionals[2])
+		if not options.ending then
+			stderr_write("Error: end value must be a number\n")
+			os.exit(1)
+		end
+	end
+
+	return options, positionals
+end
+
+-- Output a single byte as binary
+local function write_byte(value)
+	io.stdout:write(string.char(value))
+end
+
+local options, positionals = parse_args()
+
+-- Set defaults based on mode
+local start_val, end_val, count
+local show_defaults_msg = false
+
+if options.binary_output then
+	-- Binary mode: default range 0-255, but allow custom range within bounds
+	start_val = options.start or 0
+	end_val = options.ending or 255
+	count = options.count or 1024
+
+	-- Validate binary range is within 0-255
+	if start_val < 0 then
+		stderr_write("Error: start value must be >= 0 for binary output\n")
+		os.exit(1)
+	end
+	if end_val > 255 then
+		stderr_write("Error: end value must be <= 255 for binary output\n")
+		os.exit(1)
+	end
+else
+	-- Normal mode: use provided or default range
+	-- Show note if using default range (before applying defaults)
+	if options.start == nil and options.ending == nil then
+		show_defaults_msg = true
+	end
+
+	start_val = options.start or 0
+	end_val = options.ending or 99
+	count = options.count or 1
+end
+
+-- Validate start <= end (applies to both modes)
+if start_val > end_val then
+	stderr_write("Error: start value must be less than or equal to end value\n")
+	os.exit(1)
+end
 
 local state_home = os.getenv("DRANDOM_STATE_HOME") or "/tmp"
 local context = get_context()
@@ -316,12 +413,22 @@ else
 	end
 end
 
-if #argv == 0 then
+if show_defaults_msg then
 	stderr_write("(with a start of 0 and an end of 99)\n")
 end
 
-local result = rand_range(start, ending)
-print(result)
+-- Generate output
+if options.binary_output then
+	-- Binary output mode
+	for _ = 1, count do
+		write_byte(rand_range(start_val, end_val))
+	end
+else
+	-- Text output mode
+	for _ = 1, count do
+		print(rand_range(start_val, end_val))
+	end
+end
 
 os.execute("mkdir -p " .. shell_quote(state_dir) .. " 2>/dev/null")
 write_seed_file(seed_file, state)

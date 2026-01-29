@@ -60,10 +60,10 @@ random = function(start_val, end_val)
 end
 local show_help
 show_help = function()
-	print("Usage: random <start> <end>")
+	print("Usage: random [options] [start] [end]")
 	print("")
 	print("High-quality uniform random number generator using system entropy.")
-	print("Outputs a random integer between <start> and <end> (inclusive).")
+	print("Outputs random integers between <start> and <end> (inclusive).")
 	print("If <start> is not specified, it defaults to 0")
 	print("If <end> is not specified, it defaults to 99")
 	print("")
@@ -71,9 +71,11 @@ show_help = function()
 	print("and uses rejection sampling for perfect uniform distribution.")
 	print("")
 	print("Options:")
-	print("  -a, --about  Show a short description")
-	print("  -h, --help   Show this help message")
-	return print("      --test   Run the test suite")
+	print("  -a, --about         Show a short description")
+	print("  -b, --binaryoutput  Output binary bytes (default 0-255, custom range allowed)")
+	print("  -c, --count N       Output N numbers (default: 1, or 1024 with -b)")
+	print("  -h, --help          Show this help message")
+	return print("      --test          Run the test suite")
 end
 local show_about
 show_about = function()
@@ -85,32 +87,101 @@ run_test = function()
 	local result = os.execute(tostring(test_file) .. " >/dev/null")
 	return os.exit(result and 0 or 1)
 end
+local parse_args
+parse_args = function()
+	local options = {
+		binary_output = false,
+		count = nil,
+		start = nil,
+		end_val = nil
+	}
+	local i = 1
+	local positionals = { }
+	while i <= #arg do
+		do
+			local _exp_0 = arg[i]
+			if "--about" == _exp_0 or "-a" == _exp_0 then
+				show_about()
+				os.exit(0)
+			elseif "--help" == _exp_0 or "-h" == _exp_0 then
+				show_help()
+				os.exit(0)
+			elseif "--test" == _exp_0 then
+				run_test()
+				os.exit(0)
+			elseif "--binaryoutput" == _exp_0 or "-b" == _exp_0 then
+				options.binary_output = true
+			elseif "--count" == _exp_0 or "-c" == _exp_0 then
+				i = i + 1
+				if i > #arg then
+					io.stderr:write("Error: --count requires a number argument\n")
+					os.exit(1)
+				end
+				options.count = tonumber(arg[i])
+				if not options.count then
+					io.stderr:write("Error: --count value must be a number\n")
+					os.exit(1)
+				end
+			else
+				table.insert(positionals, arg[i])
+			end
+		end
+		i = i + 1
+	end
+	if #positionals >= 1 then
+		options.start = tonumber(positionals[1])
+		if not options.start then
+			io.stderr:write("Error: start value must be a number\n")
+			os.exit(1)
+		end
+	end
+	if #positionals >= 2 then
+		options.end_val = tonumber(positionals[2])
+		if not options.end_val then
+			io.stderr:write("Error: end value must be a number\n")
+			os.exit(1)
+		end
+	end
+	return options
+end
+local write_byte
+write_byte = function(value)
+	return io.stdout:write(string.char(value))
+end
 local main
 main = function()
-	local _exp_0 = #arg
-	if 0 == _exp_0 then
-		io.stderr:write("(with a start of 0 and an end of 99)\n")
-		return print(random())
+	local options = parse_args()
+	if options.binary_output then
+		options.start = options.start or 0
+		options.end_val = options.end_val or 255
+		options.count = options.count or 1024
+		if options.start < 0 then
+			io.stderr:write("Error: start value must be >= 0 for binary output\n")
+			os.exit(1)
+		end
+		if options.end_val > 255 then
+			io.stderr:write("Error: end value must be <= 255 for binary output\n")
+			os.exit(1)
+		end
 	else
-		local _exp_1 = arg[1]
-		if "--about" == _exp_1 or "-a" == _exp_1 then
-			return show_about()
-		elseif "--help" == _exp_1 or "-h" == _exp_1 then
-			return show_help()
-		elseif "--test" == _exp_1 then
-			return run_test()
-		else
-			local start = tonumber(arg[1])
-			local end_val = tonumber(arg[2])
-			if not start then
-				io.stderr:write("Error: start value must be a number\n")
-				os.exit(1)
-			end
-			if arg[2] and not end_val then
-				io.stderr:write("Error: end value must be a number\n")
-				os.exit(1)
-			end
-			return print(random(start, end_val))
+		if options.start == nil and options.end_val == nil then
+			io.stderr:write("(with a start of 0 and an end of 99)\n")
+		end
+		options.start = options.start or 0
+		options.end_val = options.end_val or 99
+		options.count = options.count or 1
+	end
+	if options.start > options.end_val then
+		io.stderr:write("Error: start value must be less than or equal to end value\n")
+		os.exit(1)
+	end
+	if options.binary_output then
+		for _ = 1, options.count do
+			write_byte(random(options.start, options.end_val))
+		end
+	else
+		for _ = 1, options.count do
+			print(random(options.start, options.end_val))
 		end
 	end
 end

@@ -215,6 +215,160 @@ test_random() {
 		(( fails++ ))
 	fi
 
+	# Test 8: --count flag outputs multiple numbers
+	(( tests++ ))
+	echo "Testing --count flag..."
+
+	local count_output
+	count_output=$(random --count 5 0 100 2>/dev/null)
+	local count_lines
+	count_lines=$(printf '%s\n' "$count_output" | wc -l | tr -d ' ')
+
+	if [ "$count_lines" -eq 5 ]; then
+		# Verify all outputs are valid integers in range
+		local all_valid=true
+		while IFS= read -r line; do
+			if ! [[ "$line" =~ ^-?[0-9]+$ ]] || [ "$line" -lt 0 ] || [ "$line" -gt 100 ]; then
+				all_valid=false
+				break
+			fi
+		done <<< "$count_output"
+
+		if $all_valid; then
+			echo "✓ --count flag test passed (got $count_lines lines)"
+		else
+			echo "✗ --count flag test failed: invalid output values" >&2
+			(( fails++ ))
+		fi
+	else
+		echo "✗ --count flag test failed: expected 5 lines, got $count_lines" >&2
+		(( fails++ ))
+	fi
+
+	# Test 9: --binaryoutput produces binary data (0-255 bytes)
+	(( tests++ ))
+	echo "Testing --binaryoutput flag..."
+
+	local binary_output
+	binary_output=$(random --binaryoutput --count 100 2>/dev/null | xxd -p | tr -d '\n')
+	local byte_count
+	byte_count=$((${#binary_output} / 2))
+
+	if [ "$byte_count" -eq 100 ]; then
+		echo "✓ --binaryoutput flag test passed (got $byte_count bytes)"
+	else
+		echo "✗ --binaryoutput flag test failed: expected 100 bytes, got $byte_count" >&2
+		(( fails++ ))
+	fi
+
+	# Test 10: --binaryoutput defaults to 1024 bytes
+	(( tests++ ))
+	echo "Testing --binaryoutput default count (1024)..."
+
+	local binary_default_output
+	binary_default_output=$(random --binaryoutput 2>/dev/null | xxd -p | tr -d '\n')
+	local default_byte_count
+	default_byte_count=$((${#binary_default_output} / 2))
+
+	if [ "$default_byte_count" -eq 1024 ]; then
+		echo "✓ --binaryoutput default count test passed (got $default_byte_count bytes)"
+	else
+		echo "✗ --binaryoutput default count test failed: expected 1024 bytes, got $default_byte_count" >&2
+		(( fails++ ))
+	fi
+
+	# Test 11: --binaryoutput with custom range
+	(( tests++ ))
+	echo "Testing --binaryoutput with custom range 64-192..."
+
+	local custom_range_output
+	custom_range_output=$(random -b -c 500 64 192 2>/dev/null | xxd -p | tr -d '\n')
+	local custom_bytes
+	custom_bytes=$((${#custom_range_output} / 2))
+
+	if [ "$custom_bytes" -eq 500 ]; then
+		# Check all bytes are in range 64-192
+		local all_in_range=true
+		for hex in $(echo "$custom_range_output" | fold -w2); do
+			local decimal=$((16#$hex))
+			if [ "$decimal" -lt 64 ] || [ "$decimal" -gt 192 ]; then
+				all_in_range=false
+				break
+			fi
+		done
+
+		if $all_in_range; then
+			echo "✓ --binaryoutput custom range test passed"
+		else
+			echo "✗ --binaryoutput custom range test failed: bytes outside 64-192 range" >&2
+			(( fails++ ))
+		fi
+	else
+		echo "✗ --binaryoutput custom range test failed: expected 500 bytes, got $custom_bytes" >&2
+		(( fails++ ))
+	fi
+
+	# Test 12: --binaryoutput with start < 0 should error
+	(( tests++ ))
+	echo "Testing --binaryoutput rejects start < 0..."
+
+	local negative_start_output
+	negative_start_output=$(random -b -c 10 -1 100 2>&1)
+	local negative_start_status=$?
+
+	if [ $negative_start_status -ne 0 ] && echo "$negative_start_output" | grep -qi "error"; then
+		echo "✓ --binaryoutput start < 0 rejection test passed"
+	else
+		echo "✗ --binaryoutput start < 0 rejection test failed: expected error, got status=$negative_start_status" >&2
+		(( fails++ ))
+	fi
+
+	# Test 13: --binaryoutput with end > 255 should error
+	(( tests++ ))
+	echo "Testing --binaryoutput rejects end > 255..."
+
+	local over255_output
+	over255_output=$(random -b -c 10 0 256 2>&1)
+	local over255_status=$?
+
+	if [ $over255_status -ne 0 ] && echo "$over255_output" | grep -qi "error"; then
+		echo "✓ --binaryoutput end > 255 rejection test passed"
+	else
+		echo "✗ --binaryoutput end > 255 rejection test failed: expected error, got status=$over255_status" >&2
+		(( fails++ ))
+	fi
+
+	# Test 14: start > end should error
+	(( tests++ ))
+	echo "Testing start > end rejection..."
+
+	local start_gt_end_output
+	start_gt_end_output=$(random 50 40 2>&1)
+	local start_gt_end_status=$?
+
+	if [ $start_gt_end_status -ne 0 ] && echo "$start_gt_end_output" | grep -qi "error"; then
+		echo "✓ start > end rejection test passed"
+	else
+		echo "✗ start > end rejection test failed: expected error, got status=$start_gt_end_status" >&2
+		(( fails++ ))
+	fi
+
+	# Test 15: -c and -b short forms work
+	(( tests++ ))
+	echo "Testing -c and -b short forms..."
+
+	local short_form_output
+	short_form_output=$(random -b -c 50 2>/dev/null | xxd -p | tr -d '\n')
+	local short_form_bytes
+	short_form_bytes=$((${#short_form_output} / 2))
+
+	if [ "$short_form_bytes" -eq 50 ]; then
+		echo "✓ -c and -b short form test passed"
+	else
+		echo "✗ -c and -b short form test failed: expected 50 bytes, got $short_form_bytes" >&2
+		(( fails++ ))
+	fi
+
 	# Final results
 	if [ $fails -gt 0 ]; then
 		echo ""

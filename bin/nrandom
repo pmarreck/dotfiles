@@ -26,15 +26,17 @@ nrandom = (start = 0, end_val = 99) ->
 
 -- Help function
 show_help = ->
-	print "Usage: nrandom <start> <end>"
-	print "Outputs a normally-distributed random number between <start> and <end>"
+	print "Usage: nrandom [options] [start] [end]"
+	print "Outputs normally-distributed random numbers between <start> and <end>"
 	print "If <start> is not specified, it defaults to 0"
 	print "If <end> is not specified, it defaults to 99"
 	print ""
 	print "Options:"
-	print "  -a, --about  Show a short description"
-	print "  -h, --help   Show this help message"
-	print "      --test   Run the test suite"
+	print "  -a, --about         Show a short description"
+	print "  -b, --binaryoutput  Output binary bytes (default 0-255, custom range allowed)"
+	print "  -c, --count N       Output N numbers (default: 1, or 1024 with -b)"
+	print "  -h, --help          Show this help message"
+	print "      --test          Run the test suite"
 
 -- About function
 show_about = ->
@@ -46,41 +48,109 @@ run_test = ->
 	result = os.execute "#{test_file} >/dev/null"
 	os.exit result == 0 and 0 or 1
 
+-- Parse command line arguments
+parse_args = ->
+	options = {
+		binary_output: false
+		count: nil  -- nil means use default (1 or 1024 for binary)
+		start: nil
+		end_val: nil
+	}
+
+	i = 1
+	positionals = {}
+
+	while i <= #arg
+		switch arg[i]
+			when "--about", "-a"
+				show_about!
+				os.exit 0
+			when "--help", "-h"
+				show_help!
+				os.exit 0
+			when "--test"
+				run_test!
+				os.exit 0
+			when "--binaryoutput", "-b"
+				options.binary_output = true
+			when "--count", "-c"
+				i += 1
+				if i > #arg
+					io.stderr\write "Error: --count requires a number argument\n"
+					os.exit 1
+				options.count = tonumber arg[i]
+				unless options.count
+					io.stderr\write "Error: --count value must be a number\n"
+					os.exit 1
+			else
+				-- Collect positional arguments
+				table.insert positionals, arg[i]
+		i += 1
+
+	-- Parse positional arguments as start and end
+	if #positionals >= 1
+		options.start = tonumber positionals[1]
+		unless options.start
+			io.stderr\write "Error: start value must be a number\n"
+			os.exit 1
+	if #positionals >= 2
+		options.end_val = tonumber positionals[2]
+		unless options.end_val
+			io.stderr\write "Error: end value must be a number\n"
+			os.exit 1
+
+	options
+
+-- Output a single byte as binary
+write_byte = (value) ->
+	io.stdout\write string.char value
+
 -- Main execution logic
 main = ->
 	-- Initialize random seed
 	math.randomseed os.time! + os.clock! * 1000000
 
-	-- Handle command line arguments using switch statement
-	switch #arg
-		when 0
-			-- No arguments, use defaults and show note
+	-- Parse arguments
+	options = parse_args!
+
+	-- Set defaults based on mode
+	if options.binary_output
+		-- Binary mode: default range 0-255, but allow custom range within bounds
+		options.start = options.start or 0
+		options.end_val = options.end_val or 255
+		options.count = options.count or 1024
+
+		-- Validate binary range is within 0-255
+		if options.start < 0
+			io.stderr\write "Error: start value must be >= 0 for binary output\n"
+			os.exit 1
+		if options.end_val > 255
+			io.stderr\write "Error: end value must be <= 255 for binary output\n"
+			os.exit 1
+	else
+		-- Normal mode: use provided or default range
+		-- Show note if using default range (before applying defaults)
+		if options.start == nil and options.end_val == nil
 			io.stderr\write "(with a start of 0 and an end of 99)\n"
-			print nrandom!
-		else
-			switch arg[1]
-				when "--about", "-a"
-					show_about!
-				when "--help", "-h"
-					show_help!
-				when "--test"
-					run_test!
-				else
-					-- Parse numeric arguments
-					start = tonumber arg[1]
-					end_val = tonumber arg[2]
 
-					-- Validation with nil coalescing operator
-					unless start
-						io.stderr\write "Error: start value must be a number\n"
-						os.exit 1
+		options.start = options.start or 0
+		options.end_val = options.end_val or 99
+		options.count = options.count or 1
 
-					if arg[2] and not end_val
-						io.stderr\write "Error: end value must be a number\n"
-						os.exit 1
+	-- Validate start < end (applies to both modes)
+	if options.start >= options.end_val
+		io.stderr\write "Error: start value must be less than end value\n"
+		os.exit 1
 
-					-- Use default end_val if not provided
-					print nrandom start, end_val
+	-- Generate output
+	if options.binary_output
+		-- Binary output mode
+		for _ = 1, options.count
+			write_byte nrandom options.start, options.end_val
+	else
+		-- Text output mode
+		for _ = 1, options.count
+			print nrandom options.start, options.end_val
 
 -- Run main function
 main!
