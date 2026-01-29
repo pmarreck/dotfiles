@@ -1,188 +1,508 @@
-#!/usr/bin/env yuerun
+#!/usr/bin/env luajit
 
--- Get random bytes from /dev/urandom (or fallback)
-get_random_bytes = (num_bytes) ->
-	-- Try to read from /dev/urandom first (preferred)
-	urandom = io.open("/dev/urandom", "rb")
-	if urandom
-		bytes = urandom\read(num_bytes)
-		urandom\close!
-		return bytes if bytes and #bytes == num_bytes
+--[[
+Unified random number generator
+- Uniform distribution (default) or normal distribution (--normalized/-n)
+- True random from /dev/urandom (default) or deterministic PCG32 (--deterministic/-d)
+- Can combine modes: deterministic + normalized for reproducible normal distribution
+- Symlink-aware: invoked as 'nrandom' implies --normalized, 'drandom' implies --deterministic
+]]
 
-	-- Fallback: try /dev/random (may block, but more entropy)
-	random_dev = io.open("/dev/random", "rb")
-	if random_dev
-		bytes = random_dev\read(num_bytes)
-		random_dev\close!
-		return bytes if bytes and #bytes == num_bytes
+local ffi = require("ffi")
+local bit = require("bit")
 
-	-- Final fallback: generate pseudo-random bytes from time
-	-- This shouldn't happen on Unix-like systems, but just in case
-	result = ""
-	for i = 1, num_bytes
-		-- Use current time with some variation
-		time_val = os.time! + os.clock! * 1000000 + i * 12345
-		byte_val = math.floor(time_val % 256)
-		result = result .. string.char(byte_val)
-	result
+local argv = arg or {}
 
--- Convert bytes to integer
-bytes_to_integer = (bytes) ->
-	result = 0
-	for i = 1, #bytes
+-- ===== FFI declarations =====
+ffi.cdef[[
+	int getppid(void);
+	int gettimeofday(struct timeval *tv, void *tz);
+	typedef long time_t;
+	struct timeval {
+		time_t tv_sec;
+		long tv_usec;
+	};
+]]
+
+local u64 = ffi.typeof("uint64_t")
+
+-- ===== Utility functions =====
+local function stderr_write(msg)
+	io.stderr:write(msg)
+end
+
+local function shell_quote(s)
+	return "'" .. s:gsub("'", "'\\''") .. "'"
+end
+
+local function exec_status(cmd)
+	local ok, reason, code = os.execute(cmd)
+	if type(ok) == "number" then return ok end
+	if ok == true then return 0 end
+	if reason == "exit" and type(code) == "number" then return code end
+	return 1
+end
+
+local function trim(s)
+	return (s:gsub("^%s+", ""):gsub("%s+$", ""))
+end
+
+-- ===== Seed parsing =====
+local function parse_uint64_dec(s)
+	local value = ffi.new(u64, 0)
+	for i = 1, #s do
+		local c = s:byte(i)
+		if c < 48 or c > 57 then return nil end
+		value = value * 10 + (c - 48)
+	end
+	return value
+end
+
+local function parse_uint64_hex(s)
+	local value = ffi.new(u64, 0)
+	s = s:gsub("^0[xX]", "")
+	for i = 1, #s do
+		local c = s:byte(i)
+		local digit
+		if c >= 48 and c <= 57 then digit = c - 48
+		elseif c >= 65 and c <= 70 then digit = c - 55
+		elseif c >= 97 and c <= 102 then digit = c - 87
+		else return nil end
+		value = value * 16 + digit
+	end
+	return value
+end
+
+local function parse_seed(seed_str, warn_on_implicit_hex)
+	if not seed_str then return nil end
+	local seed = trim(seed_str)
+	if seed == "" then return nil end
+	if seed:match("^0[xX][0-9A-Fa-f]+$") then
+		return parse_uint64_hex(seed)
+	end
+	if seed:match("^[0-9A-Fa-f]+$") and seed:match("[A-Fa-f]") then
+		if warn_on_implicit_hex then
+			stderr_write("Warning: seed '" .. seed .. "' looks like hex without 0x prefix; interpreting as hex\n")
+		end
+		return parse_uint64_hex(seed)
+	end
+	return parse_uint64_dec(seed)
+end
+
+local function u64_to_hex(value)
+	if value == nil then return "0x0" end
+	local digits = {}
+	local tmp = ffi.new(u64, value)
+	if tmp == 0 then return "0x0" end
+	while tmp > 0 do
+		local nibble = tonumber(tmp % 16)
+		if nibble < 10 then
+			digits[#digits + 1] = string.char(48 + nibble)
+		else
+			digits[#digits + 1] = string.char(87 + nibble)
+		end
+		tmp = tmp / 16
+	end
+	return "0x" .. table.concat(digits):reverse()
+end
+
+-- ===== PCG32 PRNG =====
+local pcg_state = ffi.new(u64, 0)
+local pcg_inc = ffi.new(u64, 1442695040888963407ULL)
+local pcg_mult = ffi.new(u64, 6364136223846793005ULL)
+
+local function pcg32_random()
+	local old = pcg_state
+	pcg_state = old * pcg_mult + pcg_inc
+	local xorshifted = bit.rshift(bit.bxor(bit.rshift(old, 18), old), 27)
+	local rot = tonumber(bit.rshift(old, 59))
+	local x = tonumber(ffi.cast("uint32_t", xorshifted))
+	local res = bit.bor(bit.rshift(x, rot), bit.lshift(x, bit.band(-rot, 31)))
+	return tonumber(ffi.cast("uint32_t", res))
+end
+
+local function pcg32_seed(seed)
+	pcg_state = ffi.new(u64, 0)
+	pcg_inc = ffi.new(u64, 1442695040888963407ULL)
+	pcg32_random()
+	pcg_state = pcg_state + seed
+	pcg32_random()
+end
+
+local function pcg32_range(start_val, end_val)
+	local range = end_val - start_val + 1
+	if range <= 1 then return start_val end
+	local bound = 4294967296 - (4294967296 % range)
+	while true do
+		local r = pcg32_random()
+		if r < bound then
+			return start_val + (r % range)
+		end
+	end
+end
+
+-- ===== /dev/urandom random =====
+local function get_random_bytes(num_bytes)
+	local urandom = io.open("/dev/urandom", "rb")
+	if urandom then
+		local bytes = urandom:read(num_bytes)
+		urandom:close()
+		if bytes and #bytes == num_bytes then return bytes end
+	end
+	-- Fallback
+	local random_dev = io.open("/dev/random", "rb")
+	if random_dev then
+		local bytes = random_dev:read(num_bytes)
+		random_dev:close()
+		if bytes and #bytes == num_bytes then return bytes end
+	end
+	-- Final fallback: time-based
+	local result = ""
+	for i = 1, num_bytes do
+		local time_val = os.time() + os.clock() * 1000000 + i * 12345
+		result = result .. string.char(math.floor(time_val % 256))
+	end
+	return result
+end
+
+local function bytes_to_integer(bytes)
+	local result = 0
+	for i = 1, #bytes do
 		result = result * 256 + string.byte(bytes, i)
-	result
+	end
+	return result
+end
 
--- Main random function using /dev/urandom directly
-random = (start_val = 0, end_val = 99) ->
-	span = end_val - start_val + 1
-	return start_val if span <= 1
-
-	-- Use rejection sampling with /dev/urandom to get uniform distribution
-	-- We need enough bytes to represent the range without bias
-	bytes_needed = math.ceil(math.log(span) / math.log(256)) + 1  -- Extra byte to reduce bias
-	max_val = 256^bytes_needed
-	limit = math.floor(max_val / span) * span
-
-	-- Rejection sampling loop
-	while true
-		bytes = get_random_bytes(bytes_needed)
-		random_val = bytes_to_integer(bytes)
-
-		-- Accept value if it's within the unbiased range
-		if random_val < limit
+local function urandom_range(start_val, end_val)
+	local span = end_val - start_val + 1
+	if span <= 1 then return start_val end
+	local bytes_needed = math.ceil(math.log(span) / math.log(256)) + 1
+	local max_val = 256^bytes_needed
+	local limit = math.floor(max_val / span) * span
+	while true do
+		local bytes = get_random_bytes(bytes_needed)
+		local random_val = bytes_to_integer(bytes)
+		if random_val < limit then
 			return start_val + (random_val % span)
-		-- Otherwise, try again (rejection sampling)
+		end
+	end
+end
 
--- Show help
-show_help = ->
-	print "Usage: random [options] [start] [end]"
-	print ""
-	print "High-quality uniform random number generator using system entropy."
-	print "Outputs random integers between <start> and <end> (inclusive)."
-	print "If <start> is not specified, it defaults to 0"
-	print "If <end> is not specified, it defaults to 99"
-	print ""
-	print "Sources entropy directly from /dev/urandom (with /dev/random fallback)"
-	print "and uses rejection sampling for perfect uniform distribution."
-	print ""
-	print "Options:"
-	print "  -a, --about         Show a short description"
-	print "  -b, --binaryoutput  Output binary bytes (default 0-255, custom range allowed)"
-	print "  -c, --count N       Output N numbers (default: 1, or 1024 with -b)"
-	print "  -h, --help          Show this help message"
-	print "      --test          Run the test suite"
+-- ===== Normal distribution (Box-Muller) =====
+local function normal_random(start_val, end_val, rand_func)
+	local range = end_val - start_val
+	local result
+	repeat
+		-- Box-Muller transformation
+		local u1 = (rand_func(1, 1000000)) / 1000000
+		local u2 = (rand_func(1, 1000000)) / 1000000
+		-- Avoid log(0)
+		if u1 < 0.000001 then u1 = 0.000001 end
+		local z0 = math.sqrt(-2 * math.log(u1)) * math.cos(2 * math.pi * u2)
+		-- Transform: scale by range/6, shift to center
+		local random_number = start_val + (z0 * (range / 6)) + (range / 2)
+		result = math.floor(random_number + 0.5)
+	until result >= start_val and result <= end_val
+	return result
+end
 
--- Show a one-line description
-show_about = ->
-	print "Uniform random integer generator using /dev/urandom with rejection sampling"
+-- ===== Time-based seed generation =====
+local function now_seed()
+	local tv = ffi.new("struct timeval")
+	if ffi.C.gettimeofday(tv, nil) == 0 then
+		local seconds = ffi.new(u64, tv.tv_sec)
+		local micros = ffi.new(u64, tv.tv_usec)
+		return seconds * 1000000 + micros
+	end
+	return ffi.new(u64, os.time())
+end
 
--- Test function
-run_test = ->
-	test_file = "#{os.getenv('HOME')}/dotfiles/bin/test/random_test"
-	result = os.execute("#{test_file} >/dev/null")
-	os.exit(result and 0 or 1)
+-- ===== Invocation name detection =====
+local function get_invocation_name()
+	local script_path = argv[0] or "random"
+	return script_path:match("([^/]+)$") or "random"
+end
 
--- Parse command line arguments
-parse_args = ->
-	options = {
-		binary_output: false
-		count: nil  -- nil means use default (1 or 1024 for binary)
-		start: nil
-		end_val: nil
+-- ===== Help and about =====
+local function print_about(invocation)
+	if invocation == "nrandom" then
+		print("Normally distributed random integer between bounds via Box-Muller sampling")
+	elseif invocation == "drandom" then
+		print("Deterministic PCG32-based RNG with optional seeding for reproducible numbers")
+	else
+		print("Unified random number generator: uniform/normal, true-random/deterministic")
+	end
+end
+
+local function print_help(invocation)
+	print("Usage: " .. invocation .. " [options] [start] [end]")
+	print("")
+	print("Unified random number generator with multiple modes.")
+	print("Outputs random integers between start and end (inclusive).")
+	print("Defaults: start=0, end=99")
+	print("")
+	print("Modes:")
+	print("  (default)           Uniform distribution from /dev/urandom")
+	print("  -d, --deterministic Use PCG32 PRNG (reproducible with same seed)")
+	print("  -n, --normalized    Normal (Gaussian) distribution via Box-Muller")
+	print("  -d -n               Reproducible normal distribution")
+	print("")
+	print("Options:")
+	print("  -a, --about         Show a short description")
+	print("  -b, --binaryoutput  Output binary bytes (default 0-255, custom range allowed)")
+	print("  -c, --count N       Output N numbers (default: 1, or 1024 with -b)")
+	print("  -h, --help          Show this help message")
+	print("      --seed N        Set seed (implies -d). Hex (0xABC) or decimal.")
+	print("      --test          Run the test suite")
+	print("")
+	print("Symlink behavior:")
+	print("  Invoked as 'nrandom' → implies --normalized")
+	print("  Invoked as 'drandom' → implies --deterministic")
+	print("")
+	print("Environment variables (for deterministic mode):")
+	print("  DRANDOM_SEED        Alternative way to set seed")
+	print("  DRANDOM_CONTEXT     Isolate state per context (default: parent PID)")
+	print("  DRANDOM_STATE_HOME  State directory (default: /tmp)")
+	print("")
+	print("Examples:")
+	print("  random              # Uniform random 0-99")
+	print("  random -n 0 100     # Normal distribution 0-100")
+	print("  random -d --seed 42 # Deterministic with seed")
+	print("  random -d -n --seed 42  # Reproducible normal distribution")
+	print("  random -b -c 64     # 64 random bytes to stdout")
+end
+
+-- ===== State persistence (for drandom compatibility) =====
+local function get_context()
+	local env_ctx = os.getenv("DRANDOM_CONTEXT")
+	if env_ctx and env_ctx ~= "" then return env_ctx end
+	local ok, ppid = pcall(function() return ffi.C.getppid() end)
+	if ok and ppid then return tostring(ppid) end
+	return tostring(os.getenv("PPID") or "unknown")
+end
+
+local function get_user()
+	local user = os.getenv("USER")
+	if user and user ~= "" then return user end
+	return "unknown"
+end
+
+local function read_seed_file(path)
+	local f = io.open(path, "r")
+	if not f then return nil end
+	local line = f:read("*l")
+	f:close()
+	if not line then return nil end
+	return parse_seed(line, false)
+end
+
+local function write_seed_file(path, value)
+	local f = io.open(path, "w")
+	if not f then return end
+	f:write(u64_to_hex(value))
+	f:write("\n")
+	f:close()
+end
+
+-- ===== Argument parsing =====
+local function parse_args()
+	local invocation = get_invocation_name()
+
+	local options = {
+		deterministic = (invocation == "drandom"),
+		normalized = (invocation == "nrandom"),
+		binary_output = false,
+		count = nil,
+		seed = nil,
+		seed_provided = false,
+		start_val = nil,
+		end_val = nil,
 	}
 
-	i = 1
-	positionals = {}
+	local i = 1
+	local positionals = {}
 
-	while i <= #arg
-		switch arg[i]
-			when "--about", "-a"
-				show_about!
-				os.exit 0
-			when "--help", "-h"
-				show_help!
-				os.exit 0
-			when "--test"
-				run_test!
-				os.exit 0
-			when "--binaryoutput", "-b"
-				options.binary_output = true
-			when "--count", "-c"
-				i += 1
-				if i > #arg
-					io.stderr\write "Error: --count requires a number argument\n"
-					os.exit 1
-				options.count = tonumber arg[i]
-				unless options.count
-					io.stderr\write "Error: --count value must be a number\n"
-					os.exit 1
+	while i <= #argv do
+		local arg_val = argv[i]
+		if arg_val == "--about" or arg_val == "-a" then
+			print_about(invocation)
+			os.exit(0)
+		elseif arg_val == "--help" or arg_val == "-h" then
+			print_help(invocation)
+			os.exit(0)
+		elseif arg_val == "--test" then
+			local test_file = (os.getenv("HOME") or "") .. "/dotfiles/bin/test/random_test"
+			local f = io.open(test_file, "r")
+			if f then
+				f:close()
+				local cmd = "FAST=1 " .. shell_quote(test_file) .. " >/dev/null"
+				local status = exec_status(cmd)
+				os.exit(status)
 			else
-				-- Collect positional arguments
-				table.insert positionals, arg[i]
-		i += 1
+				stderr_write("Test file not found: " .. test_file .. "\n")
+				os.exit(1)
+			end
+		elseif arg_val == "--deterministic" or arg_val == "-d" then
+			options.deterministic = true
+		elseif arg_val == "--normalized" or arg_val == "-n" then
+			options.normalized = true
+		elseif arg_val == "--binaryoutput" or arg_val == "-b" then
+			options.binary_output = true
+		elseif arg_val == "--count" or arg_val == "-c" then
+			i = i + 1
+			if i > #argv then
+				stderr_write("Error: --count requires a number argument\n")
+				os.exit(1)
+			end
+			options.count = tonumber(argv[i])
+			if not options.count then
+				stderr_write("Error: --count value must be a number\n")
+				os.exit(1)
+			end
+		elseif arg_val == "--seed" then
+			i = i + 1
+			if i > #argv then
+				stderr_write("Error: --seed requires a value\n")
+				os.exit(1)
+			end
+			options.seed = parse_seed(argv[i], true)
+			options.seed_provided = true
+			options.deterministic = true  -- --seed implies --deterministic
+		else
+			table.insert(positionals, arg_val)
+		end
+		i = i + 1
+	end
 
-	-- Parse positional arguments as start and end
-	if #positionals >= 1
-		options.start = tonumber positionals[1]
-		unless options.start
-			io.stderr\write "Error: start value must be a number\n"
-			os.exit 1
-	if #positionals >= 2
-		options.end_val = tonumber positionals[2]
-		unless options.end_val
-			io.stderr\write "Error: end value must be a number\n"
-			os.exit 1
+	-- Parse positional arguments
+	if #positionals >= 1 then
+		options.start_val = tonumber(positionals[1])
+		if not options.start_val then
+			stderr_write("Error: start value must be a number\n")
+			os.exit(1)
+		end
+	end
+	if #positionals >= 2 then
+		options.end_val = tonumber(positionals[2])
+		if not options.end_val then
+			stderr_write("Error: end value must be a number\n")
+			os.exit(1)
+		end
+	end
 
-	options
+	return options, positionals, invocation
+end
 
--- Output a single byte as binary
-write_byte = (value) ->
-	io.stdout\write string.char value
-
--- Main execution logic
-main = ->
-	-- Parse arguments
-	options = parse_args!
+-- ===== Main =====
+local function main()
+	local options, positionals, invocation = parse_args()
 
 	-- Set defaults based on mode
-	if options.binary_output
-		-- Binary mode: default range 0-255, but allow custom range within bounds
-		options.start = options.start or 0
-		options.end_val = options.end_val or 255
-		options.count = options.count or 1024
+	local start_val, end_val, count
+	local show_defaults_msg = false
 
-		-- Validate binary range is within 0-255
-		if options.start < 0
-			io.stderr\write "Error: start value must be >= 0 for binary output\n"
-			os.exit 1
-		if options.end_val > 255
-			io.stderr\write "Error: end value must be <= 255 for binary output\n"
-			os.exit 1
+	if options.binary_output then
+		start_val = options.start_val or 0
+		end_val = options.end_val or 255
+		count = options.count or 1024
+
+		if start_val < 0 then
+			stderr_write("Error: start value must be >= 0 for binary output\n")
+			os.exit(1)
+		end
+		if end_val > 255 then
+			stderr_write("Error: end value must be <= 255 for binary output\n")
+			os.exit(1)
+		end
 	else
-		-- Normal mode: use provided or default range
-		-- Show note if using default range (before applying defaults)
-		if options.start == nil and options.end_val == nil
-			io.stderr\write "(with a start of 0 and an end of 99)\n"
+		if options.start_val == nil and options.end_val == nil then
+			show_defaults_msg = true
+		end
+		start_val = options.start_val or 0
+		end_val = options.end_val or 99
+		count = options.count or 1
+	end
 
-		options.start = options.start or 0
-		options.end_val = options.end_val or 99
-		options.count = options.count or 1
+	-- Validate range
+	if start_val > end_val then
+		stderr_write("Error: start value must be less than or equal to end value\n")
+		os.exit(1)
+	end
 
-	-- Validate start <= end (applies to both modes)
-	if options.start > options.end_val
-		io.stderr\write "Error: start value must be less than or equal to end value\n"
-		os.exit 1
+	-- Setup RNG
+	local rand_func
+
+	if options.deterministic then
+		-- Check for DRANDOM_SEED environment variable
+		local env_seed_raw = os.getenv("DRANDOM_SEED")
+		local env_seed_set = env_seed_raw ~= nil and env_seed_raw ~= ""
+
+		if options.seed_provided then
+			-- Use provided seed
+			pcg32_seed(options.seed or ffi.new(u64, 0))
+		elseif env_seed_set then
+			-- Use environment seed
+			local env_seed = parse_seed(env_seed_raw, true)
+			pcg32_seed(env_seed or ffi.new(u64, 0))
+		else
+			-- Check for persisted state or generate random seed
+			local state_home = os.getenv("DRANDOM_STATE_HOME") or "/tmp"
+			local context = get_context()
+			local state_dir = state_home .. "/drandom/" .. get_user()
+			local seed_file = state_dir .. "/" .. context .. ".seed"
+
+			local persisted = read_seed_file(seed_file)
+			if persisted then
+				pcg_state = persisted
+			else
+				-- Generate random seed and output to stderr
+				local random_seed = now_seed()
+				pcg32_seed(random_seed)
+				stderr_write("(seed: " .. u64_to_hex(random_seed) .. ")\n")
+			end
+
+			-- Save state after generation (done at end)
+			-- We need to save state, so track this
+			options._save_state = true
+			options._state_dir = state_dir
+			options._seed_file = seed_file
+		end
+
+		rand_func = pcg32_range
+	else
+		rand_func = urandom_range
+	end
+
+	-- Show defaults message
+	if show_defaults_msg and not options.binary_output then
+		stderr_write("(with a start of 0 and an end of 99)\n")
+	end
 
 	-- Generate output
-	if options.binary_output
-		-- Binary output mode
-		for _ = 1, options.count
-			write_byte random options.start, options.end_val
-	else
-		-- Text output mode
-		for _ = 1, options.count
-			print random options.start, options.end_val
+	local write_byte = function(value)
+		io.stdout:write(string.char(value))
+	end
 
--- Run main function
-main!
+	for _ = 1, count do
+		local value
+		if options.normalized then
+			value = normal_random(start_val, end_val, rand_func)
+		else
+			value = rand_func(start_val, end_val)
+		end
+
+		if options.binary_output then
+			write_byte(value)
+		else
+			print(value)
+		end
+	end
+
+	-- Save deterministic state if needed
+	if options._save_state then
+		os.execute("mkdir -p " .. shell_quote(options._state_dir) .. " 2>/dev/null")
+		write_seed_file(options._seed_file, pcg_state)
+	end
+end
+
+main()

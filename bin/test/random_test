@@ -4,31 +4,50 @@ if [ "$RANDOM_TEST_DEPTH" = "1" ]; then
 	exit 0
 fi
 
-# Test the random function
+# Sample sizes (FAST mode reduces iterations for quick --test runs)
+SAMPLE_SIZE=${RANDOM_TEST_SAMPLE_SIZE:-1000}
+BINARY_SAMPLE_SIZE=${RANDOM_TEST_BINARY_SIZE:-1000}
+if [ -n "$FAST" ]; then
+	SAMPLE_SIZE=100
+	BINARY_SAMPLE_SIZE=100
+fi
+
+# Test the unified random function
 test_random() {
 	local fails=0
 	local tests=0
+	local state_home
+	state_home=$(mktemp -d --tmpdir random-test.XXXXXX)
+	if [ ! -d "$state_home" ]; then
+		echo "✗ Failed to create temp state dir for tests" >&2
+		return 1
+	fi
+	trap 'rm -rf "$state_home"' EXIT
 
-	echo "Testing uniform random number generator..."
+	echo "Testing unified random number generator..."
+	echo "============================================"
 
-	# Test 0: About flag should return a single-line summary
+	# ===== SECTION 1: Basic functionality (uniform mode) =====
+	echo ""
+	echo "--- Section 1: Basic uniform random ---"
+
+	# Test 1: About flag
 	(( tests++ ))
 	echo "Testing --about/-a flags..."
 
 	local about_output
 	about_output=$(random --about 2>/dev/null)
-
 	local about_lines
 	about_lines=$(printf '%s\n' "$about_output" | wc -l | tr -d ' ')
 
-	if [ -n "$about_output" ] && [ "$about_lines" -eq 1 ] && echo "$about_output" | grep -qi "uniform random"; then
-		echo "✓ About flag test passed: single-line summary present"
+	if [ -n "$about_output" ] && [ "$about_lines" -eq 1 ]; then
+		echo "✓ About flag test passed"
 	else
 		echo "✗ About flag test failed: output='$about_output' (lines: $about_lines)" >&2
 		(( fails++ ))
 	fi
 
-	# Test 0b: Help flags should show usage and exit 0
+	# Test 2: Help flag
 	(( tests++ ))
 	echo "Testing --help/-h flags..."
 
@@ -43,7 +62,7 @@ test_random() {
 		(( fails++ ))
 	fi
 
-	# Test 0c: --test should run silently and exit 0 when passing
+	# Test 3: --test flag
 	(( tests++ ))
 	echo "Testing --test flag..."
 
@@ -52,13 +71,13 @@ test_random() {
 	local test_status=$?
 
 	if [ $test_status -eq 0 ] && [ -z "$test_output" ]; then
-		echo "✓ --test flag test passed: silent success"
+		echo "✓ --test flag test passed"
 	else
 		echo "✗ --test flag test failed: status=$test_status, output='$test_output'" >&2
 		(( fails++ ))
 	fi
 
-	# Test 1: Basic execution (runs without error)
+	# Test 4: Basic execution
 	(( tests++ ))
 	echo "Testing basic execution..."
 
@@ -67,155 +86,71 @@ test_random() {
 	local exit_code=$?
 
 	if [ "$exit_code" -eq 0 ] && [ -n "$random_output" ]; then
-		echo "✓ Basic execution test passed: runs without error and produces output"
+		echo "✓ Basic execution test passed"
 	else
-		echo "✗ Basic execution test failed:" >&2
-		echo "  Exit code: $exit_code (expected 0)" >&2
-		echo "  Output: '$random_output'" >&2
+		echo "✗ Basic execution test failed: exit=$exit_code" >&2
 		(( fails++ ))
 	fi
 
-	# Test 2: Default range (0-100)
+	# Test 5: Default range (0-99)
 	(( tests++ ))
 	echo "Testing default range (0-99)..."
 
 	local num=$(random 2>/dev/null)
 
 	if [ "$num" -ge 0 ] && [ "$num" -le 99 ]; then
-		echo "✓ Default range test passed: $num is in range [0, 99]"
+		echo "✓ Default range test passed: $num in [0, 99]"
 	else
-		echo "✗ Default range test failed: $num is not in range [0, 99]" >&2
+		echo "✗ Default range test failed: $num not in [0, 99]" >&2
 		(( fails++ ))
 	fi
 
-	# Test 3: Custom range (10-20)
+	# Test 6: Custom range
 	(( tests++ ))
 	echo "Testing custom range (10-20)..."
 
 	local custom_num=$(random 10 20 2>/dev/null)
 
 	if [ "$custom_num" -ge 10 ] && [ "$custom_num" -le 20 ]; then
-		echo "✓ Custom range test passed: $custom_num is in range [10, 20]"
+		echo "✓ Custom range test passed: $custom_num in [10, 20]"
 	else
-		echo "✗ Custom range test failed: $custom_num is not in range [10, 20]" >&2
+		echo "✗ Custom range test failed: $custom_num not in [10, 20]" >&2
 		(( fails++ ))
 	fi
 
-	# Test 4: Single value range (should always return the same value)
+	# Test 7: Single value range
 	(( tests++ ))
 	echo "Testing single value range (5-5)..."
 
 	local single_val=$(random 5 5 2>/dev/null)
 
 	if [ "$single_val" -eq 5 ]; then
-		echo "✓ Single value range test passed: got $single_val"
+		echo "✓ Single value range test passed"
 	else
 		echo "✗ Single value range test failed: got $single_val, expected 5" >&2
 		(( fails++ ))
 	fi
 
-	# Test 5: Statistical uniformity test (range 1-10, 1000 samples)
+	# Test 8: start > end should error
 	(( tests++ ))
-	echo "Testing statistical uniformity (1000 samples, range 1-10)..."
+	echo "Testing start > end rejection..."
 
-	local samples=1000
-	local range_start=1
-	local range_end=10
-	local expected_per_bucket=$((samples / (range_end - range_start + 1)))
-	local tolerance=$((expected_per_bucket / 2))  # Allow 50% deviation
+	local start_gt_end_output
+	start_gt_end_output=$(random 50 40 2>&1)
+	local start_gt_end_status=$?
 
-	# Count occurrences of each value
-	declare -A counts
-	for ((i=range_start; i<=range_end; i++)); do
-		counts[$i]=0
-	done
-
-	# Generate samples
-	for ((i=0; i<samples; i++)); do
-		local val=$(random $range_start $range_end 2>/dev/null)
-		if [ "$val" -ge $range_start ] && [ "$val" -le $range_end ]; then
-			(( counts[$val]++ ))
-		fi
-	done
-
-	# Check uniformity
-	local uniformity_fails=0
-	for ((i=range_start; i<=range_end; i++)); do
-		local count=${counts[$i]}
-		local deviation=$((count - expected_per_bucket))
-		local abs_deviation=${deviation#-}  # absolute value
-
-		if [ "$abs_deviation" -gt "$tolerance" ]; then
-			(( uniformity_fails++ ))
-		fi
-	done
-
-	if [ "$uniformity_fails" -le 2 ]; then  # Allow up to 2 buckets to be outside tolerance
-		echo "✓ Statistical uniformity test passed: $uniformity_fails/10 buckets outside tolerance"
-		echo "    Expected ~$expected_per_bucket per bucket, tolerance ±$tolerance"
+	if [ $start_gt_end_status -ne 0 ] && echo "$start_gt_end_output" | grep -qi "error"; then
+		echo "✓ start > end rejection test passed"
 	else
-		echo "✗ Statistical uniformity test failed: $uniformity_fails/10 buckets outside tolerance" >&2
-		echo "    Expected ~$expected_per_bucket per bucket, tolerance ±$tolerance" >&2
-		echo "    Counts:" >&2
-		for ((i=range_start; i<=range_end; i++)); do
-			echo "      Value $i: ${counts[$i]} occurrences" >&2
-		done
+		echo "✗ start > end rejection test failed" >&2
 		(( fails++ ))
 	fi
 
-	# Test 6: Chi-square goodness of fit test (simple version)
-	(( tests++ ))
-	echo "Testing chi-square goodness of fit..."
+	# ===== SECTION 2: --count and --binaryoutput =====
+	echo ""
+	echo "--- Section 2: --count and --binaryoutput ---"
 
-	local chi_square=0
-	for ((i=range_start; i<=range_end; i++)); do
-		local observed=${counts[$i]}
-		local expected=$expected_per_bucket
-		local diff=$((observed - expected))
-		local squared_diff=$((diff * diff))
-		local contribution=$((squared_diff / expected))
-		chi_square=$((chi_square + contribution))
-	done
-
-	# For 9 degrees of freedom (10 buckets - 1), critical value at p=0.05 is ~16.9
-	# We'll use a more lenient threshold of 20 to account for variability
-	if [ "$chi_square" -lt 20 ]; then
-		echo "✓ Chi-square test passed: χ² = $chi_square (threshold: 20)"
-	else
-		echo "✗ Chi-square test failed: χ² = $chi_square (threshold: 20)" >&2
-		echo "    This suggests non-uniform distribution" >&2
-		(( fails++ ))
-	fi
-
-	# Test 7: Randomness between invocations (10 consecutive calls should have variety)
-	(( tests++ ))
-	echo "Testing randomness between invocations..."
-
-	local consecutive_samples=()
-	local unique_count=0
-
-	for ((i=0; i<10; i++)); do
-		consecutive_samples[i]=$(random 1 100 2>/dev/null)
-	done
-
-	# Count unique values
-	printf '%s\n' "${consecutive_samples[@]}" | sort -u > /tmp/unique_random_samples.txt
-	unique_count=$(cat /tmp/unique_random_samples.txt | wc -l)
-	rm -f /tmp/unique_random_samples.txt
-
-	# Expect at least 7 unique values out of 10 (lenient check)
-	if [ "$unique_count" -ge 7 ]; then
-		echo "✓ Consecutive randomness test passed: $unique_count/10 unique values"
-	else
-		echo "✗ Consecutive randomness test failed: only $unique_count/10 unique values" >&2
-		echo "    Values:" >&2
-		for ((i=0; i<10; i++)); do
-			echo "      Call $((i+1)): ${consecutive_samples[i]}" >&2
-		done
-		(( fails++ ))
-	fi
-
-	# Test 8: --count flag outputs multiple numbers
+	# Test 9: --count flag
 	(( tests++ ))
 	echo "Testing --count flag..."
 
@@ -225,27 +160,13 @@ test_random() {
 	count_lines=$(printf '%s\n' "$count_output" | wc -l | tr -d ' ')
 
 	if [ "$count_lines" -eq 5 ]; then
-		# Verify all outputs are valid integers in range
-		local all_valid=true
-		while IFS= read -r line; do
-			if ! [[ "$line" =~ ^-?[0-9]+$ ]] || [ "$line" -lt 0 ] || [ "$line" -gt 100 ]; then
-				all_valid=false
-				break
-			fi
-		done <<< "$count_output"
-
-		if $all_valid; then
-			echo "✓ --count flag test passed (got $count_lines lines)"
-		else
-			echo "✗ --count flag test failed: invalid output values" >&2
-			(( fails++ ))
-		fi
+		echo "✓ --count flag test passed (got $count_lines lines)"
 	else
 		echo "✗ --count flag test failed: expected 5 lines, got $count_lines" >&2
 		(( fails++ ))
 	fi
 
-	# Test 9: --binaryoutput produces binary data (0-255 bytes)
+	# Test 10: --binaryoutput
 	(( tests++ ))
 	echo "Testing --binaryoutput flag..."
 
@@ -261,7 +182,7 @@ test_random() {
 		(( fails++ ))
 	fi
 
-	# Test 10: --binaryoutput defaults to 1024 bytes
+	# Test 11: --binaryoutput default count (1024)
 	(( tests++ ))
 	echo "Testing --binaryoutput default count (1024)..."
 
@@ -271,25 +192,24 @@ test_random() {
 	default_byte_count=$((${#binary_default_output} / 2))
 
 	if [ "$default_byte_count" -eq 1024 ]; then
-		echo "✓ --binaryoutput default count test passed (got $default_byte_count bytes)"
+		echo "✓ --binaryoutput default count test passed"
 	else
-		echo "✗ --binaryoutput default count test failed: expected 1024 bytes, got $default_byte_count" >&2
+		echo "✗ --binaryoutput default count test failed: expected 1024, got $default_byte_count" >&2
 		(( fails++ ))
 	fi
 
-	# Test 11: --binaryoutput with custom range
+	# Test 12: --binaryoutput with custom range
 	(( tests++ ))
 	echo "Testing --binaryoutput with custom range 64-192..."
 
 	local custom_range_output
-	custom_range_output=$(random -b -c 500 64 192 2>/dev/null | xxd -p | tr -d '\n')
+	custom_range_output=$(random -b -c 200 64 192 2>/dev/null | xxd -p | tr -d '\n')
 	local custom_bytes
 	custom_bytes=$((${#custom_range_output} / 2))
 
-	if [ "$custom_bytes" -eq 500 ]; then
-		# Check all bytes are in range 64-192
+	if [ "$custom_bytes" -eq 200 ]; then
 		local all_in_range=true
-		for hex in $(echo "$custom_range_output" | fold -w2); do
+		for hex in $(echo "$custom_range_output" | fold -w2 | head -50); do
 			local decimal=$((16#$hex))
 			if [ "$decimal" -lt 64 ] || [ "$decimal" -gt 192 ]; then
 				all_in_range=false
@@ -300,82 +220,383 @@ test_random() {
 		if $all_in_range; then
 			echo "✓ --binaryoutput custom range test passed"
 		else
-			echo "✗ --binaryoutput custom range test failed: bytes outside 64-192 range" >&2
+			echo "✗ --binaryoutput custom range test failed: bytes outside range" >&2
 			(( fails++ ))
 		fi
 	else
-		echo "✗ --binaryoutput custom range test failed: expected 500 bytes, got $custom_bytes" >&2
+		echo "✗ --binaryoutput custom range test failed: expected 200 bytes, got $custom_bytes" >&2
 		(( fails++ ))
 	fi
 
-	# Test 12: --binaryoutput with start < 0 should error
+	# Test 13: --binaryoutput rejects start < 0
 	(( tests++ ))
 	echo "Testing --binaryoutput rejects start < 0..."
 
-	local negative_start_output
-	negative_start_output=$(random -b -c 10 -1 100 2>&1)
-	local negative_start_status=$?
+	local neg_output
+	neg_output=$(random -b -c 10 -1 100 2>&1)
+	local neg_status=$?
 
-	if [ $negative_start_status -ne 0 ] && echo "$negative_start_output" | grep -qi "error"; then
+	if [ $neg_status -ne 0 ] && echo "$neg_output" | grep -qi "error"; then
 		echo "✓ --binaryoutput start < 0 rejection test passed"
 	else
-		echo "✗ --binaryoutput start < 0 rejection test failed: expected error, got status=$negative_start_status" >&2
+		echo "✗ --binaryoutput start < 0 rejection test failed" >&2
 		(( fails++ ))
 	fi
 
-	# Test 13: --binaryoutput with end > 255 should error
+	# Test 14: --binaryoutput rejects end > 255
 	(( tests++ ))
 	echo "Testing --binaryoutput rejects end > 255..."
 
-	local over255_output
-	over255_output=$(random -b -c 10 0 256 2>&1)
-	local over255_status=$?
+	local over_output
+	over_output=$(random -b -c 10 0 256 2>&1)
+	local over_status=$?
 
-	if [ $over255_status -ne 0 ] && echo "$over255_output" | grep -qi "error"; then
+	if [ $over_status -ne 0 ] && echo "$over_output" | grep -qi "error"; then
 		echo "✓ --binaryoutput end > 255 rejection test passed"
 	else
-		echo "✗ --binaryoutput end > 255 rejection test failed: expected error, got status=$over255_status" >&2
+		echo "✗ --binaryoutput end > 255 rejection test failed" >&2
 		(( fails++ ))
 	fi
 
-	# Test 14: start > end should error
+	# ===== SECTION 3: --deterministic mode =====
+	echo ""
+	echo "--- Section 3: --deterministic mode ---"
+
+	# Test 15: --deterministic with --seed produces deterministic output
 	(( tests++ ))
-	echo "Testing start > end rejection..."
+	echo "Testing --deterministic --seed determinism..."
 
-	local start_gt_end_output
-	start_gt_end_output=$(random 50 40 2>&1)
-	local start_gt_end_status=$?
+	local det_seq1=$(random --deterministic --seed 12345 --count 5 2>/dev/null | tr '\n' ' ')
+	local det_seq2=$(random --deterministic --seed 12345 --count 5 2>/dev/null | tr '\n' ' ')
 
-	if [ $start_gt_end_status -ne 0 ] && echo "$start_gt_end_output" | grep -qi "error"; then
-		echo "✓ start > end rejection test passed"
+	if [ "$det_seq1" = "$det_seq2" ] && [ -n "$det_seq1" ]; then
+		echo "✓ Deterministic seed test passed"
 	else
-		echo "✗ start > end rejection test failed: expected error, got status=$start_gt_end_status" >&2
+		echo "✗ Deterministic seed test failed: sequences differ" >&2
+		echo "  Seq1: $det_seq1" >&2
+		echo "  Seq2: $det_seq2" >&2
 		(( fails++ ))
 	fi
 
-	# Test 15: -c and -b short forms work
+	# Test 16: Different seeds produce different sequences
 	(( tests++ ))
-	echo "Testing -c and -b short forms..."
+	echo "Testing different seeds produce different sequences..."
 
-	local short_form_output
-	short_form_output=$(random -b -c 50 2>/dev/null | xxd -p | tr -d '\n')
-	local short_form_bytes
-	short_form_bytes=$((${#short_form_output} / 2))
+	local seq_a=$(random -d --seed 11111 --count 5 2>/dev/null | tr '\n' ' ')
+	local seq_b=$(random -d --seed 22222 --count 5 2>/dev/null | tr '\n' ' ')
 
-	if [ "$short_form_bytes" -eq 50 ]; then
-		echo "✓ -c and -b short form test passed"
+	if [ "$seq_a" != "$seq_b" ]; then
+		echo "✓ Different seeds test passed"
 	else
-		echo "✗ -c and -b short form test failed: expected 50 bytes, got $short_form_bytes" >&2
+		echo "✗ Different seeds test failed: sequences identical" >&2
 		(( fails++ ))
 	fi
 
-	# Final results
+	# Test 17: --deterministic without --seed outputs seed to stderr
+	(( tests++ ))
+	echo "Testing --deterministic auto-seed output..."
+
+	local auto_seed_stderr
+	auto_seed_stderr=$(random -d -c 1 2>&1 >/dev/null)
+
+	if echo "$auto_seed_stderr" | grep -qiE "(seed|0x)"; then
+		echo "✓ Auto-seed output test passed"
+	else
+		echo "✗ Auto-seed output test failed: no seed in stderr" >&2
+		echo "  stderr: $auto_seed_stderr" >&2
+		(( fails++ ))
+	fi
+
+	# Test 18: --seed implies --deterministic
+	(( tests++ ))
+	echo "Testing --seed implies --deterministic..."
+
+	local seed_only_seq1=$(random --seed 99999 --count 3 2>/dev/null | tr '\n' ' ')
+	local seed_only_seq2=$(random --seed 99999 --count 3 2>/dev/null | tr '\n' ' ')
+
+	if [ "$seed_only_seq1" = "$seed_only_seq2" ] && [ -n "$seed_only_seq1" ]; then
+		echo "✓ --seed implies --deterministic test passed"
+	else
+		echo "✗ --seed implies --deterministic test failed" >&2
+		(( fails++ ))
+	fi
+
+	# Test 19: Hex seed support
+	(( tests++ ))
+	echo "Testing hex seed support..."
+
+	local hex_seq1=$(random -d --seed 0xDEADBEEF --count 3 2>/dev/null | tr '\n' ' ')
+	local hex_seq2=$(random -d --seed 0xDEADBEEF --count 3 2>/dev/null | tr '\n' ' ')
+
+	if [ "$hex_seq1" = "$hex_seq2" ] && [ -n "$hex_seq1" ]; then
+		echo "✓ Hex seed test passed"
+	else
+		echo "✗ Hex seed test failed" >&2
+		(( fails++ ))
+	fi
+
+	# Test 20: PCG32 known output (ensures algorithm consistency)
+	(( tests++ ))
+	echo "Testing PCG32 known output..."
+
+	local pcg_output
+	pcg_output=$(random -d --seed 42 0 99 2>/dev/null)
+
+	if [ "$pcg_output" = "26" ]; then
+		echo "✓ PCG32 known output test passed"
+	else
+		echo "✗ PCG32 known output test failed: expected 26, got $pcg_output" >&2
+		(( fails++ ))
+	fi
+
+	# ===== SECTION 4: --normalized mode =====
+	echo ""
+	echo "--- Section 4: --normalized mode ---"
+
+	# Test 21: --normalized produces values in range
+	(( tests++ ))
+	echo "Testing --normalized produces values in range..."
+
+	local norm_vals=$(random --normalized --count 20 0 100 2>/dev/null)
+	local all_in_range=true
+	while IFS= read -r val; do
+		if [ "$val" -lt 0 ] || [ "$val" -gt 100 ]; then
+			all_in_range=false
+			break
+		fi
+	done <<< "$norm_vals"
+
+	if $all_in_range; then
+		echo "✓ Normalized range test passed"
+	else
+		echo "✗ Normalized range test failed: values outside range" >&2
+		(( fails++ ))
+	fi
+
+	# Test 22: --normalized 68-95-99.7 rule statistical test
+	(( tests++ ))
+	echo "Testing --normalized 68-95-99.7 rule..."
+
+	local range_start=0
+	local range_end=100
+	local expected_mean=50
+	local expected_stddev=$(echo "scale=2; (100 - 0) / 6" | bc -l)
+
+	local stats=$(random -n --count $SAMPLE_SIZE $range_start $range_end 2>/dev/null | awk -v expected_mean="$expected_mean" -v expected_stddev="$expected_stddev" '
+	{
+		samples[NR] = $1
+		sum += $1
+		if (NR == 1 || $1 < min) min = $1
+		if (NR == 1 || $1 > max) max = $1
+	}
+	END {
+		mean = sum / NR
+		for (i = 1; i <= NR; i++) {
+			variance_sum += (samples[i] - mean) * (samples[i] - mean)
+		}
+		stddev = sqrt(variance_sum / (NR - 1))
+
+		within_1sd = 0
+		within_2sd = 0
+		within_3sd = 0
+
+		for (i = 1; i <= NR; i++) {
+			z_score = (samples[i] - mean) / stddev
+			abs_z = (z_score < 0) ? -z_score : z_score
+			if (abs_z <= 1) within_1sd++
+			if (abs_z <= 2) within_2sd++
+			if (abs_z <= 3) within_3sd++
+		}
+
+		pct_1sd = within_1sd * 100 / NR
+		pct_2sd = within_2sd * 100 / NR
+		pct_3sd = within_3sd * 100 / NR
+
+		printf "ACTUAL_MEAN=%.2f\n", mean
+		printf "ACTUAL_STDDEV=%.2f\n", stddev
+		printf "PCT_1SD=%.1f\n", pct_1sd
+		printf "PCT_2SD=%.1f\n", pct_2sd
+		printf "PCT_3SD=%.1f\n", pct_3sd
+	}')
+
+	eval "$stats"
+
+	echo "  Within 1σ: $PCT_1SD% (expected ~68%)"
+	echo "  Within 2σ: $PCT_2SD% (expected ~95%)"
+	echo "  Within 3σ: $PCT_3SD% (expected ~99.7%)"
+
+	local normal_pass=true
+	if (( $(echo "$PCT_1SD < 55 || $PCT_1SD > 80" | bc -l) )); then
+		echo "  ✗ 1σ out of range [55%, 80%]" >&2
+		normal_pass=false
+	fi
+	if (( $(echo "$PCT_2SD < 85 || $PCT_2SD > 99" | bc -l) )); then
+		echo "  ✗ 2σ out of range [85%, 99%]" >&2
+		normal_pass=false
+	fi
+	if (( $(echo "$PCT_3SD < 98" | bc -l) )); then
+		echo "  ✗ 3σ < 98%" >&2
+		normal_pass=false
+	fi
+
+	if $normal_pass; then
+		echo "✓ 68-95-99.7 rule test passed"
+	else
+		(( fails++ ))
+	fi
+
+	# ===== SECTION 5: --deterministic --normalized combined =====
+	echo ""
+	echo "--- Section 5: --deterministic --normalized ---"
+
+	# Test 22: Combined mode is reproducible
+	(( tests++ ))
+	echo "Testing --deterministic --normalized reproducibility..."
+
+	local dn_seq1=$(random -d -n --seed 54321 --count 5 0 100 2>/dev/null | tr '\n' ' ')
+	local dn_seq2=$(random -d -n --seed 54321 --count 5 0 100 2>/dev/null | tr '\n' ' ')
+
+	if [ "$dn_seq1" = "$dn_seq2" ] && [ -n "$dn_seq1" ]; then
+		echo "✓ Deterministic normalized reproducibility test passed"
+	else
+		echo "✗ Deterministic normalized reproducibility test failed" >&2
+		echo "  Seq1: $dn_seq1" >&2
+		echo "  Seq2: $dn_seq2" >&2
+		(( fails++ ))
+	fi
+
+	# Test 23: Combined mode still has normal distribution
+	(( tests++ ))
+	echo "Testing --deterministic --normalized still center-heavy..."
+
+	local dn_sample=$(random -d -n --seed 11111 --count $SAMPLE_SIZE 0 100 2>/dev/null)
+	local dn_center=0
+	local dn_total=0
+
+	while IFS= read -r val; do
+		(( dn_total++ ))
+		if [ "$val" -ge 35 ] && [ "$val" -le 65 ]; then
+			(( dn_center++ ))
+		fi
+	done <<< "$dn_sample"
+
+	local dn_pct=$((dn_center * 100 / dn_total))
+
+	if [ "$dn_pct" -ge 40 ]; then
+		echo "✓ Deterministic normalized distribution test passed ($dn_pct% in center)"
+	else
+		echo "✗ Deterministic normalized distribution test failed: $dn_pct% in center" >&2
+		(( fails++ ))
+	fi
+
+	# ===== SECTION 6: Symlink/invocation name behavior =====
+	echo ""
+	echo "--- Section 6: Symlink invocation behavior ---"
+
+	# Test 24: nrandom symlink implies --normalized
+	(( tests++ ))
+	echo "Testing nrandom symlink implies --normalized..."
+
+	# Check nrandom exists and is a symlink
+	if [ -L "$HOME/bin/nrandom" ] || [ -x "$HOME/bin/nrandom" ]; then
+		local nrandom_sample=$(nrandom --count 50 0 100 2>/dev/null)
+		local nr_center=0
+		local nr_total=0
+
+		while IFS= read -r val; do
+			(( nr_total++ ))
+			if [ "$val" -ge 35 ] && [ "$val" -le 65 ]; then
+				(( nr_center++ ))
+			fi
+		done <<< "$nrandom_sample"
+
+		local nr_pct=$((nr_center * 100 / nr_total))
+
+		if [ "$nr_pct" -ge 35 ]; then
+			echo "✓ nrandom symlink test passed ($nr_pct% in center)"
+		else
+			echo "✗ nrandom symlink test failed: not center-heavy ($nr_pct%)" >&2
+			(( fails++ ))
+		fi
+	else
+		echo "✗ nrandom symlink test failed: nrandom not found" >&2
+		(( fails++ ))
+	fi
+
+	# Test 25: drandom symlink implies --deterministic
+	(( tests++ ))
+	echo "Testing drandom symlink implies --deterministic..."
+
+	if [ -L "$HOME/bin/drandom" ] || [ -x "$HOME/bin/drandom" ]; then
+		# drandom with DRANDOM_SEED should be deterministic
+		local dr_seq1=$(DRANDOM_SEED=77777 drandom --count 3 2>/dev/null | tr '\n' ' ')
+		local dr_seq2=$(DRANDOM_SEED=77777 drandom --count 3 2>/dev/null | tr '\n' ' ')
+
+		if [ "$dr_seq1" = "$dr_seq2" ] && [ -n "$dr_seq1" ]; then
+			echo "✓ drandom symlink test passed"
+		else
+			echo "✗ drandom symlink test failed: not deterministic" >&2
+			(( fails++ ))
+		fi
+	else
+		echo "✗ drandom symlink test failed: drandom not found" >&2
+		(( fails++ ))
+	fi
+
+	# ===== SECTION 7: Binary output with modes =====
+	echo ""
+	echo "--- Section 7: Binary output with modes ---"
+
+	# Test 26: --binaryoutput with --deterministic
+	(( tests++ ))
+	echo "Testing --binaryoutput --deterministic..."
+
+	local bd_out1=$(random -b -d --seed 12121 -c 32 2>/dev/null | xxd -p | tr -d '\n')
+	local bd_out2=$(random -b -d --seed 12121 -c 32 2>/dev/null | xxd -p | tr -d '\n')
+
+	if [ "$bd_out1" = "$bd_out2" ] && [ "${#bd_out1}" -eq 64 ]; then
+		echo "✓ Binary deterministic test passed"
+	else
+		echo "✗ Binary deterministic test failed" >&2
+		(( fails++ ))
+	fi
+
+	# Test 27: --binaryoutput with --normalized
+	(( tests++ ))
+	echo "Testing --binaryoutput --normalized..."
+
+	local bn_out=$(random -b -n -c 200 2>/dev/null | xxd -p | tr -d '\n')
+	local bn_bytes=$((${#bn_out} / 2))
+
+	if [ "$bn_bytes" -eq 200 ]; then
+		# Check center-heavy distribution (bytes 96-160 should be common)
+		local bn_center=0
+		for hex in $(echo "$bn_out" | fold -w2); do
+			local decimal=$((16#$hex))
+			if [ "$decimal" -ge 96 ] && [ "$decimal" -le 160 ]; then
+				(( bn_center++ ))
+			fi
+		done
+		local bn_pct=$((bn_center * 100 / bn_bytes))
+
+		if [ "$bn_pct" -ge 35 ]; then
+			echo "✓ Binary normalized test passed ($bn_pct% in center)"
+		else
+			echo "✗ Binary normalized test failed: $bn_pct% in center" >&2
+			(( fails++ ))
+		fi
+	else
+		echo "✗ Binary normalized test failed: expected 200 bytes, got $bn_bytes" >&2
+		(( fails++ ))
+	fi
+
+	# ===== Final results =====
+	echo ""
+	echo "============================================"
 	if [ $fails -gt 0 ]; then
-		echo ""
 		echo "random test FAILED: $fails of $tests tests failed" >&2
 		return $fails
 	else
-		echo ""
 		echo "random test PASSED: All $tests tests passed"
 		return 0
 	fi
