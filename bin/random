@@ -2,10 +2,11 @@
 
 --[[
 Unified random number generator
-- Uniform distribution (default) or normal distribution (--normalized/-n)
+- Multiple distributions: uniform, normal, exponential, poisson, log-normal, beta
 - True random from /dev/urandom (default) or deterministic PCG32 (--deterministic/-d)
-- Can combine modes: deterministic + normalized for reproducible normal distribution
-- Symlink-aware: invoked as 'nrandom' implies --normalized, 'drandom' implies --deterministic
+- Stdin operations: --choose, --shuffle, --weighted
+- Output formats: decimal, hex, base64, binary
+- Symlink-aware: 'nrandom' implies --normalized, 'drandom' implies --deterministic
 ]]
 
 local ffi = require("ffi")
@@ -45,6 +46,45 @@ end
 
 local function trim(s)
 	return (s:gsub("^%s+", ""):gsub("%s+$", ""))
+end
+
+-- ===== Base64 encoding =====
+local b64chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+
+local function base64_encode(data)
+	local result = {}
+	local len = #data
+	local i = 1
+	while i <= len do
+		local a = string.byte(data, i) or 0
+		local b = string.byte(data, i + 1) or 0
+		local c = string.byte(data, i + 2) or 0
+
+		local n = a * 65536 + b * 256 + c
+
+		local c1 = bit.rshift(n, 18) % 64
+		local c2 = bit.rshift(n, 12) % 64
+		local c3 = bit.rshift(n, 6) % 64
+		local c4 = n % 64
+
+		result[#result + 1] = b64chars:sub(c1 + 1, c1 + 1)
+		result[#result + 1] = b64chars:sub(c2 + 1, c2 + 1)
+
+		if i + 1 <= len then
+			result[#result + 1] = b64chars:sub(c3 + 1, c3 + 1)
+		else
+			result[#result + 1] = "="
+		end
+
+		if i + 2 <= len then
+			result[#result + 1] = b64chars:sub(c4 + 1, c4 + 1)
+		else
+			result[#result + 1] = "="
+		end
+
+		i = i + 3
+	end
+	return table.concat(result)
 end
 
 -- ===== Seed parsing =====
@@ -141,6 +181,11 @@ local function pcg32_range(start_val, end_val)
 	end
 end
 
+-- Get uniform random in [0, 1)
+local function pcg32_uniform()
+	return pcg32_random() / 4294967296
+end
+
 -- ===== /dev/urandom random =====
 local function get_random_bytes(num_bytes)
 	local urandom = io.open("/dev/urandom", "rb")
@@ -149,14 +194,12 @@ local function get_random_bytes(num_bytes)
 		urandom:close()
 		if bytes and #bytes == num_bytes then return bytes end
 	end
-	-- Fallback
 	local random_dev = io.open("/dev/random", "rb")
 	if random_dev then
 		local bytes = random_dev:read(num_bytes)
 		random_dev:close()
 		if bytes and #bytes == num_bytes then return bytes end
 	end
-	-- Final fallback: time-based
 	local result = ""
 	for i = 1, num_bytes do
 		local time_val = os.time() + os.clock() * 1000000 + i * 12345
@@ -188,22 +231,94 @@ local function urandom_range(start_val, end_val)
 	end
 end
 
--- ===== Normal distribution (Box-Muller) =====
-local function normal_random(start_val, end_val, rand_func)
+-- Get uniform random in [0, 1) from urandom
+local function urandom_uniform()
+	local bytes = get_random_bytes(4)
+	return bytes_to_integer(bytes) / 4294967296
+end
+
+-- ===== Distribution functions =====
+
+-- Normal distribution (Box-Muller) - for integer output with range
+local function normal_random_int(start_val, end_val, rand_func)
 	local range = end_val - start_val
 	local result
 	repeat
-		-- Box-Muller transformation
 		local u1 = (rand_func(1, 1000000)) / 1000000
 		local u2 = (rand_func(1, 1000000)) / 1000000
-		-- Avoid log(0)
 		if u1 < 0.000001 then u1 = 0.000001 end
 		local z0 = math.sqrt(-2 * math.log(u1)) * math.cos(2 * math.pi * u2)
-		-- Transform: scale by range/6, shift to center
 		local random_number = start_val + (z0 * (range / 6)) + (range / 2)
 		result = math.floor(random_number + 0.5)
 	until result >= start_val and result <= end_val
 	return result
+end
+
+-- Normal distribution with mean/stddev - returns float
+local function normal_random_float(mean, stddev, uniform_func)
+	local u1 = uniform_func()
+	local u2 = uniform_func()
+	if u1 < 0.000001 then u1 = 0.000001 end
+	local z0 = math.sqrt(-2 * math.log(u1)) * math.cos(2 * math.pi * u2)
+	return mean + z0 * stddev
+end
+
+-- Exponential distribution (rate = 1 by default)
+local function exponential_random(rate, uniform_func)
+	local u = uniform_func()
+	if u < 0.000001 then u = 0.000001 end
+	return -math.log(u) / rate
+end
+
+-- Poisson distribution using inverse transform
+local function poisson_random(lambda, uniform_func)
+	local L = math.exp(-lambda)
+	local k = 0
+	local p = 1
+	repeat
+		k = k + 1
+		p = p * uniform_func()
+	until p <= L
+	return k - 1
+end
+
+-- Log-normal distribution
+local function lognormal_random(mu, sigma, uniform_func)
+	local normal = normal_random_float(mu, sigma, uniform_func)
+	return math.exp(normal)
+end
+
+-- Beta distribution using Gamma variates (rejection method for small params)
+local function gamma_random(alpha, uniform_func)
+	if alpha < 1 then
+		-- Ahrens-Dieter method for alpha < 1
+		local u = uniform_func()
+		return gamma_random(1 + alpha, uniform_func) * math.pow(u, 1 / alpha)
+	end
+	-- Marsaglia and Tsang's method for alpha >= 1
+	local d = alpha - 1/3
+	local c = 1 / math.sqrt(9 * d)
+	while true do
+		local x, v
+		repeat
+			x = normal_random_float(0, 1, uniform_func)
+			v = 1 + c * x
+		until v > 0
+		v = v * v * v
+		local u = uniform_func()
+		if u < 1 - 0.0331 * (x * x) * (x * x) then
+			return d * v
+		end
+		if math.log(u) < 0.5 * x * x + d * (1 - v + math.log(v)) then
+			return d * v
+		end
+	end
+end
+
+local function beta_random(alpha, beta_param, uniform_func)
+	local x = gamma_random(alpha, uniform_func)
+	local y = gamma_random(beta_param, uniform_func)
+	return x / (x + y)
 end
 
 -- ===== Time-based seed generation =====
@@ -230,49 +345,60 @@ local function print_about(invocation)
 	elseif invocation == "drandom" then
 		print("Deterministic PCG32-based RNG with optional seeding for reproducible numbers")
 	else
-		print("Unified random number generator: uniform/normal, true-random/deterministic")
+		print("Unified random number generator: multiple distributions, stdin ops, output formats")
 	end
 end
 
 local function print_help(invocation)
 	print("Usage: " .. invocation .. " [options] [start] [end]")
+	print("       echo 'items' | " .. invocation .. " --choose")
+	print("       echo 'items' | " .. invocation .. " --shuffle")
 	print("")
-	print("Unified random number generator with multiple modes.")
-	print("Outputs random integers between start and end (inclusive).")
-	print("Defaults: start=0, end=99")
+	print("Unified random number generator with multiple modes and distributions.")
 	print("")
-	print("Modes:")
-	print("  (default)           Uniform distribution from /dev/urandom")
-	print("  -d, --deterministic Use PCG32 PRNG (reproducible with same seed)")
-	print("  -n, --normalized    Normal (Gaussian) distribution via Box-Muller")
-	print("  -d -n               Reproducible normal distribution")
+	print("Distributions (mutually exclusive):")
+	print("  (default)           Uniform distribution")
+	print("  -n, --normalized    Normal (Gaussian) via Box-Muller")
+	print("      --exponential   Exponential distribution (rate=1)")
+	print("      --poisson       Poisson distribution (use --mean for λ)")
+	print("      --log-normal    Log-normal distribution")
+	print("      --beta          Beta distribution (use --alpha, --beta-param)")
+	print("")
+	print("Stdin operations:")
+	print("      --choose        Pick one random item from stdin")
+	print("      --shuffle       Shuffle all items from stdin")
+	print("      --weighted      Pick from weighted stdin (format: value:weight)")
 	print("")
 	print("Options:")
 	print("  -a, --about         Show a short description")
-	print("  -b, --binaryoutput  Output binary bytes (default 0-255, custom range allowed)")
+	print("  -b, --binaryoutput  Output binary bytes")
 	print("  -c, --count N       Output N numbers (default: 1, or 1024 with -b)")
+	print("  -d, --deterministic Use PCG32 PRNG (reproducible with seed)")
+	print("      --delimiter S   Set delimiter for output/input (default: newline/$IFS)")
 	print("  -h, --help          Show this help message")
-	print("      --seed N        Set seed (implies -d). Hex (0xABC) or decimal.")
+	print("      --hex           Output as hexadecimal")
+	print("      --base64        Output as base64 (for binary)")
+	print("      --seed N        Set seed (implies -d)")
+	print("      --mean M        Set mean for normal/poisson")
+	print("      --stddev S      Set stddev for normal/log-normal")
+	print("      --alpha A       Set alpha for beta distribution")
+	print("      --beta-param B  Set beta for beta distribution")
 	print("      --test          Run the test suite")
 	print("")
 	print("Symlink behavior:")
-	print("  Invoked as 'nrandom' → implies --normalized")
-	print("  Invoked as 'drandom' → implies --deterministic")
-	print("")
-	print("Environment variables (for deterministic mode):")
-	print("  DRANDOM_SEED        Alternative way to set seed")
-	print("  DRANDOM_CONTEXT     Isolate state per context (default: parent PID)")
-	print("  DRANDOM_STATE_HOME  State directory (default: /tmp)")
+	print("  'nrandom' → implies --normalized")
+	print("  'drandom' → implies --deterministic")
 	print("")
 	print("Examples:")
-	print("  random              # Uniform random 0-99")
-	print("  random -n 0 100     # Normal distribution 0-100")
-	print("  random -d --seed 42 # Deterministic with seed")
-	print("  random -d -n --seed 42  # Reproducible normal distribution")
-	print("  random -b -c 64     # 64 random bytes to stdout")
+	print("  random                    # Uniform random 0-99")
+	print("  random -n --mean 50 --stddev 10  # Normal, custom params")
+	print("  random -d --seed 42       # Deterministic")
+	print("  random --hex -c 5         # 5 hex numbers")
+	print("  echo -e 'a\\nb\\nc' | random --choose")
+	print("  echo 'rare:1,common:10' | random --weighted --delimiter ','")
 end
 
--- ===== State persistence (for drandom compatibility) =====
+-- ===== State persistence =====
 local function get_context()
 	local env_ctx = os.getenv("DRANDOM_CONTEXT")
 	if env_ctx and env_ctx ~= "" then return env_ctx end
@@ -304,6 +430,36 @@ local function write_seed_file(path, value)
 	f:close()
 end
 
+-- ===== Stdin reading =====
+local function read_stdin_items(delimiter)
+	local content = io.read("*a")
+	if not content or content == "" then return {} end
+	content = trim(content)
+	if content == "" then return {} end
+
+	local items = {}
+	if delimiter == "\n" then
+		for line in content:gmatch("[^\n]+") do
+			table.insert(items, line)
+		end
+	else
+		for item in content:gmatch("[^" .. delimiter:gsub("([%^%$%(%)%%%.%[%]%*%+%-%?])", "%%%1") .. "]+") do
+			table.insert(items, trim(item))
+		end
+	end
+	return items
+end
+
+-- Fisher-Yates shuffle
+local function shuffle_array(arr, rand_func)
+	local n = #arr
+	for i = n, 2, -1 do
+		local j = rand_func(1, i)
+		arr[i], arr[j] = arr[j], arr[i]
+	end
+	return arr
+end
+
 -- ===== Argument parsing =====
 local function parse_args()
 	local invocation = get_invocation_name()
@@ -311,12 +467,26 @@ local function parse_args()
 	local options = {
 		deterministic = (invocation == "drandom"),
 		normalized = (invocation == "nrandom"),
+		exponential = false,
+		poisson = false,
+		log_normal = false,
+		beta = false,
 		binary_output = false,
+		hex_output = false,
+		base64_output = false,
+		delimiter = nil,  -- nil means use default (newline or $IFS)
+		choose = false,
+		shuffle = false,
+		weighted = false,
 		count = nil,
 		seed = nil,
 		seed_provided = false,
 		start_val = nil,
 		end_val = nil,
+		mean = nil,
+		stddev = nil,
+		alpha = nil,
+		beta_param = nil,
 	}
 
 	local i = 1
@@ -346,12 +516,37 @@ local function parse_args()
 			options.deterministic = true
 		elseif arg_val == "--normalized" or arg_val == "-n" then
 			options.normalized = true
+		elseif arg_val == "--exponential" then
+			options.exponential = true
+		elseif arg_val == "--poisson" then
+			options.poisson = true
+		elseif arg_val == "--log-normal" then
+			options.log_normal = true
+		elseif arg_val == "--beta" then
+			options.beta = true
 		elseif arg_val == "--binaryoutput" or arg_val == "-b" then
 			options.binary_output = true
+		elseif arg_val == "--hex" then
+			options.hex_output = true
+		elseif arg_val == "--base64" then
+			options.base64_output = true
+		elseif arg_val == "--choose" then
+			options.choose = true
+		elseif arg_val == "--shuffle" then
+			options.shuffle = true
+		elseif arg_val == "--weighted" then
+			options.weighted = true
+		elseif arg_val == "--delimiter" or arg_val == "--delim" then
+			i = i + 1
+			if i > #argv then
+				stderr_write("Error: --delimiter requires a value\n")
+				os.exit(1)
+			end
+			options.delimiter = argv[i]
 		elseif arg_val == "--count" or arg_val == "-c" then
 			i = i + 1
 			if i > #argv then
-				stderr_write("Error: --count requires a number argument\n")
+				stderr_write("Error: --count requires a number\n")
 				os.exit(1)
 			end
 			options.count = tonumber(argv[i])
@@ -367,7 +562,51 @@ local function parse_args()
 			end
 			options.seed = parse_seed(argv[i], true)
 			options.seed_provided = true
-			options.deterministic = true  -- --seed implies --deterministic
+			options.deterministic = true
+		elseif arg_val == "--mean" then
+			i = i + 1
+			if i > #argv then
+				stderr_write("Error: --mean requires a number\n")
+				os.exit(1)
+			end
+			options.mean = tonumber(argv[i])
+			if not options.mean then
+				stderr_write("Error: --mean value must be a number\n")
+				os.exit(1)
+			end
+		elseif arg_val == "--stddev" then
+			i = i + 1
+			if i > #argv then
+				stderr_write("Error: --stddev requires a number\n")
+				os.exit(1)
+			end
+			options.stddev = tonumber(argv[i])
+			if not options.stddev then
+				stderr_write("Error: --stddev value must be a number\n")
+				os.exit(1)
+			end
+		elseif arg_val == "--alpha" then
+			i = i + 1
+			if i > #argv then
+				stderr_write("Error: --alpha requires a number\n")
+				os.exit(1)
+			end
+			options.alpha = tonumber(argv[i])
+			if not options.alpha then
+				stderr_write("Error: --alpha value must be a number\n")
+				os.exit(1)
+			end
+		elseif arg_val == "--beta-param" then
+			i = i + 1
+			if i > #argv then
+				stderr_write("Error: --beta-param requires a number\n")
+				os.exit(1)
+			end
+			options.beta_param = tonumber(argv[i])
+			if not options.beta_param then
+				stderr_write("Error: --beta-param value must be a number\n")
+				os.exit(1)
+			end
 		else
 			table.insert(positionals, arg_val)
 		end
@@ -390,6 +629,28 @@ local function parse_args()
 		end
 	end
 
+	-- Validate: only one distribution type
+	local dist_count = 0
+	if options.normalized then dist_count = dist_count + 1 end
+	if options.exponential then dist_count = dist_count + 1 end
+	if options.poisson then dist_count = dist_count + 1 end
+	if options.log_normal then dist_count = dist_count + 1 end
+	if options.beta then dist_count = dist_count + 1 end
+	if dist_count > 1 then
+		stderr_write("Error: only one distribution type can be specified\n")
+		os.exit(1)
+	end
+
+	-- Default delimiter from $IFS or newline
+	if options.delimiter == nil then
+		local ifs = os.getenv("IFS")
+		if ifs and #ifs > 0 then
+			options.delimiter = ifs:sub(1, 1)
+		else
+			options.delimiter = "\n"
+		end
+	end
+
 	return options, positionals, invocation
 end
 
@@ -397,7 +658,116 @@ end
 local function main()
 	local options, positionals, invocation = parse_args()
 
-	-- Set defaults based on mode
+	-- Setup RNG first (needed for all operations)
+	local rand_func, uniform_func
+
+	if options.deterministic then
+		local env_seed_raw = os.getenv("DRANDOM_SEED")
+		local env_seed_set = env_seed_raw ~= nil and env_seed_raw ~= ""
+
+		if options.seed_provided then
+			pcg32_seed(options.seed or ffi.new(u64, 0))
+		elseif env_seed_set then
+			local env_seed = parse_seed(env_seed_raw, true)
+			pcg32_seed(env_seed or ffi.new(u64, 0))
+		else
+			local state_home = os.getenv("DRANDOM_STATE_HOME") or "/tmp"
+			local context = get_context()
+			local state_dir = state_home .. "/drandom/" .. get_user()
+			local seed_file = state_dir .. "/" .. context .. ".seed"
+
+			local persisted = read_seed_file(seed_file)
+			if persisted then
+				pcg_state = persisted
+			else
+				local random_seed = now_seed()
+				pcg32_seed(random_seed)
+				stderr_write("(seed: " .. u64_to_hex(random_seed) .. ")\n")
+			end
+
+			options._save_state = true
+			options._state_dir = state_dir
+			options._seed_file = seed_file
+		end
+
+		rand_func = pcg32_range
+		uniform_func = pcg32_uniform
+	else
+		rand_func = urandom_range
+		uniform_func = urandom_uniform
+	end
+
+	-- Handle stdin operations
+	if options.choose then
+		local items = read_stdin_items(options.delimiter)
+		if #items == 0 then
+			stderr_write("Error: no items to choose from\n")
+			os.exit(1)
+		end
+		local idx = rand_func(1, #items)
+		print(items[idx])
+		if options._save_state then
+			os.execute("mkdir -p " .. shell_quote(options._state_dir) .. " 2>/dev/null")
+			write_seed_file(options._seed_file, pcg_state)
+		end
+		return
+	end
+
+	if options.shuffle then
+		local items = read_stdin_items(options.delimiter)
+		if #items == 0 then
+			stderr_write("Error: no items to shuffle\n")
+			os.exit(1)
+		end
+		shuffle_array(items, rand_func)
+		for _, item in ipairs(items) do
+			print(item)
+		end
+		if options._save_state then
+			os.execute("mkdir -p " .. shell_quote(options._state_dir) .. " 2>/dev/null")
+			write_seed_file(options._seed_file, pcg_state)
+		end
+		return
+	end
+
+	if options.weighted then
+		local items = read_stdin_items(options.delimiter)
+		if #items == 0 then
+			stderr_write("Error: no items for weighted selection\n")
+			os.exit(1)
+		end
+
+		local weighted_items = {}
+		local total_weight = 0
+		for _, item in ipairs(items) do
+			local value, weight = item:match("^(.+):(%d+)$")
+			if not value or not weight then
+				stderr_write("Error: weighted item must be in format 'value:weight', got: " .. item .. "\n")
+				os.exit(1)
+			end
+			weight = tonumber(weight)
+			table.insert(weighted_items, {value = value, weight = weight})
+			total_weight = total_weight + weight
+		end
+
+		local pick = rand_func(1, total_weight)
+		local cumulative = 0
+		for _, wi in ipairs(weighted_items) do
+			cumulative = cumulative + wi.weight
+			if pick <= cumulative then
+				print(wi.value)
+				break
+			end
+		end
+
+		if options._save_state then
+			os.execute("mkdir -p " .. shell_quote(options._state_dir) .. " 2>/dev/null")
+			write_seed_file(options._seed_file, pcg_state)
+		end
+		return
+	end
+
+	-- Regular number generation
 	local start_val, end_val, count
 	local show_defaults_msg = false
 
@@ -423,82 +793,120 @@ local function main()
 		count = options.count or 1
 	end
 
-	-- Validate range
-	if start_val > end_val then
-		stderr_write("Error: start value must be less than or equal to end value\n")
-		os.exit(1)
-	end
-
-	-- Setup RNG
-	local rand_func
-
-	if options.deterministic then
-		-- Check for DRANDOM_SEED environment variable
-		local env_seed_raw = os.getenv("DRANDOM_SEED")
-		local env_seed_set = env_seed_raw ~= nil and env_seed_raw ~= ""
-
-		if options.seed_provided then
-			-- Use provided seed
-			pcg32_seed(options.seed or ffi.new(u64, 0))
-		elseif env_seed_set then
-			-- Use environment seed
-			local env_seed = parse_seed(env_seed_raw, true)
-			pcg32_seed(env_seed or ffi.new(u64, 0))
-		else
-			-- Check for persisted state or generate random seed
-			local state_home = os.getenv("DRANDOM_STATE_HOME") or "/tmp"
-			local context = get_context()
-			local state_dir = state_home .. "/drandom/" .. get_user()
-			local seed_file = state_dir .. "/" .. context .. ".seed"
-
-			local persisted = read_seed_file(seed_file)
-			if persisted then
-				pcg_state = persisted
-			else
-				-- Generate random seed and output to stderr
-				local random_seed = now_seed()
-				pcg32_seed(random_seed)
-				stderr_write("(seed: " .. u64_to_hex(random_seed) .. ")\n")
-			end
-
-			-- Save state after generation (done at end)
-			-- We need to save state, so track this
-			options._save_state = true
-			options._state_dir = state_dir
-			options._seed_file = seed_file
+	-- Validate range for integer distributions
+	if not (options.exponential or options.poisson or options.log_normal or options.beta) then
+		if start_val > end_val then
+			stderr_write("Error: start value must be less than or equal to end value\n")
+			os.exit(1)
 		end
-
-		rand_func = pcg32_range
-	else
-		rand_func = urandom_range
 	end
 
-	-- Show defaults message
 	if show_defaults_msg and not options.binary_output then
 		stderr_write("(with a start of 0 and an end of 99)\n")
 	end
 
-	-- Generate output
-	local write_byte = function(value)
-		io.stdout:write(string.char(value))
-	end
+	-- Generate values
+	local values = {}
+	local binary_data = {}
 
 	for _ = 1, count do
 		local value
-		if options.normalized then
-			value = normal_random(start_val, end_val, rand_func)
+
+		if options.exponential then
+			value = exponential_random(1, uniform_func)
+		elseif options.poisson then
+			local lambda = options.mean or 1
+			value = poisson_random(lambda, uniform_func)
+		elseif options.log_normal then
+			local mu = options.mean or 0
+			local sigma = options.stddev or 1
+			value = lognormal_random(mu, sigma, uniform_func)
+		elseif options.beta then
+			local alpha = options.alpha or 2
+			local beta_p = options.beta_param or 2
+			value = beta_random(alpha, beta_p, uniform_func)
+		elseif options.normalized then
+			if options.mean and options.stddev then
+				-- Use custom mean/stddev, output as float rounded to int
+				value = math.floor(normal_random_float(options.mean, options.stddev, uniform_func) + 0.5)
+			else
+				value = normal_random_int(start_val, end_val, rand_func)
+			end
 		else
 			value = rand_func(start_val, end_val)
 		end
 
 		if options.binary_output then
-			write_byte(value)
+			table.insert(binary_data, string.char(math.floor(value) % 256))
 		else
-			print(value)
+			table.insert(values, value)
 		end
 	end
 
-	-- Save deterministic state if needed
+	-- Output
+	if options.binary_output then
+		local data = table.concat(binary_data)
+		if options.base64_output then
+			print(base64_encode(data))
+		elseif options.hex_output then
+			local hex = {}
+			for i = 1, #data do
+				hex[i] = string.format("%02x", string.byte(data, i))
+			end
+			print(table.concat(hex))
+		else
+			io.stdout:write(data)
+		end
+	else
+		local output_delimiter = options.delimiter
+		if options.hex_output then
+			for i, v in ipairs(values) do
+				if i > 1 and output_delimiter ~= "\n" then
+					io.stdout:write(output_delimiter)
+				end
+				local formatted
+				if type(v) == "number" and v == math.floor(v) then
+					formatted = string.format("%x", math.floor(v))
+				else
+					formatted = tostring(v)
+				end
+				if output_delimiter == "\n" then
+					print(formatted)
+				else
+					io.stdout:write(formatted)
+				end
+			end
+			if output_delimiter ~= "\n" then
+				print("")
+			end
+		else
+			for i, v in ipairs(values) do
+				if i > 1 and output_delimiter ~= "\n" then
+					io.stdout:write(output_delimiter)
+				end
+				local formatted
+				if type(v) == "number" then
+					if v == math.floor(v) then
+						formatted = tostring(math.floor(v))
+					else
+						formatted = string.format("%.6f", v)
+					end
+				else
+					formatted = tostring(v)
+				end
+				if output_delimiter == "\n" then
+					print(formatted)
+				else
+					io.stdout:write(formatted)
+				end
+			end
+			if output_delimiter ~= "\n" then
+				print("")
+			end
+		end
+	end
+
+	-- Save state if needed
 	if options._save_state then
 		os.execute("mkdir -p " .. shell_quote(options._state_dir) .. " 2>/dev/null")
 		write_seed_file(options._seed_file, pcg_state)

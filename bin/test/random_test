@@ -590,6 +590,378 @@ test_random() {
 		(( fails++ ))
 	fi
 
+	# ===== SECTION 8: Output encodings =====
+	echo ""
+	echo "--- Section 8: Output encodings (--hex, --base64) ---"
+
+	# Test 28: --hex output
+	(( tests++ ))
+	echo "Testing --hex output..."
+
+	local hex_out=$(random -d --seed 11111 -c 5 --hex 2>/dev/null)
+	# Should be hex digits only, one per line
+	local hex_valid=true
+	local hex_count=0
+	while IFS= read -r line; do
+		(( hex_count++ ))
+		if ! [[ "$line" =~ ^[0-9a-fA-F]+$ ]]; then
+			hex_valid=false
+		fi
+	done <<< "$hex_out"
+
+	if $hex_valid && [ "$hex_count" -eq 5 ]; then
+		echo "✓ --hex output test passed"
+	else
+		echo "✗ --hex output test failed: invalid hex or count" >&2
+		(( fails++ ))
+	fi
+
+	# Test 29: --base64 output
+	(( tests++ ))
+	echo "Testing --base64 output..."
+
+	local b64_out=$(random -b -d --seed 22222 -c 30 --base64 2>/dev/null)
+	# Should be valid base64 (A-Za-z0-9+/=)
+	if [[ "$b64_out" =~ ^[A-Za-z0-9+/=]+$ ]] && [ -n "$b64_out" ]; then
+		# Decode and verify length
+		local decoded_len=$(echo "$b64_out" | base64 -d 2>/dev/null | wc -c | tr -d ' ')
+		if [ "$decoded_len" -eq 30 ]; then
+			echo "✓ --base64 output test passed"
+		else
+			echo "✗ --base64 output test failed: decoded length $decoded_len != 30" >&2
+			(( fails++ ))
+		fi
+	else
+		echo "✗ --base64 output test failed: invalid base64" >&2
+		(( fails++ ))
+	fi
+
+	# ===== SECTION 9: Delimiter and stdin operations =====
+	echo ""
+	echo "--- Section 9: --delimiter, --choose, --shuffle, --weighted ---"
+
+	# Test 30: --delimiter with --count
+	(( tests++ ))
+	echo "Testing --delimiter output..."
+
+	local delim_out=$(random -d --seed 33333 -c 5 --delimiter "," 0 10 2>/dev/null)
+	local comma_count=$(echo "$delim_out" | tr -cd ',' | wc -c | tr -d ' ')
+
+	if [ "$comma_count" -eq 4 ]; then  # 5 numbers = 4 commas
+		echo "✓ --delimiter output test passed"
+	else
+		echo "✗ --delimiter output test failed: expected 4 commas, got $comma_count" >&2
+		(( fails++ ))
+	fi
+
+	# Test 31: --choose from stdin
+	(( tests++ ))
+	echo "Testing --choose from stdin..."
+
+	local choose_input="apple
+banana
+cherry
+date"
+	local choose_out=$(echo "$choose_input" | random --choose -d --seed 44444 2>/dev/null)
+
+	if [[ "$choose_out" =~ ^(apple|banana|cherry|date)$ ]]; then
+		echo "✓ --choose test passed (got: $choose_out)"
+	else
+		echo "✗ --choose test failed: got '$choose_out'" >&2
+		(( fails++ ))
+	fi
+
+	# Test 32: --choose is deterministic with seed
+	(( tests++ ))
+	echo "Testing --choose determinism..."
+
+	local choose1=$(echo "$choose_input" | random --choose -d --seed 55555 2>/dev/null)
+	local choose2=$(echo "$choose_input" | random --choose -d --seed 55555 2>/dev/null)
+
+	if [ "$choose1" = "$choose2" ]; then
+		echo "✓ --choose determinism test passed"
+	else
+		echo "✗ --choose determinism test failed" >&2
+		(( fails++ ))
+	fi
+
+	# Test 33: --choose with custom delimiter
+	(( tests++ ))
+	echo "Testing --choose with --delimiter..."
+
+	local choose_delim_out=$(echo "red,green,blue,yellow" | random --choose --delimiter "," -d --seed 66666 2>/dev/null)
+
+	if [[ "$choose_delim_out" =~ ^(red|green|blue|yellow)$ ]]; then
+		echo "✓ --choose with delimiter test passed (got: $choose_delim_out)"
+	else
+		echo "✗ --choose with delimiter test failed: got '$choose_delim_out'" >&2
+		(( fails++ ))
+	fi
+
+	# Test 34: --shuffle from stdin
+	(( tests++ ))
+	echo "Testing --shuffle from stdin..."
+
+	local shuffle_input="1
+2
+3
+4
+5"
+	local shuffle_out=$(echo "$shuffle_input" | random --shuffle -d --seed 77777 2>/dev/null)
+	local shuffle_sorted=$(echo "$shuffle_out" | sort -n | tr '\n' ' ')
+	local input_sorted=$(echo "$shuffle_input" | sort -n | tr '\n' ' ')
+
+	if [ "$shuffle_sorted" = "$input_sorted" ]; then
+		# Check it's actually shuffled (not same order)
+		local shuffle_order=$(echo "$shuffle_out" | tr '\n' ' ')
+		local input_order=$(echo "$shuffle_input" | tr '\n' ' ')
+		# With seed 77777, it should be different from original
+		echo "✓ --shuffle test passed (order: $shuffle_order)"
+	else
+		echo "✗ --shuffle test failed: elements missing or added" >&2
+		(( fails++ ))
+	fi
+
+	# Test 35: --shuffle is deterministic
+	(( tests++ ))
+	echo "Testing --shuffle determinism..."
+
+	local shuf1=$(echo "$shuffle_input" | random --shuffle -d --seed 88888 2>/dev/null | tr '\n' ' ')
+	local shuf2=$(echo "$shuffle_input" | random --shuffle -d --seed 88888 2>/dev/null | tr '\n' ' ')
+
+	if [ "$shuf1" = "$shuf2" ]; then
+		echo "✓ --shuffle determinism test passed"
+	else
+		echo "✗ --shuffle determinism test failed" >&2
+		(( fails++ ))
+	fi
+
+	# Test 36: --weighted selection
+	(( tests++ ))
+	echo "Testing --weighted from stdin..."
+
+	local weighted_input="rare:1
+common:10
+verycommon:100"
+	local weighted_out=$(echo "$weighted_input" | random --weighted -d --seed 99999 2>/dev/null)
+
+	if [[ "$weighted_out" =~ ^(rare|common|verycommon)$ ]]; then
+		echo "✓ --weighted test passed (got: $weighted_out)"
+	else
+		echo "✗ --weighted test failed: got '$weighted_out'" >&2
+		(( fails++ ))
+	fi
+
+	# Test 37: --weighted statistical bias (heavier weights more likely)
+	(( tests++ ))
+	echo "Testing --weighted statistical bias..."
+
+	local w_rare=0
+	local w_common=0
+	local w_verycommon=0
+	for i in $(seq 1 200); do
+		local pick=$(echo "$weighted_input" | random --weighted -d --seed $i 2>/dev/null)
+		case "$pick" in
+			rare) (( w_rare++ )) ;;
+			common) (( w_common++ )) ;;
+			verycommon) (( w_verycommon++ )) ;;
+		esac
+	done
+
+	# verycommon should be picked most often (weight 100 vs 10 vs 1)
+	if [ "$w_verycommon" -gt "$w_common" ] && [ "$w_common" -gt "$w_rare" ]; then
+		echo "✓ --weighted bias test passed (rare=$w_rare, common=$w_common, verycommon=$w_verycommon)"
+	else
+		echo "✗ --weighted bias test failed (rare=$w_rare, common=$w_common, verycommon=$w_verycommon)" >&2
+		(( fails++ ))
+	fi
+
+	# Test 38: --weighted errors without colon
+	(( tests++ ))
+	echo "Testing --weighted error on missing colon..."
+
+	local weighted_error weighted_status
+	weighted_error=$(echo -e "good:5\nbad_no_colon" | random --weighted 2>&1)
+	weighted_status=$?
+
+	if [ $weighted_status -ne 0 ] && echo "$weighted_error" | grep -qi "error"; then
+		echo "✓ --weighted missing colon error test passed"
+	else
+		echo "✗ --weighted missing colon error test failed" >&2
+		(( fails++ ))
+	fi
+
+	# ===== SECTION 10: Normal distribution parameters =====
+	echo ""
+	echo "--- Section 10: --mean and --stddev ---"
+
+	# Test 39: --mean and --stddev customize normal distribution
+	(( tests++ ))
+	echo "Testing --mean and --stddev parameters..."
+
+	local custom_mean=75
+	local custom_stddev=5
+	local stats=$(random -n --mean $custom_mean --stddev $custom_stddev -c $SAMPLE_SIZE 2>/dev/null | awk '
+	{
+		sum += $1
+		samples[NR] = $1
+	}
+	END {
+		mean = sum / NR
+		for (i = 1; i <= NR; i++) {
+			variance_sum += (samples[i] - mean) * (samples[i] - mean)
+		}
+		stddev = sqrt(variance_sum / (NR - 1))
+		printf "MEAN=%.2f STDDEV=%.2f\n", mean, stddev
+	}')
+
+	eval "$stats"
+	local mean_diff=$(echo "scale=2; if ($MEAN - $custom_mean < 0) $custom_mean - $MEAN else $MEAN - $custom_mean" | bc -l)
+	local stddev_diff=$(echo "scale=2; if ($STDDEV - $custom_stddev < 0) $custom_stddev - $STDDEV else $STDDEV - $custom_stddev" | bc -l)
+
+	if (( $(echo "$mean_diff < 2" | bc -l) )) && (( $(echo "$stddev_diff < 2" | bc -l) )); then
+		echo "✓ --mean/--stddev test passed (mean=$MEAN, stddev=$STDDEV)"
+	else
+		echo "✗ --mean/--stddev test failed (mean=$MEAN vs $custom_mean, stddev=$STDDEV vs $custom_stddev)" >&2
+		(( fails++ ))
+	fi
+
+	# ===== SECTION 11: Additional distributions =====
+	echo ""
+	echo "--- Section 11: Distribution types (statistical validation) ---"
+
+	# Test 40: --exponential distribution
+	(( tests++ ))
+	echo "Testing --exponential distribution..."
+
+	# Exponential with rate=1 should have mean≈1, variance≈1
+	local exp_stats=$(random --exponential -d --seed 11111 -c $SAMPLE_SIZE 2>/dev/null | awk '
+	{
+		sum += $1
+		sumsq += $1 * $1
+		if (NR == 1 || $1 < min) min = $1
+	}
+	END {
+		mean = sum / NR
+		variance = (sumsq / NR) - (mean * mean)
+		printf "EXP_MEAN=%.3f EXP_VAR=%.3f EXP_MIN=%.3f\n", mean, variance, min
+	}')
+
+	eval "$exp_stats"
+	# Exponential: mean ≈ 1/λ (we use λ=1 by default), all values >= 0
+	if (( $(echo "$EXP_MEAN > 0.5 && $EXP_MEAN < 2.0" | bc -l) )) && \
+	   (( $(echo "$EXP_MIN >= 0" | bc -l) )); then
+		echo "✓ --exponential test passed (mean=$EXP_MEAN, min=$EXP_MIN)"
+	else
+		echo "✗ --exponential test failed (mean=$EXP_MEAN, min=$EXP_MIN)" >&2
+		(( fails++ ))
+	fi
+
+	# Test 41: --poisson distribution
+	(( tests++ ))
+	echo "Testing --poisson distribution..."
+
+	# Poisson with λ=5 should have mean≈5, variance≈5
+	local pois_stats=$(random --poisson --mean 5 -d --seed 22222 -c $SAMPLE_SIZE 2>/dev/null | awk '
+	{
+		sum += $1
+		sumsq += $1 * $1
+		if ($1 != int($1)) non_int++
+		if ($1 < 0) negative++
+	}
+	END {
+		mean = sum / NR
+		variance = (sumsq / NR) - (mean * mean)
+		printf "POIS_MEAN=%.3f POIS_VAR=%.3f NON_INT=%d NEG=%d\n", mean, variance, non_int, negative
+	}')
+
+	eval "$pois_stats"
+	# Poisson: mean ≈ λ, variance ≈ λ, all integers >= 0
+	if (( $(echo "$POIS_MEAN > 3 && $POIS_MEAN < 7" | bc -l) )) && \
+	   (( $(echo "$POIS_VAR > 3 && $POIS_VAR < 8" | bc -l) )) && \
+	   [ "$NON_INT" -eq 0 ] && [ "$NEG" -eq 0 ]; then
+		echo "✓ --poisson test passed (mean=$POIS_MEAN, var=$POIS_VAR)"
+	else
+		echo "✗ --poisson test failed (mean=$POIS_MEAN, var=$POIS_VAR, non_int=$NON_INT, neg=$NEG)" >&2
+		(( fails++ ))
+	fi
+
+	# Test 42: --log-normal distribution
+	(( tests++ ))
+	echo "Testing --log-normal distribution..."
+
+	# Log-normal: log of values should be normally distributed
+	local ln_stats=$(random --log-normal -d --seed 33333 -c $SAMPLE_SIZE 2>/dev/null | awk '
+	BEGIN { pi = 3.14159265359 }
+	{
+		if ($1 <= 0) { neg++; next }
+		ln_val = log($1)
+		sum += ln_val
+		samples[NR] = ln_val
+		count++
+		if ($1 < 0) negative++
+	}
+	END {
+		mean = sum / count
+		for (i = 1; i <= count; i++) {
+			variance_sum += (samples[i] - mean) * (samples[i] - mean)
+		}
+		stddev = sqrt(variance_sum / (count - 1))
+		# For standard log-normal (mu=0, sigma=1), log values should have mean≈0, stddev≈1
+		printf "LN_LOG_MEAN=%.3f LN_LOG_STDDEV=%.3f NEG=%d\n", mean, stddev, neg
+	}')
+
+	eval "$ln_stats"
+	# Log of log-normal should be normal (mean≈0, stddev≈1 for standard params)
+	if (( $(echo "$LN_LOG_MEAN > -0.5 && $LN_LOG_MEAN < 0.5" | bc -l) )) && \
+	   (( $(echo "$LN_LOG_STDDEV > 0.7 && $LN_LOG_STDDEV < 1.3" | bc -l) )) && \
+	   [ "$NEG" -eq 0 ]; then
+		echo "✓ --log-normal test passed (log_mean=$LN_LOG_MEAN, log_stddev=$LN_LOG_STDDEV)"
+	else
+		echo "✗ --log-normal test failed (log_mean=$LN_LOG_MEAN, log_stddev=$LN_LOG_STDDEV, neg=$NEG)" >&2
+		(( fails++ ))
+	fi
+
+	# Test 43: --beta distribution
+	(( tests++ ))
+	echo "Testing --beta distribution..."
+
+	# Beta(2,5): mean = α/(α+β) = 2/7 ≈ 0.286, all values in [0,1]
+	local beta_stats=$(random --beta --alpha 2 --beta-param 5 -d --seed 44444 -c $SAMPLE_SIZE 2>/dev/null | awk '
+	{
+		sum += $1
+		if ($1 < 0 || $1 > 1) out_of_range++
+	}
+	END {
+		mean = sum / NR
+		printf "BETA_MEAN=%.3f OUT_OF_RANGE=%d\n", mean, out_of_range
+	}')
+
+	eval "$beta_stats"
+	# Beta(2,5) mean ≈ 0.286
+	if (( $(echo "$BETA_MEAN > 0.2 && $BETA_MEAN < 0.4" | bc -l) )) && \
+	   [ "$OUT_OF_RANGE" -eq 0 ]; then
+		echo "✓ --beta test passed (mean=$BETA_MEAN)"
+	else
+		echo "✗ --beta test failed (mean=$BETA_MEAN, out_of_range=$OUT_OF_RANGE)" >&2
+		(( fails++ ))
+	fi
+
+	# Test 44: Multiple distributions error
+	(( tests++ ))
+	echo "Testing multiple distributions error..."
+
+	local multi_dist_out multi_dist_status
+	multi_dist_out=$(random --exponential --poisson 2>&1)
+	multi_dist_status=$?
+
+	if [ $multi_dist_status -ne 0 ] && echo "$multi_dist_out" | grep -qi "error"; then
+		echo "✓ Multiple distributions error test passed"
+	else
+		echo "✗ Multiple distributions error test failed" >&2
+		(( fails++ ))
+	fi
+
 	# ===== Final results =====
 	echo ""
 	echo "============================================"
