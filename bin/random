@@ -389,6 +389,18 @@ local function print_help(invocation)
 	print("  'nrandom' → implies --normalized")
 	print("  'drandom' → implies --deterministic")
 	print("")
+	print("Environment variables:")
+	print("  DRANDOM_CONTEXT   Session identifier for state persistence (default: PPID)")
+	print("  DRANDOM_SEED      Seed value (overrides state file, implies -d)")
+	print("  DRANDOM_STATE_HOME  Directory for state files (default: /tmp)")
+	print("")
+	print("State persistence (deterministic mode):")
+	print("  State is saved per-session so sequences continue across calls.")
+	print("  The session is identified by DRANDOM_CONTEXT or parent PID.")
+	print("  NOTE: Pipes and $() subshells change the parent PID. For reliable")
+	print("  state in scripts, add to your shell config:")
+	print("    export DRANDOM_CONTEXT=$$")
+	print("")
 	print("Examples:")
 	print("  random                    # Uniform random 0-99")
 	print("  random -n --mean 50 --stddev 10  # Normal, custom params")
@@ -665,17 +677,22 @@ local function main()
 		local env_seed_raw = os.getenv("DRANDOM_SEED")
 		local env_seed_set = env_seed_raw ~= nil and env_seed_raw ~= ""
 
+		-- Set up state file paths (needed for both explicit seed and auto-seed)
+		local state_home = os.getenv("DRANDOM_STATE_HOME") or "/tmp"
+		local context = get_context()
+		local state_dir = state_home .. "/drandom/" .. get_user()
+		local seed_file = state_dir .. "/" .. context .. ".seed"
+
 		if options.seed_provided then
 			pcg32_seed(options.seed or ffi.new(u64, 0))
+			-- Save state so subsequent calls continue from this seed
+			options._save_state = true
+			options._state_dir = state_dir
+			options._seed_file = seed_file
 		elseif env_seed_set then
 			local env_seed = parse_seed(env_seed_raw, true)
 			pcg32_seed(env_seed or ffi.new(u64, 0))
 		else
-			local state_home = os.getenv("DRANDOM_STATE_HOME") or "/tmp"
-			local context = get_context()
-			local state_dir = state_home .. "/drandom/" .. get_user()
-			local seed_file = state_dir .. "/" .. context .. ".seed"
-
 			local persisted = read_seed_file(seed_file)
 			if persisted then
 				pcg_state = persisted
