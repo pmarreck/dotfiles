@@ -1,18 +1,35 @@
 #!/usr/bin/env bash
 
 supertop() {
-	if ! command -v tmux &> /dev/null; then
-		err "tmux is not installed. Please install it first, along with btop and htop.";
-		return 1;
-	fi;
+	local missing=()
+	local dep
+	for dep in tmux btop htop; do
+		if ! command -v "$dep" &> /dev/null; then
+			missing+=("$dep")
+		fi
+	done
 
-	local session_name;
-	session_name="split_session_$$";
+	if [ ${#missing[@]} -gt 0 ]; then
+		err "Missing dependencies: ${missing[*]}. Please install them and ensure they are on PATH."
+		return 1
+	fi
 
-	# Create the tmux session with htop, split, add btop, then attach
-	tmux new-session -d -s "${session_name}" 'htop';
-	tmux split-window -h -t "${session_name}" 'btop';
-	tmux attach-session -t "${session_name}";
+	local session_name
+	session_name="top"
+	local setup_cmd
+	# $'\x1c' is the ancient file-separator character from ASCII
+	# I did this to avoid having to do the usual "|| true" after "<<- 'EOF'"  in a heredoc read, which swallows errors and is a gross hack IMHO
+	# This is more technically-correct and thus, less gross. By definition. B)
+	read -r -d $'\x1c' setup_cmd <<-'EOF'
+		tmux set-option -t "${session_name}" set-titles on
+		tmux set-option -t "${session_name}" set-titles-string "top"
+		tmux split-window -h -t "${session_name}" btop
+		exec htop
+		$'\x1c'
+	EOF
+
+	# Attach to the session if it exists, or create it with the setup command
+	tmux new-session -A -s "${session_name}" "${setup_cmd}"
 }
 
 # Run the function if this script is executed directly
