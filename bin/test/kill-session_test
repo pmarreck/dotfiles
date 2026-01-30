@@ -1,0 +1,169 @@
+#!/usr/bin/env bash
+
+# Test for kill-session functionality
+# Exit code should be number of failed tests
+
+fails=0
+tests=0
+
+tmpdir=$(mktemp -d --tmpdir)
+trap 'tmux kill-server 2>/dev/null || true; rm -rf "$tmpdir"' EXIT
+
+unset TMUX
+
+mkdir -p "$tmpdir/bin"
+PATH="$HOME/dotfiles/bin:$tmpdir/bin:$PATH"
+
+tmux_bin=$(command -v tmux)
+export REAL_TMUX_BIN="$tmux_bin"
+export TMUX_SOCKET_NAME="kill-session-test-$$"
+
+cat <<'TMUX_EOF' > "$tmpdir/bin/tmux"
+#!/usr/bin/env bash
+exec "$REAL_TMUX_BIN" -L "$TMUX_SOCKET_NAME" "$@"
+TMUX_EOF
+chmod +x "$tmpdir/bin/tmux"
+export TMUX_BIN="$tmpdir/bin/tmux"
+
+cat <<'GUM_EOF' > "$tmpdir/bin/gum"
+#!/usr/bin/env bash
+if [[ ${1:-} != "choose" ]]; then
+	echo "gum stub only supports choose" >&2
+	exit 2
+fi
+
+if [[ ${GUM_MODE:-} == "cancel" ]]; then
+	echo "nothing selected" >&2
+	exit 1
+fi
+
+shift
+
+choice="${GUM_CHOICE:-}"
+selected=""
+options=("$@")
+
+if (( ${#options[@]} == 0 )); then
+	while IFS= read -r line; do
+		options+=("$line")
+	done
+fi
+
+for opt in "${options[@]}"; do
+	if [[ -n "$choice" && "$opt" == "$choice" ]]; then
+		selected="$opt"
+	fi
+	if [[ -z "$choice" && -z "$selected" ]]; then
+		selected="$opt"
+	fi
+done
+
+if [[ -n "$selected" ]]; then
+	echo "$selected"
+	exit 0
+fi
+
+exit 1
+GUM_EOF
+chmod +x "$tmpdir/bin/gum"
+
+# Test 1: help output
+((tests++))
+echo "Testing: help output..."
+output=$(kill-session --help)
+if [[ "$output" == *"Usage:"* ]]; then
+	echo "PASS: help shows usage"
+else
+	echo "FAIL: help missing usage" >&2
+	((fails++))
+fi
+
+# Test 2: kill a session by name
+((tests++))
+echo "Testing: kill session by name..."
+tmux new-session -d -s alpha
+kill-session alpha >/dev/null 2>&1
+if tmux has-session -t alpha 2>/dev/null; then
+	echo "FAIL: alpha session still exists" >&2
+	((fails++))
+else
+	echo "PASS: alpha session killed"
+fi
+
+# Test 3: kill a session using gum choose
+((tests++))
+echo "Testing: gum choose selection..."
+tmux new-session -d -s beta
+tmux new-session -d -s gamma
+export GUM_CHOICE="beta"
+kill-session >/dev/null 2>&1
+if tmux has-session -t beta 2>/dev/null; then
+	echo "FAIL: beta session still exists" >&2
+	((fails++))
+else
+	echo "PASS: beta session killed via gum choose"
+fi
+if tmux has-session -t gamma 2>/dev/null; then
+	echo "PASS: gamma session preserved"
+else
+	echo "FAIL: gamma session missing" >&2
+	((fails++))
+fi
+
+# Test 4: no sessions error
+((tests++))
+echo "Testing: no sessions error..."
+kill-session gamma >/dev/null 2>&1
+error_output=$(kill-session 2>&1 >/dev/null)
+exit_code=$?
+if [[ $exit_code -ne 0 && "$error_output" == *"no tmux sessions"* ]]; then
+	echo "PASS: no sessions produces error"
+else
+	echo "FAIL: expected no sessions error" >&2
+	echo "  exit: $exit_code" >&2
+	echo "  output: $error_output" >&2
+	((fails++))
+fi
+
+# Test 5: gum cancel only reports once
+((tests++))
+echo "Testing: gum cancel output..."
+tmux new-session -d -s delta
+export GUM_MODE="cancel"
+error_output=$(kill-session 2>&1 >/dev/null)
+exit_code=$?
+unset GUM_MODE
+count=$(printf '%s\n' "$error_output" | grep -c "no session selected" || true)
+if [[ $exit_code -ne 0 && $count -eq 1 && "$error_output" != *"nothing selected"* ]]; then
+	echo "PASS: gum cancel outputs one clean message"
+else
+	echo "FAIL: gum cancel output unexpected" >&2
+	echo "  exit: $exit_code" >&2
+	echo "  output: $error_output" >&2
+	((fails++))
+fi
+kill-session delta >/dev/null 2>&1
+
+# Test 6: missing name lists active sessions
+((tests++))
+echo "Testing: missing session name error list..."
+tmux new-session -d -s alpha
+tmux new-session -d -s beta
+error_output=$(kill-session missing 2>&1 >/dev/null)
+exit_code=$?
+if [[ $exit_code -ne 0 && "$error_output" == *"tmux session name not found; active sessions: alpha, beta"* ]]; then
+	echo "PASS: missing name lists active sessions"
+else
+	echo "FAIL: missing name output unexpected" >&2
+	echo "  exit: $exit_code" >&2
+	echo "  output: $error_output" >&2
+	((fails++))
+fi
+
+if [[ $fails -eq 0 ]]; then
+	echo "All $tests tests passed"
+else
+	echo "$fails of $tests tests failed" >&2
+fi
+
+exit $fails

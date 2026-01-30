@@ -1,0 +1,152 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+usage() {
+	cat <<'USAGE_EOF'
+Usage: kill-session [SESSION_NAME] [--test]
+
+Kill a tmux session by name. If no name is provided, select one with gum choose.
+
+Options:
+  -h, --help  Show this help text.
+  -a, --about Show a short description.
+  --test      Run the kill-session test suite.
+USAGE_EOF
+}
+
+about() {
+	echo "kill-session: kill a tmux session by name or by interactive selection."
+}
+
+run_tests() {
+	local test_script="$HOME/dotfiles/bin/test/kill-session_test"
+	if [[ ! -x "$test_script" ]]; then
+		echo "kill-session: missing test script at $test_script" >&2
+		exit 1
+	fi
+	"$test_script" >/dev/null
+	exit $?
+}
+
+list_sessions() {
+	"${tmux_cmd[@]}" list-sessions -F '#S' 2>/dev/null || true
+}
+
+format_session_list() {
+	local sessions=$1
+	if [[ -z "$sessions" ]]; then
+		return 0
+	fi
+	printf '%s\n' "$sessions" | awk 'NR==1 {printf "%s", $0; next} {printf ", %s", $0} END {print ""}'
+}
+
+select_session() {
+	local session_name="${1:-}"
+	if [[ -n "$session_name" ]]; then
+		printf '%s' "$session_name"
+		return 0
+	fi
+
+	local -a session_list=()
+	mapfile -t session_list < <(list_sessions)
+	if (( ${#session_list[@]} == 0 )); then
+		echo "kill-session: no tmux sessions found." >&2
+		exit 1
+	fi
+
+	if ! command -v gum >/dev/null 2>&1; then
+		echo "kill-session: gum is required when no session name is provided." >&2
+		exit 1
+	fi
+
+	if [[ -t 2 ]]; then
+		if ! session_name=$(gum choose "${session_list[@]}"); then
+			printf '\033[1A\r\033[K' >&2
+			echo "kill-session: no session selected." >&2
+			exit 1
+		fi
+	else
+		local gum_cancel_flag
+		gum_cancel_flag=$(mktemp --tmpdir)
+		if ! session_name=$(gum choose "${session_list[@]}" 2> >(awk -v flag="$gum_cancel_flag" '
+			$0 == "nothing selected" { print "1" > flag; next }
+			{ print > "/dev/stderr"; fflush("/dev/stderr") }
+		')); then
+			echo "kill-session: no session selected." >&2
+			rm -f "$gum_cancel_flag"
+			exit 1
+		fi
+		rm -f "$gum_cancel_flag"
+	fi
+
+	if [[ -z "$session_name" ]]; then
+		echo "kill-session: no session selected." >&2
+		exit 1
+	fi
+
+	printf '%s' "$session_name"
+}
+
+main() {
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+			-h|--help)
+				usage
+				exit 0
+				;;
+			-a|--about)
+				about
+				exit 0
+				;;
+			--test)
+				run_tests
+				;;
+			--)
+				shift
+				break
+				;;
+			-*)
+				echo "kill-session: unrecognized option '$1'" >&2
+				usage >&2
+				exit 1
+				;;
+			*)
+				break
+				;;
+		esac
+	done
+
+	if [[ $# -gt 1 ]]; then
+		echo "kill-session: too many arguments: $*" >&2
+		usage >&2
+		exit 1
+	fi
+
+	local tmux_bin
+	tmux_bin="${TMUX_BIN:-}"
+	if [[ -z "$tmux_bin" ]]; then
+		tmux_bin=$(command -v tmux || true)
+	fi
+	if [[ -z "$tmux_bin" ]]; then
+		echo "kill-session: tmux is required but not found in PATH." >&2
+		exit 1
+	fi
+	tmux_cmd=("$tmux_bin")
+
+	local session_name
+	local provided_name="${1:-}"
+	session_name=$(select_session "$provided_name")
+
+	if ! "${tmux_cmd[@]}" has-session -t "$session_name" 2>/dev/null; then
+		local active_sessions active_list
+		active_sessions=$(list_sessions)
+		active_list=$(format_session_list "$active_sessions")
+		echo "kill-session: tmux session name not found; active sessions: $active_list" >&2
+		exit 1
+	fi
+
+	"${tmux_cmd[@]}" kill-session -t "$session_name"
+}
+
+main "$@"

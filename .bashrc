@@ -306,6 +306,9 @@ set +H
 # activate ble.sh/blesh
 # [[ ! ${BLE_VERSION-} ]] || ble-attach
 
+# consistent deterministic randomization in subshells
+export DRANDOM_CONTEXT=$$
+
 # Added by LM Studio CLI (lms)
 # export PATH="$PATH:/Users/pmarreck/.cache/lm-studio/bin"
 # End of LM Studio CLI section
