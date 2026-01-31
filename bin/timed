@@ -482,6 +482,11 @@ timed_main() {
 				use_line_prefix=1
 		fi
 
+		export TIMED_ACTIVE=1
+		export TIMED_START_TIME="$START_TIME"
+		export TIMED_LINE_PREFIX="$use_line_prefix"
+		export TIMED_QUIET="$QUIET_MODE"
+
 		if [[ $SHOW_RESOURCES -eq 1 ]]; then
 				# Check for GNU time command (avoid shell builtin)
 				if command -v gtime >/dev/null 2>&1; then

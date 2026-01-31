@@ -117,3 +117,8 @@ done
 - Maintain existing code style and conventions
 - Test all modifications with both `--about` and `-a` flags
 - Keep descriptions concise and descriptive of core functionality
+
+## Additional Utilities
+- `cp437-to-utf8`: Convert CP437 codepage text to UTF-8 for terminal rendering.
+  - Map every CP437 character to its UTF-8 equivalent (complete 256-character table).
+  - Add a test that asserts every single character conversion.

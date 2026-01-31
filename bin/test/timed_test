@@ -124,7 +124,7 @@ test_quiet_mode() {
     output=$(timed_main -q sleep 0.1 2>&1)
     local exit_code=$?
     assert_exit_code 0 "$exit_code" "Quiet mode: command executes successfully"
-    assert_not_contains "$output" "1s" "Quiet mode: no real-time counter"
+    assert_not_contains "$output" $'\r' "Quiet mode: no inline updates"
     assert_contains "$output" "real" "Quiet mode: still shows final timing"
 }
 

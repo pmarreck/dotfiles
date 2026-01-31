@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+
+set -o pipefail
+
+fails=0
+tests=0
+
+export PATH="$HOME/bin:$PATH"
+
+temp_dir=$(mktemp -d --tmpdir counted_test.XXXXXX)
+trap 'rm -rf "$temp_dir"' EXIT
+
+line_script="$temp_dir/lines.sh"
+cat > "$line_script" << 'EOF'
+#!/usr/bin/env bash
+printf "alpha\nbeta\n"
+EOF
+chmod +x "$line_script"
+
+pass() {
+	printf "PASS: %s\n" "$1"
+}
+
+fail() {
+	printf "FAIL: %s\n" "$1" >&2
+	shift
+	if [ $# -gt 0 ]; then
+		printf "  %s\n" "$*" >&2
+	fi
+	((fails++))
+}
+
+((tests++))
+output=$(counted "$line_script")
+expected=$'1 alpha\n2 beta'
+if [[ "$output" == "$expected" ]]; then
+	pass "basic numbering"
+else
+	fail "basic numbering" "Expected: $expected" "Actual:   $output"
+fi
+
+((tests++))
+output=$(counted --separator "::" "$line_script")
+expected=$'1::alpha\n2::beta'
+if [[ "$output" == "$expected" ]]; then
+	pass "separator supports multi-character"
+else
+	fail "separator supports multi-character" "Expected: $expected" "Actual:   $output"
+fi
+
+((tests++))
+output=$(counted --separator "" "$line_script")
+expected=$'1alpha\n2beta'
+if [[ "$output" == "$expected" ]]; then
+	pass "separator supports empty string"
+else
+	fail "separator supports empty string" "Expected: $expected" "Actual:   $output"
+fi
+
+((tests++))
+output=$(counted --padding 4 "$line_script")
+expected=$'  1 alpha\n  2 beta'
+if [[ "$output" == "$expected" ]]; then
+	pass "padding includes separator"
+else
+	fail "padding includes separator" "Expected: $expected" "Actual:   $output"
+fi
+
+((tests++))
+output=$(counted --unbuffer "$line_script")
+expected=$'1 alpha\n2 beta'
+if [[ "$output" == "$expected" ]]; then
+	pass "unbuffer option runs"
+else
+	fail "unbuffer option runs" "Expected: $expected" "Actual:   $output"
+fi
+
+((tests++))
+output=$(counted --no-unbuffer "$line_script")
+expected=$'1 alpha\n2 beta'
+if [[ "$output" == "$expected" ]]; then
+	pass "no-unbuffer option runs"
+else
+	fail "no-unbuffer option runs" "Expected: $expected" "Actual:   $output"
+fi
+
+if [ "$fails" -eq 0 ]; then
+	printf "All %d tests passed\n" "$tests"
+else
+	printf "%d of %d tests failed\n" "$fails" "$tests" >&2
+fi
+
+exit "$fails"

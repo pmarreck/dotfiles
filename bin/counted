@@ -1,0 +1,181 @@
+#!/usr/bin/env bash
+
+# counted - Prefix stdout lines with an incrementing line number
+# Version: 1.0.0
+
+set -o pipefail
+
+SCRIPT_NAME=$(basename "${0##\-}")
+VERSION="1.0.0"
+
+PADDING=0
+SEPARATOR=" "
+USE_UNBUFFER=1
+
+show_usage() {
+	cat << EOF
+Usage: $SCRIPT_NAME [OPTIONS] COMMAND [ARGS...]
+
+Prefix each stdout line with an incrementing line number.
+
+Options:
+  -h, --help             Show this help message
+  -a, --about            Show a short description
+  -v, --version          Show version information
+  -p, --padding WIDTH    Right-align number + separator to WIDTH
+  -s, --separator STR    Separator between the number and line (default: " ")
+      --unbuffer         Try to force line-buffered output
+      --no-unbuffer      Disable line-buffering helpers
+  --test                 Run tests
+
+Notes:
+  Designed to chain cleanly with timed. Line numbers always go on stdout.
+
+Examples:
+  $SCRIPT_NAME make build
+  $SCRIPT_NAME -p 4 -s ": " ./script.sh
+  timed $SCRIPT_NAME ./script.sh
+  $SCRIPT_NAME timed ./script.sh
+EOF
+}
+
+show_about() {
+	printf "Prefix stdout lines with line numbers\n"
+}
+
+show_version() {
+	printf "%s version %s\n" "$SCRIPT_NAME" "$VERSION"
+}
+
+prefix_stdout_lines() {
+	local line_number=1
+	local line
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		local prefix="${line_number}${SEPARATOR}"
+		if [[ $PADDING -gt 0 ]]; then
+			prefix=$(printf "%*s" "$PADDING" "$prefix")
+		fi
+		printf "%s%s\n" "$prefix" "$line"
+		((line_number++))
+	done
+}
+
+resolve_unbuffer_command() {
+	if command -v stdbuf >/dev/null 2>&1; then
+		printf "stdbuf\n"
+		return 0
+	fi
+	if command -v gstdbuf >/dev/null 2>&1; then
+		printf "gstdbuf\n"
+		return 0
+	fi
+	return 1
+}
+
+counted_main() {
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+			-h|--help)
+				show_usage
+				return 0
+				;;
+			-a|--about)
+				show_about
+				return 0
+				;;
+			-v|--version)
+				show_version
+				return 0
+				;;
+			-p|--padding)
+				if [[ $# -lt 2 ]]; then
+					printf "Error: --padding requires an argument\n" >&2
+					return 1
+				fi
+				if ! [[ "$2" =~ ^[0-9]+$ ]]; then
+					printf "Error: --padding must be a non-negative integer\n" >&2
+					return 1
+				fi
+				PADDING="$2"
+				shift 2
+				;;
+			-s|--separator)
+				if [[ $# -lt 2 ]]; then
+					printf "Error: --separator requires an argument\n" >&2
+					return 1
+				fi
+				SEPARATOR="$2"
+				shift 2
+				;;
+			--unbuffer)
+				USE_UNBUFFER=1
+				shift
+				;;
+			--no-unbuffer)
+				USE_UNBUFFER=0
+				shift
+				;;
+			--)
+				shift
+				break
+				;;
+			-*)
+				printf "Error: Unknown option: %s\n" "$1" >&2
+				printf "Try '%s --help' for more information.\n" "$SCRIPT_NAME" >&2
+				return 1
+				;;
+			*)
+				break
+				;;
+		esac
+	done
+
+	if [[ $# -eq 0 ]]; then
+		printf "Error: No command specified\n" >&2
+		printf "Usage: %s [OPTIONS] COMMAND [ARGS...]\n" "$SCRIPT_NAME" >&2
+		printf "Try '%s --help' for more information.\n" "$SCRIPT_NAME" >&2
+		return 1
+	fi
+
+	local cmd="$1"
+	if ! command -v "$cmd" >/dev/null 2>&1; then
+		if [[ ! -x "$cmd" ]]; then
+			printf "Error: Command not found or not executable: %s\n" "$cmd" >&2
+			return 127
+		fi
+	fi
+
+	export COUNTED_ACTIVE=1
+	export COUNTED_PADDING="$PADDING"
+	export COUNTED_SEPARATOR="$SEPARATOR"
+
+	local -a cmd=("$@")
+	if [[ $USE_UNBUFFER -eq 1 ]]; then
+		local unbuffer_cmd
+		if unbuffer_cmd=$(resolve_unbuffer_command); then
+			cmd=("$unbuffer_cmd" -oL -eL "${cmd[@]}")
+		fi
+	fi
+
+	"${cmd[@]}" | prefix_stdout_lines
+	return ${PIPESTATUS[0]}
+}
+
+run_tests() {
+	local test_file="$HOME/dotfiles/bin/test/${SCRIPT_NAME}_test"
+
+	if [[ ! -f "$test_file" ]]; then
+		printf "Error: Test file not found: %s\n" "$test_file" >&2
+		return 1
+	fi
+
+	exec "$test_file"
+}
+
+if ! (return 0 2>/dev/null); then
+	if [[ "${1:-}" == "--test" ]]; then
+		run_tests >/dev/null
+	else
+		counted_main "$@"
+	fi
+fi
