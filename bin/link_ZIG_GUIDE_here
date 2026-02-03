@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+
+if [ -z "${DOCUMENTS:-}" ]; then
+	echo "link_ZIG_GUIDE_here: DOCUMENTS is not set or is empty" >&2
+	exit 1
+fi
+
+rm -f "ZIG_RECENT_API_CHANGES_2025.md"
+ln -s "$DOCUMENTS/Obsidian Vaults/Peter Marreck/ZIG_RECENT_API_CHANGES_2025.md" "ZIG_RECENT_API_CHANGES_2025.md"
