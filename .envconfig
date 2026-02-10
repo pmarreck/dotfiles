@@ -232,37 +232,40 @@ export OLLAMA_DEFAULT_MODEL=${OLLAMA_DEFAULT_MODEL:-granite3.3:latest}
 export ERL_FLAGS="+P 2000000";
 
 # Set up a few character set globals in ENV for the password generator functions
-export CHARSET_LOWER="$(echo -n {a..z} | tr -d ' ')"
-export CHARSET_UPPER="$(echo -n {A..Z} | tr -d ' ')"
-export CHARSET_NUM="$(echo -n {0..9} | tr -d ' ')"
+export CHARSET_LOWER="abcdefghijklmnopqrstuvwxyz"
+export CHARSET_UPPER="ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+export CHARSET_NUM="0123456789"
 export CHARSET_ALPHA="$CHARSET_LOWER$CHARSET_UPPER"
 export CHARSET_ALNUM="$CHARSET_ALPHA$CHARSET_NUM"
 # delete glyphs that can be confused with other characters
 # zero and one are the preferred glyphs to capital O, lowercase l and capital I
-export CHARSET_ALNUM_SANE="$(printf "%s" "$CHARSET_ALNUM" | tr -d 'OlI')"
+# export CHARSET_ALNUM_SANE="$(printf "%s" "$CHARSET_ALNUM" | tr -d 'OlI')"
+export CHARSET_ALNUM_SANE="abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ0123456789"
 # export CHARSET_PUNC='!@#$%^&*-_=+[]{}|;:,.<>/?~'
 # I shortened the possible punctuation chars above due to incompatibility with various sites
 export CHARSET_PUNC='!@#$%^&*'
 export CHARSET_HEX="${CHARSET_NUM}abcdef"
 
-# global TMPDIR which is on /tmp (in memory on my OS'es) and unique to this process
-export TMPDIR="/tmp/$$" # a canonical process-ID-specific temp directory
-mkdir -p "$TMPDIR" # because mktemp won't work unless it already exists
-export TMPDIR=$(realpath "$TMPDIR")
+# create a global TMPDIR which is on /tmp (in memory on my OS'es) and unique to this process
+TMPDIR=$(realpath "/tmp")
+TMPDIR="$TMPDIR/$$" && mkdir -p "$TMPDIR" # a canonical process-ID-specific temp directory
+export TMPDIR
 
 # Bash integer handling
-_bash_int_max_helper() {
-	local n=1 next
-	while :; do
-		next=$((n<<1))
-		(( next > 0 )) || break
-		n=$next
-	done
-	printf '%s' $((n*2 - 1))
-}
+# In case you have to ever recompute it:
+# _bash_int_max_helper() {
+# 	local n next
+# 	n=1
+# 	while :; do
+# 		next=$(( n<<1 ))
+# 		(( next > 0 )) || break
+# 		n=$next
+# 	done
+# 	printf '%s' $((n*2 - 1))
+# }
 # make it feel like an env var:
-declare -p "BASH_INT_MAX" >/dev/null 2>&1 || declare -irx BASH_INT_MAX="$(_bash_int_max_helper)"
-declare -p "BASH_INT_MIN" >/dev/null 2>&1 || declare -irx BASH_INT_MIN=$(( -BASH_INT_MAX - 1 ))
+declare -irx BASH_INT_MAX=9223372036854775807
+declare -irx BASH_INT_MIN=$(( -BASH_INT_MAX - 1 ))
 unset _bash_int_max_helper
 
 # take any $HOME/.secrets and export them

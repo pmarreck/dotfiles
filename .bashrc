@@ -318,6 +318,6 @@ export PNPM_HOME="$HOME/.local/share/pnpm"
 prepend_path "$PNPM_HOME"
 # pnpm end
 # Append Warp and McFly history to shell history
-if command -v warp-history &> /dev/null; then
-	warp-history --shell bash
-fi
+# if command -v warp-history &> /dev/null; then
+# 	warp-history --shell bash
+# fi

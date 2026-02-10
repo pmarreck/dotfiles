@@ -23,7 +23,7 @@ git_commit_ai() {
 		return 1
 	fi
 
-	model=${OPENAI_MODEL:-gpt-5-mini}
+	model=${OPENAI_MODEL:-gpt-5-nano}
 	timeout=${OPENAI_TIMEOUT:-1200}
 	openai_host=${OPENAI_HOST:-api.openai.com}
 	openai_path=${OPENAI_PATH:-/v1/chat/completions}

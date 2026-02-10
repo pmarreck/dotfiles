@@ -129,7 +129,7 @@ ask() {
 		openai_host openai_path openai_protocol openai_url local_llm \
 		top_k top_p temperature system_prompt user_prompt repeat_penalty num_ctx \
 		history_file history_temp timestamp continue_conversation discard_history
-	model=${OPENAI_MODEL:-gpt-5} # see openai docs for other models
+	model=${OPENAI_MODEL:-gpt-5-nano} # see openai docs for other models
 	timeout=${OPENAI_TIMEOUT:-60}
 	openai_host=${OPENAI_HOST:-api.openai.com}
 	openai_path=${OPENAI_PATH:-/v1/chat/completions}
