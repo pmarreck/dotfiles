@@ -321,3 +321,7 @@ prepend_path "$PNPM_HOME"
 # if command -v warp-history &> /dev/null; then
 # 	warp-history --shell bash
 # fi
+
+# peon-ping quick controls
+alias peon="bash ~/.claude/hooks/peon-ping/peon.sh"
+[ -f ~/.claude/hooks/peon-ping/completions.bash ] && source ~/.claude/hooks/peon-ping/completions.bash

@@ -27,9 +27,124 @@ ffi.cdef[[
 		time_t tv_sec;
 		long tv_usec;
 	};
+	int mkdir(const char *path, int mode);
+	int isatty(int fd);
 ]]
 
 local u64 = ffi.typeof("uint64_t")
+
+-- ===== XXH64 (pure LuaJIT, zero dependencies) =====
+-- 64-bit operations via split into 32-bit halves (LuaJIT bit ops are 32-bit)
+-- CRITICAL: use ffi.cast("uint32_t", x) to avoid sign-extension when
+-- bit ops return negative Lua numbers (high bit set in 32-bit result)
+
+local function u64_lo(x) return tonumber(ffi.cast("uint32_t", x)) end
+local function u64_hi(x)
+	local lo = ffi.cast(u64, ffi.cast("uint32_t", x))
+	return tonumber(ffi.cast("uint32_t", (x - lo) / (2ULL ^ 32)))
+end
+
+local function u64_from(hi, lo)
+	return ffi.cast(u64, ffi.cast("uint32_t", hi)) * (2ULL ^ 32) + ffi.cast(u64, ffi.cast("uint32_t", lo))
+end
+
+local function u64_xor(a, b)
+	return u64_from(bit.bxor(u64_hi(a), u64_hi(b)), bit.bxor(u64_lo(a), u64_lo(b)))
+end
+
+local function u64_rshift(x, n)
+	if n >= 64 then return 0ULL end
+	if n >= 32 then return u64_from(0, bit.rshift(u64_hi(x), n - 32)) end
+	if n == 0 then return x end
+	local hi, lo = u64_hi(x), u64_lo(x)
+	return u64_from(bit.rshift(hi, n), bit.bor(bit.rshift(lo, n), bit.lshift(hi, 32 - n)))
+end
+
+local function u64_lshift(x, n)
+	if n >= 64 then return 0ULL end
+	if n >= 32 then return u64_from(bit.lshift(u64_lo(x), n - 32), 0) end
+	if n == 0 then return x end
+	local hi, lo = u64_hi(x), u64_lo(x)
+	return u64_from(bit.bor(bit.lshift(hi, n), bit.rshift(lo, 32 - n)), bit.lshift(lo, n))
+end
+
+local function u64_or(a, b)
+	return u64_from(bit.bor(u64_hi(a), u64_hi(b)), bit.bor(u64_lo(a), u64_lo(b)))
+end
+
+local function rotl64(x, r)
+	return u64_or(u64_lshift(x, r), u64_rshift(x, 64 - r))
+end
+
+local XXH_P1 = ffi.new(u64, 0x9E3779B185EBCA87ULL)
+local XXH_P2 = ffi.new(u64, 0xC2B2AE3D27D4EB4FULL)
+local XXH_P3 = ffi.new(u64, 0x165667B19E3779F9ULL)
+local XXH_P4 = ffi.new(u64, 0x85EBCA77C2B2AE63ULL)
+local XXH_P5 = ffi.new(u64, 0x27D4EB2F165667C5ULL)
+
+local function xxh64_round(acc, input)
+	return rotl64(acc + input * XXH_P2, 31) * XXH_P1
+end
+
+local function xxh64_merge_round(acc, val)
+	return u64_xor(acc, xxh64_round(0ULL, val)) * XXH_P1 + XXH_P4
+end
+
+local function xxh64_avalanche(h)
+	h = u64_xor(h, u64_rshift(h, 33)) * XXH_P2
+	h = u64_xor(h, u64_rshift(h, 29)) * XXH_P3
+	return u64_xor(h, u64_rshift(h, 32))
+end
+
+local function xxh64(data, seed)
+	seed = ffi.new(u64, seed or 0)
+	local len = #data
+	local p = ffi.cast("const uint8_t*", data)
+	local h64, off = nil, 0
+
+	if len >= 32 then
+		local v1 = seed + XXH_P1 + XXH_P2
+		local v2 = seed + XXH_P2
+		local v3 = seed + 0ULL
+		local v4 = seed - XXH_P1
+		while off + 32 <= len do
+			v1 = xxh64_round(v1, ffi.cast("const uint64_t*", p + off)[0])
+			v2 = xxh64_round(v2, ffi.cast("const uint64_t*", p + off + 8)[0])
+			v3 = xxh64_round(v3, ffi.cast("const uint64_t*", p + off + 16)[0])
+			v4 = xxh64_round(v4, ffi.cast("const uint64_t*", p + off + 24)[0])
+			off = off + 32
+		end
+		h64 = rotl64(v1, 1) + rotl64(v2, 7) + rotl64(v3, 12) + rotl64(v4, 18)
+		h64 = xxh64_merge_round(h64, v1)
+		h64 = xxh64_merge_round(h64, v2)
+		h64 = xxh64_merge_round(h64, v3)
+		h64 = xxh64_merge_round(h64, v4)
+	else
+		h64 = seed + XXH_P5
+	end
+
+	h64 = h64 + ffi.new(u64, len)
+
+	while off + 8 <= len do
+		h64 = rotl64(u64_xor(h64, xxh64_round(0ULL, ffi.cast("const uint64_t*", p + off)[0])), 27) * XXH_P1 + XXH_P4
+		off = off + 8
+	end
+	while off + 4 <= len do
+		h64 = rotl64(u64_xor(h64, ffi.cast(u64, ffi.cast("const uint32_t*", p + off)[0]) * XXH_P1), 23) * XXH_P2 + XXH_P3
+		off = off + 4
+	end
+	while off < len do
+		h64 = rotl64(u64_xor(h64, ffi.cast(u64, p[off]) * XXH_P5), 11) * XXH_P1
+		off = off + 1
+	end
+
+	return xxh64_avalanche(h64)
+end
+
+local function xxh64_hex(data)
+	local h = xxh64(data)
+	return string.format("%08x%08x", u64_hi(h), u64_lo(h))
+end
 
 -- ===== Utility functions =====
 local function stderr_write(msg)
@@ -799,10 +914,25 @@ local function write_jxl(filepath, raw_data, width, height)
 	end
 end
 
+-- ===== Hashing =====
+
+local function hash_bytes(data)
+	return xxh64_hex(data)
+end
+
 -- ===== File creation =====
 
+local _dir_cache = {}
+
 local function ensure_dir(path)
-	exec_status("mkdir -p " .. shell_quote(path) .. " 2>/dev/null")
+	if _dir_cache[path] then return end
+	-- Recursively ensure parent exists first
+	local parent = path:match("(.+)/[^/]+$")
+	if parent and not _dir_cache[parent] then
+		ensure_dir(parent)
+	end
+	ffi.C.mkdir(path, tonumber("0755", 8))
+	_dir_cache[path] = true
 end
 
 local function create_file(filepath, file_spec)
@@ -811,42 +941,27 @@ local function create_file(filepath, file_spec)
 	local ext = file_spec.extension
 	local content
 	local actual_size
+	local hash
 
 	if cat == "text" then
 		content = generate_text_content(size)
-		local f = io.open(filepath, "wb")
-		if f then
-			f:write(content)
-			f:close()
-		end
-		actual_size = #content
-
 	elseif cat == "source" then
 		content = generate_source_content(size, ext)
-		local f = io.open(filepath, "wb")
-		if f then
-			f:write(content)
-			f:close()
-		end
-		actual_size = #content
-
 	elseif cat == "binary" then
 		content = generate_binary_content(size)
-		local f = io.open(filepath, "wb")
-		if f then
-			f:write(content)
-			f:close()
-		end
-		actual_size = #content
-
 	elseif cat == "low_entropy" then
 		content = generate_low_entropy_content(size)
+	end
+
+	-- Non-image files: write content and hash in memory (no re-read)
+	if content then
 		local f = io.open(filepath, "wb")
 		if f then
 			f:write(content)
 			f:close()
 		end
 		actual_size = #content
+		hash = hash_bytes(content)
 
 	elseif cat == "image" then
 		local raw_data, width, height = generate_image_data(size)
@@ -861,17 +976,20 @@ local function create_file(filepath, file_spec)
 				f:close()
 			end
 		end
-		-- Get actual file size
+		-- Image files: must read back (ffmpeg/cjxl transform the data)
 		local f = io.open(filepath, "rb")
 		if f then
-			actual_size = f:seek("end")
+			local data = f:read("*a")
 			f:close()
+			actual_size = #data
+			hash = hash_bytes(data)
 		else
 			actual_size = 0
+			hash = "unknown"
 		end
 	end
 
-	return actual_size or 0
+	return actual_size or 0, hash or "unknown"
 end
 
 -- ===== Duplicate handling =====
@@ -896,20 +1014,6 @@ local function deduplicate_paths(files)
 		end
 		seen[path] = true
 	end
-end
-
--- ===== SHA256 =====
-
-local function sha256_file(filepath)
-	local pipe = io.popen("shasum -a 256 " .. shell_quote(filepath) .. " 2>/dev/null")
-	if pipe then
-		local output = pipe:read("*l")
-		pipe:close()
-		if output then
-			return output:match("^(%x+)")
-		end
-	end
-	return "unknown"
 end
 
 -- ===== JSON escaping =====
@@ -953,7 +1057,7 @@ local function write_manifest(target_dir, seed_str, files_info)
 		f:write('\t\t\t"path": "' .. json_escape(fi.path) .. '",\n')
 		f:write('\t\t\t"type": "' .. json_escape(fi.type) .. '",\n')
 		f:write('\t\t\t"size": ' .. fi.size .. ',\n')
-		f:write('\t\t\t"sha256": "' .. fi.sha256 .. '"\n')
+		f:write('\t\t\t"xxh64": "' .. fi.xxh64 .. '"\n')
 		if i < #files_info then
 			f:write('\t\t},\n')
 		else
@@ -1132,7 +1236,7 @@ local function main()
 	-- Phase 4: Create files
 	local files_info = {}
 	local total_written = 0
-	local is_tty = exec_status("test -t 2") == 0
+	local is_tty = ffi.C.isatty(2) == 1
 
 	for idx, file_spec in ipairs(files) do
 		-- Check size budget (actual bytes written)
@@ -1156,14 +1260,14 @@ local function main()
 			file_spec.target_size = math.max(1, remaining)
 		end
 
-		local actual_size = create_file(filepath, file_spec)
+		local actual_size, hash = create_file(filepath, file_spec)
 		total_written = total_written + actual_size
 
 		files_info[#files_info + 1] = {
 			path = file_spec.path,
 			type = file_spec.category,
 			size = actual_size,
-			sha256 = sha256_file(filepath),
+			xxh64 = hash,
 		}
 
 		-- Progress: show both percentages, whichever hits 100% first stops

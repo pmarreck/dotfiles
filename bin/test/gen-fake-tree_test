@@ -308,10 +308,10 @@ test_gen_fake_tree() {
 
 	# ----- Test 14: Manifest checksums are valid -----
 	(( tests++ ))
-	echo "Testing manifest SHA256 checksums..."
+	echo "Testing manifest xxh64 checksums..."
 
 	if [ -f "$manifest" ]; then
-		# Extract first file path and sha256 from manifest using luajit
+		# Extract first file path and xxh64 from manifest using luajit
 		local check_info
 		check_info=$(luajit -e '
 			local f = io.open("'"$manifest"'", "r")
@@ -320,9 +320,9 @@ test_gen_fake_tree() {
 			f:close()
 			-- Find first file entry
 			local path = content:match("\"path\"%s*:%s*\"([^\"]+)\"")
-			local sha256 = content:match("\"sha256\"%s*:%s*\"([^\"]+)\"")
-			if path and sha256 then
-				print(path .. "|" .. sha256)
+			local xxh64 = content:match("\"xxh64\"%s*:%s*\"([^\"]+)\"")
+			if path and xxh64 then
+				print(path .. "|" .. xxh64)
 			else
 				os.exit(1)
 			end
@@ -330,19 +330,43 @@ test_gen_fake_tree() {
 
 		if [ -n "$check_info" ]; then
 			local check_path="${check_info%%|*}"
-			local expected_sha="${check_info##*|}"
+			local expected_hash="${check_info##*|}"
 			local full_path="$run1_dir/$check_path"
 
 			if [ -f "$full_path" ]; then
-				local actual_sha
-				actual_sha=$(shasum -a 256 "$full_path" | awk '{print $1}')
-				if [ "$actual_sha" = "$expected_sha" ]; then
-					echo "✓ Manifest checksum test passed"
+				if command -v xxhsum >/dev/null 2>&1; then
+					# xxhsum with -H64 outputs: hash  filename
+					local actual_hash
+					actual_hash=$(xxhsum -H64 "$full_path" 2>/dev/null | awk '{print $1}')
+					# xxhsum outputs with leading zeros to 16 chars
+					if [ "$actual_hash" = "$expected_hash" ]; then
+						echo "✓ Manifest checksum test passed"
+					else
+						echo "✗ Manifest checksum test failed for $check_path" >&2
+						echo "  expected: $expected_hash" >&2
+						echo "  actual:   $actual_hash" >&2
+						(( fails++ ))
+					fi
 				else
-					echo "✗ Manifest checksum test failed for $check_path" >&2
-					echo "  expected: $expected_sha" >&2
-					echo "  actual:   $actual_sha" >&2
-					(( fails++ ))
+					# No xxhsum available — verify determinism instead:
+					# re-generate and compare manifest checksums
+					local run3_dir="$tmpdir/det_run3"
+					gen-fake-tree --seed 0xDEADBEEF --path "$run3_dir" --max-files 10 --max-size 100K --max-depth 3 2>/dev/null
+					local run3_hash
+					run3_hash=$(luajit -e '
+						local f = io.open("'"$run3_dir/.gen-fake-tree-manifest.json"'", "r")
+						if not f then os.exit(1) end
+						local content = f:read("*a")
+						f:close()
+						local xxh64 = content:match("\"xxh64\"%s*:%s*\"([^\"]+)\"")
+						if xxh64 then print(xxh64) else os.exit(1) end
+					' 2>/dev/null)
+					if [ "$run3_hash" = "$expected_hash" ]; then
+						echo "✓ Manifest checksum test passed (determinism check, xxhsum not available)"
+					else
+						echo "✗ Manifest checksum test failed: hashes differ across runs" >&2
+						(( fails++ ))
+					fi
 				fi
 			else
 				echo "✗ Manifest checksum test failed: file $full_path not found" >&2
