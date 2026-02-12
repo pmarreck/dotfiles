@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+
+if [ -z "${DOCUMENTS:-}" ]; then
+	echo "link_AGENTS_here: DOCUMENTS is not set or is empty" >&2
+	exit 1
+fi
+
+ln -s "$HOME/dotfiles/docs/jj_reference/jj_cheatsheet.md" jj_cheatsheet.md
