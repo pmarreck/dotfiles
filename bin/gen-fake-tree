@@ -1,0 +1,1192 @@
+#!/usr/bin/env luajit
+
+--[[
+gen-fake-tree: Deterministic fake directory hierarchy generator
+Given a seed, generates byte-identical file trees for testing compression,
+validation, and parity data systems.
+
+Architecture: Plan-Then-Execute
+1. Seed PCG32 with provided seed
+2. Load dictionary from bin/data/dictionary.txt
+3. Plan phase — generate full tree spec using only PRNG calls
+4. Execute phase — create dirs, then files in deterministic order
+5. Manifest phase — write .gen-fake-tree-manifest.json
+]]
+
+local ffi = require("ffi")
+local bit = require("bit")
+
+local argv = arg or {}
+
+-- ===== FFI declarations =====
+ffi.cdef[[
+	int getppid(void);
+	int gettimeofday(struct timeval *tv, void *tz);
+	typedef long time_t;
+	struct timeval {
+		time_t tv_sec;
+		long tv_usec;
+	};
+]]
+
+local u64 = ffi.typeof("uint64_t")
+
+-- ===== Utility functions =====
+local function stderr_write(msg)
+	io.stderr:write(msg)
+end
+
+local function shell_quote(s)
+	return "'" .. s:gsub("'", "'\\''") .. "'"
+end
+
+local function exec_status(cmd)
+	local ok, reason, code = os.execute(cmd)
+	if type(ok) == "number" then return ok end
+	if ok == true then return 0 end
+	if reason == "exit" and type(code) == "number" then return code end
+	return 1
+end
+
+local function trim(s)
+	return (s:gsub("^%s+", ""):gsub("%s+$", ""))
+end
+
+local function format_size(bytes)
+	if bytes >= 1024 * 1024 * 1024 then
+		return string.format("%.1fG", bytes / (1024 * 1024 * 1024))
+	elseif bytes >= 1024 * 1024 then
+		return string.format("%.1fM", bytes / (1024 * 1024))
+	elseif bytes >= 1024 then
+		return string.format("%.1fK", bytes / 1024)
+	else
+		return tostring(bytes) .. "B"
+	end
+end
+
+-- ===== Seed parsing (from bin/random) =====
+local function parse_uint64_dec(s)
+	local value = ffi.new(u64, 0)
+	for i = 1, #s do
+		local c = s:byte(i)
+		if c < 48 or c > 57 then return nil end
+		value = value * 10 + (c - 48)
+	end
+	return value
+end
+
+local function parse_uint64_hex(s)
+	local value = ffi.new(u64, 0)
+	s = s:gsub("^0[xX]", "")
+	for i = 1, #s do
+		local c = s:byte(i)
+		local digit
+		if c >= 48 and c <= 57 then digit = c - 48
+		elseif c >= 65 and c <= 70 then digit = c - 55
+		elseif c >= 97 and c <= 102 then digit = c - 87
+		else return nil end
+		value = value * 16 + digit
+	end
+	return value
+end
+
+local function parse_seed(seed_str)
+	if not seed_str then return nil end
+	local seed = trim(seed_str)
+	if seed == "" then return nil end
+	if seed:match("^0[xX][0-9A-Fa-f]+$") then
+		return parse_uint64_hex(seed)
+	end
+	if seed:match("^[0-9A-Fa-f]+$") and seed:match("[A-Fa-f]") then
+		return parse_uint64_hex(seed)
+	end
+	return parse_uint64_dec(seed)
+end
+
+local function u64_to_hex(value)
+	if value == nil then return "0x0" end
+	local digits = {}
+	local tmp = ffi.new(u64, value)
+	if tmp == 0 then return "0x0" end
+	while tmp > 0 do
+		local nibble = tonumber(tmp % 16)
+		if nibble < 10 then
+			digits[#digits + 1] = string.char(48 + nibble)
+		else
+			digits[#digits + 1] = string.char(87 + nibble)
+		end
+		tmp = tmp / 16
+	end
+	return "0x" .. table.concat(digits):reverse()
+end
+
+-- ===== PCG32 PRNG (from bin/random) =====
+local pcg_state = ffi.new(u64, 0)
+local pcg_inc = ffi.new(u64, 1442695040888963407ULL)
+local pcg_mult = ffi.new(u64, 6364136223846793005ULL)
+
+local function pcg32_random()
+	local old = pcg_state
+	pcg_state = old * pcg_mult + pcg_inc
+	local xorshifted = bit.rshift(bit.bxor(bit.rshift(old, 18), old), 27)
+	local rot = tonumber(bit.rshift(old, 59))
+	local x = tonumber(ffi.cast("uint32_t", xorshifted))
+	local res = bit.bor(bit.rshift(x, rot), bit.lshift(x, bit.band(-rot, 31)))
+	return tonumber(ffi.cast("uint32_t", res))
+end
+
+local function pcg32_seed(seed)
+	pcg_state = ffi.new(u64, 0)
+	pcg_inc = ffi.new(u64, 1442695040888963407ULL)
+	pcg32_random()
+	pcg_state = pcg_state + seed
+	pcg32_random()
+end
+
+local function pcg32_range(start_val, end_val)
+	local range = end_val - start_val + 1
+	if range <= 1 then return start_val end
+	local bound = 4294967296 - (4294967296 % range)
+	while true do
+		local r = pcg32_random()
+		if r < bound then
+			return start_val + (r % range)
+		end
+	end
+end
+
+local function pcg32_uniform()
+	return pcg32_random() / 4294967296
+end
+
+-- ===== Distribution functions (from bin/random) =====
+local function normal_random_float(mean, stddev, uniform_func)
+	local u1 = uniform_func()
+	local u2 = uniform_func()
+	if u1 < 0.000001 then u1 = 0.000001 end
+	local z0 = math.sqrt(-2 * math.log(u1)) * math.cos(2 * math.pi * u2)
+	return mean + z0 * stddev
+end
+
+local function lognormal_random(mu, sigma, uniform_func)
+	local normal = normal_random_float(mu, sigma, uniform_func)
+	return math.exp(normal)
+end
+
+-- ===== Size parsing =====
+local function parse_size(s)
+	if not s then return nil end
+	s = trim(s)
+	local num, suffix = s:match("^([%d%.]+)([KkMmGg]?)$")
+	if not num then return nil end
+	num = tonumber(num)
+	if not num then return nil end
+	suffix = suffix:upper()
+	if suffix == "K" then
+		return math.floor(num * 1024)
+	elseif suffix == "M" then
+		return math.floor(num * 1024 * 1024)
+	elseif suffix == "G" then
+		return math.floor(num * 1024 * 1024 * 1024)
+	else
+		return math.floor(num)
+	end
+end
+
+-- ===== Dictionary =====
+local dictionary = {}
+
+local function load_dictionary()
+	local script_path = argv[0] or ""
+	local bin_dir = script_path:match("(.*/)")
+	if not bin_dir then bin_dir = "./" end
+
+	-- Try relative to script location first
+	local dict_paths = {
+		bin_dir .. "data/dictionary.txt",
+		(os.getenv("HOME") or "") .. "/dotfiles/bin/data/dictionary.txt",
+		(os.getenv("HOME") or "") .. "/bin/data/dictionary.txt",
+	}
+
+	for _, path in ipairs(dict_paths) do
+		local f = io.open(path, "r")
+		if f then
+			for line in f:lines() do
+				local word = trim(line)
+				if #word > 0 and not word:match("^#") then
+					dictionary[#dictionary + 1] = word
+				end
+			end
+			f:close()
+			if #dictionary > 0 then return end
+		end
+	end
+
+	if #dictionary == 0 then
+		stderr_write("Error: could not load dictionary from any of:\n")
+		for _, path in ipairs(dict_paths) do
+			stderr_write("  " .. path .. "\n")
+		end
+		os.exit(1)
+	end
+end
+
+local function random_word()
+	return dictionary[pcg32_range(1, #dictionary)]
+end
+
+-- ===== File type taxonomy =====
+
+-- Weighted category selection
+-- text=30, binary=20, image=15, source=25, low_entropy=10 => total=100
+local file_categories = {
+	{ name = "text",        weight = 30, extensions = {".txt", ".md", ".log", ".csv", ".json", ".xml", ".html", ".yaml", ".ini", ".cfg"} },
+	{ name = "binary",      weight = 20, extensions = {".bin", ".dat", ".db", ".raw"} },
+	{ name = "image",       weight = 15, extensions = {".png", ".jxl"} },
+	{ name = "source",      weight = 25, extensions = {".c", ".h", ".lua", ".sh", ".js", ".rb", ".go", ".rs"} },
+	{ name = "low_entropy", weight = 10, extensions = {".bin", ".dat", ".log", ".bak"} },
+}
+
+local function pick_category()
+	local total = 0
+	for _, cat in ipairs(file_categories) do
+		total = total + cat.weight
+	end
+	local pick = pcg32_range(1, total)
+	local cumulative = 0
+	for _, cat in ipairs(file_categories) do
+		cumulative = cumulative + cat.weight
+		if pick <= cumulative then
+			return cat
+		end
+	end
+	return file_categories[1]
+end
+
+local function pick_extension(cat)
+	return cat.extensions[pcg32_range(1, #cat.extensions)]
+end
+
+-- ===== Name generation =====
+local name_separators = {" ", "_", "-", "."}
+
+local function generate_filename()
+	local word_count = pcg32_range(1, 6)
+	local parts = {}
+	for i = 1, word_count do
+		parts[i] = random_word()
+	end
+	-- Join with random separators
+	local result = parts[1]
+	for i = 2, #parts do
+		local sep = name_separators[pcg32_range(1, #name_separators)]
+		result = result .. sep .. parts[i]
+	end
+	return result
+end
+
+local function generate_dirname()
+	local word_count = pcg32_range(1, 3)
+	local parts = {}
+	for i = 1, word_count do
+		parts[i] = random_word():lower()
+	end
+	local seps = {"_", "-"}
+	local result = parts[1]
+	for i = 2, #parts do
+		local sep = seps[pcg32_range(1, #seps)]
+		result = result .. sep .. parts[i]
+	end
+	return result
+end
+
+-- ===== Tree planning =====
+
+local function plan_directory_structure(max_depth)
+	local dirs = {""} -- root is always included
+	-- Generate between 2 and max(3, max_depth * 3) directories
+	local num_dirs = pcg32_range(2, math.max(3, max_depth * 3))
+
+	for _ = 1, num_dirs do
+		-- Pick a parent directory
+		local parent_idx = pcg32_range(1, #dirs)
+		local parent = dirs[parent_idx]
+
+		-- Calculate parent depth
+		local parent_depth = 0
+		if parent ~= "" then
+			for _ in parent:gmatch("/") do parent_depth = parent_depth + 1 end
+			parent_depth = parent_depth + 1
+		end
+
+		-- Only add if we won't exceed max depth
+		if parent_depth < max_depth then
+			local dirname = generate_dirname()
+			local path
+			if parent == "" then
+				path = dirname
+			else
+				path = parent .. "/" .. dirname
+			end
+			dirs[#dirs + 1] = path
+		end
+	end
+
+	return dirs
+end
+
+local function plan_files(dirs, max_files, max_size)
+	local files = {}
+	local planned_size = 0
+
+	for i = 1, max_files do
+		-- Pick a directory
+		local dir_idx = pcg32_range(1, #dirs)
+		local dir = dirs[dir_idx]
+
+		-- Pick category and extension
+		local cat = pick_category()
+		local ext = pick_extension(cat)
+
+		-- Generate filename
+		local basename = generate_filename() .. ext
+
+		-- Generate size using log-normal distribution
+		-- mu=8, sigma=2 => median ~3KB, mean ~22KB
+		local raw_size = lognormal_random(8, 2, pcg32_uniform)
+		local target_size = math.max(1, math.floor(raw_size))
+
+		-- Clamp to remaining budget
+		local remaining = max_size - planned_size
+		if remaining <= 0 then break end
+		if target_size > remaining then target_size = remaining end
+
+		local path
+		if dir == "" then
+			path = basename
+		else
+			path = dir .. "/" .. basename
+		end
+
+		files[#files + 1] = {
+			path = path,
+			category = cat.name,
+			extension = ext,
+			target_size = target_size,
+		}
+
+		planned_size = planned_size + target_size
+		if planned_size >= max_size then break end
+	end
+
+	return files
+end
+
+-- ===== Content generators =====
+
+local function generate_text_content(size)
+	local chunks = {}
+	local written = 0
+
+	while written < size do
+		-- Generate a sentence of 5-15 words
+		local sentence_len = pcg32_range(5, 15)
+		local words = {}
+		for i = 1, sentence_len do
+			local w = random_word()
+			if i == 1 then
+				-- Capitalize first letter
+				w = w:sub(1, 1):upper() .. w:sub(2)
+			end
+			words[i] = w
+		end
+		local sentence = table.concat(words, " ") .. ".\n"
+		chunks[#chunks + 1] = sentence
+		written = written + #sentence
+
+		-- Occasionally add a blank line for paragraph breaks
+		if pcg32_range(1, 5) == 1 then
+			chunks[#chunks + 1] = "\n"
+			written = written + 1
+		end
+	end
+
+	local result = table.concat(chunks)
+	-- Trim to target size
+	if #result > size then
+		result = result:sub(1, size)
+	end
+	return result
+end
+
+local function generate_source_content(size, ext)
+	local chunks = {}
+	local written = 0
+
+	-- Language-specific patterns
+	local comment_styles = {
+		[".c"] = "//", [".h"] = "//", [".js"] = "//", [".go"] = "//",
+		[".rs"] = "//", [".lua"] = "--", [".sh"] = "#", [".rb"] = "#",
+	}
+	local comment = comment_styles[ext] or "//"
+
+	-- Generate a file header comment
+	local header = comment .. " " .. generate_filename():gsub("[%s%-%.]+", "_") .. "\n"
+	header = header .. comment .. " Generated content for testing\n\n"
+	chunks[#chunks + 1] = header
+	written = written + #header
+
+	while written < size do
+		local block_type = pcg32_range(1, 4)
+		local block
+
+		if block_type == 1 then
+			-- Function-like block
+			local fname = random_word():lower() .. "_" .. random_word():lower()
+			local body_lines = pcg32_range(2, 8)
+			if ext == ".lua" then
+				block = "function " .. fname .. "()\n"
+				for _ = 1, body_lines do
+					block = block .. "\tlocal " .. random_word():lower() .. " = " .. tostring(pcg32_range(0, 999)) .. "\n"
+				end
+				block = block .. "end\n\n"
+			elseif ext == ".sh" then
+				block = fname .. "() {\n"
+				for _ = 1, body_lines do
+					block = block .. "\t" .. random_word():lower() .. "=" .. tostring(pcg32_range(0, 999)) .. "\n"
+				end
+				block = block .. "}\n\n"
+			elseif ext == ".rb" then
+				block = "def " .. fname .. "\n"
+				for _ = 1, body_lines do
+					block = block .. "\t" .. random_word():lower() .. " = " .. tostring(pcg32_range(0, 999)) .. "\n"
+				end
+				block = block .. "end\n\n"
+			elseif ext == ".go" then
+				block = "func " .. fname .. "() int {\n"
+				for _ = 1, body_lines do
+					block = block .. "\t" .. random_word():lower() .. " := " .. tostring(pcg32_range(0, 999)) .. "\n"
+				end
+				block = block .. "\treturn 0\n}\n\n"
+			elseif ext == ".rs" then
+				block = "fn " .. fname .. "() -> i32 {\n"
+				for _ = 1, body_lines do
+					block = block .. "\tlet " .. random_word():lower() .. " = " .. tostring(pcg32_range(0, 999)) .. ";\n"
+				end
+				block = block .. "\t0\n}\n\n"
+			else
+				-- C/JS style
+				block = "int " .. fname .. "() {\n"
+				for _ = 1, body_lines do
+					block = block .. "\tint " .. random_word():lower() .. " = " .. tostring(pcg32_range(0, 999)) .. ";\n"
+				end
+				block = block .. "\treturn 0;\n}\n\n"
+			end
+		elseif block_type == 2 then
+			-- Comment block
+			local num_lines = pcg32_range(1, 5)
+			block = ""
+			for _ = 1, num_lines do
+				local words = {}
+				for j = 1, pcg32_range(3, 10) do
+					words[j] = random_word()
+				end
+				block = block .. comment .. " " .. table.concat(words, " ") .. "\n"
+			end
+			block = block .. "\n"
+		elseif block_type == 3 then
+			-- Variable declarations
+			local num_vars = pcg32_range(1, 6)
+			block = ""
+			for _ = 1, num_vars do
+				local vname = random_word():lower()
+				local vval = tostring(pcg32_range(0, 99999))
+				if ext == ".lua" then
+					block = block .. "local " .. vname .. " = " .. vval .. "\n"
+				elseif ext == ".sh" then
+					block = block .. vname .. "=" .. vval .. "\n"
+				elseif ext == ".rb" then
+					block = block .. vname .. " = " .. vval .. "\n"
+				elseif ext == ".go" then
+					block = block .. "var " .. vname .. " = " .. vval .. "\n"
+				elseif ext == ".rs" then
+					block = block .. "let " .. vname .. " = " .. vval .. ";\n"
+				else
+					block = block .. "int " .. vname .. " = " .. vval .. ";\n"
+				end
+			end
+			block = block .. "\n"
+		else
+			-- String data / constants
+			local num_strings = pcg32_range(1, 4)
+			block = ""
+			for _ = 1, num_strings do
+				local words = {}
+				for j = 1, pcg32_range(2, 8) do
+					words[j] = random_word()
+				end
+				local sname = random_word():lower() .. "_str"
+				local sval = table.concat(words, " ")
+				if ext == ".lua" then
+					block = block .. "local " .. sname .. ' = "' .. sval .. '"\n'
+				elseif ext == ".sh" then
+					block = block .. sname .. '="' .. sval .. '"\n'
+				elseif ext == ".rb" then
+					block = block .. sname .. ' = "' .. sval .. '"\n'
+				elseif ext == ".go" then
+					block = block .. 'var ' .. sname .. ' = "' .. sval .. '"\n'
+				elseif ext == ".rs" then
+					block = block .. 'let ' .. sname .. ' = "' .. sval .. '";\n'
+				else
+					block = block .. 'const char* ' .. sname .. ' = "' .. sval .. '";\n'
+				end
+			end
+			block = block .. "\n"
+		end
+
+		chunks[#chunks + 1] = block
+		written = written + #block
+	end
+
+	local result = table.concat(chunks)
+	if #result > size then
+		result = result:sub(1, size)
+	end
+	return result
+end
+
+local function generate_binary_content(size)
+	-- Mix of distributions for varied entropy
+	local chunks = {}
+	local written = 0
+	local buf = ffi.new("uint8_t[?]", math.min(size, 4096))
+
+	while written < size do
+		local chunk_size = math.min(size - written, 4096)
+		local dist_type = pcg32_range(1, 3)
+
+		if dist_type == 1 then
+			-- Uniform random (incompressible)
+			for i = 0, chunk_size - 1 do
+				buf[i] = pcg32_range(0, 255)
+			end
+		elseif dist_type == 2 then
+			-- Normal distribution (somewhat compressible — values cluster around 128)
+			for i = 0, chunk_size - 1 do
+				local val = normal_random_float(128, 40, pcg32_uniform)
+				val = math.max(0, math.min(255, math.floor(val + 0.5)))
+				buf[i] = val
+			end
+		else
+			-- Exponential (compressible — many low bytes)
+			for i = 0, chunk_size - 1 do
+				local u = pcg32_uniform()
+				if u < 0.000001 then u = 0.000001 end
+				local val = math.floor(-math.log(u) * 30)
+				val = math.max(0, math.min(255, val))
+				buf[i] = val
+			end
+		end
+
+		chunks[#chunks + 1] = ffi.string(buf, chunk_size)
+		written = written + chunk_size
+	end
+
+	return table.concat(chunks)
+end
+
+local function generate_low_entropy_content(size)
+	local chunks = {}
+	local written = 0
+
+	while written < size do
+		local remaining = size - written
+		local pattern_type = pcg32_range(1, 4)
+		local chunk
+
+		if pattern_type == 1 then
+			-- Runs of zeros
+			local run_len = math.min(remaining, pcg32_range(64, 1024))
+			chunk = string.rep("\0", run_len)
+		elseif pattern_type == 2 then
+			-- Repeated single byte
+			local byte_val = pcg32_range(0, 255)
+			local run_len = math.min(remaining, pcg32_range(64, 512))
+			chunk = string.rep(string.char(byte_val), run_len)
+		elseif pattern_type == 3 then
+			-- Repeated word/phrase
+			local words = {}
+			for i = 1, pcg32_range(1, 3) do
+				words[i] = random_word()
+			end
+			local phrase = table.concat(words, " ") .. "\n"
+			local reps = math.max(1, math.floor(math.min(remaining, 512) / #phrase))
+			chunk = string.rep(phrase, reps)
+		else
+			-- Short repeating byte pattern (e.g., ABAB or ABCABC)
+			local pattern_len = pcg32_range(2, 4)
+			local pattern_bytes = {}
+			for i = 1, pattern_len do
+				pattern_bytes[i] = string.char(pcg32_range(0, 255))
+			end
+			local pattern = table.concat(pattern_bytes)
+			local reps = math.max(1, math.floor(math.min(remaining, 512) / #pattern))
+			chunk = string.rep(pattern, reps)
+		end
+
+		if #chunk > remaining then
+			chunk = chunk:sub(1, remaining)
+		end
+		chunks[#chunks + 1] = chunk
+		written = written + #chunk
+	end
+
+	return table.concat(chunks)
+end
+
+-- ===== Image generation =====
+
+local function check_command(cmd)
+	return exec_status("command -v " .. shell_quote(cmd) .. " >/dev/null 2>&1") == 0
+end
+
+local has_ffmpeg = nil
+local has_cjxl = nil
+
+local function init_image_tools()
+	if has_ffmpeg == nil then
+		has_ffmpeg = check_command("ffmpeg")
+	end
+	if has_cjxl == nil then
+		has_cjxl = check_command("cjxl")
+	end
+end
+
+local function generate_image_data(target_size)
+	-- Calculate dimensions from target size
+	-- For RGB24: pixels = size/3, then width = floor(sqrt(pixels)), height = floor(pixels/width)
+	-- Use ~60% of target size for raw data (PNG/JXL compress well on random data... actually poorly)
+	-- Actually for random data, PNG will be LARGER than raw. Use target_size directly as pixel budget.
+	local pixels = math.max(1, math.floor(target_size / 3))
+	local width = math.max(1, math.floor(math.sqrt(pixels)))
+	local height = math.max(1, math.floor(pixels / width))
+
+	-- Generate raw RGB data deterministically
+	local buf = ffi.new("uint8_t[?]", width * height * 3)
+	local pattern = pcg32_range(1, 4)
+
+	if pattern == 1 then
+		-- Gradient with noise
+		for y = 0, height - 1 do
+			for x = 0, width - 1 do
+				local idx = (y * width + x) * 3
+				buf[idx] = (x * 255 / math.max(1, width - 1) + pcg32_range(0, 20)) % 256
+				buf[idx + 1] = (y * 255 / math.max(1, height - 1) + pcg32_range(0, 20)) % 256
+				buf[idx + 2] = pcg32_range(0, 255)
+			end
+		end
+	elseif pattern == 2 then
+		-- Blocks of color
+		local block_size = pcg32_range(4, 16)
+		for y = 0, height - 1 do
+			for x = 0, width - 1 do
+				local bx = math.floor(x / block_size)
+				local by = math.floor(y / block_size)
+				-- Use deterministic color per block (seed from position)
+				local idx = (y * width + x) * 3
+				buf[idx] = (bx * 37 + by * 73 + pcg32_range(0, 5)) % 256
+				buf[idx + 1] = (bx * 97 + by * 41 + pcg32_range(0, 5)) % 256
+				buf[idx + 2] = (bx * 53 + by * 89 + pcg32_range(0, 5)) % 256
+			end
+		end
+	elseif pattern == 3 then
+		-- Random noise (low compressibility)
+		for i = 0, width * height * 3 - 1 do
+			buf[i] = pcg32_range(0, 255)
+		end
+	else
+		-- Smooth regions with sharp boundaries
+		local num_regions = pcg32_range(3, 8)
+		-- Fill with base color
+		local base_r = pcg32_range(0, 255)
+		local base_g = pcg32_range(0, 255)
+		local base_b = pcg32_range(0, 255)
+		for i = 0, width * height - 1 do
+			buf[i * 3] = base_r
+			buf[i * 3 + 1] = base_g
+			buf[i * 3 + 2] = base_b
+		end
+		-- Add random rectangles
+		for _ = 1, num_regions do
+			local rx = pcg32_range(0, math.max(0, width - 1))
+			local ry = pcg32_range(0, math.max(0, height - 1))
+			local rw = pcg32_range(1, math.max(1, math.floor(width / 2)))
+			local rh = pcg32_range(1, math.max(1, math.floor(height / 2)))
+			local cr = pcg32_range(0, 255)
+			local cg = pcg32_range(0, 255)
+			local cb = pcg32_range(0, 255)
+			for y = ry, math.min(ry + rh - 1, height - 1) do
+				for x = rx, math.min(rx + rw - 1, width - 1) do
+					local idx = (y * width + x) * 3
+					buf[idx] = cr
+					buf[idx + 1] = cg
+					buf[idx + 2] = cb
+				end
+			end
+		end
+	end
+
+	return ffi.string(buf, width * height * 3), width, height
+end
+
+local function write_png(filepath, raw_data, width, height)
+	init_image_tools()
+	if not has_ffmpeg then
+		-- Fallback: write raw binary
+		local f = io.open(filepath, "wb")
+		if f then
+			f:write(raw_data)
+			f:close()
+		end
+		return
+	end
+
+	local cmd = "ffmpeg -y -f rawvideo -pix_fmt rgb24 -s " .. width .. "x" .. height
+		.. " -i pipe:0 " .. shell_quote(filepath) .. " 2>/dev/null"
+	local pipe = io.popen(cmd, "w")
+	if pipe then
+		pipe:write(raw_data)
+		pipe:close()
+	end
+end
+
+local function write_jxl(filepath, raw_data, width, height)
+	init_image_tools()
+	if not has_cjxl then
+		-- Fallback: try PNG via ffmpeg, then raw
+		if has_ffmpeg then
+			-- Write as PNG instead
+			local png_path = filepath:gsub("%.jxl$", ".png")
+			-- Actually write raw since we can't guarantee the extension
+			local f = io.open(filepath, "wb")
+			if f then
+				f:write(raw_data)
+				f:close()
+			end
+		else
+			local f = io.open(filepath, "wb")
+			if f then
+				f:write(raw_data)
+				f:close()
+			end
+		end
+		return
+	end
+
+	-- Write temp PPM file
+	local tmpdir = os.getenv("TMPDIR") or "/tmp"
+	local ppm_path = tmpdir .. "/gen-fake-tree-" .. tostring(os.time()) .. "-" .. tostring(pcg32_random()) .. ".ppm"
+	local f = io.open(ppm_path, "wb")
+	if f then
+		f:write("P6\n" .. width .. " " .. height .. "\n255\n")
+		f:write(raw_data)
+		f:close()
+
+		local cmd = "cjxl " .. shell_quote(ppm_path) .. " " .. shell_quote(filepath) .. " -d 0 --quiet 2>/dev/null"
+		exec_status(cmd)
+
+		os.remove(ppm_path)
+	end
+end
+
+-- ===== File creation =====
+
+local function ensure_dir(path)
+	exec_status("mkdir -p " .. shell_quote(path) .. " 2>/dev/null")
+end
+
+local function create_file(filepath, file_spec)
+	local cat = file_spec.category
+	local size = file_spec.target_size
+	local ext = file_spec.extension
+	local content
+	local actual_size
+
+	if cat == "text" then
+		content = generate_text_content(size)
+		local f = io.open(filepath, "wb")
+		if f then
+			f:write(content)
+			f:close()
+		end
+		actual_size = #content
+
+	elseif cat == "source" then
+		content = generate_source_content(size, ext)
+		local f = io.open(filepath, "wb")
+		if f then
+			f:write(content)
+			f:close()
+		end
+		actual_size = #content
+
+	elseif cat == "binary" then
+		content = generate_binary_content(size)
+		local f = io.open(filepath, "wb")
+		if f then
+			f:write(content)
+			f:close()
+		end
+		actual_size = #content
+
+	elseif cat == "low_entropy" then
+		content = generate_low_entropy_content(size)
+		local f = io.open(filepath, "wb")
+		if f then
+			f:write(content)
+			f:close()
+		end
+		actual_size = #content
+
+	elseif cat == "image" then
+		local raw_data, width, height = generate_image_data(size)
+		if ext == ".png" then
+			write_png(filepath, raw_data, width, height)
+		elseif ext == ".jxl" then
+			write_jxl(filepath, raw_data, width, height)
+		else
+			local f = io.open(filepath, "wb")
+			if f then
+				f:write(raw_data)
+				f:close()
+			end
+		end
+		-- Get actual file size
+		local f = io.open(filepath, "rb")
+		if f then
+			actual_size = f:seek("end")
+			f:close()
+		else
+			actual_size = 0
+		end
+	end
+
+	return actual_size or 0
+end
+
+-- ===== Duplicate handling =====
+
+local function deduplicate_paths(files)
+	local seen = {}
+	for _, file in ipairs(files) do
+		local path = file.path
+		if seen[path] then
+			local counter = 1
+			local base = path:match("(.+)%.")
+			local ext = path:match("(%.[^%.]+)$")
+			if not base then
+				base = path
+				ext = ""
+			end
+			repeat
+				path = base .. "_" .. counter .. ext
+				counter = counter + 1
+			until not seen[path]
+			file.path = path
+		end
+		seen[path] = true
+	end
+end
+
+-- ===== SHA256 =====
+
+local function sha256_file(filepath)
+	local pipe = io.popen("shasum -a 256 " .. shell_quote(filepath) .. " 2>/dev/null")
+	if pipe then
+		local output = pipe:read("*l")
+		pipe:close()
+		if output then
+			return output:match("^(%x+)")
+		end
+	end
+	return "unknown"
+end
+
+-- ===== JSON escaping =====
+
+local function json_escape(s)
+	s = s:gsub("\\", "\\\\")
+	s = s:gsub('"', '\\"')
+	s = s:gsub("\n", "\\n")
+	s = s:gsub("\r", "\\r")
+	s = s:gsub("\t", "\\t")
+	-- Escape remaining control characters (0x00-0x1f)
+	s = s:gsub("%c", function(c)
+		return string.format("\\u%04x", string.byte(c))
+	end)
+	return s
+end
+
+-- ===== Manifest =====
+
+local function write_manifest(target_dir, seed_str, files_info)
+	local manifest_path = target_dir .. "/.gen-fake-tree-manifest.json"
+	local f = io.open(manifest_path, "w")
+	if not f then
+		stderr_write("Warning: could not write manifest to " .. manifest_path .. "\n")
+		return
+	end
+
+	f:write("{\n")
+	f:write('\t"seed": "' .. json_escape(seed_str) .. '",\n')
+	f:write('\t"file_count": ' .. #files_info .. ',\n')
+
+	local total_bytes = 0
+	for _, fi in ipairs(files_info) do
+		total_bytes = total_bytes + fi.size
+	end
+	f:write('\t"total_bytes": ' .. total_bytes .. ',\n')
+
+	f:write('\t"files": [\n')
+	for i, fi in ipairs(files_info) do
+		f:write('\t\t{\n')
+		f:write('\t\t\t"path": "' .. json_escape(fi.path) .. '",\n')
+		f:write('\t\t\t"type": "' .. json_escape(fi.type) .. '",\n')
+		f:write('\t\t\t"size": ' .. fi.size .. ',\n')
+		f:write('\t\t\t"sha256": "' .. fi.sha256 .. '"\n')
+		if i < #files_info then
+			f:write('\t\t},\n')
+		else
+			f:write('\t\t}\n')
+		end
+	end
+	f:write('\t]\n')
+	f:write("}\n")
+	f:close()
+end
+
+-- ===== Help and about =====
+
+local function print_about()
+	print("Deterministic fake directory hierarchy generator for testing compression and parity systems")
+end
+
+local function print_help()
+	print([[Usage: gen-fake-tree --seed SEED --path DIR [options]
+
+Generate a deterministic fake directory tree. Given the same seed,
+two runs produce byte-identical output.
+
+Required:
+  --seed SEED       PCG32 seed (hex 0x... or decimal)
+  --path DIR        Target directory (created if needed)
+
+Options:
+  --max-depth N     Max directory nesting depth (default: 5)
+  --max-files N     Max file count (default: 100)
+  --max-size SIZE   Max total storage with K/M/G suffixes (default: 100M)
+  -h, --help        Show this help message
+  -a, --about       One-line description
+  --test            Run associated test suite]])
+end
+
+-- ===== Argument parsing =====
+
+local function parse_args()
+	local options = {
+		seed_str = nil,
+		seed = nil,
+		path = nil,
+		max_depth = 5,
+		max_files = 100,
+		max_size = 100 * 1024 * 1024, -- 100M
+	}
+
+	local i = 1
+	while i <= #argv do
+		local a = argv[i]
+		if a == "--about" or a == "-a" then
+			print_about()
+			os.exit(0)
+		elseif a == "--help" or a == "-h" then
+			print_help()
+			os.exit(0)
+		elseif a == "--test" then
+			local test_file = (os.getenv("HOME") or "") .. "/dotfiles/bin/test/gen-fake-tree_test"
+			local f = io.open(test_file, "r")
+			if f then
+				f:close()
+				local cmd = shell_quote(test_file) .. " >/dev/null"
+				local status = exec_status(cmd)
+				os.exit(status)
+			else
+				stderr_write("Test file not found: " .. test_file .. "\n")
+				os.exit(1)
+			end
+		elseif a == "--seed" then
+			i = i + 1
+			if i > #argv then
+				stderr_write("Error: --seed requires a value\n")
+				os.exit(1)
+			end
+			options.seed_str = argv[i]
+			options.seed = parse_seed(argv[i])
+			if not options.seed then
+				stderr_write("Error: invalid seed value: " .. argv[i] .. "\n")
+				os.exit(1)
+			end
+		elseif a == "--path" then
+			i = i + 1
+			if i > #argv then
+				stderr_write("Error: --path requires a directory\n")
+				os.exit(1)
+			end
+			options.path = argv[i]
+		elseif a == "--max-depth" then
+			i = i + 1
+			if i > #argv then
+				stderr_write("Error: --max-depth requires a number\n")
+				os.exit(1)
+			end
+			options.max_depth = tonumber(argv[i])
+			if not options.max_depth or options.max_depth < 1 then
+				stderr_write("Error: --max-depth must be a positive integer\n")
+				os.exit(1)
+			end
+		elseif a == "--max-files" then
+			i = i + 1
+			if i > #argv then
+				stderr_write("Error: --max-files requires a number\n")
+				os.exit(1)
+			end
+			options.max_files = tonumber(argv[i])
+			if not options.max_files or options.max_files < 1 then
+				stderr_write("Error: --max-files must be a positive integer\n")
+				os.exit(1)
+			end
+		elseif a == "--max-size" then
+			i = i + 1
+			if i > #argv then
+				stderr_write("Error: --max-size requires a value\n")
+				os.exit(1)
+			end
+			options.max_size = parse_size(argv[i])
+			if not options.max_size or options.max_size < 1 then
+				stderr_write("Error: --max-size must be a positive value (e.g., 100K, 10M, 1G)\n")
+				os.exit(1)
+			end
+		else
+			stderr_write("Error: unknown option: " .. a .. "\n")
+			os.exit(1)
+		end
+		i = i + 1
+	end
+
+	return options
+end
+
+-- ===== Main =====
+
+local function main()
+	local options = parse_args()
+
+	-- Validate required options
+	if not options.seed then
+		stderr_write("Error: --seed is required\n")
+		os.exit(1)
+	end
+	if not options.path then
+		stderr_write("Error: --path is required\n")
+		os.exit(1)
+	end
+
+	-- Initialize
+	pcg32_seed(options.seed)
+	load_dictionary()
+
+	stderr_write("gen-fake-tree: seed=" .. (options.seed_str or "?") .. " path=" .. options.path .. "\n")
+	stderr_write("  max-files=" .. options.max_files .. " max-size=" .. options.max_size .. " max-depth=" .. options.max_depth .. "\n")
+
+	-- Phase 1: Plan directory structure
+	stderr_write("Planning directory structure...\n")
+	local dirs = plan_directory_structure(options.max_depth)
+
+	-- Phase 2: Plan files
+	stderr_write("Planning files...\n")
+	local files = plan_files(dirs, options.max_files, options.max_size)
+
+	-- Handle duplicate paths
+	deduplicate_paths(files)
+
+	-- Phase 3: Create directories
+	stderr_write("Creating directories...\n")
+	ensure_dir(options.path)
+	-- Sort dirs to create parents before children
+	table.sort(dirs)
+	for _, dir in ipairs(dirs) do
+		if dir ~= "" then
+			ensure_dir(options.path .. "/" .. dir)
+		end
+	end
+
+	-- Phase 4: Create files
+	local files_info = {}
+	local total_written = 0
+	local is_tty = exec_status("test -t 2") == 0
+
+	for idx, file_spec in ipairs(files) do
+		-- Check size budget (actual bytes written)
+		if total_written >= options.max_size then
+			if is_tty then stderr_write("\r\027[K") end
+			stderr_write("Size budget reached after " .. (idx - 1) .. " files\n")
+			break
+		end
+
+		local filepath = options.path .. "/" .. file_spec.path
+
+		-- Ensure parent directory exists (in case planning created nested paths)
+		local parent = filepath:match("(.+)/[^/]+$")
+		if parent then
+			ensure_dir(parent)
+		end
+
+		-- Clamp target size to remaining budget
+		local remaining = options.max_size - total_written
+		if file_spec.target_size > remaining then
+			file_spec.target_size = math.max(1, remaining)
+		end
+
+		local actual_size = create_file(filepath, file_spec)
+		total_written = total_written + actual_size
+
+		files_info[#files_info + 1] = {
+			path = file_spec.path,
+			type = file_spec.category,
+			size = actual_size,
+			sha256 = sha256_file(filepath),
+		}
+
+		-- Progress: show both percentages, whichever hits 100% first stops
+		local file_pct = math.floor(idx * 100 / #files)
+		local size_pct = math.floor(total_written * 100 / options.max_size)
+		if is_tty then
+			stderr_write(string.format("\r\027[KFiles: %d/%d (%d%%)  Size: %s/%s (%d%%)",
+				idx, #files, file_pct,
+				format_size(total_written), format_size(options.max_size), size_pct))
+		else
+			stderr_write(string.format("Files: %d/%d (%d%%)  Size: %s/%s (%d%%)\n",
+				idx, #files, file_pct,
+				format_size(total_written), format_size(options.max_size), size_pct))
+		end
+	end
+
+	if is_tty then stderr_write("\r\027[K") end
+
+	-- Phase 5: Write manifest
+	stderr_write("Writing manifest...\n")
+	write_manifest(options.path, options.seed_str or u64_to_hex(options.seed), files_info)
+
+	stderr_write("Done: " .. #files_info .. " files, " .. format_size(total_written) .. " total\n")
+end
+
+main()

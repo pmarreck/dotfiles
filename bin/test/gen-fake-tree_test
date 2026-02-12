@@ -1,0 +1,376 @@
+#!/usr/bin/env bash
+
+# Recursive --test guard
+if [ "$GEN_FAKE_TREE_TEST_DEPTH" = "1" ]; then
+	exit 0
+fi
+
+test_gen_fake_tree() {
+	local fails=0
+	local tests=0
+	local tmpdir
+	tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/gen-fake-tree-test.XXXXXX")
+	if [ ! -d "$tmpdir" ]; then
+		echo "✗ Failed to create temp dir for tests" >&2
+		return 1
+	fi
+	trap 'rm -rf "$tmpdir"' EXIT
+
+	echo "Testing gen-fake-tree..."
+	echo "========================"
+
+	# ----- Test 1: --about flag -----
+	(( tests++ ))
+	echo "Testing --about flag..."
+
+	local about_output
+	about_output=$(gen-fake-tree --about 2>/dev/null)
+	local about_lines
+	about_lines=$(printf '%s\n' "$about_output" | wc -l | tr -d ' ')
+
+	if [ -n "$about_output" ] && [ "$about_lines" -eq 1 ]; then
+		echo "✓ --about flag test passed"
+	else
+		echo "✗ --about flag test failed: output='$about_output' (lines: $about_lines)" >&2
+		(( fails++ ))
+	fi
+
+	# ----- Test 2: --help flag -----
+	(( tests++ ))
+	echo "Testing --help flag..."
+
+	local help_output
+	help_output=$(gen-fake-tree --help 2>/dev/null)
+	local help_status=$?
+
+	if [ $help_status -eq 0 ] && echo "$help_output" | grep -q "Usage:"; then
+		echo "✓ --help flag test passed"
+	else
+		echo "✗ --help flag test failed: status=$help_status" >&2
+		(( fails++ ))
+	fi
+
+	# ----- Test 3: --test flag (recursive guard) -----
+	(( tests++ ))
+	echo "Testing --test flag (recursive guard)..."
+
+	local test_output
+	test_output=$(GEN_FAKE_TREE_TEST_DEPTH=1 gen-fake-tree --test 2>&1)
+	local test_status=$?
+
+	if [ $test_status -eq 0 ] && [ -z "$test_output" ]; then
+		echo "✓ --test flag recursive guard test passed"
+	else
+		echo "✗ --test flag recursive guard test failed: status=$test_status, output='$test_output'" >&2
+		(( fails++ ))
+	fi
+
+	# ----- Test 4: Missing --seed errors -----
+	(( tests++ ))
+	echo "Testing missing --seed errors..."
+
+	local no_seed_output
+	no_seed_output=$(gen-fake-tree --path "$tmpdir/noseed" 2>&1)
+	local no_seed_status=$?
+
+	if [ $no_seed_status -ne 0 ] && echo "$no_seed_output" | grep -qi "seed"; then
+		echo "✓ Missing --seed error test passed"
+	else
+		echo "✗ Missing --seed error test failed: status=$no_seed_status" >&2
+		(( fails++ ))
+	fi
+
+	# ----- Test 5: Missing --path errors -----
+	(( tests++ ))
+	echo "Testing missing --path errors..."
+
+	local no_path_output
+	no_path_output=$(gen-fake-tree --seed 0x42 2>&1)
+	local no_path_status=$?
+
+	if [ $no_path_status -ne 0 ] && echo "$no_path_output" | grep -qi "path"; then
+		echo "✓ Missing --path error test passed"
+	else
+		echo "✗ Missing --path error test failed: status=$no_path_status" >&2
+		(( fails++ ))
+	fi
+
+	# ----- Test 6: Determinism (same seed = identical output) -----
+	(( tests++ ))
+	echo "Testing determinism (same seed, two runs)..."
+
+	local run1_dir="$tmpdir/det_run1"
+	local run2_dir="$tmpdir/det_run2"
+
+	gen-fake-tree --seed 0xDEADBEEF --path "$run1_dir" --max-files 10 --max-size 100K --max-depth 3 2>/dev/null
+	gen-fake-tree --seed 0xDEADBEEF --path "$run2_dir" --max-files 10 --max-size 100K --max-depth 3 2>/dev/null
+
+	local diff_output
+	diff_output=$(diff -r "$run1_dir" "$run2_dir" 2>&1)
+
+	if [ -z "$diff_output" ]; then
+		echo "✓ Determinism test passed"
+	else
+		echo "✗ Determinism test failed: runs differ" >&2
+		echo "  diff output (first 5 lines):" >&2
+		echo "$diff_output" | head -5 >&2
+		(( fails++ ))
+	fi
+
+	# ----- Test 7: Different seeds produce different output -----
+	(( tests++ ))
+	echo "Testing different seeds produce different output..."
+
+	local diff_seed_dir="$tmpdir/diff_seed"
+	gen-fake-tree --seed 0xCAFEBABE --path "$diff_seed_dir" --max-files 10 --max-size 100K --max-depth 3 2>/dev/null
+
+	# Compare file listings (different seeds should produce different filenames)
+	local list1 list2
+	list1=$(cd "$run1_dir" && find . -type f | sort)
+	list2=$(cd "$diff_seed_dir" && find . -type f | sort)
+
+	if [ "$list1" != "$list2" ]; then
+		echo "✓ Different seeds test passed"
+	else
+		echo "✗ Different seeds test failed: file listings are identical" >&2
+		(( fails++ ))
+	fi
+
+	# ----- Test 8: --max-files constraint -----
+	(( tests++ ))
+	echo "Testing --max-files constraint..."
+
+	local max_files_dir="$tmpdir/max_files"
+	gen-fake-tree --seed 0xABCD --path "$max_files_dir" --max-files 15 --max-size 10M --max-depth 3 2>/dev/null
+
+	# Count files (exclude manifest)
+	local file_count
+	file_count=$(find "$max_files_dir" -type f ! -name '.gen-fake-tree-manifest.json' | wc -l | tr -d ' ')
+
+	if [ "$file_count" -le 15 ] && [ "$file_count" -gt 0 ]; then
+		echo "✓ --max-files constraint test passed ($file_count files)"
+	else
+		echo "✗ --max-files constraint test failed: $file_count files (max 15)" >&2
+		(( fails++ ))
+	fi
+
+	# ----- Test 9: --max-size constraint -----
+	(( tests++ ))
+	echo "Testing --max-size constraint..."
+
+	local max_size_dir="$tmpdir/max_size"
+	gen-fake-tree --seed 0x1234 --path "$max_size_dir" --max-files 50 --max-size 50K --max-depth 3 2>/dev/null
+
+	# Sum file sizes (exclude manifest)
+	local total_size
+	if [[ "$(uname)" == "Darwin" ]]; then
+		total_size=$(find "$max_size_dir" -type f ! -name '.gen-fake-tree-manifest.json' -exec stat -f%z {} + 2>/dev/null | awk '{s+=$1}END{print s+0}')
+	else
+		total_size=$(find "$max_size_dir" -type f ! -name '.gen-fake-tree-manifest.json' -exec stat --printf='%s\n' {} + 2>/dev/null | awk '{s+=$1}END{print s+0}')
+	fi
+
+	# Allow 15% tolerance for image compression overhead
+	local max_allowed=$(( 50 * 1024 * 115 / 100 ))
+
+	if [ "$total_size" -le "$max_allowed" ]; then
+		echo "✓ --max-size constraint test passed (${total_size} bytes, limit ~${max_allowed})"
+	else
+		echo "✗ --max-size constraint test failed: ${total_size} bytes > ${max_allowed}" >&2
+		(( fails++ ))
+	fi
+
+	# ----- Test 10: --max-depth constraint -----
+	(( tests++ ))
+	echo "Testing --max-depth constraint..."
+
+	local max_depth_dir="$tmpdir/max_depth"
+	gen-fake-tree --seed 0x5678 --path "$max_depth_dir" --max-files 20 --max-size 100K --max-depth 2 2>/dev/null
+
+	# Find max directory depth relative to root
+	local max_actual_depth=0
+	while IFS= read -r dir; do
+		local rel="${dir#$max_depth_dir}"
+		local depth=$(echo "$rel" | tr -cd '/' | wc -c | tr -d ' ')
+		if [ "$depth" -gt "$max_actual_depth" ]; then
+			max_actual_depth=$depth
+		fi
+	done < <(find "$max_depth_dir" -type d)
+
+	if [ "$max_actual_depth" -le 2 ]; then
+		echo "✓ --max-depth constraint test passed (max depth: $max_actual_depth)"
+	else
+		echo "✗ --max-depth constraint test failed: max depth $max_actual_depth > 2" >&2
+		(( fails++ ))
+	fi
+
+	# ----- Test 11: Files actually created -----
+	(( tests++ ))
+	echo "Testing files were actually created..."
+
+	local created_count
+	created_count=$(find "$run1_dir" -type f ! -name '.gen-fake-tree-manifest.json' | wc -l | tr -d ' ')
+
+	if [ "$created_count" -gt 0 ]; then
+		echo "✓ Files created test passed ($created_count files)"
+	else
+		echo "✗ Files created test failed: no files found" >&2
+		(( fails++ ))
+	fi
+
+	# ----- Test 12: Image file validity -----
+	(( tests++ ))
+	echo "Testing image file validity..."
+
+	local has_images=false
+	local images_valid=true
+	local image_errors=""
+
+	while IFS= read -r img; do
+		has_images=true
+		local file_type
+		file_type=$(file -b "$img" 2>/dev/null)
+		local ext="${img##*.}"
+		case "$ext" in
+			png)
+				if ! echo "$file_type" | grep -qi "png"; then
+					images_valid=false
+					image_errors="$image_errors\n  $img: $file_type"
+				fi
+				;;
+			jxl)
+				if ! echo "$file_type" | grep -qiE "(jpeg xl|jxl|image)"; then
+					# Some 'file' versions don't recognize JXL; accept anything that's not text/empty
+					if echo "$file_type" | grep -qiE "(empty|text|ascii)"; then
+						images_valid=false
+						image_errors="$image_errors\n  $img: $file_type"
+					fi
+				fi
+				;;
+		esac
+	done < <(find "$run1_dir" -type f \( -name '*.png' -o -name '*.jxl' \) 2>/dev/null)
+
+	if $has_images; then
+		if $images_valid; then
+			echo "✓ Image validity test passed"
+		else
+			echo "✗ Image validity test failed:$image_errors" >&2
+			(( fails++ ))
+		fi
+	else
+		# No images generated (possible with small --max-files) — skip, not a fail
+		echo "- Image validity test skipped (no images in this run)"
+	fi
+
+	# ----- Test 13: Manifest exists and is valid -----
+	(( tests++ ))
+	echo "Testing manifest exists and is valid..."
+
+	local manifest="$run1_dir/.gen-fake-tree-manifest.json"
+
+	if [ -f "$manifest" ]; then
+		# Check JSON is parseable (use luajit since we know it's available)
+		local json_valid
+		json_valid=$(luajit -e '
+			local f = io.open("'"$manifest"'", "r")
+			if not f then os.exit(1) end
+			local content = f:read("*a")
+			f:close()
+			-- Simple validation: check structure
+			if content:match("\"seed\"") and content:match("\"files\"") and content:match("\"file_count\"") then
+				-- Count files in manifest
+				local count = 0
+				for _ in content:gmatch("\"path\"") do count = count + 1 end
+				print(count)
+			else
+				os.exit(1)
+			end
+		' 2>/dev/null)
+		local json_status=$?
+
+		if [ $json_status -eq 0 ] && [ -n "$json_valid" ]; then
+			# Check file count in manifest roughly matches actual files
+			local actual_files
+			actual_files=$(find "$run1_dir" -type f ! -name '.gen-fake-tree-manifest.json' | wc -l | tr -d ' ')
+			if [ "$json_valid" -eq "$actual_files" ]; then
+				echo "✓ Manifest test passed ($json_valid files listed)"
+			else
+				echo "✗ Manifest file count mismatch: manifest=$json_valid, actual=$actual_files" >&2
+				(( fails++ ))
+			fi
+		else
+			echo "✗ Manifest test failed: invalid JSON" >&2
+			(( fails++ ))
+		fi
+	else
+		echo "✗ Manifest test failed: file not found" >&2
+		(( fails++ ))
+	fi
+
+	# ----- Test 14: Manifest checksums are valid -----
+	(( tests++ ))
+	echo "Testing manifest SHA256 checksums..."
+
+	if [ -f "$manifest" ]; then
+		# Extract first file path and sha256 from manifest using luajit
+		local check_info
+		check_info=$(luajit -e '
+			local f = io.open("'"$manifest"'", "r")
+			if not f then os.exit(1) end
+			local content = f:read("*a")
+			f:close()
+			-- Find first file entry
+			local path = content:match("\"path\"%s*:%s*\"([^\"]+)\"")
+			local sha256 = content:match("\"sha256\"%s*:%s*\"([^\"]+)\"")
+			if path and sha256 then
+				print(path .. "|" .. sha256)
+			else
+				os.exit(1)
+			end
+		' 2>/dev/null)
+
+		if [ -n "$check_info" ]; then
+			local check_path="${check_info%%|*}"
+			local expected_sha="${check_info##*|}"
+			local full_path="$run1_dir/$check_path"
+
+			if [ -f "$full_path" ]; then
+				local actual_sha
+				actual_sha=$(shasum -a 256 "$full_path" | awk '{print $1}')
+				if [ "$actual_sha" = "$expected_sha" ]; then
+					echo "✓ Manifest checksum test passed"
+				else
+					echo "✗ Manifest checksum test failed for $check_path" >&2
+					echo "  expected: $expected_sha" >&2
+					echo "  actual:   $actual_sha" >&2
+					(( fails++ ))
+				fi
+			else
+				echo "✗ Manifest checksum test failed: file $full_path not found" >&2
+				(( fails++ ))
+			fi
+		else
+			echo "✗ Manifest checksum test failed: could not parse manifest" >&2
+			(( fails++ ))
+		fi
+	else
+		echo "✗ Manifest checksum test failed: manifest not found" >&2
+		(( fails++ ))
+	fi
+
+	# ===== Final results =====
+	echo ""
+	echo "========================"
+	if [ $fails -gt 0 ]; then
+		echo "gen-fake-tree test FAILED: $fails of $tests tests failed" >&2
+		return $fails
+	else
+		echo "gen-fake-tree test PASSED: All $tests tests passed"
+		return 0
+	fi
+}
+
+# Run the test if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	test_gen_fake_tree
+	exit $?
+fi
