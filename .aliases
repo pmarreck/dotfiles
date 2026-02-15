@@ -227,3 +227,4 @@ alias vk='HOST=0.0.0.0 BACKEND_PORT=10001 TMPDIR=$XDG_CACHE_HOME/vibe-kanban npx
 alias backlog='nix run github:MrLesk/Backlog.md'
 alias hogs='hr; echo "Memhogs:"; memhogs; hr; echo "CPU hogs:"; cpuhogs; hr'
 alias entropy='cd $DOCUMENTS/entropy_shield'
+alias codescan-proj='cd /Users/pmarreck/Documents-CloudManaged/codescan'
