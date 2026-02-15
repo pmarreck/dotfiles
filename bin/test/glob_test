@@ -615,6 +615,38 @@ EOF
   (( fails += $? ))
   rm -rf many-args "print-args" "$run_log" "$batch_err_file"
 
+  # Test 52: Should warn on stderr when dotfiles were excluded but would have matched
+  (( tests++ ))
+  touch visible.txt .hidden.txt
+  warning=$(glob "*.txt" 2>&1 >/dev/null)
+  assert "$warning" =~ "dotfile" "glob should warn when dotfiles were excluded but would have matched"
+  (( fails += $? ))
+  rm -f visible.txt .hidden.txt
+
+  # Test 53: Should NOT warn about dotfiles when --dotglob/--all is used
+  (( tests++ ))
+  touch visible.txt .hidden.txt
+  warning=$(glob --dotglob "*.txt" 2>&1 >/dev/null)
+  assert "$warning" == "" "glob --dotglob should not warn about dotfiles"
+  (( fails += $? ))
+  rm -f visible.txt .hidden.txt
+
+  # Test 54: Should NOT warn about dotfiles when pattern explicitly targets them
+  (( tests++ ))
+  touch .hidden.txt .secret.txt
+  warning=$(glob ".*" 2>&1 >/dev/null)
+  assert "$warning" == "" "glob should not warn about dotfiles when pattern starts with dot"
+  (( fails += $? ))
+  rm -f .hidden.txt .secret.txt
+
+  # Test 55: Dotfile warning should also work in command mode
+  (( tests++ ))
+  touch visible.txt .hidden.txt
+  warning=$(glob echo "*.txt" 2>&1 >/dev/null)
+  assert "$warning" =~ "dotfile" "glob should warn about dotfiles in command mode too"
+  (( fails += $? ))
+  rm -f visible.txt .hidden.txt
+
   # Leave temp dir (mktemp -d creates a temporary directory that will be cleaned up by the system)
   popd >/dev/null
 

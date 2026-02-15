@@ -707,6 +707,7 @@ EOF
 	fi
 
 	local processed_args=()
+	local _glob_patterns_seen=()  # track glob patterns for dotfile warning
 	for arg in "${args[@]}"; do
 		# If we have a command and arg starts with - or --, pass it through
 		if [[ -n "$exec_command" && ("$arg" == -* || "$arg" == --*) ]]; then
@@ -715,6 +716,7 @@ EOF
 		# If arg contains glob pattern
 		elif [[ "$arg" == *[\*\?\[]* ]]; then
 			debug "Processing glob pattern: $arg"
+			_glob_patterns_seen+=("$arg")
 
 			# Special handling for command mode with nullglob
 			if [[ -n "$exec_command" ]] && $nullglob_set; then
@@ -1079,6 +1081,42 @@ EOF
 			processed_args+=("$arg")
 		fi
 	done
+
+	# Warn about excluded dotfiles (only when dotglob was NOT enabled)
+	if ! $dotglob_effective && [[ ${#_glob_patterns_seen[@]} -gt 0 ]]; then
+		local _dotfile_warning_needed=false
+		local _pattern
+		for _pattern in "${_glob_patterns_seen[@]}"; do
+			# Skip patterns that explicitly target dotfiles (start with . after any path prefix)
+			local _basename="${_pattern##*/}"
+			if [[ "$_basename" == .* ]]; then
+				continue
+			fi
+			# Check if enabling dotglob would yield additional matches
+			local _dot_matches=()
+			shopt -s nullglob dotglob
+			if $ignore_case; then
+				shopt -s nocaseglob
+			fi
+			_dot_matches=($_pattern)
+			shopt -u nullglob dotglob
+			if $ignore_case && ! $nocaseglob_set; then
+				shopt -u nocaseglob
+			fi
+			# Compare: filter to only the dotfile entries
+			local _m
+			for _m in "${_dot_matches[@]}"; do
+				local _mbase="${_m##*/}"
+				if [[ "$_mbase" == .* ]]; then
+					_dotfile_warning_needed=true
+					break 2
+				fi
+			done
+		done
+		if $_dotfile_warning_needed; then
+			printf '\033[33mNote: dotfiles were excluded. Use --dotglob or --all to include them.\033[0m\n' >&2
+		fi
+	fi
 
 	# Check if we found any matches
 	if ! $found_any_matches; then
