@@ -1077,33 +1077,28 @@ EOF
 	fi
 
 	# Step 3: Sort and emit results
-	local sorted_output
 	if [[ ${#processed_args[@]} -gt 0 ]]; then
-		# Sort the output using C locale for consistent behavior
-		# This ensures predictable sorting regardless of system locale
-		sorted_output=$(printf "%s\n" "${processed_args[@]}" | LC_ALL=C sort)
 
 		# Step 4: Execute command or print results
 		if [[ -n "$exec_command" ]]; then
-			# Convert sorted output back to array
-			local sorted_args=()
-			while IFS= read -r line; do
-				[[ -z "$line" ]] && continue
-
+			# In command mode, preserve argument order as given by the user.
+			# Sorting would scramble positional semantics (e.g. cp SRC... DEST).
+			# Glob expansion within each pattern is already naturally sorted by bash.
+			local cmd_args=()
+			local item
+			for item in "${processed_args[@]}"; do
 				# Special handling for nullglob in command mode
-				# If we're in command mode with nullglob set, skip any non-matching patterns
-				# This is a safety check to catch any patterns that might have slipped through
-				if $nullglob_set && [[ "$line" == *[*?[]* ]] && [[ ! -e "$line" ]]; then
-					debug "Skipping non-matching pattern in command mode with nullglob: $line"
+				# Skip any non-matching patterns that might have slipped through
+				if $nullglob_set && [[ "$item" == *[*?[]* ]] && [[ ! -e "$item" ]]; then
+					debug "Skipping non-matching pattern in command mode with nullglob: $item"
 					continue
 				fi
-
-				sorted_args+=("$line")
-			done <<< "$sorted_output"
+				cmd_args+=("$item")
+			done
 
 			if $batch_mode; then
-				debug "Executing in batch mode: $exec_command ${sorted_args[*]}"
-				_run_batched "$exec_command" "${sorted_args[@]}"
+				debug "Executing in batch mode: $exec_command ${cmd_args[*]}"
+				_run_batched "$exec_command" "${cmd_args[@]}"
 				local retcode=$?
 			else
 				local arg_max
@@ -1112,7 +1107,7 @@ EOF
 				budget=$(_get_arg_budget) || budget=""
 				if [[ -n "$arg_max" && -n "$budget" ]]; then
 					local total_bytes
-					total_bytes=$(_arg_total_bytes "$exec_command" "${sorted_args[@]}")
+					total_bytes=$(_arg_total_bytes "$exec_command" "${cmd_args[@]}")
 					if (( total_bytes > budget )); then
 						echo "Error: expanded arguments exceed safe ARG_MAX budget (${total_bytes} bytes > ${budget}; system ARG_MAX ${arg_max}). Re-run with --batch." >&2
 						if $glob_disabled; then set -f; fi
@@ -1130,8 +1125,8 @@ EOF
 					fi
 				fi
 
-				debug "Executing: $exec_command ${sorted_args[*]}"
-				"$exec_command" "${sorted_args[@]}"
+				debug "Executing: $exec_command ${cmd_args[*]}"
+				"$exec_command" "${cmd_args[@]}"
 				local retcode=$?
 			fi
 
@@ -1153,6 +1148,10 @@ EOF
 
 			return $retcode
 		else
+			# In display mode, sort results for consistent output
+			local sorted_output
+			sorted_output=$(printf "%s\n" "${processed_args[@]}" | LC_ALL=C sort)
+
 			# Print results according to output format
 			case "$output_format" in
 				"double-quote")
