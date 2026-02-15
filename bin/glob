@@ -27,6 +27,7 @@ OPTIONS:
 	--dotfiles                      Synonym for --dotglob
 	--all                           No restrictions (includes dotfiles)
 	--batch                         Run command in chunks to avoid ARG_MAX limits
+	--dry-run, --debug              Show expanded command (yellow, to stderr) without executing
 	--double-quote                   Newline-separated, double-quoted output with embedded quotes escaped
 	-n                               Space-separated output with shell escaping
 	-0                               Null-separated output without escaping
@@ -136,6 +137,7 @@ EOF
 	local ignore_case=false
 	local include_dotfiles=false
 	local batch_mode=false
+	local dry_run=false
 	local output_format="newline"  # default: newline-separated
 	local double_quote=false
 	local space_flag=false
@@ -159,6 +161,10 @@ EOF
 				;;
 			--batch)
 				batch_mode=true
+				shift
+				;;
+			--dry-run|--debug)
+				dry_run=true
 				shift
 				;;
 			--double-quote)
@@ -667,6 +673,22 @@ EOF
 		fi
 		return 2
 	fi
+	if $dry_run && [[ -z "$exec_command" ]]; then
+		echo "Error: --dry-run/--debug requires a command" >&2
+		# Restore original settings before exiting
+		if $glob_disabled; then set -f; fi
+		if $dotglob_forced; then
+			shopt -u dotglob
+		fi
+		if $ignore_case; then
+			if $nocaseglob_set; then
+				shopt -s nocaseglob
+			else
+				shopt -u nocaseglob
+			fi
+		fi
+		return 2
+	fi
 	if $batch_mode && [[ -z "$exec_command" ]]; then
 		echo "Error: --batch requires a command" >&2
 		# Restore original settings before exiting
@@ -1096,7 +1118,16 @@ EOF
 				cmd_args+=("$item")
 			done
 
-			if $batch_mode; then
+			if $dry_run; then
+				# Show the expanded command in yellow to stderr, don't execute
+				local quoted_args=()
+				local a
+				for a in "${cmd_args[@]}"; do
+					quoted_args+=("$(builtin printf "%q" "$a")")
+				done
+				printf '\033[33m%s %s\033[0m\n' "$exec_command" "${quoted_args[*]}" >&2
+				local retcode=0
+			elif $batch_mode; then
 				debug "Executing in batch mode: $exec_command ${cmd_args[*]}"
 				_run_batched "$exec_command" "${cmd_args[@]}"
 				local retcode=$?
