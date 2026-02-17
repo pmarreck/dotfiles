@@ -1,3 +1,5 @@
+#!/usr/bin/env es
+
 # this file basically make 'es' look more like a modern bash prompt
 # (in terms of following symlinks, colours, cd - (+ enhancements))
 
@@ -48,7 +50,7 @@ let (cd = $fn-cd) fn cd dir {
 
 # go back -N directories in cd (cd -1 prints stack, cd - goes to previous)
 #
-let (cd = $fn-cd; cd-stack = (. . . . . . . . . .)) fn cd dir { 
+let (cd = $fn-cd; cd-stack = (. . . . . . . . . .)) fn cd dir {
     if {~ $dir -*} {
         let (index = <={%split - $dir}) {
             if {~ $#index 0} {

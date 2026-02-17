@@ -1,4 +1,5 @@
 #!/bin/sh
+
 # .profile must remain POSIX-compliant, use shellcheck to verify
 # There is currently 1 exception to this rule: the use of ${BASH_SOURCE[0]} for debugging
 

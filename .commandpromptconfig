@@ -1,3 +1,4 @@
+#!/usr/bin/env sh
 [ -n "${DEBUG_SHELLCONFIG}" ] && echo "Entering $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")"
 [ -n "${DEBUG_PATHCONFIG}" ] && echo $PATH
 # Command prompt config

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+
 [[ "$(type -t append_dotfile_progress)" == "function" ]] || . "$HOME/dotfiles/bin/src/append_dotfile_progress.sh"
 [ -n "${DEBUG_SHELLCONFIG}" ] && echo "Entering $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")" || $INTERACTIVE_SHELL && $LOGIN_SHELL && append_dotfile_progress "P"
 [ -n "${DEBUG_PATHCONFIG}" ] && echo "PATH is: $PATH"

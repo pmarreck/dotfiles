@@ -1,3 +1,5 @@
+#!/usr/bin/env sh
+
 ####### Aliases
 
 # get the list of defined aliases

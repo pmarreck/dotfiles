@@ -1,3 +1,5 @@
+#!/usr/bin/env bash
+
 # We use PROMPT_COMMAND and the DEBUG trap to generate timing information. We try
 # to avoid clobbering what we can, and try to give the user ways around our
 # clobbers, if it's unavoidable. For example, PROMPT_COMMAND is appended to,
