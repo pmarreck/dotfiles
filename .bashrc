@@ -117,8 +117,8 @@ unset VISUAL EDITOR
 		unset VISUAL # note: this indicates to other tooling later on that we are not in a GUI context
 	else
 		needs micro "please install the micro editor; defaulting to nano for EDITOR" && export EDITOR='micro' || export EDITOR='nano'
-		if needs agy "please install the Antigravity editor CLI (agy)"; then
-			export VISUAL='agy'
+		if needs antigravity "please install the Antigravity editor"; then
+			export VISUAL='antigravity'
 		elif needs code "please install the VSCode editor and commandline access for it"; then
 			export VISUAL='code'
 		else
