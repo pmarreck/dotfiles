@@ -619,24 +619,27 @@ EOF
 	local args=("$@")
 	local found_any_matches=false
 
-	# Use which + file to robustly detect if first arg is an executable command
+	# Detect command mode without external helpers (which/file).
+	# This keeps startup fast and works even if helper binaries are unavailable.
 	if [[ ${#args[@]} -gt 0 ]]; then
 		local resolved_path
-		# Try to resolve the first argument using which
-		resolved_path=$(which "${args[0]}" 2>/dev/null)
-		
+		local candidate="${args[0]}"
+		resolved_path=""
+
+		if [[ "$candidate" == */* ]]; then
+			if [[ -x "$candidate" && ! -d "$candidate" ]]; then
+				resolved_path="$candidate"
+			fi
+		else
+			resolved_path=$(type -P -- "$candidate" 2>/dev/null || true)
+		fi
+
 		if [[ -n "$resolved_path" ]]; then
-			debug "which resolved '${args[0]}' to: $resolved_path"
-			
-			# Check if the resolved path contains "executable" in file output
-			local file_output
-			file_output=$(file -L "$resolved_path" 2>/dev/null)
-			debug "file output: $file_output"
-			
-			# Also check if this looks like a data file by extension
+			debug "Resolved command candidate '${args[0]}' to: $resolved_path"
+
+			# Treat executable files that look like common data files as data, not commands.
 			local data_file_extensions="\.(jpg|jpeg|png|gif|pdf|mp4|avi|mp3|wav|doc|docx|txt|log|csv)$"
-			
-			if [[ "$file_output" == *"executable"* ]] && [[ ! "$resolved_path" =~ $data_file_extensions ]]; then
+			if [[ ! "$resolved_path" =~ $data_file_extensions ]]; then
 				exec_command="${args[0]}"
 				debug "Found executable command: $exec_command (resolved to: $resolved_path)"
 				# Remove the command from args
@@ -647,14 +650,10 @@ EOF
 					debug "Command mode with nullglob set - will filter out non-matching patterns"
 				fi
 			else
-				if [[ "$resolved_path" =~ $data_file_extensions ]]; then
-					debug "which resolved '${args[0]}' but it has a data file extension: $resolved_path"
-				else
-					debug "which resolved '${args[0]}' but file says it's not executable: $file_output"
-				fi
+				debug "Resolved '${args[0]}' but it has a data file extension: $resolved_path"
 			fi
 		else
-			debug "which could not resolve '${args[0]}' - treating as pattern"
+			debug "Could not resolve '${args[0]}' as an executable command - treating as pattern"
 		fi
 	fi
 	if [[ -n "$exec_command" && "$double_quote" == true ]]; then

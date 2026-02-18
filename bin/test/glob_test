@@ -262,9 +262,11 @@ test_glob() {
   
   # Test 22: Case-insensitive with command execution
   (( tests++ ))
-  output=$(glob -i echo "test*.jpg" 2>/dev/null)
-  # Command mode preserves bash glob order (case-insensitive nocaseglob); not re-sorted
-  expected_files="test with spaces.jpg test.Jpg Test.JPG TEST.jpg test1.jpg test2.jpg"
+  output=$(glob -i printf '%s\n' "test*.jpg" 2>/dev/null)
+  # Bash nocaseglob ordering can vary by platform/collation; verify matched set.
+  output=$(printf '%s\n' "$output" | LC_ALL=C sort)
+  expected_files=$'TEST.jpg\nTest.JPG\ntest with spaces.jpg\ntest.Jpg\ntest1.jpg\ntest2.jpg'
+  expected_files=$(printf '%s\n' "$expected_files" | LC_ALL=C sort)
   assert "$output" == "$expected_files" "glob should execute commands with case-insensitive matching"
   (( fails += $? ))
   
@@ -646,6 +648,25 @@ EOF
   assert "$warning" =~ "dotfile" "glob should warn about dotfiles in command mode too"
   (( fails += $? ))
   rm -f visible.txt .hidden.txt
+
+  # Test 56: Command detection should work without external which/file helpers
+  (( tests++ ))
+  mkdir -p fake-tools
+  cat > fake-tools/which <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+  cat > fake-tools/file <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+  chmod +x fake-tools/which fake-tools/file
+  touch alpha.txt beta.txt
+  output=$(PATH="$PWD/fake-tools:$PATH" glob echo "*.txt" 2>/dev/null)
+  expected_files="alpha.txt beta.txt"
+  assert "$output" == "$expected_files" "glob should detect commands without relying on which/file"
+  (( fails += $? ))
+  rm -rf fake-tools alpha.txt beta.txt
 
   # Leave temp dir (mktemp -d creates a temporary directory that will be cleaned up by the system)
   popd >/dev/null
