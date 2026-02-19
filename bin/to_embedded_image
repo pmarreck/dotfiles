@@ -1,0 +1,281 @@
+#!/usr/bin/env luajit
+
+local ffi = require("ffi")
+local bit = require("bit")
+
+ffi.cdef[[
+	int isatty(int fd);
+]]
+
+local function stderr_write(msg)
+	io.stderr:write(msg)
+end
+
+local function shell_quote(s)
+	return "'" .. s:gsub("'", "'\\''") .. "'"
+end
+
+local function exec_status(cmd)
+	local ok, reason, code = os.execute(cmd)
+	if type(ok) == "number" then
+		return ok
+	end
+	if ok == true then
+		return 0
+	end
+	if reason == "exit" and type(code) == "number" then
+		return code
+	end
+	return 1
+end
+
+local function basename(path)
+	return (path:gsub("^.*[/\\]", ""))
+end
+
+local function print_help()
+	print([[Usage: to_embedded_image [--markdown|-md|--html] [--alt TEXT] [image_file]
+
+Encode image bytes as base64 and emit an embeddable data URI snippet.
+
+Options:
+	--markdown, -md   Output markdown image syntax
+	--html            Output HTML <img> syntax
+	--alt TEXT        Alt text when no file argument is provided
+	-h, --help        Show this help message
+	-a, --about       Show a one-line description
+	--test            Run tests (stdout muted; stderr preserved)
+
+Input:
+	Provide either an image file path or pipe image bytes on stdin.
+	Supported image formats: png, jpg/jpeg, jxl
+	Alt precedence: file stem > --alt > "insert alt text for image here"
+]])
+end
+
+local function print_about()
+	print("Encode image bytes into markdown or HTML data-URI snippets.")
+end
+
+local function die(msg)
+	stderr_write("to_embedded_image: " .. msg .. "\n")
+	os.exit(1)
+end
+
+local function detect_mime_from_extension(path)
+	if not path then
+		return nil
+	end
+	local ext = path:match("%.([^.]+)$")
+	if not ext then
+		return nil
+	end
+	ext = ext:lower()
+	if ext == "png" then
+		return "image/png"
+	elseif ext == "jpg" or ext == "jpeg" then
+		return "image/jpeg"
+	elseif ext == "jxl" then
+		return "image/jxl"
+	end
+	return nil
+end
+
+local function stem_from_path(path)
+	local name = basename(path)
+	local stem = name:gsub("%.[^.]+$", "")
+	if stem == "" then
+		return name
+	end
+	return stem
+end
+
+local function has_prefix_bytes(data, bytes)
+	if #data < #bytes then
+		return false
+	end
+	for i = 1, #bytes do
+		if string.byte(data, i) ~= bytes[i] then
+			return false
+		end
+	end
+	return true
+end
+
+local function detect_mime(data, input_path)
+	if has_prefix_bytes(data, { 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a }) then
+		return "image/png"
+	end
+	if has_prefix_bytes(data, { 0xff, 0xd8, 0xff }) then
+		return "image/jpeg"
+	end
+	if has_prefix_bytes(data, { 0xff, 0x0a }) then
+		return "image/jxl"
+	end
+	if has_prefix_bytes(data, { 0x00, 0x00, 0x00, 0x0c, 0x4a, 0x58, 0x4c, 0x20, 0x0d, 0x0a, 0x87, 0x0a }) then
+		return "image/jxl"
+	end
+	return detect_mime_from_extension(input_path)
+end
+
+local b64chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+
+local function base64_encode(data)
+	local result = {}
+	local len = #data
+	local i = 1
+	local out = 1
+
+	while i <= len do
+		local a = string.byte(data, i) or 0
+		local b = string.byte(data, i + 1) or 0
+		local c = string.byte(data, i + 2) or 0
+
+		local n = a * 65536 + b * 256 + c
+
+		local c1 = (bit.rshift(n, 18) % 64) + 1
+		local c2 = (bit.rshift(n, 12) % 64) + 1
+		local c3 = (bit.rshift(n, 6) % 64) + 1
+		local c4 = (n % 64) + 1
+
+		result[out] = b64chars:sub(c1, c1)
+		out = out + 1
+		result[out] = b64chars:sub(c2, c2)
+		out = out + 1
+
+		if i < len then
+			result[out] = b64chars:sub(c3, c3)
+		else
+			result[out] = "="
+		end
+		out = out + 1
+
+		if i + 1 < len then
+			result[out] = b64chars:sub(c4, c4)
+		else
+			result[out] = "="
+		end
+		out = out + 1
+
+		i = i + 3
+	end
+
+	return table.concat(result)
+end
+
+local function read_file_binary(path)
+	local file, open_err = io.open(path, "rb")
+	if not file then
+		die("cannot open file '" .. tostring(path) .. "': " .. tostring(open_err))
+	end
+	local data = file:read("*a")
+	file:close()
+	if not data then
+		die("failed reading file '" .. tostring(path) .. "'")
+	end
+	if #data == 0 then
+		die("input data is empty")
+	end
+	return data
+end
+
+local function has_stdin_data()
+	return ffi.C.isatty(0) == 0
+end
+
+local function read_stdin_binary()
+	local data = io.stdin:read("*a")
+	if not data or #data == 0 then
+		die("no input data received on stdin")
+	end
+	return data
+end
+
+local argv = arg or {}
+
+if argv[1] == "--test" then
+	if #argv > 1 then
+		die("--test does not accept additional arguments")
+	end
+	local test_file = (os.getenv("HOME") or "") .. "/dotfiles/bin/test/" .. basename(arg[0] or "to_embedded_image") .. "_test"
+	local status = exec_status(shell_quote(test_file) .. " >/dev/null")
+	os.exit(status)
+end
+
+local output_mode = nil
+local input_path = nil
+local alt_option = nil
+local i = 1
+
+while i <= #argv do
+	local a = argv[i]
+	if a == "-h" or a == "--help" then
+		print_help()
+		os.exit(0)
+	elseif a == "-a" or a == "--about" then
+		print_about()
+		os.exit(0)
+	elseif a == "--markdown" or a == "-md" then
+		if output_mode == "html" then
+			die("cannot combine --html with --markdown")
+		end
+		output_mode = "markdown"
+	elseif a == "--html" then
+		if output_mode == "markdown" then
+			die("cannot combine --html with --markdown")
+		end
+		output_mode = "html"
+	elseif a == "--alt" then
+		if i + 1 > #argv then
+			die("--alt requires a value")
+		end
+		i = i + 1
+		alt_option = argv[i]
+	elseif a == "--test" then
+		die("--test must be the only argument")
+	elseif a:sub(1, 1) == "-" then
+		die("unknown option: " .. tostring(a))
+	else
+		if input_path ~= nil then
+			die("too many positional arguments; expected at most one image file")
+		end
+		input_path = a
+	end
+	i = i + 1
+end
+
+if output_mode == nil then
+	output_mode = "markdown"
+	stderr_write("\27[33m(--html or --markdown not specified; defaulting to --markdown)\27[0m\n")
+end
+
+local data
+if input_path ~= nil then
+	data = read_file_binary(input_path)
+elseif has_stdin_data() then
+	data = read_stdin_binary()
+else
+	die("no input provided; pass a file path or pipe image data on stdin")
+end
+
+local mime = detect_mime(data, input_path)
+if mime == nil then
+	die("unsupported image format; supported formats are png, jpg/jpeg, and jxl")
+end
+
+local alt_text
+if input_path ~= nil then
+	alt_text = stem_from_path(input_path)
+elseif alt_option ~= nil then
+	alt_text = alt_option
+else
+	alt_text = "insert alt text for image here"
+end
+
+local encoded = base64_encode(data)
+
+if output_mode == "html" then
+	print('<img alt="' .. alt_text .. '" src="data:' .. mime .. ';base64,' .. encoded .. '" />')
+else
+	print('![' .. alt_text .. '](data:' .. mime .. ';base64,' .. encoded .. ')')
+end

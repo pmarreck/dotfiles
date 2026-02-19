@@ -1,0 +1,308 @@
+#!/usr/bin/env bash
+
+set -o pipefail
+
+if [ "${TO_EMBEDDED_IMAGE_TEST_DEPTH:-0}" = "1" ]; then
+	exit 0
+fi
+
+fails=0
+tests=0
+
+export PATH="$HOME/bin:$PATH"
+
+temp_dir=$(mktemp -d --tmpdir to_embedded_image_test.XXXXXX)
+trap 'rm -rf "$temp_dir"' EXIT
+
+if ! command -v to_embedded_image >/dev/null 2>&1; then
+	echo "to_embedded_image_test: to_embedded_image command not found on PATH" >&2
+	exit 1
+fi
+
+pass() {
+	echo "✓ $1"
+}
+
+fail() {
+	echo "✗ $1" >&2
+	shift
+	if [ "$#" -gt 0 ]; then
+		printf '  %s\n' "$@" >&2
+	fi
+	((fails++))
+}
+
+base64_file() {
+	base64 < "$1" | tr -d '\n'
+}
+
+expected_markdown() {
+	printf '![%s](data:%s;base64,%s)' "$1" "$2" "$3"
+}
+
+expected_html() {
+	printf '<img alt="%s" src="data:%s;base64,%s" />' "$1" "$2" "$3"
+}
+
+expected_default_warning=$'\033[33m(--html or --markdown not specified; defaulting to --markdown)\033[0m'
+
+png_file="$temp_dir/sample.png"
+jpg_file="$temp_dir/sample.jpg"
+jxl_file="$temp_dir/sample.jxl"
+
+printf '\x89PNG\r\n\x1a\n' > "$png_file"
+printf '\xff\xd8\xff' > "$jpg_file"
+printf '\xff\x0a' > "$jxl_file"
+
+png_b64=$(base64_file "$png_file")
+jpg_b64=$(base64_file "$jpg_file")
+jxl_b64=$(base64_file "$jxl_file")
+
+((tests++))
+echo "Testing: --help prints usage..."
+if help_output=$(to_embedded_image --help 2>"$temp_dir/help.err"); then
+	if [[ "$help_output" == *"Usage: to_embedded_image"* ]]; then
+		pass "--help prints usage"
+	else
+		fail "--help prints usage" "Help text missing usage header"
+	fi
+else
+	fail "--help prints usage" "Command exited non-zero"
+fi
+
+((tests++))
+echo "Testing: default mode uses markdown, png mime, and yellow warning..."
+stdout_file="$temp_dir/default.stdout"
+stderr_file="$temp_dir/default.stderr"
+if to_embedded_image "$png_file" >"$stdout_file" 2>"$stderr_file"; then
+	actual_out=$(cat "$stdout_file")
+	actual_err=$(cat "$stderr_file")
+	expected_out=$(expected_markdown "sample" "image/png" "$png_b64")
+	if [ "$actual_out" = "$expected_out" ] && [ "$actual_err" = "$expected_default_warning" ]; then
+		pass "default markdown output and warning"
+	else
+		fail "default markdown output and warning" \
+			"Expected stdout: $expected_out" \
+			"Actual stdout:   $actual_out" \
+			"Expected stderr: $expected_default_warning" \
+			"Actual stderr:   $actual_err"
+	fi
+else
+	fail "default markdown output and warning" "Command exited non-zero"
+fi
+
+((tests++))
+echo "Testing: --markdown suppresses warning and keeps png mime..."
+stdout_file="$temp_dir/markdown.stdout"
+stderr_file="$temp_dir/markdown.stderr"
+if to_embedded_image --markdown "$png_file" >"$stdout_file" 2>"$stderr_file"; then
+	actual_out=$(cat "$stdout_file")
+	actual_err=$(cat "$stderr_file")
+	expected_out=$(expected_markdown "sample" "image/png" "$png_b64")
+	if [ "$actual_out" = "$expected_out" ] && [ -z "$actual_err" ]; then
+		pass "--markdown output"
+	else
+		fail "--markdown output" \
+			"Expected stdout: $expected_out" \
+			"Actual stdout:   $actual_out" \
+			"Expected stderr empty" \
+			"Actual stderr:   $actual_err"
+	fi
+else
+	fail "--markdown output" "Command exited non-zero"
+fi
+
+((tests++))
+echo "Testing: -md behaves like --markdown..."
+stdout_file="$temp_dir/md.stdout"
+stderr_file="$temp_dir/md.stderr"
+if to_embedded_image -md "$png_file" >"$stdout_file" 2>"$stderr_file"; then
+	actual_out=$(cat "$stdout_file")
+	actual_err=$(cat "$stderr_file")
+	expected_out=$(expected_markdown "sample" "image/png" "$png_b64")
+	if [ "$actual_out" = "$expected_out" ] && [ -z "$actual_err" ]; then
+		pass "-md output"
+	else
+		fail "-md output" \
+			"Expected stdout: $expected_out" \
+			"Actual stdout:   $actual_out" \
+			"Expected stderr empty" \
+			"Actual stderr:   $actual_err"
+	fi
+else
+	fail "-md output" "Command exited non-zero"
+fi
+
+((tests++))
+echo "Testing: --html with jpg detects image/jpeg..."
+stdout_file="$temp_dir/html_jpg.stdout"
+stderr_file="$temp_dir/html_jpg.stderr"
+if to_embedded_image --html "$jpg_file" >"$stdout_file" 2>"$stderr_file"; then
+	actual_out=$(cat "$stdout_file")
+	actual_err=$(cat "$stderr_file")
+	expected_out=$(expected_html "sample" "image/jpeg" "$jpg_b64")
+	if [ "$actual_out" = "$expected_out" ] && [ -z "$actual_err" ]; then
+		pass "jpg html output"
+	else
+		fail "jpg html output" \
+			"Expected stdout: $expected_out" \
+			"Actual stdout:   $actual_out" \
+			"Expected stderr empty" \
+			"Actual stderr:   $actual_err"
+	fi
+else
+	fail "jpg html output" "Command exited non-zero"
+fi
+
+((tests++))
+echo "Testing: --html with jxl detects image/jxl..."
+stdout_file="$temp_dir/html_jxl.stdout"
+stderr_file="$temp_dir/html_jxl.stderr"
+if to_embedded_image --html "$jxl_file" >"$stdout_file" 2>"$stderr_file"; then
+	actual_out=$(cat "$stdout_file")
+	actual_err=$(cat "$stderr_file")
+	expected_out=$(expected_html "sample" "image/jxl" "$jxl_b64")
+	if [ "$actual_out" = "$expected_out" ] && [ -z "$actual_err" ]; then
+		pass "jxl html output"
+	else
+		fail "jxl html output" \
+			"Expected stdout: $expected_out" \
+			"Actual stdout:   $actual_out" \
+			"Expected stderr empty" \
+			"Actual stderr:   $actual_err"
+	fi
+else
+	fail "jxl html output" "Command exited non-zero"
+fi
+
+((tests++))
+echo "Testing: stdin png input works in default mode..."
+stdout_file="$temp_dir/stdin_png.stdout"
+stderr_file="$temp_dir/stdin_png.stderr"
+if cat "$png_file" | to_embedded_image >"$stdout_file" 2>"$stderr_file"; then
+	actual_out=$(cat "$stdout_file")
+	actual_err=$(cat "$stderr_file")
+	expected_out=$(expected_markdown "insert alt text for image here" "image/png" "$png_b64")
+	if [ "$actual_out" = "$expected_out" ] && [ "$actual_err" = "$expected_default_warning" ]; then
+		pass "stdin png default output"
+	else
+		fail "stdin png default output" \
+			"Expected stdout: $expected_out" \
+			"Actual stdout:   $actual_out" \
+			"Expected stderr: $expected_default_warning" \
+			"Actual stderr:   $actual_err"
+	fi
+else
+	fail "stdin png default output" "Command exited non-zero"
+fi
+
+((tests++))
+echo "Testing: stdin jpg input works with --html..."
+stdout_file="$temp_dir/stdin_jpg.stdout"
+stderr_file="$temp_dir/stdin_jpg.stderr"
+if cat "$jpg_file" | to_embedded_image --html >"$stdout_file" 2>"$stderr_file"; then
+	actual_out=$(cat "$stdout_file")
+	actual_err=$(cat "$stderr_file")
+	expected_out=$(expected_html "insert alt text for image here" "image/jpeg" "$jpg_b64")
+	if [ "$actual_out" = "$expected_out" ] && [ -z "$actual_err" ]; then
+		pass "stdin jpg html output"
+	else
+		fail "stdin jpg html output" \
+			"Expected stdout: $expected_out" \
+			"Actual stdout:   $actual_out" \
+			"Expected stderr empty" \
+			"Actual stderr:   $actual_err"
+	fi
+else
+	fail "stdin jpg html output" "Command exited non-zero"
+fi
+
+((tests++))
+echo "Testing: stdin jxl input works with --markdown..."
+stdout_file="$temp_dir/stdin_jxl.stdout"
+stderr_file="$temp_dir/stdin_jxl.stderr"
+if cat "$jxl_file" | to_embedded_image --markdown >"$stdout_file" 2>"$stderr_file"; then
+	actual_out=$(cat "$stdout_file")
+	actual_err=$(cat "$stderr_file")
+	expected_out=$(expected_markdown "insert alt text for image here" "image/jxl" "$jxl_b64")
+	if [ "$actual_out" = "$expected_out" ] && [ -z "$actual_err" ]; then
+		pass "stdin jxl markdown output"
+	else
+		fail "stdin jxl markdown output" \
+			"Expected stdout: $expected_out" \
+			"Actual stdout:   $actual_out" \
+			"Expected stderr empty" \
+			"Actual stderr:   $actual_err"
+	fi
+else
+	fail "stdin jxl markdown output" "Command exited non-zero"
+fi
+
+((tests++))
+echo "Testing: --alt is used when reading from stdin..."
+stdout_file="$temp_dir/stdin_alt.stdout"
+stderr_file="$temp_dir/stdin_alt.stderr"
+if cat "$png_file" | to_embedded_image --markdown --alt "custom alt text" >"$stdout_file" 2>"$stderr_file"; then
+	actual_out=$(cat "$stdout_file")
+	actual_err=$(cat "$stderr_file")
+	expected_out=$(expected_markdown "custom alt text" "image/png" "$png_b64")
+	if [ "$actual_out" = "$expected_out" ] && [ -z "$actual_err" ]; then
+		pass "stdin uses --alt"
+	else
+		fail "stdin uses --alt" \
+			"Expected stdout: $expected_out" \
+			"Actual stdout:   $actual_out" \
+			"Expected stderr empty" \
+			"Actual stderr:   $actual_err"
+	fi
+else
+	fail "stdin uses --alt" "Command exited non-zero"
+fi
+
+((tests++))
+echo "Testing: filename stem takes precedence over --alt..."
+stdout_file="$temp_dir/file_alt_precedence.stdout"
+stderr_file="$temp_dir/file_alt_precedence.stderr"
+if to_embedded_image --markdown --alt "custom alt text" "$png_file" >"$stdout_file" 2>"$stderr_file"; then
+	actual_out=$(cat "$stdout_file")
+	actual_err=$(cat "$stderr_file")
+	expected_out=$(expected_markdown "sample" "image/png" "$png_b64")
+	if [ "$actual_out" = "$expected_out" ] && [ -z "$actual_err" ]; then
+		pass "file stem overrides --alt"
+	else
+		fail "file stem overrides --alt" \
+			"Expected stdout: $expected_out" \
+			"Actual stdout:   $actual_out" \
+			"Expected stderr empty" \
+			"Actual stderr:   $actual_err"
+	fi
+else
+	fail "file stem overrides --alt" "Command exited non-zero"
+fi
+
+((tests++))
+echo "Testing: --test runs silently and exits 0 when nested..."
+stdout_file="$temp_dir/test.stdout"
+stderr_file="$temp_dir/test.stderr"
+if TO_EMBEDDED_IMAGE_TEST_DEPTH=1 to_embedded_image --test >"$stdout_file" 2>"$stderr_file"; then
+	actual_out=$(cat "$stdout_file")
+	actual_err=$(cat "$stderr_file")
+	if [ -z "$actual_out" ] && [ -z "$actual_err" ]; then
+		pass "--test is silent when passing"
+	else
+		fail "--test is silent when passing" \
+			"Expected empty stdout/stderr" \
+			"Actual stdout: $actual_out" \
+			"Actual stderr: $actual_err"
+	fi
+else
+	fail "--test is silent when passing" "Command exited non-zero"
+fi
+
+if [ "$fails" -eq 0 ]; then
+	echo "All $tests tests passed"
+else
+	echo "$fails of $tests tests failed" >&2
+fi
+
+exit "$fails"
