@@ -20,10 +20,10 @@ ds_bore() {
 		*)
 			rg --files --hidden --glob '*.DS_Store' | while IFS= read -r file; do
 				echo "$file"
-				rm "$file"
+				/bin/rm "$file" # avoid using my "safe" alias because this is extremely unlikely to be a mistake
 			done
 			;;
-	esac  
+	esac
 }
 
 # Run the function if this script is executed directly
