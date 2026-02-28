@@ -153,6 +153,36 @@ test_jpegxl() {
         (( fails++ ))
     fi
 
+    # Test 11: TIFF lossless conversion
+    (( tests++ ))
+    # Embedded 2x2 RGB TIFF (232 bytes) encoded with printable-binary
+    local tif_encoded='II⁎·꞉···»ž··žŻ·»ž··žŻ·⌫·⌫·⌫·H···¯···H···¯···Lavc62.11.100·ȯ·ż·ϟ·¯········¯ϟ·¯···«···¯¯ϟ·¯···«···«¯»·»···ɨ···»¯»·¯···¿ă··¡¯»·¯···«···¹¯ϟ·¯···⌫···µ¯»·¯···»···ɨ¯ϟ·¯···Čϟ··⏹¯ϟ·¯···ȯ···Ƶ¯¿·¯···Ξ···⎋¯¿·¯···Ꞩ···❨¯»·¯···«···1¯«·ȯ···٫·······'
+    local tif_file="$test_dir/test_tif.tif"
+    echo -n "$tif_encoded" | PRINTABLE_BINARY_MUTE_STATS=1 printable-binary -d -S > "$tif_file"
+    if magick identify "$tif_file" >/dev/null 2>&1; then
+        DEBUG=true jpegxl "$tif_file" >/dev/null 2>&1
+        if [[ -f "$test_dir/test_tif.jxl" ]]; then
+            echo "✓ TIFF lossless conversion test passed"
+        else
+            echo "✗ TIFF lossless conversion test failed (no .jxl output)" >&2
+            (( fails++ ))
+        fi
+    else
+        echo "✗ TIFF lossless conversion test skipped (embedded TIFF not valid — check printable-binary)" >&2
+        (( fails++ ))
+    fi
+
+    # Test 12: TIFF lossy conversion
+    (( tests++ ))
+    rm -f "$test_dir/test_tif.jxl"
+    DEBUG=true jpegxl --lossy "$tif_file" >/dev/null 2>&1
+    if [[ -f "$test_dir/test_tif.jxl" ]]; then
+        echo "✓ TIFF lossy conversion test passed"
+    else
+        echo "✗ TIFF lossy conversion test failed (no .jxl output)" >&2
+        (( fails++ ))
+    fi
+
     # Clean up test directory
     echo "Cleaning up test directory..."
     rm -rf "$test_dir"

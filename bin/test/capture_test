@@ -25,7 +25,7 @@ fails=0
 run_test_case() {
     local test_name="$1"
     local test_func_name="$2"
-    
+
     ((tests++))
     echo "Running Test $tests: $test_name"
 
@@ -104,7 +104,7 @@ test_5_null_byte_with_p() {
     local out err rc
     local test_fail=0
     local processed_nul
-    processed_nul=$(printf '\0' | printable_binary)
+    processed_nul=$(printf '\0' | printable-binary)
 
     capture -p printf "a\0b"
     assert "$out" "==" "a${processed_nul}b" "Test 5.1: out was '$out'" || test_fail=1
@@ -136,7 +136,7 @@ test_6_command_flags() {
 test_7_separator() {
     local out err rc
     local test_fail=0
-    
+
     local temp_dir
     temp_dir=$(mktemp --tmpdir -d capture_test.XXXXXX)
     trap 'rm -rf "$temp_dir"' RETURN
@@ -152,7 +152,7 @@ EOF
 
     capture -- -p
     assert "$out" "==" "this is the -p script" "Test 7.1: out was '$out'" || test_fail=1
-    
+
     export PATH="$old_path"
     return "$test_fail"
 }
@@ -160,7 +160,7 @@ EOF
 test_8_required_vars_not_declared() {
     local err exit_code
     local test_fail=0
-    
+
     # Run in a subshell where 'out' is explicitly not declared to trigger capture's check
     (
         unset out # Ensure 'out' is not present in the subshell environment
@@ -183,9 +183,9 @@ test_8_required_vars_not_declared() {
 test_9_no_command_given() {
     local err rc
     local test_fail=0
-    
+
     # This call will cause capture to print to stderr and return 2
-    capture &>/dev/null 
+    capture &>/dev/null
     local exit_code=$?
     if [[ "$exit_code" -eq 2 ]]; then
         : # pass
@@ -193,9 +193,9 @@ test_9_no_command_given() {
         echo "Assertion failed: Test 9.1: exit code was $exit_code, expected 2" >&2
         test_fail=1
     fi
-    
+
     # Capture stderr for message check
-    err=$(capture 2>&1) 
+    err=$(capture 2>&1)
     assert "$err" "==" "capture: no command given" "Test 9.2: err was '$err'" || test_fail=1
     return "$test_fail"
 }

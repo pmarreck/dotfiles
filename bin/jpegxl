@@ -197,7 +197,7 @@ Convert images to and from JPEG XL format. Supports batch processing.
 Options:
 	--help, -h               Show this help message
 	--about                  Show a brief description
-	--effort=N               Set compression effort (1-10, default: 10)
+	--effort=N               Set compression effort (1-10, default: 9)
 	--distance=N             Set compression distance (0-15, default: 1)
 													 0 is lossless, higher values = more lossy
 	--quality=N              Set compression quality (1-100, default: 93)
@@ -211,7 +211,7 @@ Options:
 	test                     Run self-test
 
 Environment Variables:
-	JPEGXL_DEFAULT_EFFORT    Set default compression effort (1-10, default: 10)
+	JPEGXL_DEFAULT_EFFORT    Set default compression effort (1-10, default: 9)
 	JPEGXL_DEFAULT_DISTANCE  Set default compression distance (0-15, default: 1)
 	DEBUG                    Enable debug output
 
@@ -376,6 +376,21 @@ process_file() {
 					return 1
 				fi
 			fi
+		elif [[ "$extension" == "tif" || "$extension" == "tiff" ]]; then
+			# TIFF: pipe through ImageMagick directly to cjxl (no temp file)
+			if [[ "$lossy" == "false" ]]; then
+				debug "Converting $extension to JXL (lossless, piped): $file -> $output"
+				if ! (set -o pipefail; magick "$file" png:- | cjxl -e "$effort" -d 0 - "$output" 2>/dev/null); then
+					echo "Error converting $original_file to JXL." >&2
+					return 1
+				fi
+			else
+				debug "Converting $extension to JXL (lossy, d=$distance, piped): $file -> $output"
+				if ! (set -o pipefail; magick "$file" png:- | cjxl -e "$effort" -d "$distance" - "$output" 2>/dev/null); then
+					echo "Error converting $original_file to JXL." >&2
+					return 1
+				fi
+			fi
 		else
 			# For non-JPEG (PNG, or intermediate PNG), use distance
 			# Note: For strict lossless, distance MUST be 0
@@ -414,7 +429,7 @@ jpegxl() {
 	check_dependencies || return 1
 
 	# Default settings, potentially overridden by environment variables
-	local effort=${JPEGXL_DEFAULT_EFFORT:-10}
+	local effort=${JPEGXL_DEFAULT_EFFORT:-9}
 	local distance=${JPEGXL_DEFAULT_DISTANCE:-1}
 	local lossy=false
 	local preserve_timestamps=true
