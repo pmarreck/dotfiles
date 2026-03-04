@@ -1,0 +1,322 @@
+#!/usr/bin/env bash
+
+# Test the jpeg converter
+test_jpeg() {
+	local fails=0
+	local tests=0
+
+	# Determine stat command
+	local STAT
+	if command -v gstat >/dev/null 2>&1; then
+		STAT="gstat"
+	elif stat --version >/dev/null 2>&1; then
+		STAT="stat"
+	else
+		echo "Error: GNU stat required" >&2
+		return 1
+	fi
+
+	local test_dir=$(mktemp --tmpdir -d jpeg_test.XXXXXX)
+	echo "Running jpeg tests in temporary directory: $test_dir"
+
+	# Create test images
+	magick -size 50x50 gradient:green-yellow "$test_dir/source.jpg"
+	magick -size 50x50 gradient:blue-red "$test_dir/source.png"
+	magick -size 50x50 xc:none -fill red -draw "circle 25,25 10,15" "$test_dir/alpha.png"
+	# JXL with JPEG reconstruction (lossless roundtrip)
+	cjxl -e 3 --lossless_jpeg=1 "$test_dir/source.jpg" "$test_dir/jpeg_recon.jxl" 2>/dev/null
+	# JXL from PNG source (no JPEG reconstruction)
+	cjxl -e 3 -d 0 "$test_dir/source.png" "$test_dir/from_png.jxl" 2>/dev/null
+	# Lossy JXL
+	cjxl -e 3 -d 1 "$test_dir/source.png" "$test_dir/lossy.jxl" 2>/dev/null
+
+	# Test 1: JXL with JPEG reconstruction → lossless JPEG roundtrip
+	(( tests++ ))
+	jpeg "$test_dir/jpeg_recon.jxl" >/dev/null 2>&1
+	if [[ -f "$test_dir/jpeg_recon.jpg" ]]; then
+		# Verify it's a byte-perfect reconstruction
+		local orig_md5 recon_md5
+		orig_md5=$(md5sum "$test_dir/source.jpg" | cut -d' ' -f1)
+		recon_md5=$(md5sum "$test_dir/jpeg_recon.jpg" | cut -d' ' -f1)
+		if [[ "$orig_md5" == "$recon_md5" ]]; then
+			echo "✓ JXL JPEG reconstruction test passed (byte-perfect)"
+		else
+			echo "✗ JXL JPEG reconstruction test failed (not byte-perfect)" >&2
+			(( fails++ ))
+		fi
+	else
+		echo "✗ JXL JPEG reconstruction test failed (no .jpg output)" >&2
+		(( fails++ ))
+	fi
+
+	# Test 2: JXL without JPEG reconstruction → lossy JPEG (default quality)
+	(( tests++ ))
+	jpeg "$test_dir/from_png.jxl" >/dev/null 2>&1
+	if [[ -f "$test_dir/from_png.jpg" ]]; then
+		echo "✓ JXL (no reconstruction) to JPEG test passed"
+	else
+		echo "✗ JXL (no reconstruction) to JPEG test failed (no .jpg output)" >&2
+		(( fails++ ))
+	fi
+
+	# Test 3: PNG → JPEG with default quality
+	(( tests++ ))
+	magick -size 50x50 gradient:blue-red "$test_dir/default_q.png"
+	jpeg "$test_dir/default_q.png" >/dev/null 2>&1
+	if [[ -f "$test_dir/default_q.jpg" ]]; then
+		echo "✓ PNG to JPEG (default quality) test passed"
+	else
+		echo "✗ PNG to JPEG test failed (no .jpg output)" >&2
+		(( fails++ ))
+	fi
+
+	# Test 4: PNG → JPEG with --quality=80
+	(( tests++ ))
+	magick -size 50x50 gradient:cyan-magenta "$test_dir/q80_test.png"
+	jpeg --quality=80 "$test_dir/q80_test.png" >/dev/null 2>&1
+	if [[ -f "$test_dir/q80_test.jpg" ]]; then
+		# Lower quality should produce smaller file than default (93)
+		magick -size 50x50 gradient:cyan-magenta "$test_dir/q93_test.png"
+		jpeg "$test_dir/q93_test.png" >/dev/null 2>&1
+		local size_80=$($STAT -c "%s" "$test_dir/q80_test.jpg")
+		local size_93=$($STAT -c "%s" "$test_dir/q93_test.jpg")
+		if [[ "$size_80" -lt "$size_93" ]]; then
+			echo "✓ Quality=80 produces smaller file test passed"
+		else
+			echo "✗ Quality=80 should be smaller than default ($size_80 vs $size_93)" >&2
+			(( fails++ ))
+		fi
+	else
+		echo "✗ PNG to JPEG (quality=80) test failed (no .jpg output)" >&2
+		(( fails++ ))
+	fi
+
+	# Test 5: Shorthand -8 (quality 80)
+	(( tests++ ))
+	magick -size 50x50 gradient:yellow-green "$test_dir/shorthand.png"
+	jpeg -8 "$test_dir/shorthand.png" >/dev/null 2>&1
+	if [[ -f "$test_dir/shorthand.jpg" ]]; then
+		echo "✓ Shorthand -8 test passed"
+	else
+		echo "✗ Shorthand -8 test failed (no .jpg output)" >&2
+		(( fails++ ))
+	fi
+
+	# Test 6: PNG with alpha → JPEG warns about alpha loss
+	(( tests++ ))
+	local stderr_output
+	stderr_output=$(jpeg "$test_dir/alpha.png" 2>&1 >/dev/null)
+	if [[ -f "$test_dir/alpha.jpg" ]]; then
+		if echo "$stderr_output" | grep -qi "alpha"; then
+			echo "✓ Alpha channel warning test passed"
+		else
+			echo "✗ Alpha channel warning test failed (no alpha warning)" >&2
+			echo "  stderr was: $stderr_output" >&2
+			(( fails++ ))
+		fi
+	else
+		echo "✗ PNG with alpha to JPEG test failed (no .jpg output)" >&2
+		(( fails++ ))
+	fi
+
+	# Test 7: Lossy source (WebP) → JPEG emits BIG warning
+	(( tests++ ))
+	magick -size 50x50 gradient:red-blue -quality 80 "$test_dir/lossy_source.webp"
+	stderr_output=$(jpeg "$test_dir/lossy_source.webp" 2>&1 >/dev/null)
+	if [[ -f "$test_dir/lossy_source.jpg" ]]; then
+		# Should contain strong warning language
+		if echo "$stderr_output" | grep -qi "warning" && echo "$stderr_output" | grep -qi "lossy"; then
+			echo "✓ Lossy source (WebP) big warning test passed"
+		else
+			echo "✗ Lossy source big warning test failed (weak or no warning)" >&2
+			echo "  stderr was: $stderr_output" >&2
+			(( fails++ ))
+		fi
+	else
+		echo "✗ WebP to JPEG conversion test failed (no .jpg output)" >&2
+		(( fails++ ))
+	fi
+
+	# Test 8: Already JPEG → skip
+	(( tests++ ))
+	cp "$test_dir/source.jpg" "$test_dir/already.jpg"
+	local output
+	output=$(jpeg "$test_dir/already.jpg" 2>&1)
+	if echo "$output" | grep -qi "skip\|already"; then
+		echo "✓ Already JPEG skip test passed"
+	else
+		echo "✗ Already JPEG skip test failed" >&2
+		echo "  output was: $output" >&2
+		(( fails++ ))
+	fi
+
+	# Test 9: Overwrite protection (non-interactive)
+	(( tests++ ))
+	magick -size 10x10 gradient:red-blue "$test_dir/overwrite_src.png"
+	jpeg "$test_dir/overwrite_src.png" >/dev/null 2>&1
+	# Now try again — output already exists
+	stderr_output=$(jpeg "$test_dir/overwrite_src.png" 2>&1 >/dev/null)
+	local exit_code=$?
+	if [[ "$exit_code" -ne 0 ]] && echo "$stderr_output" | grep -qi "exists\|overwrite"; then
+		echo "✓ Overwrite protection test passed"
+	else
+		echo "✗ Overwrite protection test failed (exit=$exit_code)" >&2
+		echo "  stderr was: $stderr_output" >&2
+		(( fails++ ))
+	fi
+
+	# Test 10: --force allows overwrite
+	(( tests++ ))
+	jpeg --force "$test_dir/overwrite_src.png" >/dev/null 2>&1
+	exit_code=$?
+	if [[ "$exit_code" -eq 0 ]]; then
+		echo "✓ Force overwrite test passed"
+	else
+		echo "✗ Force overwrite test failed (exit=$exit_code)" >&2
+		(( fails++ ))
+	fi
+
+	# Test 11: --help flag
+	(( tests++ ))
+	if jpeg --help 2>&1 | grep -qi "usage"; then
+		echo "✓ Help flag test passed"
+	else
+		echo "✗ Help flag test failed" >&2
+		(( fails++ ))
+	fi
+
+	# Test 12: --about flag
+	(( tests++ ))
+	if jpeg --about 2>&1 | grep -q "jpeg - Convert"; then
+		echo "✓ About flag test passed"
+	else
+		echo "✗ About flag test failed" >&2
+		(( fails++ ))
+	fi
+
+	# Test 13: Timestamp preservation
+	(( tests++ ))
+	magick -size 10x10 gradient:red-blue "$test_dir/ts_src.png"
+	touch -t 200001010000 "$test_dir/ts_src.png"
+	local stat_mtime
+	if command -v gstat >/dev/null 2>&1; then
+		stat_mtime() { gstat -c %Y "$1"; }
+	else
+		stat_mtime() { stat -f %m "$1"; }
+	fi
+	local original_mtime
+	original_mtime=$(stat_mtime "$test_dir/ts_src.png")
+	jpeg "$test_dir/ts_src.png" >/dev/null 2>&1
+	if [[ -f "$test_dir/ts_src.jpg" ]]; then
+		local converted_mtime
+		converted_mtime=$(stat_mtime "$test_dir/ts_src.jpg")
+		if [[ "$converted_mtime" == "$original_mtime" ]]; then
+			echo "✓ Timestamp preservation test passed"
+		else
+			echo "✗ Timestamp preservation test failed (expected $original_mtime, got $converted_mtime)" >&2
+			(( fails++ ))
+		fi
+	else
+		echo "✗ Timestamp preservation test failed (no output file)" >&2
+		(( fails++ ))
+	fi
+
+	# Test 14: jpg alias works
+	(( tests++ ))
+	magick -size 10x10 gradient:red-blue "$test_dir/alias_test.png"
+	jpg "$test_dir/alias_test.png" >/dev/null 2>&1
+	if [[ -f "$test_dir/alias_test.jpg" ]]; then
+		echo "✓ jpg alias test passed"
+	else
+		echo "✗ jpg alias test failed (no .jpg output)" >&2
+		(( fails++ ))
+	fi
+
+	# Test 15: Lossy JXL → JPEG emits warning
+	(( tests++ ))
+	stderr_output=$(jpeg "$test_dir/lossy.jxl" 2>&1 >/dev/null)
+	if [[ -f "$test_dir/lossy.jpg" ]]; then
+		if echo "$stderr_output" | grep -qi "lossy"; then
+			echo "✓ Lossy JXL warning test passed"
+		else
+			echo "✗ Lossy JXL warning test failed (no warning)" >&2
+			echo "  stderr was: $stderr_output" >&2
+			(( fails++ ))
+		fi
+	else
+		echo "✗ Lossy JXL to JPEG test failed (no .jpg output)" >&2
+		(( fails++ ))
+	fi
+
+	# Test 16: Size display shows before → after
+	(( tests++ ))
+	magick -size 10x10 gradient:red-blue "$test_dir/size_display.png"
+	output=$(jpeg "$test_dir/size_display.png" 2>/dev/null)
+	if echo "$output" | grep -q "→"; then
+		echo "✓ Size display test passed"
+	else
+		echo "✗ Size display test failed" >&2
+		echo "  output was: $output" >&2
+		(( fails++ ))
+	fi
+
+	# Test 17: PRESERVE_TIMESTAMPS=false disables timestamp preservation
+	(( tests++ ))
+	magick -size 10x10 gradient:red-blue "$test_dir/envts.png"
+	touch -t 200001010000 "$test_dir/envts.png"
+	local env_orig_mtime
+	env_orig_mtime=$(stat_mtime "$test_dir/envts.png")
+	PRESERVE_TIMESTAMPS=false jpeg "$test_dir/envts.png" >/dev/null 2>&1
+	if [[ -f "$test_dir/envts.jpg" ]]; then
+		local env_new_mtime
+		env_new_mtime=$(stat_mtime "$test_dir/envts.jpg")
+		if [[ "$env_new_mtime" != "$env_orig_mtime" ]]; then
+			echo "✓ PRESERVE_TIMESTAMPS=false test passed"
+		else
+			echo "✗ PRESERVE_TIMESTAMPS=false test failed (timestamps were preserved)" >&2
+			(( fails++ ))
+		fi
+	else
+		echo "✗ PRESERVE_TIMESTAMPS=false test failed (no output file)" >&2
+		(( fails++ ))
+	fi
+
+	# Test 18: --preserve-timestamps overrides PRESERVE_TIMESTAMPS=false
+	(( tests++ ))
+	magick -size 10x10 gradient:red-blue "$test_dir/envts_override.png"
+	touch -t 200001010000 "$test_dir/envts_override.png"
+	local override_orig_mtime
+	override_orig_mtime=$(stat_mtime "$test_dir/envts_override.png")
+	PRESERVE_TIMESTAMPS=false jpeg --preserve-timestamps "$test_dir/envts_override.png" >/dev/null 2>&1
+	if [[ -f "$test_dir/envts_override.jpg" ]]; then
+		local override_new_mtime
+		override_new_mtime=$(stat_mtime "$test_dir/envts_override.jpg")
+		if [[ "$override_new_mtime" == "$override_orig_mtime" ]]; then
+			echo "✓ CLI --preserve-timestamps overrides env var test passed"
+		else
+			echo "✗ CLI --preserve-timestamps override test failed" >&2
+			(( fails++ ))
+		fi
+	else
+		echo "✗ CLI --preserve-timestamps override test failed (no output file)" >&2
+		(( fails++ ))
+	fi
+
+	# Clean up test directory
+	echo "Cleaning up test directory..."
+	rm -rf "$test_dir"
+
+	# Report results
+	if [ $fails -gt 0 ]; then
+		echo "$fails of $tests jpeg tests failed!" >&2
+	else
+		echo "All $tests jpeg tests passed!"
+	fi
+
+	return $fails
+}
+
+# Run the test if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	test_jpeg
+fi

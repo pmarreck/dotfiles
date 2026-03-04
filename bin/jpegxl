@@ -433,6 +433,12 @@ jpegxl() {
 	local distance=${JPEGXL_DEFAULT_DISTANCE:-1}
 	local lossy=false
 	local preserve_timestamps=true
+	# Respect PRESERVE_TIMESTAMPS env var (unset/empty = true; 0/no/false = false)
+	if [[ -n "$PRESERVE_TIMESTAMPS" ]]; then
+		case "${PRESERVE_TIMESTAMPS,,}" in
+			0|no|false) preserve_timestamps=false ;;
+		esac
+	fi
 	local to_format=""
 	local quality=93 # Default quality for djxl and magick
 	local files=()

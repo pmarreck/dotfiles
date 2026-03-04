@@ -183,6 +183,53 @@ test_jpegxl() {
         (( fails++ ))
     fi
 
+    # Test 13: PRESERVE_TIMESTAMPS=false disables timestamp preservation
+    (( tests++ ))
+    local env_ts_file="$test_dir/envts.jpg"
+    magick -size 10x10 gradient:red-blue "$env_ts_file"
+    touch -t 200001010000 "$env_ts_file"
+    local env_orig_mtime
+    env_orig_mtime=$(stat_mtime "$env_ts_file")
+    PRESERVE_TIMESTAMPS=false jpegxl "$env_ts_file" >/dev/null 2>&1
+    local env_ts_output="$test_dir/envts.jxl"
+    if [[ -f "$env_ts_output" ]]; then
+        local env_new_mtime
+        env_new_mtime=$(stat_mtime "$env_ts_output")
+        if [[ "$env_new_mtime" != "$env_orig_mtime" ]]; then
+            echo "✓ PRESERVE_TIMESTAMPS=false test passed"
+        else
+            echo "✗ PRESERVE_TIMESTAMPS=false test failed (timestamps were preserved)" >&2
+            (( fails++ ))
+        fi
+    else
+        echo "✗ PRESERVE_TIMESTAMPS=false test failed (no output file)" >&2
+        (( fails++ ))
+    fi
+
+    # Test 14: --preserve-timestamps overrides PRESERVE_TIMESTAMPS=false
+    (( tests++ ))
+    local override_file="$test_dir/override.jpg"
+    magick -size 10x10 gradient:red-blue "$override_file"
+    touch -t 200001010000 "$override_file"
+    local override_orig_mtime
+    override_orig_mtime=$(stat_mtime "$override_file")
+    rm -f "$test_dir/override.jxl"
+    PRESERVE_TIMESTAMPS=false jpegxl --preserve-timestamps "$override_file" >/dev/null 2>&1
+    local override_output="$test_dir/override.jxl"
+    if [[ -f "$override_output" ]]; then
+        local override_new_mtime
+        override_new_mtime=$(stat_mtime "$override_output")
+        if [[ "$override_new_mtime" == "$override_orig_mtime" ]]; then
+            echo "✓ CLI --preserve-timestamps overrides env var test passed"
+        else
+            echo "✗ CLI --preserve-timestamps override test failed (timestamps not preserved)" >&2
+            (( fails++ ))
+        fi
+    else
+        echo "✗ CLI --preserve-timestamps override test failed (no output file)" >&2
+        (( fails++ ))
+    fi
+
     # Clean up test directory
     echo "Cleaning up test directory..."
     rm -rf "$test_dir"

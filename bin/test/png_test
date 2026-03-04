@@ -241,6 +241,50 @@ test_png() {
 		(( fails++ ))
 	fi
 
+	# Test 14: PRESERVE_TIMESTAMPS=false disables timestamp preservation
+	(( tests++ ))
+	magick -size 10x10 gradient:red-blue "$test_dir/envts_src.png"
+	cjxl -e 3 -d 0 "$test_dir/envts_src.png" "$test_dir/envts.jxl" 2>/dev/null
+	touch -t 200001010000 "$test_dir/envts.jxl"
+	local env_orig_mtime
+	env_orig_mtime=$(stat_mtime "$test_dir/envts.jxl")
+	rm -f "$test_dir/envts.png"
+	PRESERVE_TIMESTAMPS=false png "$test_dir/envts.jxl" >/dev/null 2>&1
+	if [[ -f "$test_dir/envts.png" ]]; then
+		local env_new_mtime
+		env_new_mtime=$(stat_mtime "$test_dir/envts.png")
+		if [[ "$env_new_mtime" != "$env_orig_mtime" ]]; then
+			echo "✓ PRESERVE_TIMESTAMPS=false test passed"
+		else
+			echo "✗ PRESERVE_TIMESTAMPS=false test failed (timestamps were preserved)" >&2
+			(( fails++ ))
+		fi
+	else
+		echo "✗ PRESERVE_TIMESTAMPS=false test failed (no output file)" >&2
+		(( fails++ ))
+	fi
+
+	# Test 15: --preserve-timestamps overrides PRESERVE_TIMESTAMPS=false
+	(( tests++ ))
+	cjxl -e 3 -d 0 "$test_dir/envts_src.png" "$test_dir/envts_override.jxl" 2>/dev/null
+	touch -t 200001010000 "$test_dir/envts_override.jxl"
+	local override_orig_mtime
+	override_orig_mtime=$(stat_mtime "$test_dir/envts_override.jxl")
+	PRESERVE_TIMESTAMPS=false png --preserve-timestamps "$test_dir/envts_override.jxl" >/dev/null 2>&1
+	if [[ -f "$test_dir/envts_override.png" ]]; then
+		local override_new_mtime
+		override_new_mtime=$(stat_mtime "$test_dir/envts_override.png")
+		if [[ "$override_new_mtime" == "$override_orig_mtime" ]]; then
+			echo "✓ CLI --preserve-timestamps overrides env var test passed"
+		else
+			echo "✗ CLI --preserve-timestamps override test failed" >&2
+			(( fails++ ))
+		fi
+	else
+		echo "✗ CLI --preserve-timestamps override test failed (no output file)" >&2
+		(( fails++ ))
+	fi
+
 	# Clean up test directory
 	echo "Cleaning up test directory..."
 	rm -rf "$test_dir"

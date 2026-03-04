@@ -1,0 +1,337 @@
+#!/usr/bin/env bash
+
+### jpeg: convert images to JPEG format
+
+# ANSI colors
+YELLOW='\033[1;33m'
+RED='\033[1;31m'
+RESET='\033[0m'
+
+warn_alpha() {
+	echo -e "${YELLOW}Warning:${RESET} $1 has an alpha channel which JPEG does not support." >&2
+	echo -e "${YELLOW}  Transparent areas will be flattened to a solid background.${RESET}" >&2
+}
+
+warn_lossy_to_lossy() {
+	echo -e "${RED}WARNING:${RESET} $1 is already a lossy format." >&2
+	echo -e "${RED}  Re-encoding lossy→lossy compounds artifacts from BOTH codecs,${RESET}" >&2
+	echo -e "${RED}  degrades fidelity with every generation, and produces larger files${RESET}" >&2
+	echo -e "${RED}  than the original with WORSE quality. There is almost no valid${RESET}" >&2
+	echo -e "${RED}  reason to do this unless a specific tool requires JPEG input.${RESET}" >&2
+}
+
+warn_lossy_jxl() {
+	echo -e "${YELLOW}Warning:${RESET} $1 was encoded with lossy compression (distance > 0)." >&2
+	echo -e "${YELLOW}  Converting to JPEG will compound artifacts from both codecs.${RESET}" >&2
+}
+
+silence() {
+	"$@" >/dev/null 2>&1
+}
+
+check_dependencies() {
+	local missing_deps=()
+
+	if ! silence command -v djxl; then
+		missing_deps+=("djxl")
+	fi
+
+	if ! silence command -v jxlinfo; then
+		missing_deps+=("jxlinfo")
+	fi
+
+	if ! silence command -v magick; then
+		missing_deps+=("ImageMagick")
+	fi
+
+	if silence command -v gstat; then
+		STAT="gstat"
+	elif silence stat --version; then
+		STAT="stat"
+	else
+		missing_deps+=("GNU stat (gstat)")
+	fi
+	export STAT
+
+	if [[ ${#missing_deps[@]} -gt 0 ]]; then
+		echo "Error: Missing required dependencies: ${missing_deps[*]}" >&2
+		return 1
+	fi
+
+	return 0
+}
+
+declare -F debug >/dev/null 2>&1 || \
+debug() {
+	[ -n "$DEBUG" ] && echo "DEBUG: $*" >&2
+}
+
+print_help() {
+	cat << 'EOF'
+Usage: jpeg [OPTIONS] FILES...
+
+Convert images to JPEG format. Supports JXL, PNG, TIFF, WebP, HEIC, and more.
+Also available as 'jpg'.
+
+Options:
+	--help, -h               Show this help message
+	--about                  Show a brief description
+	--quality=N              JPEG quality 1-100 (default: 93)
+	-1 through -10           Shorthand: -N sets quality to N×10 (-10 = 100)
+	-f, --force              Overwrite existing output files without prompting
+	--preserve-timestamps    Preserve original timestamps (default)
+	--no-preserve-timestamps Do not preserve original timestamps
+	--test                   Run self-test
+
+Environment Variables:
+	DEBUG                    Enable debug output
+
+Examples:
+	# Convert a lossless JXL (from JPEG source) back to JPEG perfectly
+	jpeg photo.jxl
+
+	# Convert a PNG to JPEG with default quality (93)
+	jpeg image.png
+
+	# Convert with specific quality
+	jpeg --quality=85 image.png
+
+	# Quick quality shorthand (-8 = quality 80)
+	jpeg -8 image.png
+
+	# Best quality shorthand (-10 = quality 100)
+	jpeg -10 image.png
+
+Notes:
+	- JXL files with JPEG reconstruction data are restored to the exact original JPEG
+	  (byte-perfect, no quality parameter needed).
+	- Converting from lossy sources (WebP, HEIC, lossy JXL) is strongly discouraged
+	  as it compounds artifacts from both codecs.
+	- PNG/TIFF sources with alpha channels will lose transparency (flattened to white).
+
+Dependencies:
+	- JPEG XL tools (djxl, jxlinfo)
+	- ImageMagick (magick)
+EOF
+}
+
+# Check if a JXL has JPEG reconstruction data
+jxl_has_jpeg_recon() {
+	local file="$1"
+	jxlinfo "$file" 2>/dev/null | grep -q "JPEG bitstream reconstruction"
+}
+
+# Check if a JXL was encoded lossily (no JPEG recon AND reported as lossy)
+jxl_is_lossy() {
+	local file="$1"
+	local info
+	info=$(jxlinfo "$file" 2>/dev/null)
+	if echo "$info" | grep -q "JPEG bitstream reconstruction"; then
+		return 1  # JPEG recon = not "lossy JXL" in the traditional sense
+	fi
+	# "lossy" without "lossless"
+	if echo "$info" | grep -q "lossy" && ! echo "$info" | grep -q "lossless"; then
+		return 0
+	fi
+	return 1
+}
+
+# Check if source has alpha channel
+has_alpha_channel() {
+	local file="$1"
+	magick identify -verbose "$file" 2>/dev/null | grep -q "Alpha"
+}
+
+# Known lossy source formats (not JXL — handled separately)
+is_lossy_format() {
+	local ext="$1"
+	case "$ext" in
+		webp|heic|heif) return 0 ;;
+		*) return 1 ;;
+	esac
+}
+
+display_size() {
+	local original_file="$1"
+	local new_file="$2"
+	local original_size=$($STAT -c "%s" "$original_file")
+	local new_size=$($STAT -c "%s" "$new_file")
+	local original_display new_display
+	if [[ "$original_size" -gt 5120 ]]; then
+		original_display="$(( (original_size + 1023) / 1024 ))K"
+	else
+		original_display="${original_size}B"
+	fi
+	if [[ "$new_size" -gt 5120 ]]; then
+		new_display="$(( (new_size + 1023) / 1024 ))K"
+	else
+		new_display="${new_size}B"
+	fi
+	echo "$original_file → $new_file (${original_display} → ${new_display})"
+}
+
+process_file() {
+	local file="$1"
+	local quality="$2"
+	local preserve_timestamps="$3"
+	local force="$4"
+
+	if [[ ! -f "$file" ]]; then
+		echo "Error: File not found: $file" >&2
+		return 1
+	fi
+
+	local extension="${file##*.}"
+	extension="${extension,,}"
+	debug "Processing $file ($extension)..."
+
+	# Already JPEG
+	if [[ "$extension" == "jpg" || "$extension" == "jpeg" ]]; then
+		debug "Skipping $file (already JPEG)"
+		echo "Skipping $file (already JPEG)"
+		return 0
+	fi
+
+	local output="${file%.*}.jpg"
+	debug "Output file: $output"
+
+	# Overwrite protection
+	if [[ -f "$output" && "$force" != "true" ]]; then
+		if [[ -t 0 && -t 1 ]]; then
+			read -rp "Overwrite $output? [y/N] " answer
+			if [[ "${answer,,}" != "y" ]]; then
+				echo "Skipping $file (output exists)" >&2
+				return 1
+			fi
+		else
+			echo "Error: $output already exists. Use -f/--force to overwrite." >&2
+			return 1
+		fi
+	fi
+
+	# Warnings and conversion
+	if [[ "$extension" == "jxl" ]]; then
+		if jxl_has_jpeg_recon "$file"; then
+			# Perfect JPEG reconstruction — no quality param, byte-identical
+			debug "Reconstructing original JPEG from JXL: $file -> $output"
+			if ! djxl "$file" "$output" 2>/dev/null; then
+				echo "Error reconstructing JPEG from $file." >&2
+				return 1
+			fi
+		elif jxl_is_lossy "$file"; then
+			# Lossy JXL → JPEG: warn about double lossy
+			warn_lossy_jxl "$file"
+			debug "Converting lossy JXL to JPEG (q=$quality): $file -> $output"
+			if ! djxl -q "$quality" --pixels_to_jpeg "$file" "$output" 2>/dev/null; then
+				echo "Error converting $file to JPEG." >&2
+				return 1
+			fi
+		else
+			# Lossless JXL from non-JPEG source → lossy JPEG
+			debug "Converting lossless JXL to JPEG (q=$quality): $file -> $output"
+			if ! djxl -q "$quality" --pixels_to_jpeg "$file" "$output" 2>/dev/null; then
+				echo "Error converting $file to JPEG." >&2
+				return 1
+			fi
+		fi
+	elif is_lossy_format "$extension"; then
+		# Lossy → lossy: BIG WARNING
+		warn_lossy_to_lossy "$file"
+		# Check for alpha
+		if has_alpha_channel "$file"; then
+			warn_alpha "$file"
+		fi
+		debug "Converting $extension to JPEG (q=$quality): $file -> $output"
+		if ! magick "$file" -flatten -quality "$quality" "$output" 2>/dev/null; then
+			echo "Error converting $file to JPEG." >&2
+			return 1
+		fi
+	else
+		# Lossless source (PNG, TIFF, etc.)
+		if has_alpha_channel "$file"; then
+			warn_alpha "$file"
+		fi
+		debug "Converting $extension to JPEG (q=$quality): $file -> $output"
+		if ! magick "$file" -flatten -quality "$quality" "$output" 2>/dev/null; then
+			echo "Error converting $file to JPEG." >&2
+			return 1
+		fi
+	fi
+
+	# Post-processing
+	if [[ "$preserve_timestamps" == "true" ]]; then
+		debug "Preserving timestamps from $file to $output"
+		touch -r "$file" "$output"
+	fi
+
+	if [[ -f "$output" ]]; then
+		display_size "$file" "$output"
+		return 0
+	else
+		echo "Error: Output file not produced for $file." >&2
+		return 1
+	fi
+}
+
+jpeg() {
+	check_dependencies || return 1
+
+	local quality=93
+	local preserve_timestamps=true
+	# Respect PRESERVE_TIMESTAMPS env var (unset/empty = true; 0/no/false = false)
+	if [[ -n "$PRESERVE_TIMESTAMPS" ]]; then
+		case "${PRESERVE_TIMESTAMPS,,}" in
+			0|no|false) preserve_timestamps=false ;;
+		esac
+	fi
+	local force=false
+	local files=()
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+			-h|--help) print_help; return 0 ;;
+			--about) echo "jpeg - Convert images to JPEG format"; return 0 ;;
+			--test)
+				"$HOME/dotfiles/bin/test/jpeg_test"
+				return $?
+				;;
+			--quality=*) quality="${1#*=}" ;;
+			-[0-9]|-10)
+				# Shorthand: -N = quality N*10
+				local n="${1#-}"
+				quality=$(( n * 10 ))
+				;;
+			-f|--force) force=true ;;
+			--preserve-timestamps) preserve_timestamps=true ;;
+			--no-preserve-timestamps) preserve_timestamps=false ;;
+			-*) echo "Unknown option: $1" >&2; print_help; return 1 ;;
+			*) files+=("$1") ;;
+		esac
+		shift
+	done
+
+	if [[ ${#files[@]} -eq 0 ]]; then
+		echo "Error: No input files specified" >&2
+		print_help
+		return 1
+	fi
+
+	local failures=0
+	for file in "${files[@]}"; do
+		if ! process_file "$file" "$quality" "$preserve_timestamps" "$force"; then
+			((failures++))
+		fi
+	done
+
+	if [[ "$failures" -gt 0 ]]; then
+		echo "Completed with $failures failures." >&2
+		return 1
+	fi
+
+	return 0
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	jpeg "$@"
+fi

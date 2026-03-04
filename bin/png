@@ -217,6 +217,12 @@ png() {
 	check_dependencies || return 1
 
 	local preserve_timestamps=true
+	# Respect PRESERVE_TIMESTAMPS env var (unset/empty = true; 0/no/false = false)
+	if [[ -n "$PRESERVE_TIMESTAMPS" ]]; then
+		case "${PRESERVE_TIMESTAMPS,,}" in
+			0|no|false) preserve_timestamps=false ;;
+		esac
+	fi
 	local force=false
 	local files=()
 
