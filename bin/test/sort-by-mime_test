@@ -1,0 +1,174 @@
+#!/usr/bin/env bash
+
+# Test for sort-by-mime
+
+if [[ -z "$DOTFILES_DIR" ]]; then
+	DOTFILES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+fi
+export PATH="$DOTFILES_DIR/bin:$PATH"
+
+# Ensure assert is available
+if ! command -v assert &> /dev/null; then
+	echo "assert command not found. It should be in '$DOTFILES_DIR/bin'." >&2
+	exit 1
+fi
+
+tests=0
+fails=0
+
+run_test() {
+	local name="$1"
+	local func="$2"
+	((tests++))
+	echo "Running Test $tests: $name"
+	if "$func"; then
+		echo "✅ Test $tests: $name PASSED"
+	else
+		echo "❌ Test $tests: $name FAILED" >&2
+		((fails++))
+	fi
+}
+
+# Create temp dir for test fixtures
+TMPDIR_TEST=$(mktemp -d "${TMPDIR:-/tmp}/sort-by-mime-test.XXXXXX")
+trap 'rm -rf "$TMPDIR_TEST"' EXIT
+
+# Create test fixtures
+echo "hello world" > "$TMPDIR_TEST/plain.txt"
+printf '#!/usr/bin/env bash\necho hi\n' > "$TMPDIR_TEST/script.sh"
+# Create a valid-enough PNG (needs IHDR chunk for file to detect it)
+printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00' > "$TMPDIR_TEST/fake.png"
+echo "<html><body>hi</body></html>" > "$TMPDIR_TEST/page.html"
+echo "more text" > "$TMPDIR_TEST/another.txt"
+
+# --- Tests ---
+
+test_about() {
+	local out
+	out=$(sort-by-mime --about 2>&1)
+	local rc=$?
+	assert "$rc" "==" "0" "about exits 0" || return 1
+	assert "$out" "=~" "sort-by-mime" "about mentions tool name" || return 1
+}
+
+test_help() {
+	local out
+	out=$(sort-by-mime --help 2>&1)
+	local rc=$?
+	assert "$rc" "==" "0" "help exits 0" || return 1
+	assert "$out" "=~" "usage:" "help shows usage" || return 1
+	assert "$out" "=~" "tar" "help mentions tar example" || return 1
+}
+
+test_help_short() {
+	local out
+	out=$(sort-by-mime -h 2>&1)
+	local rc=$?
+	assert "$rc" "==" "0" "-h exits 0" || return 1
+	assert "$out" "=~" "usage:" "-h shows usage" || return 1
+}
+
+test_empty_input() {
+	local out
+	out=$(printf '' | sort-by-mime 2>/dev/null)
+	local rc=$?
+	assert "$rc" "==" "0" "empty input exits 0" || return 1
+	assert "$out" "==" "" "empty input produces empty output" || return 1
+}
+
+test_basic_sort_groups_by_mime() {
+	# Feed a mix of text and image files; text files should be adjacent in output
+	local out
+	out=$(printf '%s\n%s\n%s\n' \
+		"$TMPDIR_TEST/plain.txt" \
+		"$TMPDIR_TEST/fake.png" \
+		"$TMPDIR_TEST/another.txt" \
+		| sort-by-mime 2>/dev/null)
+	local rc=$?
+	assert "$rc" "==" "0" "basic sort exits 0" || return 1
+
+	# The two text files must appear adjacent (consecutive lines)
+	local line_plain line_another
+	line_plain=$(echo "$out" | grep -n "plain.txt" | cut -d: -f1)
+	line_another=$(echo "$out" | grep -n "another.txt" | cut -d: -f1)
+	local diff=$(( line_plain > line_another ? line_plain - line_another : line_another - line_plain ))
+	assert "$diff" "==" "1" "text files are adjacent (lines $line_plain and $line_another)" || return 1
+}
+
+test_filename_with_spaces() {
+	echo "spaced content" > "$TMPDIR_TEST/file with spaces.txt"
+	local out
+	out=$(printf '%s\n' "$TMPDIR_TEST/file with spaces.txt" | sort-by-mime 2>/dev/null)
+	local rc=$?
+	assert "$rc" "==" "0" "spaces exit 0" || return 1
+	assert "$out" "==" "$TMPDIR_TEST/file with spaces.txt" "filename with spaces preserved" || return 1
+}
+
+test_null_delimited_mode() {
+	local out
+	out=$(printf '%s\0%s\0' \
+		"$TMPDIR_TEST/plain.txt" \
+		"$TMPDIR_TEST/fake.png" \
+		| sort-by-mime -0 2>/dev/null | tr '\0' '\n')
+	local rc=$?
+	assert "$rc" "==" "0" "null mode exits 0" || return 1
+	# Should have both files
+	assert "$out" "=~" "plain.txt" "null mode has plain.txt" || return 1
+	assert "$out" "=~" "fake.png" "null mode has fake.png" || return 1
+}
+
+test_reverse_sort() {
+	local out_normal out_reverse
+	out_normal=$(printf '%s\n%s\n%s\n' \
+		"$TMPDIR_TEST/plain.txt" \
+		"$TMPDIR_TEST/fake.png" \
+		"$TMPDIR_TEST/page.html" \
+		| sort-by-mime 2>/dev/null)
+	out_reverse=$(printf '%s\n%s\n%s\n' \
+		"$TMPDIR_TEST/plain.txt" \
+		"$TMPDIR_TEST/fake.png" \
+		"$TMPDIR_TEST/page.html" \
+		| sort-by-mime -r 2>/dev/null)
+	local rc=$?
+	assert "$rc" "==" "0" "reverse sort exits 0" || return 1
+	# First line of normal should be last line of reverse (or different order)
+	local first_normal first_reverse
+	first_normal=$(echo "$out_normal" | head -1)
+	first_reverse=$(echo "$out_reverse" | head -1)
+	assert "$first_normal" "!=" "$first_reverse" "reverse changes order" || return 1
+}
+
+test_nonexistent_file_continues() {
+	local out err
+	out=$(printf '%s\n%s\n' \
+		"$TMPDIR_TEST/plain.txt" \
+		"$TMPDIR_TEST/does_not_exist.xyz" \
+		| sort-by-mime 2>/dev/null)
+	local rc=$?
+	# Should still succeed and include the valid file
+	assert "$rc" "==" "0" "nonexistent file doesn't crash" || return 1
+	assert "$out" "=~" "plain.txt" "valid file still in output" || return 1
+}
+
+# --- Run tests ---
+echo "Testing sort-by-mime..."
+echo
+
+run_test "--about returns one-liner" test_about
+run_test "--help returns usage with tar example" test_help
+run_test "-h works as alias" test_help_short
+run_test "empty input" test_empty_input
+run_test "basic sort groups files by MIME type" test_basic_sort_groups_by_mime
+run_test "filename with spaces" test_filename_with_spaces
+run_test "null-delimited mode (-0)" test_null_delimited_mode
+run_test "reverse sort (-r)" test_reverse_sort
+run_test "nonexistent file doesn't crash" test_nonexistent_file_continues
+
+# --- Summary ---
+echo
+if (( fails == 0 )); then
+	echo "✅ All $tests tests passed."
+else
+	echo "❌ $fails of $tests tests failed." >&2
+	exit "$fails"
+fi
