@@ -206,7 +206,32 @@ test_jpegxl() {
         (( fails++ ))
     fi
 
-    # Test 15: PRESERVE_TIMESTAMPS=false disables timestamp preservation
+    # Test 15: JPEG 2000 (.jp2) conversion
+    (( tests++ ))
+    local jp2_file="$test_dir/test_jp2.jp2"
+    magick -size 10x10 gradient:red-blue "$jp2_file"
+    DEBUG=true jpegxl "$jp2_file" >/dev/null 2>&1
+    if [[ -f "$test_dir/test_jp2.jxl" ]]; then
+        echo "✓ JPEG 2000 conversion test passed"
+    else
+        echo "✗ JPEG 2000 conversion test failed (no .jxl output)" >&2
+        (( fails++ ))
+    fi
+
+    # Test 15b: JPEG 2000 emits lossy-source warning
+    (( tests++ ))
+    rm -f "$test_dir/test_jp2.jxl"
+    local jp2_stderr
+    jp2_stderr=$(jpegxl "$jp2_file" 2>&1 >/dev/null)
+    if echo "$jp2_stderr" | grep -qi "lossy source\|typically lossy"; then
+        echo "✓ JPEG 2000 lossy-source warning test passed"
+    else
+        echo "✗ JPEG 2000 lossy-source warning test failed (no warning on stderr)" >&2
+        echo "  stderr was: $jp2_stderr" >&2
+        (( fails++ ))
+    fi
+
+    # Test 16: PRESERVE_TIMESTAMPS=false disables timestamp preservation
     (( tests++ ))
     local env_ts_file="$test_dir/envts.jpg"
     magick -size 10x10 gradient:red-blue "$env_ts_file"
@@ -229,7 +254,7 @@ test_jpegxl() {
         (( fails++ ))
     fi
 
-    # Test 16: --preserve-timestamps overrides PRESERVE_TIMESTAMPS=false
+    # Test 17: --preserve-timestamps overrides PRESERVE_TIMESTAMPS=false
     (( tests++ ))
     local override_file="$test_dir/override.jpg"
     magick -size 10x10 gradient:red-blue "$override_file"
