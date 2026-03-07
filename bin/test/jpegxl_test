@@ -183,7 +183,30 @@ test_jpegxl() {
         (( fails++ ))
     fi
 
-    # Test 13: PRESERVE_TIMESTAMPS=false disables timestamp preservation
+    # Test 13: BMP lossless conversion
+    (( tests++ ))
+    local bmp_file="$test_dir/test_bmp.bmp"
+    magick -size 10x10 gradient:red-blue "$bmp_file"
+    DEBUG=true jpegxl "$bmp_file" >/dev/null 2>&1
+    if [[ -f "$test_dir/test_bmp.jxl" ]]; then
+        echo "✓ BMP lossless conversion test passed"
+    else
+        echo "✗ BMP lossless conversion test failed (no .jxl output)" >&2
+        (( fails++ ))
+    fi
+
+    # Test 14: BMP lossy conversion
+    (( tests++ ))
+    rm -f "$test_dir/test_bmp.jxl"
+    DEBUG=true jpegxl --lossy "$bmp_file" >/dev/null 2>&1
+    if [[ -f "$test_dir/test_bmp.jxl" ]]; then
+        echo "✓ BMP lossy conversion test passed"
+    else
+        echo "✗ BMP lossy conversion test failed (no .jxl output)" >&2
+        (( fails++ ))
+    fi
+
+    # Test 15: PRESERVE_TIMESTAMPS=false disables timestamp preservation
     (( tests++ ))
     local env_ts_file="$test_dir/envts.jpg"
     magick -size 10x10 gradient:red-blue "$env_ts_file"
@@ -206,7 +229,7 @@ test_jpegxl() {
         (( fails++ ))
     fi
 
-    # Test 14: --preserve-timestamps overrides PRESERVE_TIMESTAMPS=false
+    # Test 16: --preserve-timestamps overrides PRESERVE_TIMESTAMPS=false
     (( tests++ ))
     local override_file="$test_dir/override.jpg"
     magick -size 10x10 gradient:red-blue "$override_file"

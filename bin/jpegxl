@@ -376,8 +376,8 @@ process_file() {
 					return 1
 				fi
 			fi
-		elif [[ "$extension" == "tif" || "$extension" == "tiff" ]]; then
-			# TIFF: pipe through ImageMagick directly to cjxl (no temp file)
+		elif [[ "$extension" == "tif" || "$extension" == "tiff" || "$extension" == "bmp" ]]; then
+			# TIFF/BMP: pipe through ImageMagick directly to cjxl (no temp file)
 			if [[ "$lossy" == "false" ]]; then
 				debug "Converting $extension to JXL (lossless, piped): $file -> $output"
 				if ! (set -o pipefail; magick "$file" png:- | cjxl -e "$effort" -d 0 - "$output" 2>/dev/null); then
