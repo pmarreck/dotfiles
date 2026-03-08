@@ -1,0 +1,114 @@
+#!/usr/bin/env bash
+
+tests=0
+fails=0
+
+# Test 1: --help flag works
+((tests++))
+echo "Testing: --help flag..."
+output=$(macintel-apps-left --help 2>&1) || true
+if [[ "$output" == *"Usage:"* ]]; then
+	echo "✓ --help shows usage"
+else
+	echo "✗ --help did not show usage" >&2
+	echo "  Got: $output" >&2
+	((fails++))
+fi
+
+# Test 2: --about flag works
+((tests++))
+echo "Testing: --about flag..."
+output=$(macintel-apps-left --about 2>&1) || true
+if [[ "$output" == *"Intel"* ]]; then
+	echo "✓ --about mentions Intel"
+else
+	echo "✗ --about did not mention Intel" >&2
+	echo "  Got: $output" >&2
+	((fails++))
+fi
+
+# Test 3: -h is alias for --help
+((tests++))
+echo "Testing: -h flag..."
+output=$(macintel-apps-left -h 2>&1) || true
+if [[ "$output" == *"Usage:"* ]]; then
+	echo "✓ -h shows usage"
+else
+	echo "✗ -h did not show usage" >&2
+	echo "  Got: $output" >&2
+	((fails++))
+fi
+
+# Test 4: On macOS, runs without error
+((tests++))
+echo "Testing: runs on macOS without error..."
+if [[ "$(uname -s)" == "Darwin" ]]; then
+	if macintel-apps-left >/dev/null 2>&1; then
+		echo "✓ exits cleanly on macOS"
+	else
+		rc=$?
+		# exit code 0 = success, nonzero only if actual error
+		echo "✗ exited with code $rc on macOS" >&2
+		((fails++))
+	fi
+else
+	# On Linux, should fail with a nice message
+	output=$(macintel-apps-left 2>&1) || true
+	if [[ "$output" == *"macOS"* ]]; then
+		echo "✓ shows macOS-only message on non-macOS"
+	else
+		echo "✗ did not show macOS-only message on non-macOS" >&2
+		((fails++))
+	fi
+fi
+
+# Test 5: Output lines (if any) are valid .app paths
+((tests++))
+echo "Testing: output format..."
+if [[ "$(uname -s)" == "Darwin" ]]; then
+	output=$(macintel-apps-left 2>/dev/null) || true
+	if [[ -z "$output" ]]; then
+		echo "✓ no output (no Intel-only apps found, or all universal) — format trivially valid"
+	else
+		bad_lines=0
+		while IFS= read -r line; do
+			if [[ "$line" != *".app" ]]; then
+				((bad_lines++))
+				echo "  Bad line: $line" >&2
+			fi
+		done <<< "$output"
+		if [[ "$bad_lines" -eq 0 ]]; then
+			echo "✓ all output lines end in .app"
+		else
+			echo "✗ $bad_lines output lines did not end in .app" >&2
+			((fails++))
+		fi
+	fi
+else
+	echo "✓ skipped (not macOS)"
+fi
+
+# Test 6: --test flag runs this test (meta-test, skip if already recursing)
+if [[ -z "${MACINTEL_APPS_LEFT_TESTING:-}" ]]; then
+	((tests++))
+	echo "Testing: --test flag runs tests..."
+	output=$(MACINTEL_APPS_LEFT_TESTING=1 macintel-apps-left --test 2>&1) || true
+	# stdout is muted by --test, so only stderr (errors) should appear
+	# A clean run means exit 0 and no output
+	rc=0
+	MACINTEL_APPS_LEFT_TESTING=1 macintel-apps-left --test 2>/dev/null || rc=$?
+	if [[ "$rc" -eq 0 ]]; then
+		echo "✓ --test flag runs tests cleanly"
+	else
+		echo "✗ --test flag exited with code $rc" >&2
+		((fails++))
+	fi
+fi
+
+# Summary
+if [[ "$fails" -eq 0 ]]; then
+	echo "All $tests tests passed"
+else
+	echo "$fails of $tests tests failed" >&2
+fi
+exit "$fails"

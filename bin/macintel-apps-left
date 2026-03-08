@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+
+# Find Intel-only (x86_64) apps in /Applications and ~/Applications
+
+show_help() {
+	cat <<'USAGE'
+Usage: macintel-apps-left [OPTIONS]
+
+Scans /Applications and ~/Applications for apps that are Intel-only
+(x86_64 with no arm64 slice), and prints their paths.
+
+Options:
+  -h, --help    Show this help message and exit
+  -a, --about   Show a one-line summary
+  --test        Run associated tests
+USAGE
+}
+
+show_about() {
+	echo "Lists Intel-only (x86_64) macOS apps that have not been rebuilt for Apple Silicon."
+}
+
+# Handle flags
+case "${1:-}" in
+	-h|--help)
+		show_help
+		exit 0
+		;;
+	-a|--about)
+		show_about
+		exit 0
+		;;
+	--test)
+		script_dir="$(cd "$(dirname "$0")" && pwd -P)"
+		exec "$script_dir/test/macintel-apps-left_test" >/dev/null
+		;;
+esac
+
+# Platform check
+if [[ "$(uname -s)" != "Darwin" ]]; then
+	echo "Error: macintel-apps-left only works on macOS." >&2
+	exit 1
+fi
+
+scan_dirs=()
+[[ -d /Applications ]] && scan_dirs+=("/Applications")
+[[ -d "$HOME/Applications" ]] && scan_dirs+=("$HOME/Applications")
+
+if [[ ${#scan_dirs[@]} -eq 0 ]]; then
+	echo "No application directories found." >&2
+	exit 1
+fi
+
+# Find all .app bundles and check their primary executable
+find "${scan_dirs[@]}" -maxdepth 3 -name "*.app" -type d 2>/dev/null | sort | while IFS= read -r app; do
+	# Try to find the main executable via Info.plist
+	plist="$app/Contents/Info.plist"
+	exe_name=""
+	if [[ -f "$plist" ]]; then
+		exe_name=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$plist" 2>/dev/null || true)
+	fi
+
+	exe=""
+	if [[ -n "$exe_name" && -f "$app/Contents/MacOS/$exe_name" ]]; then
+		exe="$app/Contents/MacOS/$exe_name"
+	else
+		# Fall back to first executable in MacOS/
+		macos_dir="$app/Contents/MacOS"
+		if [[ -d "$macos_dir" ]]; then
+			exe=$(find "$macos_dir" -maxdepth 1 -type f -perm +111 2>/dev/null | head -1)
+		fi
+	fi
+
+	if [[ -z "$exe" || ! -f "$exe" ]]; then
+		continue
+	fi
+
+	# Check architectures
+	archs=$(lipo -archs "$exe" 2>/dev/null || true)
+	if [[ -z "$archs" ]]; then
+		continue
+	fi
+
+	# Intel-only: has x86_64 but no arm64
+	if [[ "$archs" == *"x86_64"* ]] && [[ "$archs" != *"arm64"* ]]; then
+		echo "$app"
+	fi
+done
