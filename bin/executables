@@ -1,49 +1,18 @@
 #!/usr/bin/env bash
 
 
-# Format executable name, annotating symlinks for clarity
-format_executable_display() {
-	local entry="$1"
-	local name
-	name=$(basename "$entry")
-	if [[ -L "$entry" ]]; then
-		printf '%s (symlinked)' "$name"
-	else
-		printf '%s' "$name"
-	fi
-}
-
-# Determine if the provided path is executable or resolves to an executable target
-is_executable_entry() {
-	local entry="$1"
-	[[ -z "$entry" ]] && return 1
-	if [[ -x "$entry" && ! -d "$entry" ]]; then
-		return 0
-	fi
-	if [[ -L "$entry" ]]; then
-		local target
-		if ! target=$(readlink -f "$entry" 2>/dev/null); then
-			return 1
-		fi
-		[[ -n "$target" && -x "$target" && ! -d "$target" ]]
-		return
-	fi
-	return 1
-}
-
 # Print out the names of all executables available in your PATH
 executables() {
 	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-	
+
 	local show_scripts=false
 	local path_filters=()
-	local results=()
-	
+
 	# Parse command line arguments
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 			--scripts) show_scripts=true ; shift ;;
-			-h|--help) 
+			-h|--help)
 				echo "executables - Print out the names of all executables available in your PATH"
 				echo ""
 				echo "Usage: executables [OPTIONS] [PATH ...]"
@@ -76,10 +45,9 @@ executables() {
 		esac
 	done
 
-	# Create a temporary directory for our search paths
 	local search_paths=()
 	local nonexistent_paths=()
-	
+
 	# Process PATH into valid directories
 	IFS=: read -ra path_dirs <<<"$PATH"
 	for dir in "${path_dirs[@]}"; do
@@ -107,64 +75,42 @@ executables() {
 		search_paths=("${filtered_paths[@]}")
 	fi
 
-	# Use fd for faster searching if available
-	if command -v fd >/dev/null 2>&1; then
-		# Build base fd command
-		local fd_cmd=(
-			--max-depth 1
-			--min-depth 1
-			--type f
-			--type l
-			--absolute-path
-			--print0
-		)
+	[[ ${#search_paths[@]} -eq 0 ]] && return 0
 
-		# Add search paths - use fd's --search-path for parallel processing
-		if [[ ${#search_paths[@]} -gt 0 ]]; then
-			# Build fd command with multiple --search-path arguments
-			local search_path_args=()
-			for path in "${search_paths[@]}"; do
-				search_path_args+=(--search-path "$path")
-			done
-			
-			while IFS= read -r -d $'\0' exe; do
-				if ! is_executable_entry "$exe"; then
-					continue
-				fi
-				if $show_scripts && ! file -L "$exe" 2>/dev/null | grep -q "script"; then
-					continue
-				fi
-				results+=("$(format_executable_display "$exe")")
-			done < <(fd "${fd_cmd[@]}" "${search_path_args[@]}" . 2>/dev/null)
-		fi
+	# Resolve sort path upfront so it works even with restricted PATHs
+	local sort_cmd
+	sort_cmd=$(command -v sort 2>/dev/null) || sort_cmd=/usr/bin/sort
+
+	# Collect all candidate files, then process in a pipeline instead of per-file subshells.
+	# Key optimizations:
+	#   - ${exe##*/} instead of $(basename "$exe") — no subshell per file
+	#   - Inline symlink check instead of function call overhead
+	#   - For --scripts: batch file(1) via xargs instead of one invocation per file
+	#   - Stream to sort -u instead of accumulating in a bash array
+
+	if $show_scripts; then
+		# --scripts mode: batch file(1) calls via xargs for massive speedup
+		_executables_collect_candidates "${search_paths[@]}" \
+			| xargs -0 file -L 2>/dev/null \
+			| grep 'script' \
+			| while IFS=: read -r exe _rest; do
+				[[ -z "$exe" || ! -f "$exe" ]] && continue
+				local name="${exe##*/}"
+				[[ -L "$exe" ]] && name="$name (symlinked)"
+				printf '%s\n' "$name"
+			done \
+			| "$sort_cmd" -u
 	else
-		# Fallback to find if fd is not available
-		for dir in "${search_paths[@]}"; do
-			local find_cmd
-			if find /tmp -executable 2>/dev/null | grep -q .; then
-				find_cmd='find -L "$dir" -mindepth 1 -maxdepth 1 -not -type d -executable -print 2>/dev/null'
-			else
-				find_cmd='find -L "$dir" -mindepth 1 -maxdepth 1 -not -type d -perm +111 -print 2>/dev/null'
-			fi
-
-			while IFS= read -r exe; do
+		# Normal mode: stream directly, no file(1) needed
+		_executables_collect_candidates "${search_paths[@]}" \
+			| while IFS= read -r -d $'\0' exe; do
 				[[ -z "$exe" ]] && continue
-				if ! is_executable_entry "$exe"; then
-					continue
-				fi
-				if $show_scripts && ! file -L "$exe" 2>/dev/null | grep -q "script"; then
-					continue
-				fi
-				results+=("$(format_executable_display "$exe")")
-			done < <(eval "$find_cmd" 2>/dev/null)
-		done
+				local name="${exe##*/}"
+				[[ -L "$exe" ]] && name="$name (symlinked)"
+				printf '%s\n' "$name"
+			done \
+			| "$sort_cmd" -u
 	fi
-
-	# Output results if any were found
-	if [[ ${#results[@]} -gt 0 ]]; then
-		printf '%s\n' "${results[@]}" | sort -u
-	fi
-
 
 	# Show warnings if any
 	if [[ ${#nonexistent_paths[@]} -gt 0 ]]; then
@@ -174,14 +120,49 @@ executables() {
 	fi
 }
 
+# Emit null-delimited paths of executable files/symlinks from given directories
+_executables_collect_candidates() {
+	local dirs=("$@")
+	if command -v fd >/dev/null 2>&1; then
+		local search_path_args=()
+		for path in "${dirs[@]}"; do
+			search_path_args+=(--search-path "$path")
+		done
+		# fd with --type x filters for executable permission natively
+		fd --max-depth 1 --min-depth 1 --type f --type l \
+			--absolute-path --print0 \
+			"${search_path_args[@]}" . 2>/dev/null \
+			| while IFS= read -r -d $'\0' exe; do
+				# fd finds files+symlinks but doesn't check executable bit; verify it
+				if [[ -x "$exe" ]]; then
+					printf '%s\0' "$exe"
+				elif [[ -L "$exe" ]]; then
+					local target
+					target=$(readlink -f "$exe" 2>/dev/null) || continue
+					[[ -n "$target" && -x "$target" && ! -d "$target" ]] && printf '%s\0' "$exe"
+				fi
+			done
+	else
+		# Fallback to find
+		local perm_flag
+		if find /dev/null -executable 2>/dev/null; then
+			perm_flag="-executable"
+		else
+			perm_flag="-perm +111"
+		fi
+		for dir in "${dirs[@]}"; do
+			find -L "$dir" -mindepth 1 -maxdepth 1 -not -type d $perm_flag -print0 2>/dev/null
+		done
+	fi
+}
+
 # Run the function if this script is executed directly
 if ! (return 0 2>/dev/null); then
-	# Check if we are running tests
+	_script_name="${0##*/}"
+	_script_name="${_script_name#-}"
 	if [ "$1" = "--test" ]; then
-		# Run tests from the test file
-		exec "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+		exec "$HOME/dotfiles/bin/test/${_script_name}_test"
 	else
-		# If called directly, pass all arguments to the function
-		$(basename "${0##\-}") "$@"
+		"$_script_name" "$@"
 	fi
 fi
