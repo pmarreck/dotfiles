@@ -147,10 +147,85 @@ echo "bin2"' > "$test_dir/bin2/bin2_only"
     return 1
   fi
   
+  # Test --ambiguate flag: no "(symlinked)" annotations, deduplicated by name
+  echo "Testing --ambiguate flag..."
+  if ! ambig_output=$(PATH="$limited_path" "$HOME/dotfiles/bin/executables" --ambiguate 2>/dev/null); then
+    echo "FAIL: --ambiguate command failed"
+    return 1
+  fi
+
+  # Should NOT have "(symlinked)" in output
+  if echo "$ambig_output" | grep -q '(symlinked)'; then
+    echo "FAIL: --ambiguate output still contains '(symlinked)'"
+    return 1
+  fi
+
+  # test1_symlink should still appear (it's a different name)
+  if ! echo "$ambig_output" | grep -q '^test1_symlink$'; then
+    echo "FAIL: --ambiguate did not include test1_symlink (plain name)"
+    return 1
+  fi
+
+  # test1 should appear exactly once
+  local test1_count
+  test1_count=$(echo "$ambig_output" | grep -c '^test1$')
+  if [[ "$test1_count" -ne 1 ]]; then
+    echo "FAIL: --ambiguate has $test1_count copies of test1 (expected 1)"
+    return 1
+  fi
+
+  # Test --ambiguate help text appears in --help
+  echo "Testing --ambiguate in help..."
+  if ! echo "$output" | grep -q 'ambiguate'; then
+    echo "FAIL: --help does not mention --ambiguate"
+    return 1
+  fi
+
+  # Test --path flag: shows paths in a second column
+  echo "Testing --path flag..."
+  if ! path_output=$(PATH="$limited_path" "$HOME/dotfiles/bin/executables" --path "$test_dir/bin1" 2>/dev/null); then
+    echo "FAIL: --path command failed"
+    return 1
+  fi
+
+  # Output should contain the test directory path
+  if ! echo "$path_output" | grep -q "$test_dir/bin1/test1"; then
+    echo "FAIL: --path output does not show path for test1"
+    echo "Got: $path_output"
+    return 1
+  fi
+
+  # test1 name should still be in the output
+  if ! echo "$path_output" | grep -q 'test1'; then
+    echo "FAIL: --path output does not show name test1"
+    return 1
+  fi
+
+  # Test --path with symlinks: should show source -> target
+  echo "Testing --path flag with symlinks..."
+  if ! path_sym_output=$(PATH="$limited_path" "$HOME/dotfiles/bin/executables" --path "$test_dir/bin2" 2>/dev/null); then
+    echo "FAIL: --path with symlinks command failed"
+    return 1
+  fi
+
+  # Symlink line should contain "->" showing source and target
+  if ! echo "$path_sym_output" | grep 'test1_symlink' | grep -Fq -- '->'; then
+    echo "FAIL: --path does not show -> for symlink"
+    echo "Got: $path_sym_output"
+    return 1
+  fi
+
+  # Test --path in help text
+  echo "Testing --path in help..."
+  if ! echo "$output" | grep -Fq -- '--path'; then
+    echo "FAIL: --help does not mention --path"
+    return 1
+  fi
+
   # Clean up
   export PATH="$old_path"
   rm -rf "$test_dir"
-  
+
   echo "All tests passed!"
   return 0
 }
