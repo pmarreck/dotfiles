@@ -2,7 +2,7 @@
 [user]
 # Please adapt and uncomment the following lines:
 	name = Peter Marreck
-	email = lumbergh@gmail.com
+	email = [EMAIL_ADDRESS]
 [core]
 	precomposeUnicode = true
 	pager = delta --tabs=2
@@ -34,3 +34,9 @@
 	required = true
 [init]
 	defaultBranch = yolo
+[credential "https://github.com"]
+	helper =
+	helper = !/run/current-system/sw/bin/gh auth git-credential
+[credential "https://gist.github.com"]
+	helper =
+	helper = !/run/current-system/sw/bin/gh auth git-credential
