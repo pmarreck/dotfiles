@@ -10,6 +10,15 @@ test_glob() {
 
   glob_path=$(command -v glob)
 
+  # Detect filesystem case-sensitivity at runtime
+  local _cs_probe
+  _cs_probe=$(mktemp --tmpdir case_probe.XXXXXX)
+  local case_insensitive_fs=false
+  if [[ -e "${_cs_probe^^}" && "${_cs_probe}" != "${_cs_probe^^}" ]]; then
+    case_insensitive_fs=true
+  fi
+  rm -f "$_cs_probe"
+
   # Create test directory
   pushd "$(mktemp --tmpdir -d glob_test.XXXXXX)" >/dev/null
 
@@ -237,41 +246,72 @@ test_glob() {
   
   # Test 19: Case-insensitive matching with --ignore-case
   (( tests++ ))
-  # Create test files with mixed case (including lowercase files for case-sensitive test)
-  touch "Test.JPG" "test.Jpg" "TEST.jpg" "other.png" "test with spaces.jpg" "test1.jpg" "test2.jpg"
-  
-  # Test without ignore-case flag (should only match exact case)
-  output=$(glob "test*.jpg" 2>/dev/null)
-  expected_files=$'test with spaces.jpg\ntest1.jpg\ntest2.jpg'
-  assert "$output" == "$expected_files" "glob should be case-sensitive by default"
-  (( fails += $? ))
-  
-  # Test with --ignore-case flag (should match all case variations)
-  (( tests++ ))
-  output=$(glob --ignore-case "test*.jpg" 2>/dev/null)
-  expected_files=$'TEST.jpg\nTest.JPG\ntest with spaces.jpg\ntest.Jpg\ntest1.jpg\ntest2.jpg'
-  assert "$output" == "$expected_files" "glob should match case-insensitively with --ignore-case"
-  (( fails += $? ))
-  
-  # Test 21: Case-insensitive matching with -i (shorthand)
-  (( tests++ ))
-  output=$(glob -i "test*.jpg" 2>/dev/null)
-  expected_files=$'TEST.jpg\nTest.JPG\ntest with spaces.jpg\ntest.Jpg\ntest1.jpg\ntest2.jpg'
-  assert "$output" == "$expected_files" "glob should match case-insensitively with -i shorthand"
-  (( fails += $? ))
-  
-  # Test 22: Case-insensitive with command execution
-  (( tests++ ))
-  output=$(glob -i printf '%s\n' "test*.jpg" 2>/dev/null)
-  # Bash nocaseglob ordering can vary by platform/collation; verify matched set.
-  output=$(printf '%s\n' "$output" | LC_ALL=C sort)
-  expected_files=$'TEST.jpg\nTest.JPG\ntest with spaces.jpg\ntest.Jpg\ntest1.jpg\ntest2.jpg'
-  expected_files=$(printf '%s\n' "$expected_files" | LC_ALL=C sort)
-  assert "$output" == "$expected_files" "glob should execute commands with case-insensitive matching"
-  (( fails += $? ))
-  
-  # Clean up case-insensitive test files
-  rm -f "Test.JPG" "test.Jpg" "TEST.jpg" "other.png" "test with spaces.jpg" "test1.jpg" "test2.jpg"
+  if $case_insensitive_fs; then
+    # On case-insensitive FS, files that differ only in case collapse
+    # Use filenames that differ in MORE than just case
+    touch "alpha.JPG" "beta.Jpg" "other.png" "test with spaces.jpg" "test1.jpg" "test2.jpg"
+
+    # Test without ignore-case (case-sensitive pattern "test*.jpg")
+    output=$(glob "test*.jpg" 2>/dev/null)
+    expected_files=$'test with spaces.jpg\ntest1.jpg\ntest2.jpg'
+    assert "$output" == "$expected_files" "glob should be case-sensitive by default"
+    (( fails += $? ))
+
+    # Test with --ignore-case using UPPERCASE pattern to prove case folding works
+    (( tests++ ))
+    output=$(glob --ignore-case "TEST*.JPG" 2>/dev/null)
+    expected_files=$'test with spaces.jpg\ntest1.jpg\ntest2.jpg'
+    assert "$output" == "$expected_files" "glob should match case-insensitively with --ignore-case (case-insensitive FS)"
+    (( fails += $? ))
+
+    # Test with -i shorthand using UPPERCASE pattern
+    (( tests++ ))
+    output=$(glob -i "TEST*.JPG" 2>/dev/null)
+    expected_files=$'test with spaces.jpg\ntest1.jpg\ntest2.jpg'
+    assert "$output" == "$expected_files" "glob should match case-insensitively with -i shorthand (case-insensitive FS)"
+    (( fails += $? ))
+
+    # Test -i with command execution — should find all *.jpg case-insensitively
+    (( tests++ ))
+    output=$(glob -i printf '%s\n' "*.jpg" 2>/dev/null)
+    output=$(printf '%s\n' "$output" | LC_ALL=C sort)
+    expected_files=$'alpha.JPG\nbeta.Jpg\ntest with spaces.jpg\ntest1.jpg\ntest2.jpg'
+    expected_files=$(printf '%s\n' "$expected_files" | LC_ALL=C sort)
+    assert "$output" == "$expected_files" "glob should execute commands with case-insensitive matching (case-insensitive FS)"
+    (( fails += $? ))
+
+    rm -f "alpha.JPG" "beta.Jpg" "other.png" "test with spaces.jpg" "test1.jpg" "test2.jpg"
+  else
+    # On case-sensitive FS, original tests work fine
+    touch "Test.JPG" "test.Jpg" "TEST.jpg" "other.png" "test with spaces.jpg" "test1.jpg" "test2.jpg"
+
+    output=$(glob "test*.jpg" 2>/dev/null)
+    expected_files=$'test with spaces.jpg\ntest1.jpg\ntest2.jpg'
+    assert "$output" == "$expected_files" "glob should be case-sensitive by default"
+    (( fails += $? ))
+
+    (( tests++ ))
+    output=$(glob --ignore-case "test*.jpg" 2>/dev/null)
+    expected_files=$'TEST.jpg\nTest.JPG\ntest with spaces.jpg\ntest.Jpg\ntest1.jpg\ntest2.jpg'
+    assert "$output" == "$expected_files" "glob should match case-insensitively with --ignore-case"
+    (( fails += $? ))
+
+    (( tests++ ))
+    output=$(glob -i "test*.jpg" 2>/dev/null)
+    expected_files=$'TEST.jpg\nTest.JPG\ntest with spaces.jpg\ntest.Jpg\ntest1.jpg\ntest2.jpg'
+    assert "$output" == "$expected_files" "glob should match case-insensitively with -i shorthand"
+    (( fails += $? ))
+
+    (( tests++ ))
+    output=$(glob -i printf '%s\n' "test*.jpg" 2>/dev/null)
+    output=$(printf '%s\n' "$output" | LC_ALL=C sort)
+    expected_files=$'TEST.jpg\nTest.JPG\ntest with spaces.jpg\ntest.Jpg\ntest1.jpg\ntest2.jpg'
+    expected_files=$(printf '%s\n' "$expected_files" | LC_ALL=C sort)
+    assert "$output" == "$expected_files" "glob should execute commands with case-insensitive matching"
+    (( fails += $? ))
+
+    rm -f "Test.JPG" "test.Jpg" "TEST.jpg" "other.png" "test with spaces.jpg" "test1.jpg" "test2.jpg"
+  fi
   
   # Test 23: Mixed matching and non-matching patterns
   (( tests++ ))
