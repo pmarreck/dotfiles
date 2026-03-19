@@ -222,9 +222,11 @@ EOF
 		if [[ "$arg" =~ \{[^}]*,[^}]*\} ]]; then
 			debug "Detected brace expansion in: $arg"
 			
-			# Use bash to glob the braces 
-			# First escape spaces in the argument so bash treats it as one argument
+			# Use bash to expand the braces
+			# Escape shell metacharacters so bash -c treats them as literals
 			local escaped_arg="${arg// /\\ }"
+			escaped_arg="${escaped_arg//(/\\(}"
+			escaped_arg="${escaped_arg//)/\\)}"
 			local globbed_items
 			globbed_items=$(bash -c "printf '%s\\n' $escaped_arg" 2>/dev/null) || {
 				debug "Brace expansion failed, using original: $arg"

@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 
+shopt -s extglob
+
 remove_z_library_attrib() {
 	local files=()
 
 	# Use glob's null-separated output so filenames with spaces stay intact
-	mapfile -d '' -t files < <(glob -0 '* (Z-Library).*')
+	mapfile -d '' -t files < <(glob -0 '* @(\(Z-Library\)|\(z-library.sk, 1lib.sk, z-lib.sk\)).*')
 
 	if [[ ${#files[@]} -eq 0 ]]; then
 		return 0
@@ -12,7 +14,7 @@ remove_z_library_attrib() {
 
 	local file
 	for file in "${files[@]}"; do
-		mv -- "$file" "${file/ (Z-Library)/}"
+		mv -- "$file" "${file/ @(\(Z-Library\)|\(z-library.sk, 1lib.sk, z-lib.sk\))/}"
 	done
 }
 

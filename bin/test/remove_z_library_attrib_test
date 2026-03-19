@@ -52,8 +52,31 @@ test_noop_when_no_matches() {
 	unset tmpdir
 }
 
+test_removes_alt_suffix_from_files() {
+	((++tests))
+	tmpdir=$(mktemp --tmpdir -d remove_z_lib.XXXXXX)
+	local cwd
+	cwd=$(pwd)
+	cd "$tmpdir"
+	touch 'My Book (z-library.sk, 1lib.sk, z-lib.sk).pdf'
+	remove_z_library_attrib >/dev/null
+
+	if [[ -e 'My Book (z-library.sk, 1lib.sk, z-lib.sk).pdf' ]]; then
+		echo "FAIL failed to rename file with alt z-library suffix" >&2
+		((fails+=1))
+	elif [[ ! -e 'My Book.pdf' ]]; then
+		echo "FAIL renamed file missing expected target for alt suffix" >&2
+		((fails+=1))
+	fi
+
+	cd "$cwd"
+	rm -rf "$tmpdir"
+	unset tmpdir
+}
+
 main() {
 	test_removes_suffix_from_files_with_spaces
+	test_removes_alt_suffix_from_files
 	test_noop_when_no_matches
 
 	if (( fails == 0 )); then
