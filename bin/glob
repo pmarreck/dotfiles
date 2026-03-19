@@ -252,7 +252,7 @@ EOF
 
 	[[ $- == *f* ]] && glob_disabled=true && debug "Globbing is disabled (noglob is set)"
 
-	shopt -q nullglob && nullglob_set=true || nullglob_set=false
+	shopt -q nullglob && nullglob_set=true || nullglob_set=false  # saved for reference; never changed by glob
 	shopt -q dotglob && dotglob_set=true || dotglob_set=false
 	shopt -q nocaseglob && nocaseglob_set=true || nocaseglob_set=false
 	shopt -q extglob && extglob_set=true || extglob_set=false
@@ -637,11 +637,7 @@ EOF
 				# Remove the command from args
 				args=("${args[@]:1}")
 
-				# Special handling for nullglob in command mode
-				if $nullglob_set; then
-					debug "Command mode with nullglob set - will filter out non-matching patterns"
-				fi
-			else
+				else
 				debug "Resolved '${args[0]}' but it has a data file extension: $resolved_path"
 			fi
 		else
