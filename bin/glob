@@ -91,6 +91,18 @@ DESCRIPTION:
 	glob "**/*.{js,ts,jsx,tsx}"    # Recursive search for JavaScript/TypeScript files
 	glob -i "**/*.{JPG,PNG}"       # Case-insensitive recursive image search
 
+	EXTGLOB PATTERNS:
+	Extended globbing patterns for advanced matching:
+
+	@(pattern1|pattern2)    Match exactly one of the patterns
+	*(pattern1|pattern2)    Match zero or more of the patterns
+	+(pattern1|pattern2)    Match one or more of the patterns
+	?(pattern1|pattern2)    Match zero or one of the patterns
+	!(pattern1|pattern2)    Match anything except the patterns
+
+	glob "@(*.jpg|*.png)"          # Match jpg or png files
+	glob "!(*.bak|*.tmp)"         # Match everything except .bak and .tmp
+
 	NON-MATCHING PATTERNS:
 	When a glob pattern matches no files, it is SKIPPED entirely:
 	- Direct mode: Returns empty result and exit code 1
@@ -105,21 +117,11 @@ DESCRIPTION:
 	The -i/--ignore-case option enables case-insensitive pattern matching,
 	so "*.jpg" will match "*.JPG", "*.Jpg", etc.
 
-	When globbing requires filesystem traversal, glob prefers fd/fdfind if
-	available and falls back to find (with a warning) if not.
+	All pattern matching uses bash's built-in globbing engine via compgen -G.
+	Recursive patterns (**) require bash 4.0+ with globstar support.
 
 	If command execution would exceed ARG_MAX, glob errors and recommends
 	using --batch to split the command into chunks.
-
-	FD INSTALL (recommended for fast traversal):
-	- macOS (Homebrew): brew install fd
-	- Debian/Ubuntu: sudo apt install fd-find   (binary: fdfind)
-	- Fedora/RHEL: sudo dnf install fd-find
-	- Arch: sudo pacman -S fd
-	- Nix (nix profile): nix profile install nixpkgs#fd
-	- Nix (nix-shell): nix-shell -p fd
-	- NixOS: environment.systemPackages = with pkgs; [ fd ];
-	- Home Manager: home.packages = [ pkgs.fd ];
 EOF
 	}
 
