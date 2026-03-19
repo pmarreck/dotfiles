@@ -36,28 +36,65 @@ Input args
 - All manual space-handling paths (absolute path detection, cd-based expansion, fd/fdfind invocations)
 - All duplicated nullglob/nocaseglob save/restore blocks scattered through the expansion logic
 - The `_warn_find_fallback` function and `finder_cmd`/`finder_kind` variables
+- fd/fdfind install advice from help text (no longer relevant)
 
 ### Simplified
-- Glob detection regex expands to recognize extglob syntax
+- Glob detection regex expands to recognize extglob syntax:
+  ```bash
+  [[ "$arg" == *[\*\?\[]* || "$arg" =~ [?*+@!]\( ]]
+  ```
+  This catches standard glob metacharacters (`*`, `?`, `[`) and extglob prefixes (`@(`, `*(`, `+(`, `?(`, `!(`).
 - The entire pattern expansion loop reduces to: `compgen -G "$pattern"` with appropriate shopts
 
 ### Fixed: Dotfile Warning
 Current (broken): re-expands pattern via `_dot_matches=($_pattern)` which word-splits on spaces.
 
-New approach:
+New approach (single traversal optimization):
 ```bash
-# Get matches without dotglob
-mapfile -t matches_without < <(compgen -G "$pattern")
-# Get matches with dotglob
+# Run compgen -G once WITH dotglob enabled
 shopt -s dotglob
-mapfile -t matches_with < <(compgen -G "$pattern")
-shopt -u dotglob
-# Only warn if there are dotfile-starting entries in matches_with that aren't in matches_without
+mapfile -t all_matches < <(compgen -G "$pattern")
+shopt -u dotglob  # (or restore to previous state)
+
+# Partition into dot and non-dot sets
+local dot_matches=() nondot_matches=()
+for m in "${all_matches[@]}"; do
+    local base="${m##*/}"
+    if [[ "$base" == .* ]]; then
+        dot_matches+=("$m")
+    else
+        nondot_matches+=("$m")
+    fi
+done
+
+# If user didn't request dotglob, use nondot_matches as results
+# and warn if dot_matches is non-empty
+if (( ${#dot_matches[@]} > 0 )); then
+    # warn
+fi
+```
+This avoids traversing the filesystem twice.
+
+### Shopt Management
+All shopts that `glob` enables must be saved before and restored after. The current code saves/restores `nullglob`, `dotglob`, and `nocaseglob`. The refactor adds `extglob` and `globstar` to this list:
+
+```bash
+# Save
+shopt -q extglob && extglob_set=true || extglob_set=false
+shopt -q globstar && globstar_set=true || globstar_set=false
+
+# Enable
+shopt -s extglob globstar
+
+# Restore (on every exit path)
+$extglob_set || shopt -u extglob
+$globstar_set || shopt -u globstar
 ```
 
 ### Added
-- `shopt -s extglob globstar` in the shopt management section
+- `shopt -s extglob globstar` with proper save/restore
 - Extglob pattern detection in the glob-detection check
+- Help text: `EXTGLOB PATTERNS` section documenting `@(a|b)`, `*(a|b)`, `+(a|b)`, `?(a|b)`, `!(a|b)`
 
 ### Unchanged
 - Flag parsing and validation
@@ -65,7 +102,9 @@ shopt -u dotglob
 - Output formatting (`-0`, `-n`, `--double-quote`, default newline)
 - Command mode, batch mode, dry-run, ARG_MAX checking
 - The `--test` entry point
-- Help text (updated to mention extglob support)
+
+### Ordering Note
+`compgen -G` returns results in filesystem order (same as `ls` without flags). In display mode, results are already sorted via `LC_ALL=C sort` — no change. In command mode, the current code preserves "natural glob order" from `files=($pattern)`. After the refactor, command mode gets `compgen -G` order, which is the same natural filesystem order. No behavioral change expected.
 
 ## Separate Fix: Case-Insensitive Test Failures
 
@@ -80,7 +119,19 @@ shopt -u dotglob
 
 ## Testing Strategy
 
+- Write new extglob test FIRST (TDD), before implementation:
+  ```bash
+  # Test N: extglob pattern matching
+  touch foo.jpg bar.png baz.gif
+  output=$(glob "@(*.jpg|*.png)" 2>/dev/null)
+  expected=$'bar.png\nfoo.jpg'
+  assert "$output" == "$expected" "glob should handle extglob @(...) patterns"
+  ```
 - Run existing 54-test suite after refactor — all must continue passing
 - Fix the 3 case-insensitive tests as a separate commit
-- Add new test for extglob pattern support
-- Verify the dotfile warning fix with the user's exact reproduction case
+- Verify the dotfile warning fix with the user's exact reproduction case:
+  ```bash
+  # In ~/Downloads with dotfiles present but no dotfiles matching the full pattern:
+  glob '* {(Z-Library),(z-library.sk\, 1lib.sk\, z-lib.sk)}.*'
+  # Should NOT warn about dotfiles
+  ```
