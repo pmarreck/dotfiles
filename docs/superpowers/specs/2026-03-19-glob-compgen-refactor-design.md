@@ -108,7 +108,25 @@ $globstar_set || shopt -u globstar
 
 ## Separate Fix: Case-Insensitive Test Failures
 
-3 pre-existing test failures (tests 20, 21, 22) caused by macOS case-insensitive filesystem where `touch "Test.JPG" "test.Jpg" "TEST.jpg"` creates one file, not three. Fix: use filenames that differ beyond just case (e.g., `alpha.JPG`, `beta.Jpg`, `gamma.jpg`).
+3 pre-existing test failures (tests 20, 21, 22) caused by macOS case-insensitive filesystem where `touch "Test.JPG" "test.Jpg" "TEST.jpg"` creates one file, not three.
+
+Fix: detect filesystem case-sensitivity at runtime in the test, not via `uname` (macOS can be formatted case-sensitive). Probe the actual temp directory:
+
+```bash
+touch _case_probe_lower
+if [[ -e _CASE_PROBE_LOWER ]]; then
+    case_insensitive=true
+else
+    case_insensitive=false
+fi
+rm -f _case_probe_lower
+```
+
+Then fork the case-insensitive test expectations:
+- **Case-sensitive FS**: expect all 6 files created separately, 6 matches
+- **Case-insensitive FS**: filenames that differ only in case collapse to one file; adjust expected match count and filenames accordingly
+
+This keeps the tests accurate on both Linux (case-sensitive) and macOS (either).
 
 ## Risk Assessment
 
