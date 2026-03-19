@@ -668,6 +668,23 @@ EOF
   (( fails += $? ))
   rm -rf fake-tools alpha.txt beta.txt
 
+  # Test 58: Extglob pattern matching with @(...)
+  (( tests++ ))
+  touch foo.jpg bar.png baz.gif
+  output=$(glob "@(*.jpg|*.png)" 2>/dev/null)
+  expected_files=$'bar.png\nfoo.jpg'
+  assert "$output" == "$expected_files" "glob should handle extglob @(...) patterns"
+  (( fails += $? ))
+  rm -f foo.jpg bar.png baz.gif
+
+  # Test 59: Dotfile warning should NOT fire when no dotfiles match the full pattern
+  (( tests++ ))
+  touch "My Book (Z-Library).pdf" .hidden_file
+  warning=$(glob "* (Z-Library).*" 2>&1 >/dev/null)
+  assert "$warning" == "" "glob should not warn about dotfiles when no dotfiles match the full pattern"
+  (( fails += $? ))
+  rm -f "My Book (Z-Library).pdf" .hidden_file
+
   # Leave temp dir (mktemp -d creates a temporary directory that will be cleaned up by the system)
   popd >/dev/null
 
