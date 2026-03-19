@@ -113,13 +113,14 @@ $globstar_set || shopt -u globstar
 Fix: detect filesystem case-sensitivity at runtime in the test, not via `uname` (macOS can be formatted case-sensitive). Probe the actual temp directory:
 
 ```bash
-touch _case_probe_lower
-if [[ -e _CASE_PROBE_LOWER ]]; then
+local _cs_probe
+_cs_probe=$(mktemp --tmpdir case_probe.XXXXXX)
+if [[ -e "${_cs_probe^^}" && "${_cs_probe}" != "${_cs_probe^^}" ]]; then
     case_insensitive=true
 else
     case_insensitive=false
 fi
-rm -f _case_probe_lower
+rm -f "$_cs_probe"
 ```
 
 Then fork the case-insensitive test expectations:
