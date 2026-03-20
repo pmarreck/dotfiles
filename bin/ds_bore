@@ -19,8 +19,13 @@ ds_bore() {
 			;;
 		*)
 			rg --files --hidden --glob '*.DS_Store' | while IFS= read -r file; do
+				dir="$(dirname "$file")"
+				# Preserve the parent directory's modification time
+				orig_mtime="$(gstat -c '%Y' "$dir")"
 				echo "$file"
 				/bin/rm "$file" # avoid using my "safe" alias because this is extremely unlikely to be a mistake
+				# Restore the parent directory's original modification time
+				touch -t "$(gdate -d "@$orig_mtime" '+%Y%m%d%H%M.%S')" "$dir"
 			done
 			;;
 	esac

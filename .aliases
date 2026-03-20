@@ -58,9 +58,6 @@ if [ "${PLATFORM}-${DISTRO}" = "linux-NixOS" ] || is_nix_darwin; then
   is_nix_darwin || alias nixos="choose_editor /etc/nixos &"
 fi
 
-#alias wordcount=(cat \!* | tr -s '\''  .,;:?\!()[]"'\'' '\''\012'\'' |' \
-#                'cat -n | tail -1 | awk '\''{print $1}'\'')' # Histogram words
-# alias js='java org.mozilla.javascript.tools.shell.Main'
 alias scr='screen -r'
 alias p='ping www.yahoo.com'
 alias pp='ping -A -i 5 8.8.4.4' #Ping the root google nameserver every 5 seconds and beep if no route
@@ -70,16 +67,17 @@ alias bye='logout'
 # The current thing(s) I'm working on
 # on macos, iCloud backup was interfering with git, so I moved git repos
 # to a "Documents-CloudManaged" folder
+# The purpose of the "cd ./" is so that "dcm validate" (or whatever) does
+# an additional cd into that subdirectory
 if [ "$PLATFORM" = "osx" ]; then
-  alias dcm='cd ~/Documents-CloudManaged'
-  alias mpnetwork='cd ~/Documents-CloudManaged/mpnetwork'
+  alias dcm='cd ~/Documents-CloudManaged && cd'
 else
-  alias dcm='cd ~/Documents'
-  alias mpnetwork='cd ~/Documents/mpnetwork'
+  alias dcm='cd ~/Documents && cd'
 fi
 # alias simpaticio='cd ~/Documents/simpaticio'
 # alias work=dotfiles
-alias work='cd "$HOME/Documents/regis-project/sys (twserver)/system/SAGA"'
+#alias work='cd "$HOME/Documents/regis-project/sys (twserver)/system/SAGA"'
+alias work='dcm validate'
 
 alias dotfiles='cd ~/dotfiles'
 
@@ -104,9 +102,9 @@ if [ "$PLATFORM" = "osx" ]; then
 fi
 
 # elixir/phoenix gigalixir prod deploy command
-needs git
-alias deploy_prod='git push gigalixir master'
-alias deploy_staging='git push gigalixir staging:master'
+#needs git
+#alias deploy_prod='git push gigalixir master'
+#alias deploy_staging='git push gigalixir staging:master'
 
 # log all terminal output to a file
 alias log='/usr/bin/script -a ~/Terminal.log; source ~/.bash_profile'
@@ -132,7 +130,7 @@ alias beep='tput bel'
 
 alias newsshkey='ssh-keygen -t ed25519 -C lumbergh@gmail.com'
 alias copysshpubkey='cat ~/.ssh/id_ed25519.pub | clip' # depends on 'clip' function
-alias consoleconfig='edit $WEZTERM_CONFIG_FILE'
+alias weztermconfig='edit $WEZTERM_CONFIG_FILE'
 
 # quick CLI editor shortcut
 needs micro "please install the micro editor"

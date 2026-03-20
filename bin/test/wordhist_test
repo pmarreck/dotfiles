@@ -1,0 +1,131 @@
+#!/usr/bin/env bash
+
+# Test script for wordhist
+fails=0
+total=0
+
+CMD="wordhist"
+
+if ! command -v "$CMD" >/dev/null 2>&1; then
+    CMD="$(dirname "$(dirname "$0")")/wordhist"
+    if [[ ! -x "$CMD" ]]; then
+         echo "Error: Cannot find local executable wordhist." >&2
+         exit 1
+    fi
+fi
+
+tmpdir="$(mktemp -d --tmpdir wordhist_test.XXXXXX)"
+trap 'rm -rf "$tmpdir"' EXIT
+
+test_about() {
+    ((total++))
+    echo "Testing --about output..."
+    local out
+    out=$("$CMD" --about)
+    if [[ "$out" == *"histogram"* ]]; then
+        echo "✓ --about passed"
+    else
+        echo "✗ --about failed: unexpected output: $out" >&2
+        ((fails++))
+    fi
+}
+
+test_help() {
+    ((total++))
+    echo "Testing --help output..."
+    local out
+    out=$("$CMD" --help)
+    if [[ "$out" == *"Usage:"* ]]; then
+        echo "✓ --help passed"
+    else
+        echo "✗ --help failed" >&2
+        ((fails++))
+    fi
+}
+
+test_basic_histogram() {
+    ((total++))
+    echo "Testing basic histogram generation..."
+    
+    local testfile="$tmpdir/input.txt"
+    echo "apple apple apple banana banana cherry" > "$testfile"
+    
+    local expected
+    expected="apple           |     3 ████████████████████████████████████████
+banana          |     2 ██████████████████████████
+cherry          |     1 █████████████"
+    
+    local out
+    out=$("$CMD" "$testfile")
+    
+    if [[ "$out" == "$expected" ]]; then
+        echo "✓ basic histogram passed"
+    else
+        echo "✗ basic histogram failed. Expected:" >&2
+        echo "$expected" >&2
+        echo "Got:" >&2
+        echo "$out" >&2
+        ((fails++))
+    fi
+}
+
+test_limit() {
+    ((total++))
+    echo "Testing limit (-n) option..."
+    
+    local testfile="$tmpdir/input2.txt"
+    echo "a a a a b b b c c d e" > "$testfile"
+    
+    local expected
+    expected="a               |     4 ████████████████████████████████████████
+b               |     3 ██████████████████████████████"
+    
+    local out
+    out=$("$CMD" -n 2 "$testfile")
+    
+    if [[ "$out" == "$expected" ]]; then
+        echo "✓ limit option passed"
+    else
+        echo "✗ limit option failed. Expected:" >&2
+        echo "$expected" >&2
+        echo "Got:" >&2
+        echo "$out" >&2
+        ((fails++))
+    fi
+}
+
+test_stdin() {
+    ((total++))
+    echo "Testing stdin piping..."
+    
+    local expected
+    expected="foo             |     2 ████████████████████████████████████████
+bar             |     1 ████████████████████"
+    
+    local out
+    out=$(echo "foo foo bar" | "$CMD")
+    
+    if [[ "$out" == "$expected" ]]; then
+        echo "✓ stdin test passed"
+    else
+        echo "✗ stdin test failed. Expected:" >&2
+        echo "$expected" >&2
+        echo "Got:" >&2
+        echo "$out" >&2
+        ((fails++))
+    fi
+}
+
+test_about
+test_help
+test_basic_histogram
+test_limit
+test_stdin
+
+if [[ $fails -eq 0 ]]; then
+    echo "All $total tests passed!"
+else
+    echo "$fails of $total tests failed!" >&2
+fi
+
+exit $fails

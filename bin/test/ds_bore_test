@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+
+test_ds_bore() {
+	local fails=0
+	local tests=0
+	local tmpdir
+	tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/ds_bore-test.XXXXXX")
+	if [ ! -d "$tmpdir" ]; then
+		echo "✗ Failed to create temp dir for tests" >&2
+		return 1
+	fi
+	trap 'rm -rf "$tmpdir"' EXIT
+
+	echo "Testing ds_bore..."
+	echo "=================="
+
+	# ----- Test 1: --help flag -----
+	(( tests++ ))
+	echo "Testing --help flag..."
+
+	local help_output
+	help_output=$(ds_bore --help 2>/dev/null)
+	local help_status=$?
+
+	if [ $help_status -eq 0 ] && echo "$help_output" | grep -q "Usage:"; then
+		echo "✓ --help flag works"
+	else
+		echo "✗ --help flag failed: status=$help_status" >&2
+		(( fails++ ))
+	fi
+
+	# ----- Test 2: -f lists .DS_Store files -----
+	(( tests++ ))
+	echo "Testing -f flag lists .DS_Store files..."
+
+	mkdir -p "$tmpdir/a/b" "$tmpdir/c"
+	touch "$tmpdir/a/.DS_Store" "$tmpdir/a/b/.DS_Store" "$tmpdir/c/.DS_Store"
+
+	local list_output
+	list_output=$(cd "$tmpdir" && ds_bore -f 2>/dev/null)
+	local list_count
+	list_count=$(printf '%s\n' "$list_output" | grep -c '.DS_Store')
+
+	if [ "$list_count" -eq 3 ]; then
+		echo "✓ -f lists all 3 .DS_Store files"
+	else
+		echo "✗ -f listed $list_count files, expected 3" >&2
+		echo "  output: '$list_output'" >&2
+		(( fails++ ))
+	fi
+
+	# ----- Test 3: deletes .DS_Store files -----
+	(( tests++ ))
+	echo "Testing deletion of .DS_Store files..."
+
+	local delete_output
+	delete_output=$(cd "$tmpdir" && ds_bore 2>/dev/null)
+
+	local remaining
+	remaining=$(find "$tmpdir" -name '.DS_Store' | wc -l | tr -d ' ')
+
+	if [ "$remaining" -eq 0 ]; then
+		echo "✓ all .DS_Store files deleted"
+	else
+		echo "✗ $remaining .DS_Store files remain after deletion" >&2
+		(( fails++ ))
+	fi
+
+	# ----- Test 4: preserves parent directory modification times -----
+	(( tests++ ))
+	echo "Testing that parent directory mtimes are preserved..."
+
+	# Create fresh structure with .DS_Store files
+	mkdir -p "$tmpdir/mtime_test/sub"
+	touch "$tmpdir/mtime_test/.DS_Store" "$tmpdir/mtime_test/sub/.DS_Store"
+
+	# Set known modification times in the past (2020-06-15 12:30:00)
+	touch -t 202006151230.00 "$tmpdir/mtime_test"
+	touch -t 202006151230.00 "$tmpdir/mtime_test/sub"
+
+	# Capture original mtimes
+	local orig_mtime_parent orig_mtime_sub
+	orig_mtime_parent="$(gstat -c '%Y' "$tmpdir/mtime_test")"
+	orig_mtime_sub="$(gstat -c '%Y' "$tmpdir/mtime_test/sub")"
+
+	# Run ds_bore
+	(cd "$tmpdir/mtime_test" && ds_bore 2>/dev/null >/dev/null)
+
+	# Check mtimes were restored
+	local new_mtime_parent new_mtime_sub
+	new_mtime_parent="$(gstat -c '%Y' "$tmpdir/mtime_test")"
+	new_mtime_sub="$(gstat -c '%Y' "$tmpdir/mtime_test/sub")"
+
+	if [ "$orig_mtime_parent" = "$new_mtime_parent" ] && [ "$orig_mtime_sub" = "$new_mtime_sub" ]; then
+		echo "✓ parent directory mtimes preserved after .DS_Store deletion"
+	else
+		echo "✗ parent directory mtimes changed" >&2
+		echo "  parent: $orig_mtime_parent -> $new_mtime_parent" >&2
+		echo "  sub:    $orig_mtime_sub -> $new_mtime_sub" >&2
+		(( fails++ ))
+	fi
+
+	# ----- Test 5: no-op when no .DS_Store files exist -----
+	(( tests++ ))
+	echo "Testing no-op when no .DS_Store files..."
+
+	mkdir -p "$tmpdir/empty_test"
+	touch "$tmpdir/empty_test/somefile.txt"
+
+	local noop_output
+	noop_output=$(cd "$tmpdir/empty_test" && ds_bore 2>/dev/null)
+
+	if [ -z "$noop_output" ]; then
+		echo "✓ no output when no .DS_Store files exist"
+	else
+		echo "✗ unexpected output with no .DS_Store files: '$noop_output'" >&2
+		(( fails++ ))
+	fi
+
+	# ----- Summary -----
+	if [ "$fails" -gt 0 ]; then
+		echo "" >&2
+		echo "ds_bore test FAILED: $fails of $tests tests failed" >&2
+		return "$fails"
+	else
+		echo ""
+		echo "ds_bore test PASSED: All $tests tests passed"
+		return 0
+	fi
+}
+
+if ! (return 0 2>/dev/null); then
+	test_ds_bore
+	exit $?
+fi

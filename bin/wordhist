@@ -1,0 +1,91 @@
+#!/usr/bin/env sh
+
+VERSION="1.0.0"
+LINES=20
+
+show_help() {
+  cat <<'EOF' | trim_leading_heredoc_whitespace
+  Usage: wordhist [OPTIONS] [FILE...]
+
+  Generate an ASCII/UTF-8 bar graph histogram of word frequencies from the given files (or stdin).
+
+  Options:
+    -n, --lines N    Show the top N results (default: 20)
+    -h, --help       Show this help message
+    -a, --about      Show a one-line summary of the command
+    -v, --version    Show version information
+        --test       Run the associated test suite
+EOF
+}
+
+# Parse arguments
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -h|--help)
+      show_help
+      exit 0
+      ;;
+    -a|--about)
+      echo "Generate an ASCII/UTF-8 bar graph histogram of word frequencies"
+      exit 0
+      ;;
+    -v|--version)
+      echo "wordhist version $VERSION"
+      exit 0
+      ;;
+    --test)
+      TEST_SCRIPT="$(dirname "$0")/test/$(basename "$0")_test"
+      if command -v "wordhist_test" >/dev/null 2>&1; then
+        wordhist_test >/dev/null
+        exit $?
+      elif [ -x "$TEST_SCRIPT" ]; then
+        "$TEST_SCRIPT" >/dev/null
+        exit $?
+      else
+        echo "Error: Test script not found at $TEST_SCRIPT" >&2
+        exit 1
+      fi
+      ;;
+    -n|--lines)
+      LINES="$2"
+      shift 2
+      ;;
+    -*)
+      echo "Unknown option: $1" >&2
+      show_help >&2
+      exit 1
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+
+wordhist_process() {
+  if [ $# -eq 0 ]; then
+    cat
+  else
+    cat "$@"
+  fi | \
+    tr -cs 'a-zA-Z0-9' '\n' | \
+    tr 'A-Z' 'a-z' | \
+    grep -v '^$' | \
+    sort | \
+    uniq -c | \
+    sort -nr | \
+    head -n "$LINES" | \
+    awk -v max_bar_width=40 '
+      BEGIN { bar_char = "█" }
+      {
+        count = $1; word = $2
+        if (NR == 1) max = count
+        if (max == 0) max = 1
+        bar_len = int((count / max) * max_bar_width)
+        bar = ""
+        for (i=1; i<=bar_len; i++) bar = bar bar_char
+        printf "%-15s | %5d %s\n", word, count, bar
+      }
+    '
+}
+
+wordhist_process "$@"
