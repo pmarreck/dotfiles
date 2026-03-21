@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+
+# if we are on macOS...
+if [[ "$(uname)" == "Darwin" ]]; then
+	# Create the mount point
+	sudo mkdir -p /Volumes/Fileserver
+
+	# Add NFS config to auto_master
+	echo '/Volumes/Fileserver -fstype=nfs,resvport,rw,nfc,rsize=65536,wsize=65536 192.168.7.234:/mnt/Coruscatology/Fileserver' | sudo tee /etc/auto_nfs
+
+	# Tell auto_master about it
+	sudo grep -q auto_nfs /etc/auto_master || echo '/-                      auto_nfs' | sudo tee -a /etc/auto_master
+
+	# Activate without reboot
+	sudo automount -cv
+
+	open /Volumes/Fileserver
+# if we are on linux...
+elif [[ "$(uname)" == "Linux" ]]; then
+	sudo mount -t nfs -o rsize=65536,wsize=65536 192.168.7.234:/mnt/Coruscatology/Fileserver /mnt/Fileserver
+# otherwise error
+else
+	echo "Unsupported OS: $(uname)"
+	exit 1
+fi
