@@ -33,14 +33,23 @@
 # 6. Support for animated images (APNG, GIF) and maintaining animation in JXL format
 # -----------------------------------------------------------------------------------
 
-# ANSI color for warnings
+# ANSI colors for warnings/errors
 YELLOW='\033[1;33m'
+ORANGE='\033[0;33m'
 RESET='\033[0m'
 
+err() {
+	echo -e "${YELLOW}Error:${RESET}${ORANGE} $*${RESET}" >&2
+}
+
+warn() {
+	echo -e "${YELLOW}Warning:${RESET}${ORANGE} $*${RESET}" >&2
+}
+
 warn_lossy_source() {
-	echo -e "${YELLOW}Warning:${RESET} $1 is from a typically lossy source format." >&2
-	echo -e "${YELLOW}  Lossless encoding will faithfully preserve compression artifacts, bloating file size.${RESET}" >&2
-	echo -e "${YELLOW}  Consider using --lossy instead for better compression.${RESET}" >&2
+	warn "$1 is from a typically lossy source format."
+	echo -e "${ORANGE}  Lossless encoding will faithfully preserve compression artifacts, bloating file size.${RESET}" >&2
+	echo -e "${ORANGE}  Consider using --lossy instead for better compression.${RESET}" >&2
 }
 
 # Silence function - runs a command silently but preserves exit code
@@ -106,11 +115,11 @@ check_dependencies() {
 	export NUMFMT
 
 	if [[ ${#missing_deps[@]} -gt 0 ]]; then
-		echo "Error: Missing required dependencies: ${missing_deps[*]}" >&2
+		err "Missing required dependencies: ${missing_deps[*]}"
 		if [[ " ${missing_deps[*]} " =~ " GNU stat (gstat) " || " ${missing_deps[*]} " =~ " GNU date (gdate) " ]]; then
-			echo "Note: This script requires GNU versions of stat and date." >&2
-			echo "On macOS, install them with: brew install coreutils" >&2
-			echo "Or with Nix/nix-darwin: nix-shell -p coreutils-prefixed (or add to global flake.nix)" >&2
+			echo -e "${ORANGE}  This script requires GNU versions of stat and date.${RESET}" >&2
+			echo -e "${ORANGE}  On macOS, install them with: brew install coreutils${RESET}" >&2
+			echo -e "${ORANGE}  Or with Nix/nix-darwin: nix-shell -p coreutils-prefixed (or add to global flake.nix)${RESET}" >&2
 		fi
 		return 1
 	fi
@@ -269,7 +278,7 @@ process_file() {
 	local quality="$7"
 
 	if [[ ! -f "$file" ]]; then
-		echo "Error: File not found: $file" >&2
+		err "File not found: $file"
 		return 1
 	fi
 
@@ -300,14 +309,14 @@ process_file() {
 			jpeg|jpg)
 				debug "Converting JXL to JPEG: $file -> $output"
 				if ! djxl -q "$quality" "$file" "$output" 2>/dev/null; then
-					echo "Error converting $file to JPEG." >&2
+					err "Converting $file to JPEG failed."
 					return 1
 				fi
 				;;
 			png)
 				debug "Converting JXL to PNG: $file -> $output"
 				if ! djxl "$file" "$output" 2>/dev/null; then
-					echo "Error converting $file to PNG." >&2
+					err "Converting $file to PNG failed."
 					return 1
 				fi
 				;;
@@ -315,16 +324,16 @@ process_file() {
 				debug "Converting JXL to WebP (via PNG): $file -> $output"
 				temp_png=$(create_temp_file "png")
 				if ! djxl "$file" "$temp_png" 2>/dev/null; then
-					echo "Error converting $file to intermediate PNG." >&2
+					err "Converting $file to intermediate PNG failed."
 					return 1
 				fi
 				if ! magick "$temp_png" -quality "$quality" "$output" 2>/dev/null; then
-					echo "Error converting intermediate PNG to WebP." >&2
+					err "Converting intermediate PNG to WebP failed."
 					return 1
 				fi
 				;;
 			*)
-				echo "Unsupported target format: $to_format" >&2
+				err "Unsupported target format: $to_format"
 				return 1
 				;;
 		esac
@@ -345,11 +354,11 @@ process_file() {
 				if ! magick "$file" -alpha off -colorspace sRGB "$temp_png" 2>/dev/null; then
 					if command -v heif-convert &>/dev/null; then
 						if ! heif-convert "$file" "$temp_png" 2>/dev/null; then
-							echo "Error: Failed to convert HEIC file $file to PNG." >&2
+							err "Failed to convert HEIC file $file to PNG."
 							return 1
 						fi
 					else
-						echo "Error: Failed to convert HEIC $file. Please install heif-convert or update ImageMagick." >&2
+						err "Failed to convert HEIC $file. Please install heif-convert or update ImageMagick."
 						return 1
 					fi
 				fi
@@ -357,11 +366,11 @@ process_file() {
 				if ! magick "$file" "$temp_png" 2>/dev/null; then
 					if command -v dwebp &>/dev/null; then
 						if ! dwebp "$file" -o "$temp_png" 2>/dev/null; then
-							echo "Error: Failed to convert WebP $file to PNG." >&2
+							err "Failed to convert WebP $file to PNG."
 							return 1
 						fi
 					else
-						echo "Error: Failed to convert WebP $file. Please install dwebp or update ImageMagick." >&2
+						err "Failed to convert WebP $file. Please install dwebp or update ImageMagick."
 						return 1
 					fi
 				fi
@@ -369,7 +378,7 @@ process_file() {
 
 			# If intermediate PNG conversion failed, return
 			if [[ ! -f "$temp_png" ]]; then
-				echo "Error: Intermediate PNG file was not created for $original_file." >&2
+				err "Intermediate PNG file was not created for $original_file."
 				return 1
 			fi
 			file="$temp_png" # Use the intermediate PNG for JXL conversion
@@ -380,29 +389,38 @@ process_file() {
 			if [[ "$lossy" == "true" ]]; then
 				debug "Converting JPEG to JXL (lossy, d=$distance): $file -> $output"
 				if ! cjxl -e "$effort" -d "$distance" "$file" "$output" 2>/dev/null; then
-					echo "Error converting $original_file to JXL." >&2
+					err "Converting $original_file to JXL failed."
 					return 1
 				fi
 			else
 				debug "Converting JPEG to JXL (lossless JPEG transcoding): $file -> $output"
 				if ! cjxl -e "$effort" --lossless_jpeg=1 "$file" "$output" 2>/dev/null; then
-					echo "Error converting $original_file to JXL." >&2
+					err "Converting $original_file to JXL failed."
 					return 1
 				fi
 			fi
-		elif [[ "$extension" == "tif" || "$extension" == "tiff" || "$extension" == "bmp" || "$extension" == "jp2" ]]; then
-			# TIFF/BMP/JP2: pipe through ImageMagick directly to cjxl (no temp file)
+		elif [[ "$extension" == "tif" || "$extension" == "tiff" || "$extension" == "bmp" || "$extension" == "jp2" || "$extension" == "dng" ]]; then
+			# TIFF/BMP/JP2/DNG: pipe through ImageMagick directly to cjxl (no temp file)
+			# Note: magick with libraw delegate (DNG/raw files) can exit non-zero on
+			# warnings even when it successfully produces output. Check for output file
+			# rather than relying solely on pipe exit code.
 			if [[ "$lossy" == "false" ]]; then
 				debug "Converting $extension to JXL (lossless, piped): $file -> $output"
 				if ! (set -o pipefail; magick "$file" png:- | cjxl -e "$effort" -d 0 - "$output" 2>/dev/null); then
-					echo "Error converting $original_file to JXL." >&2
-					return 1
+					if [[ ! -f "$output" ]]; then
+						err "Converting $original_file to JXL failed."
+						return 1
+					fi
+					debug "Pipe returned non-zero but output file was produced; continuing"
 				fi
 			else
 				debug "Converting $extension to JXL (lossy, d=$distance, piped): $file -> $output"
 				if ! (set -o pipefail; magick "$file" png:- | cjxl -e "$effort" -d "$distance" - "$output" 2>/dev/null); then
-					echo "Error converting $original_file to JXL." >&2
-					return 1
+					if [[ ! -f "$output" ]]; then
+						err "Converting $original_file to JXL failed."
+						return 1
+					fi
+					debug "Pipe returned non-zero but output file was produced; continuing"
 				fi
 			fi
 		else
@@ -411,13 +429,13 @@ process_file() {
 			if [[ "$lossy" == "false" ]]; then
 				debug "Converting $extension to JXL (lossless, d=0): $file -> $output"
 				if ! cjxl -e "$effort" -d 0 "$file" "$output" 2>/dev/null; then
-					echo "Error converting $original_file to JXL." >&2
+					err "Converting $original_file to JXL failed."
 					return 1
 				fi
 			else
 				debug "Converting $extension to JXL (lossy, d=$distance): $file -> $output"
 				if ! cjxl -e "$effort" -d "$distance" "$file" "$output" 2>/dev/null; then
-					echo "Error converting $original_file to JXL." >&2
+					err "Converting $original_file to JXL failed."
 					return 1
 				fi
 			fi
@@ -434,7 +452,7 @@ process_file() {
 		display_compression_ratio "$original_file" "$output"
 		return 0
 	else
-		echo "Error: Output file not produced for $original_file." >&2
+		err "Output file not produced for $original_file."
 		return 1
 	fi
 }
@@ -489,7 +507,7 @@ jpegxl() {
 			--preserve-timestamps) preserve_timestamps=true ;;
 			--no-preserve-timestamps) preserve_timestamps=false ;;
 			--to=*) to_format="${1#*=}" ;;
-			-*) echo "Unknown option: $1" >&2; print_help; return 1 ;;
+			-*) err "Unknown option: $1"; print_help; return 1 ;;
 			*) files+=("$1") ;; # Collect all non-option arguments as files
 		esac
 		shift
@@ -497,21 +515,21 @@ jpegxl() {
 
 	# If no files are provided, show help
 	if [[ ${#files[@]} -eq 0 ]]; then
-		echo "Error: No input files specified" >&2
+		err "No input files specified"
 		print_help
 		return 1
 	fi
 
 	# Check for conflicting options and make them consistent
 	if [[ "$lossy" == "true" && "$distance" -eq 0 ]]; then
-		echo "Warning: Conflicting options: --lossy and --distance=0 (lossless)" >&2
-		echo "Using --lossless mode (--distance=0 takes precedence)" >&2
+		warn "Conflicting options: --lossy and --distance=0 (lossless)"
+		echo -e "${ORANGE}  Using --lossless mode (--distance=0 takes precedence)${RESET}" >&2
 		lossy=false
 	fi
 
 	# If --lossless is specified but distance is not 0, adjust distance
 	if [[ "$lossy" == "false" && "$distance" -ne 0 ]]; then
-		echo "Warning: Setting distance to 0 for lossless mode" >&2
+		warn "Setting distance to 0 for lossless mode"
 		distance=0
 	fi
 
@@ -534,7 +552,7 @@ jpegxl() {
 	done
 
 	if [[ "$failures" -gt 0 ]]; then
-		echo "Completed with $failures failures." >&2
+		err "Completed with $failures failure(s)."
 		return 1
 	else
 		echo "All files processed successfully."

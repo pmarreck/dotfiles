@@ -278,6 +278,82 @@ test_jpegxl() {
         (( fails++ ))
     fi
 
+    # Test 18: Magick-piped path preserves timestamps (TIFF, same path as DNG)
+    (( tests++ ))
+    local piped_ts_file="$test_dir/piped_ts.tif"
+    magick -size 10x10 gradient:red-blue "$piped_ts_file"
+    touch -t 200001010000 "$piped_ts_file"
+    local piped_orig_mtime
+    piped_orig_mtime=$(stat_mtime "$piped_ts_file")
+    jpegxl "$piped_ts_file" >/dev/null 2>&1
+    local piped_ts_output="$test_dir/piped_ts.jxl"
+    if [[ -f "$piped_ts_output" ]]; then
+        local piped_new_mtime
+        piped_new_mtime=$(stat_mtime "$piped_ts_output")
+        if [[ "$piped_new_mtime" == "$piped_orig_mtime" ]]; then
+            echo "✓ Magick-piped path timestamp preservation test passed"
+        else
+            echo "✗ Magick-piped path timestamp preservation test failed (expected $piped_orig_mtime, got $piped_new_mtime)" >&2
+            (( fails++ ))
+        fi
+    else
+        echo "✗ Magick-piped path timestamp preservation test failed (no output file)" >&2
+        (( fails++ ))
+    fi
+
+    # Test 19-20: DNG lossless/lossy conversion
+    # DNG files require actual raw sensor data (Bayer mosaic) that can't be
+    # easily synthesized. We create a real DNG-compatible file if possible,
+    # otherwise skip gracefully (not counted as a failure).
+    local dng_file="$test_dir/test_dng.dng"
+    local dng_available=false
+    # Try to create a minimal CFA TIFF that libraw can read as DNG
+    # If this doesn't work, skip DNG tests
+    magick -size 10x10 gradient:red-blue TIFF:"$dng_file" 2>/dev/null
+    if magick "$dng_file" png:/dev/null 2>/dev/null; then
+        dng_available=true
+    fi
+
+    if [[ "$dng_available" == "true" ]]; then
+        (( tests++ ))
+        DEBUG=true jpegxl "$dng_file" >/dev/null 2>&1
+        if [[ -f "$test_dir/test_dng.jxl" ]]; then
+            echo "✓ DNG lossless conversion test passed"
+        else
+            echo "✗ DNG lossless conversion test failed (no .jxl output)" >&2
+            (( fails++ ))
+        fi
+
+        # DNG lossy conversion
+        (( tests++ ))
+        rm -f "$test_dir/test_dng.jxl"
+        DEBUG=true jpegxl --lossy "$dng_file" >/dev/null 2>&1
+        if [[ -f "$test_dir/test_dng.jxl" ]]; then
+            echo "✓ DNG lossy conversion test passed"
+        else
+            echo "✗ DNG lossy conversion test failed (no .jxl output)" >&2
+            (( fails++ ))
+        fi
+    else
+        echo "⊘ DNG tests skipped (cannot synthesize raw sensor data for test DNG)" >&2
+    fi
+
+    # Test 21: DNG extension routes through magick-piped path
+    (( tests++ ))
+    # Verify .dng goes through the ImageMagick pipe path (like TIFF/BMP)
+    # by checking DEBUG output for the "piped" keyword
+    local dng_route_file="$test_dir/route_test.dng"
+    magick -size 2x2 xc:red TIFF:"$dng_route_file" 2>/dev/null
+    local dng_debug
+    dng_debug=$(DEBUG=true jpegxl "$dng_route_file" 2>&1)
+    if echo "$dng_debug" | grep -q "piped"; then
+        echo "✓ DNG format routing test passed (uses magick-piped path)"
+    else
+        echo "✗ DNG format routing test failed (should use magick-piped path)" >&2
+        echo "  debug output: $dng_debug" >&2
+        (( fails++ ))
+    fi
+
     # Clean up test directory
     echo "Cleaning up test directory..."
     rm -rf "$test_dir"
