@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Wrapper around `jj debug snapshot` that preserves the mtime of .git/ and
+# the repo root directory so that background snapshotting doesn't pollute
+# directory sort order.
+#
+# Used as the command in watchman's jj-background-monitor trigger.
+
+set -euo pipefail
+
+root="${WATCHMAN_ROOT:-.}"
+
+git_dir="$root/.git"
+repo_dir="$root"
+
+# Create temp reference files to capture current mtimes via touch -r
+ref_dir=$(mktemp -d)
+if [[ -d "$git_dir" ]]; then
+	touch -r "$git_dir" "$ref_dir/git_ref"
+fi
+touch -r "$repo_dir" "$ref_dir/repo_ref"
+
+# Run the actual snapshot
+jj debug snapshot "$@" 2>&1 || true
+
+# Restore mtimes from reference files
+if [[ -d "$git_dir" && -f "$ref_dir/git_ref" ]]; then
+	touch -r "$ref_dir/git_ref" "$git_dir"
+fi
+touch -r "$ref_dir/repo_ref" "$repo_dir"
+
+rm -rf "$ref_dir"

@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+	cat <<'USAGE'
+Usage: getfile_nas [options] URL [URL...]
+
+Download remote files to disk using wget (preferred) or curl,
+then chown to pmarreck:files. If the file is a zip, extract it
+and chown both the zip and the extracted directory.
+
+Options:
+  --help    Show this help message and exit.
+  --about   Show a short description and exit.
+  --        Treat all following arguments as downloader parameters.
+
+All non-option arguments are forwarded to the underlying downloader.
+USAGE
+}
+
+about() {
+	printf '%s\n' "Download remote files, extract zips, and chown to pmarreck:files."
+}
+
+run_downloader() {
+	if command -v wget >/dev/null 2>&1; then
+		wget --xattr -c --progress=bar -- "$@"
+	elif command -v curl >/dev/null 2>&1; then
+		curl -fL --progress-bar -O "$@"
+	else
+		echo "getfile_nas: require wget or curl" >&2
+		return 1
+	fi
+}
+
+if [ $# -eq 0 ]; then
+	usage >&2
+	exit 1
+fi
+
+args=()
+while [ $# -gt 0 ]; do
+	case "$1" in
+		--help)
+			usage
+			exit 0
+			;;
+		--about)
+			about
+			exit 0
+			;;
+		--)
+			shift
+			args=("$@")
+			break
+			;;
+		*)
+			args=("$@")
+			break
+			;;
+	esac
+done
+
+if [ ${#args[@]} -eq 0 ]; then
+	usage >&2
+	exit 1
+fi
+
+run_downloader "${args[@]}"
+
+# Post-download: handle each URL's downloaded file
+for url in "${args[@]}"; do
+	filename="${url##*/}"
+	# Strip query string if present
+	filename="${filename%%\?*}"
+
+	if [ ! -f "$filename" ]; then
+		echo "getfile_nas: warning: could not find downloaded file '$filename'" >&2
+		continue
+	fi
+
+	if [[ "$filename" == *.zip ]]; then
+		# Extract the zip
+		echo "Extracting $filename..."
+		unzip -o "$filename"
+
+		# chown the zip file (no -R, it's a single file)
+		chown pmarreck:files "$filename"
+
+		# Determine extracted directory name (zip basename without .zip)
+		dirname="${filename%.zip}"
+		if [ -d "$dirname" ]; then
+			chown -R pmarreck:files "$dirname"
+		else
+			# If no matching directory, chown all extracted files in current dir
+			# (some zips extract files flat without a containing directory)
+			echo "getfile_nas: note: no directory '$dirname' found; chowning extracted files individually" >&2
+		fi
+	else
+		# Not a zip — chown the single file (no -R)
+		chown pmarreck:files "$filename"
+	fi
+done
