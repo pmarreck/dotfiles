@@ -45,7 +45,7 @@ alias lsize4='lsize0 --level=4'
 # alias rehash='hash -r'
 # OK, thanks to badly written hooks, this now has to be a function
 # alias word='grep \!* /usr/share/dict/web2' # Grep thru dictionary
-if [ "$PLATFORM" = "osx" ]; then
+if [ "$PLATFORM" = "mac" ]; then
   alias tophog='top -ocpu -s 3'
 else # linux
   alias tophog='top -o %CPU -d 3'
@@ -69,7 +69,7 @@ alias bye='logout'
 # to a "Documents-CloudManaged" folder
 # The purpose of the "cd ./" is so that "dcm validate" (or whatever) does
 # an additional cd into that subdirectory
-if [ "$PLATFORM" = "osx" ]; then
+if [ "$PLATFORM" = "mac" ]; then
   alias dcm='cd ~/Documents-CloudManaged && cd'
 else
   alias dcm='cd ~/Documents && cd'
@@ -97,7 +97,7 @@ alias undefine="unset"
 # alias rc='rails console'
 
 # network crap (OS X only)
-if [ "$PLATFORM" = "osx" ]; then
+if [ "$PLATFORM" = "mac" ]; then
   alias killdns='sudo killall -HUP mDNSResponder'
 fi
 
@@ -233,3 +233,4 @@ alias ffpw='$(which ffpw) --channel nightly'
 alias setup_zig_repo='jj git init --colocate && link_AGENTS_here && cp -P AGENTS.md CLAUDE.md && link_jj_cheatsheet_here && link_ZIG_GUIDE_here && cp ../validate/.git/hooks/commit-msg .git/hooks/ && echo -e "AGENTS.md\nCLAUDE.md\njj_cheatsheet.md\nZIG_RECENT_API_CHANGES*" >> .gitignore'
 alias dt='dirtree'
 alias keys='env | rg API_KEY'
+alias obsidian='cd "/Users/pmarreck/Documents-CloudManaged/Obsidian Vaults/Peter Marreck/"'

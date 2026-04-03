@@ -75,7 +75,7 @@ $INTERACTIVE_SHELL && $LOGIN_SHELL && echo "$DISTRO_PRETTY"
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced nix-hash-retrievals.bash"
 
 # config for Visual Studio Code
-# if [ "$PLATFORM" = "osx" ]; then
+# if [ "$PLATFORM" = "mac" ]; then
 #   code () { VSCODE_CWD="$PWD" open -n -b com.microsoft.VSCode --args "$*" ;}
 #   pipeable_code () { VSCODE_CWD="$PWD" open -n -b com.microsoft.VSCode -f ;}
 #   export PIPEABLE_EDITOR='pipeable_code'

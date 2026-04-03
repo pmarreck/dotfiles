@@ -67,7 +67,7 @@ determine_hard_drive_name() {
 
 # This is a list of files/paths to exclude for OS X boot backups. Current as of OS X Lion, sourced from a couple places
 # The first time you do a boot backup on OS X, the contents of this are output to a file which is then used by rsync to exclude these paths/files.
-osx_boot_file_excludes() {
+mac_boot_file_excludes() {
   cat <<EOF
 /.DocumentRevisions-V100
 /.fseventsd
@@ -132,7 +132,7 @@ write_exclude_file() {
     fi
     if [ ! -e "$exclude_file" ]; then
       echo "The exclude file doesn't exist. Writing it out to $exclude_file ..."
-      osx_boot_file_excludes > "$exclude_file"
+      mac_boot_file_excludes > "$exclude_file"
     fi
     excluding_files=1
   fi

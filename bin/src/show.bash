@@ -380,7 +380,7 @@ show() {
 	set -- "${args[@]}"
 	# on macOS, you need gnu-sed from homebrew or equivalent, which is installed as "gsed"
 	# I set PLATFORM elsewhere in my env config
-	# [ "$PLATFORM" = "osx" ] && local -r sed="gsed" || local -r sed="sed"
+	# [ "$PLATFORM" = "mac" ] && local -r sed="gsed" || local -r sed="sed"
 	# screw homebrew, all in on nix now; this is always gnused; YMMV
 	local batless=false
 	needs bat "please install bat to view some file listings or function definitions with syntax highlighting; using less instead" || batless=true

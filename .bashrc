@@ -142,7 +142,7 @@ export SSH_KEY_PATH="$HOME/.ssh/id_ed25519"
 export PLATFORM
 case $OSTYPE in
 	darwin*)
-		export PLATFORM="osx"
+		export PLATFORM="mac"
 		export DISTRO="macOS"
 		if command -v mac_os_version_number_to_name >/dev/null 2>&1 && command -v sw_vers >/dev/null 2>&1; then
 			MACOS_VERSION="$(sw_vers -productVersion 2>/dev/null)"
@@ -188,7 +188,7 @@ fi
 # echo "AWK in .bashrc:258 is: $AWK"
 # using the right awk is a PITA on macOS vs. Linux so let's ensure GNU Awk everywhere
 is_gnu_awk=$($AWK --version | grep -q -m 1 'GNU Awk' && echo true || echo false)
-[ "${PLATFORM}$(basename $AWK)" == "osxawk" ] && \
+[ "${PLATFORM}$(basename $AWK)" == "macawk" ] && \
 	$is_gnu_awk && \
 	echo "WARNING: The awk on PATH is not GNU Awk on macOS, which may cause problems" >&2
 

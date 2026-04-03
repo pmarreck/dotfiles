@@ -64,7 +64,7 @@ if [ -f /etc/os-release ] && grep -q '^NAME="Arch' /etc/os-release; then
 fi
 
 # canonical gcc tweaks for OS X's homebrew gcc; Linux shouldn't need these
-# if [ "$PLATFORM" = "osx" ]; then
+# if [ "$PLATFORM" = "mac" ]; then
 	# needs brew
 	# brew_prefix=$(brew --prefix)
 	# Homebrew LLVM and compiler toolchain config
@@ -205,7 +205,7 @@ export PS4='$0:$LINENO+ '
 # shut up, macos, zsh isn't significantly better enough than bash to warrant switching
 # (and you only did it because of the licensing difference, anyway)
 # (If this is unset on macos, it will keep reminding you to switch to zsh)
-if [ "$PLATFORM" = "osx" ]; then
+if [ "$PLATFORM" = "mac" ]; then
 	export BASH_SILENCE_DEPRECATION_WARNING=1
 fi
 
