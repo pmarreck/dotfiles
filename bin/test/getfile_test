@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+# Tests for getfile --unzip feature
+
+tests=0
+fails=0
+
+tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/getfile_test.XXXXXX")
+trap 'rm -rf "$tmpdir"' EXIT
+
+# One-shot HTTP server via nc
+find_free_port() {
+	local port
+	for _ in $(seq 1 50); do
+		port=$((RANDOM % 10000 + 50000))
+		if ! (echo >/dev/tcp/localhost/$port) 2>/dev/null; then
+			echo "$port"
+			return
+		fi
+	done
+	echo "Could not find free port" >&2
+	return 1
+}
+
+# Serve a file once over HTTP, sets $server_pid
+serve_once() {
+	local file="$1" port="$2"
+	local size
+	size=$(wc -c < "$file" | tr -d ' ')
+	{ printf 'HTTP/1.0 200 OK\r\nContent-Length: %s\r\nContent-Type: application/octet-stream\r\n\r\n' "$size"; cat "$file"; } \
+		| nc -l "$port" >/dev/null 2>&1 &
+	server_pid=$!
+	sleep 0.3
+}
+
+needs nc "nc (netcat) is required for these tests" || exit 1
+needs zip "zip is required for these tests" || exit 1
+
+# Test 1: --help mentions --unzip
+((tests++))
+if getfile --help 2>&1 | grep -q -- "--unzip"; then
+	echo "✓ --help mentions --unzip"
+else
+	echo "✗ --help should mention --unzip" >&2
+	((fails++))
+fi
+
+# Test 2: --unzip extracts zip contents
+((tests++))
+echo "hello from getfile test" > "$tmpdir/testfile.txt"
+(cd "$tmpdir" && zip -q test.zip testfile.txt && rm testfile.txt)
+port=$(find_free_port)
+serve_once "$tmpdir/test.zip" "$port"
+mkdir -p "$tmpdir/out_unzip"
+if (cd "$tmpdir/out_unzip" && getfile --unzip "http://localhost:$port/test.zip" 2>/dev/null); then
+	if [ -f "$tmpdir/out_unzip/testfile.txt" ] && grep -q "hello from getfile test" "$tmpdir/out_unzip/testfile.txt"; then
+		echo "✓ --unzip extracts zip contents to cwd"
+	else
+		echo "✗ --unzip should extract testfile.txt with correct contents" >&2
+		((fails++))
+	fi
+else
+	echo "✗ --unzip command failed" >&2
+	((fails++))
+fi
+wait "$server_pid" 2>/dev/null || true
+
+# Test 3: normal download still works
+((tests++))
+echo "normal content" > "$tmpdir/normalfile.txt"
+port=$(find_free_port)
+serve_once "$tmpdir/normalfile.txt" "$port"
+mkdir -p "$tmpdir/out_normal"
+if (cd "$tmpdir/out_normal" && getfile "http://localhost:$port/normalfile.txt" 2>/dev/null); then
+	if [ -f "$tmpdir/out_normal/normalfile.txt" ] && grep -q "normal content" "$tmpdir/out_normal/normalfile.txt"; then
+		echo "✓ Normal download still works"
+	else
+		echo "✗ Normal download should produce normalfile.txt with correct contents" >&2
+		((fails++))
+	fi
+else
+	echo "✗ Normal download command failed" >&2
+	((fails++))
+fi
+wait "$server_pid" 2>/dev/null || true
+
+# Test 4: --unzip with multiple URLs
+((tests++))
+echo "file_a" > "$tmpdir/a.txt"
+echo "file_b" > "$tmpdir/b.txt"
+(cd "$tmpdir" && zip -q a.zip a.txt && zip -q b.zip b.txt && rm a.txt b.txt)
+port1=$(find_free_port)
+serve_once "$tmpdir/a.zip" "$port1"
+pid1=$server_pid
+port2=$(find_free_port)
+serve_once "$tmpdir/b.zip" "$port2"
+pid2=$server_pid
+mkdir -p "$tmpdir/out_multi"
+if (cd "$tmpdir/out_multi" && getfile --unzip "http://localhost:$port1/a.zip" "http://localhost:$port2/b.zip" 2>/dev/null); then
+	if [ -f "$tmpdir/out_multi/a.txt" ] && [ -f "$tmpdir/out_multi/b.txt" ]; then
+		echo "✓ --unzip handles multiple URLs"
+	else
+		echo "✗ --unzip with multiple URLs should extract all archives" >&2
+		((fails++))
+	fi
+else
+	echo "✗ --unzip with multiple URLs failed" >&2
+	((fails++))
+fi
+wait "$pid1" 2>/dev/null || true
+wait "$pid2" 2>/dev/null || true
+
+if [ "$fails" -eq 0 ]; then
+	echo "All $tests tests passed"
+else
+	echo "$fails of $tests tests failed" >&2
+fi
+
+exit "$fails"

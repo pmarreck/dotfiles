@@ -8,8 +8,10 @@ Usage: getfile [options] URL [URL...]
 Download remote files to disk using wget (preferred) or curl.
 
 Options:
+  --unzip   Stream-unzip each URL through bsdtar (disables resume).
   --help    Show this help message and exit.
   --about   Show a short description and exit.
+  --test    Run associated tests.
   --        Treat all following arguments as downloader parameters.
 
 All non-option arguments are forwarded to the underlying downloader.
@@ -31,21 +33,51 @@ run_downloader() {
 	fi
 }
 
+stream_download() {
+	local url="$1"
+	if command -v wget >/dev/null 2>&1; then
+		wget -q -O - -- "$url"
+	elif command -v curl >/dev/null 2>&1; then
+		curl -sfL -- "$url"
+	else
+		echo "getfile: require wget or curl" >&2
+		return 1
+	fi
+}
+
+find_stream_unzipper() {
+	if command -v bsdtar >/dev/null 2>&1; then
+		echo bsdtar
+	elif tar --version 2>&1 | grep -q libarchive; then
+		echo tar
+	else
+		return 1
+	fi
+}
+
 if [ $# -eq 0 ]; then
 	usage >&2
 	exit 1
 fi
 
+unzip_mode=false
 args=()
 while [ $# -gt 0 ]; do
 	case "$1" in
-		--help)
+		--help|-h)
 			usage
 			exit 0
 			;;
-		--about)
+		--about|-a)
 			about
 			exit 0
+			;;
+		--test)
+			exec bin/test/getfile_test 2>&1 >/dev/null
+			;;
+		--unzip)
+			unzip_mode=true
+			shift
 			;;
 		--)
 			shift
@@ -57,11 +89,22 @@ while [ $# -gt 0 ]; do
 			break
 			;;
 	esac
-	done
+done
 
 if [ ${#args[@]} -eq 0 ]; then
 	usage >&2
 	exit 1
 fi
 
-run_downloader "${args[@]}"
+if $unzip_mode; then
+	unzipper=$(find_stream_unzipper) || {
+		echo "getfile: --unzip requires bsdtar or libarchive-based tar" >&2
+		exit 1
+	}
+	for url in "${args[@]}"; do
+		echo "getfile: stream-unzipping $url" >&2
+		stream_download "$url" | "$unzipper" -xf -
+	done
+else
+	run_downloader "${args[@]}"
+fi
