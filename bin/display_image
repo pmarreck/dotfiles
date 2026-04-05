@@ -1,0 +1,171 @@
+#!/usr/bin/env bash
+
+# display_image: Display an image in the terminal using the best available
+# graphics protocol (kitty graphics protocol preferred, sixel as fallback).
+#
+# Usage: display_image [OPTIONS] <image_file>
+#
+# Options:
+#   -g, --geometry WxH   Resize to WxH pixels (e.g., 600x360)
+#   -h, --help           Show this help message
+#   --test               Run tests
+#   -a, --about          Show one-line summary
+
+display_image() {
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	local geometry="" image_file="" protocol=""
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+			-h|--help)
+				cat <<-'HELP'
+				Usage: display_image [OPTIONS] <image_file>
+
+				Display an image in the terminal using the best available
+				graphics protocol (kitty preferred, sixel as fallback).
+
+				Options:
+				  -g, --geometry WxH   Resize to WxH pixels (e.g., 600x360)
+				  -p, --protocol P     Force protocol: kitty or sixel
+				  -h, --help           Show this help message
+				  -a, --about          One-line summary
+				  --test               Run tests
+				HELP
+				return 0
+				;;
+			-a|--about)
+				echo "Display images in terminal via kitty graphics protocol or sixel"
+				return 0
+				;;
+			-g|--geometry)
+				geometry="$2"
+				shift 2
+				;;
+			-p|--protocol)
+				protocol="$2"
+				shift 2
+				;;
+			--)
+				shift
+				image_file="$1"
+				break
+				;;
+			-*)
+				echo "Unknown option: $1" >&2
+				return 1
+				;;
+			*)
+				image_file="$1"
+				shift
+				;;
+		esac
+	done
+
+	if [[ -z "$image_file" ]]; then
+		echo "Error: No image file specified." >&2
+		echo "Usage: display_image [OPTIONS] <image_file>" >&2
+		return 1
+	fi
+
+	if [[ ! -f "$image_file" ]]; then
+		echo "Error: File not found: $image_file" >&2
+		return 1
+	fi
+
+	needs magick "please install imagemagick" || return 1
+
+	# Auto-detect protocol if not forced
+	if [[ -z "$protocol" ]]; then
+		if check_kitty_support 2>/dev/null; then
+			protocol="kitty"
+		elif check_sixel_support 2>/dev/null; then
+			protocol="sixel"
+		else
+			echo "Error: No supported graphics protocol detected (tried kitty and sixel)." >&2
+			echo "Supported terminals: WezTerm, Ghostty, Kitty, or any sixel-capable terminal." >&2
+			return 1
+		fi
+	fi
+
+	case "$protocol" in
+		kitty)
+			_display_image_kitty "$image_file" "$geometry"
+			;;
+		sixel)
+			_display_image_sixel "$image_file" "$geometry"
+			;;
+		*)
+			echo "Error: Unknown protocol '$protocol'. Use 'kitty' or 'sixel'." >&2
+			return 1
+			;;
+	esac
+}
+
+_display_image_sixel() {
+	local image_file="$1" geometry="$2"
+	local geom_args=()
+	if [[ -n "$geometry" ]]; then
+		geom_args=(-geometry "$geometry")
+	fi
+	magick "$image_file" "${geom_args[@]}" -compress none -type truecolor sixel:-
+}
+
+_display_image_kitty() {
+	local image_file="$1" geometry="$2"
+	local magick_args=()
+	if [[ -n "$geometry" ]]; then
+		magick_args=(-geometry "$geometry")
+	fi
+	# Convert to PNG in memory, then send via kitty graphics protocol
+	local png_data
+	png_data=$(magick "$image_file" "${magick_args[@]}" png:- | base64 -w 0) || return 1
+
+	# Kitty graphics protocol: split into chunks of 4096 bytes
+	local chunk_size=4096
+	local data_len=${#png_data}
+	local offset=0
+	local remaining=$data_len
+
+	if [[ $remaining -le $chunk_size ]]; then
+		# Single chunk - no continuation needed
+		printf '\033_Ga=T,f=100;%s\033\\' "$png_data"
+	else
+		# Multiple chunks needed
+		local first=1
+		while [[ $remaining -gt 0 ]]; do
+			local chunk="${png_data:$offset:$chunk_size}"
+			if [[ $first -eq 1 ]]; then
+				if [[ $remaining -le $chunk_size ]]; then
+					# First and only chunk
+					printf '\033_Ga=T,f=100;%s\033\\' "$chunk"
+				else
+					# First chunk, more to come
+					printf '\033_Ga=T,f=100,m=1;%s\033\\' "$chunk"
+				fi
+				first=0
+			elif [[ $remaining -le $chunk_size ]]; then
+				# Last chunk
+				printf '\033_Gm=0;%s\033\\' "$chunk"
+			else
+				# Middle chunk
+				printf '\033_Gm=1;%s\033\\' "$chunk"
+			fi
+			offset=$((offset + chunk_size))
+			remaining=$((remaining - ${#chunk}))
+		done
+	fi
+	# Newline after the image
+	echo
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

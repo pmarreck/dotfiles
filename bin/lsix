@@ -3,7 +3,7 @@
 # lsix: like ls, but for images.
 # Shows thumbnails of images with titles directly in terminal.
 
-# Requirements: just ImageMagick (and a Sixel terminal, of course)
+# Requirements: just ImageMagick (and a terminal with kitty graphics or sixel support)
 
 # Version 1.6
 # B9 February 2018
@@ -49,8 +49,20 @@ if ! command -v montage >/dev/null; then
 	exit 1
 fi
 
+# Detect which graphics protocol to use
+if check_kitty_support 2>/dev/null; then
+	GFX_PROTOCOL="kitty"
+elif check_sixel_support 2>/dev/null; then
+	GFX_PROTOCOL="sixel"
+else
+	echo "Error: No supported graphics protocol (kitty or sixel) detected." >&2
+	exit 1
+fi
+
 cleanup() {
-	echo -n $'\e\\'		# Escape sequence to stop SIXEL.
+	if [[ "$GFX_PROTOCOL" == "sixel" ]]; then
+		echo -n $'\e\\'	# Escape sequence to stop SIXEL.
+	fi
 	stty echo			# Reset terminal to show characters.
 	exit 0
 }
@@ -171,8 +183,14 @@ main() {
 		onerow[len++]="$1"
 		shift
 	done
-	montage "${onerow[@]}"  $imoptions gif:-  \
-		| magick - -colors $numcolors sixel:-
+	if [[ "$GFX_PROTOCOL" == "kitty" ]]; then
+		montage "${onerow[@]}"  $imoptions png:-  \
+			| magick - -colors $numcolors png:- \
+			| _lsix_display_kitty
+	else
+		montage "${onerow[@]}"  $imoptions gif:-  \
+			| magick - -colors $numcolors sixel:-
+	fi
 	done
 }
 
@@ -197,6 +215,36 @@ processlabel() {
 		}
 		' |
 	$SED 's|%|%%|g; s|\\|\\\\|g; s|@|\\@|g;'
+}
+
+_lsix_display_kitty() {
+	# Read PNG from stdin and display via kitty graphics protocol
+	local png_data
+	png_data=$(base64 -w 0) || return 1
+	local chunk_size=4096
+	local data_len=${#png_data}
+	local offset=0
+	local remaining=$data_len
+
+	if [[ $remaining -le $chunk_size ]]; then
+		printf '\033_Ga=T,f=100;%s\033\\' "$png_data"
+	else
+		local first=1
+		while [[ $remaining -gt 0 ]]; do
+			local chunk="${png_data:$offset:$chunk_size}"
+			if [[ $first -eq 1 ]]; then
+				printf '\033_Ga=T,f=100,m=1;%s\033\\' "$chunk"
+				first=0
+			elif [[ $remaining -le $chunk_size ]]; then
+				printf '\033_Gm=0;%s\033\\' "$chunk"
+			else
+				printf '\033_Gm=1;%s\033\\' "$chunk"
+			fi
+			offset=$((offset + chunk_size))
+			remaining=$((remaining - ${#chunk}))
+		done
+	fi
+	echo
 }
 
 ####

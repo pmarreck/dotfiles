@@ -4,7 +4,7 @@ inthebeginning() {
 	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	# Get the directory where this script is located
 	local SCRIPT_PATH=$(dirname "$(readlink -f "$BASH_SOURCE")")
-	needs magick please install imagemagick && magick "$SCRIPT_PATH/data/inthebeginning.jpg" -geometry 600x360 sixel:-
+	needs magick please install imagemagick && display_image -g 600x360 "$SCRIPT_PATH/data/inthebeginning.jpg"
 }
 
 # Run the function if this script is executed directly

@@ -247,7 +247,7 @@ show_help() {
 			- Bash functions, aliases, variables, and builtins
 			- Files and executables in PATH
 			- URLs (opens in terminal reader using clx)
-			- Images (displays using sixel graphics if supported)
+			- Images (displays using kitty/sixel graphics if supported)
 
 		SUPPORTED ITEM TYPES:
 
@@ -270,7 +270,7 @@ show_help() {
 
 			Files:
 				- Text files: Syntax-highlighted display using bat (or less as fallback)
-				- Images: Displays using sixel graphics via ImageMagick
+				- Images: Displays using kitty/sixel graphics via ImageMagick
 				- Markdown: Rendered display using glow (if available)
 				- Detects file type and language automatically
 				Example: show ~/.bashrc
@@ -291,7 +291,7 @@ show_help() {
 			- Multiple items: Can process multiple items in one command
 			- Type detection: Automatically determines the best way to display each item
 			- Syntax highlighting: Uses bat for code/text files with language detection
-			- Image support: Displays images directly in terminal using sixel graphics
+			- Image support: Displays images directly in terminal using kitty/sixel graphics
 			- Link following: Resolves symbolic links and shows target content
 			- Error handling: Graceful fallbacks when optional tools are unavailable
 
@@ -443,15 +443,14 @@ show() {
 				;;
 		esac
 	fi
-	# if it's a file, syntax-colorize it with bat or less, or display it via sixels if it's an image
+	# if it's a file, syntax-colorize it with bat or less, or display it via kitty/sixel if it's an image
 	if [ -f "$word" ]; then
 		local file_ext=$(basename "$word" | cut -d. -f2-)
 		# if it's an image file, display it
 		if file "$word" | grep -q image; then
 			echo "$word"
 			note "'${word}' is an image file:"
-			needs magick "please install imagemagick" && \
-			magick "$word" -resize 100% -geometry +0+0 -compress none -type truecolor sixel:-
+			display_image "$word"
 		else
 			echo "$word"
 			local lang=$(determine_language_from_source "$word")

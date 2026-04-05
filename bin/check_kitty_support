@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+
+check_kitty_support() {
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	# Check specific terminals known to support the Kitty graphics protocol
+	if [[ "$TERM" == "xterm-kitty" ]]; then
+		[ -n "$DEBUG_SHELLCONFIG" ] && echo "Kitty terminal detected via TERM." >&2
+		return 0
+	fi
+	if [[ "$TERM_PROGRAM" == "WezTerm" ]]; then
+		[ -n "$DEBUG_SHELLCONFIG" ] && echo "WezTerm detected, which supports Kitty graphics protocol." >&2
+		return 0
+	fi
+	if [[ "$TERM_PROGRAM" == "ghostty" ]]; then
+		[ -n "$DEBUG_SHELLCONFIG" ] && echo "Ghostty detected, which supports Kitty graphics protocol." >&2
+		return 0
+	fi
+	# Check if KITTY_WINDOW_ID is set (running inside kitty)
+	if [[ -n "$KITTY_WINDOW_ID" ]]; then
+		[ -n "$DEBUG_SHELLCONFIG" ] && echo "Kitty graphics protocol support detected via KITTY_WINDOW_ID." >&2
+		return 0
+	fi
+	# Terminals known NOT to support kitty graphics
+	if [[ "$TERM_PROGRAM" == "Apple_Terminal" ]]; then
+		[ -n "$DEBUG_SHELLCONFIG" ] && echo "Apple Terminal does not support Kitty graphics protocol." >&2
+		return 1
+	fi
+	if [[ "$ALACRITTY_LOG" || "$ALACRITTY_WINDOW_ID" ]]; then
+		[ -n "$DEBUG_SHELLCONFIG" ] && echo "Alacritty does not support Kitty graphics protocol." >&2
+		return 1
+	fi
+	if [[ "$TERM_PROGRAM" == "WarpTerminal" ]]; then
+		[ -n "$DEBUG_SHELLCONFIG" ] && echo "Warp terminal does not support Kitty graphics protocol." >&2
+		return 1
+	fi
+	if [[ "$TERM_PROGRAM" == "Hyper" ]]; then
+		[ -n "$DEBUG_SHELLCONFIG" ] && echo "Hyper does not support Kitty graphics protocol." >&2
+		return 1
+	fi
+	[ -n "$DEBUG_SHELLCONFIG" ] && echo "Unable to determine Kitty graphics protocol support. TERM: $TERM, TERM_PROGRAM: $TERM_PROGRAM" >&2
+	return 2
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi
