@@ -21,6 +21,9 @@
 # LM Studio
 [ -d $HOME/.cache/lm-studio/bin ] && prepend_path $HOME/.cache/lm-studio/bin
 
+# npm global packages (user-scoped, since nix store is read-only)
+[ -d $HOME/.npm-global/bin ] && prepend_path $HOME/.npm-global/bin
+
 # where is this garbage in my PATH coming from?
 IGNORE_EXCLUDE_PATH_WARNINGS=true exclude_path '~/.dotnet/tools'
 exclude_path '/usr/local/share/dotnet'
@@ -68,23 +71,25 @@ else
   DOCUMENTS="$HOME/Documents"
 fi
 export DOCUMENTS
+# Non-Zig projects with custom bin paths
 IGNORE_PREPEND_PATH_WARNINGS=true prepend_path "$DOCUMENTS/ixnay"
 IGNORE_PREPEND_PATH_WARNINGS=true prepend_path "$DOCUMENTS/jumpscript/bin"
 IGNORE_PREPEND_PATH_WARNINGS=true prepend_path "$DOCUMENTS/yt-transcriber"
 IGNORE_PREPEND_PATH_WARNINGS=true prepend_path "$DOCUMENTS/baseN"
-IGNORE_PREPEND_PATH_WARNINGS=true prepend_path "$DOCUMENTS/dirtree/zig-out/bin"
-# dirtree needs to be AFTER printable-binary in PATH (and thus BEFORE it in this list) or the wrong printable-binary will be used
 IGNORE_PREPEND_PATH_WARNINGS=true prepend_path "$DOCUMENTS/printable_binary/bin"
 IGNORE_PREPEND_PATH_WARNINGS=true prepend_path "$DOCUMENTS/rm-safe/bin"
-IGNORE_PREPEND_PATH_WARNINGS=true prepend_path "$DOCUMENTS/codescan/zig-out/bin"
-IGNORE_PREPEND_PATH_WARNINGS=true prepend_path "$DOCUMENTS/chatscan/zig-out/bin"
-IGNORE_PREPEND_PATH_WARNINGS=true prepend_path "$DOCUMENTS/validate/zig-out/bin"
-IGNORE_PREPEND_PATH_WARNINGS=true prepend_path "$DOCUMENTS/ffpw/zig-out/bin"
-IGNORE_PREPEND_PATH_WARNINGS=true prepend_path "$DOCUMENTS/z7z/zig-out/bin"
-IGNORE_PREPEND_PATH_WARNINGS=true prepend_path "$DOCUMENTS/bzip2z/zig-out/bin"
-IGNORE_PREPEND_PATH_WARNINGS=true prepend_path "$DOCUMENTS/rarz/zig-out/bin"
-IGNORE_PREPEND_PATH_WARNINGS=true prepend_path "$DOCUMENTS/BLIP/zig-out/bin"
-IGNORE_PREPEND_PATH_WARNINGS=true prepend_path "$DOCUMENTS/zdiff/zig-out/bin"
+
+# Zig/Nix projects: auto-discover all {result,zig-out}/bin dirs
+# result/bin is prepended last so it takes priority when both exist.
+IGNORE_PREPEND_PATH_WARNINGS=true
+export IGNORE_PREPEND_PATH_WARNINGS
+for dir in "$DOCUMENTS"/*/zig-out/bin; do
+  [ -d "$dir" ] && prepend_path "$dir"
+done
+for dir in "$DOCUMENTS"/*/result/bin; do
+  [ -d "$dir" ] && prepend_path "$dir"
+done
+unset IGNORE_PREPEND_PATH_WARNINGS
 
 # Now exclude every path from PATH that does not actually exist.
 # I don't like this way of doing it, but it was the only way that worked easily.

@@ -224,7 +224,8 @@ export FONTCONFIG_PATH="${XDG_CONFIG_HOME:-$HOME/.config}/fontconfig"
 export FONTCONFIG_FILE="${FONTCONFIG_PATH}/fonts.conf"
 
 # Ollama
-export OLLAMA_CONTEXT_LENGTH=16384
+export OLLAMA_CONTEXT_LENGTH=65536
+export OLLAMA_KEEP_ALIVE="-1"  # keep models loaded indefinitely (no auto-unload)
 # export OLLAMA_DEFAULT_MODEL=${OLLAMA_DEFAULT_MODEL:-llama3.3:70b}
 export OLLAMA_DEFAULT_MODEL=${OLLAMA_DEFAULT_MODEL:-granite3.3:latest}
 # erlang/elixir config- 2 million process limit

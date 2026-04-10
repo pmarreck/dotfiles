@@ -1,3 +1,31 @@
+# capture.bash — Simultaneous stdout/stderr/exit-code capture for Bash
+#
+# Copyright (c) 2026 Peter Marreck. MIT License.
+#
+# Captures a command's stdout, stderr, and exit code into three separate
+# variables (out, err, rc) in a single invocation — without writing to
+# temporary files. This is surprisingly hard to do correctly in Bash;
+# most approaches either lose stderr, clobber exit codes, or require
+# temp files that create race conditions and cleanup headaches.
+#
+# The implementation uses nested command substitutions with file descriptor
+# juggling (FDs 3 and 4) and sources `declare -p` output to safely transfer
+# values across subshell boundaries — handling embedded newlines, quotes,
+# and NUL bytes correctly.
+#
+# Optional: pass -p/--printable-binary to pipe stdout and stderr through
+# the `printable-binary` utility (github.com/pmarreck/printable_binary),
+# which encodes binary data (including NULs and control characters) into
+# a readable, reversible text form safe for Bash variables.
+#
+# Usage:
+#   source capture.bash
+#   local out err rc
+#   capture some_command --with args
+#   echo "stdout: $out"
+#   echo "stderr: $err"
+#   echo "exit code: $rc"
+
 capture() {
 	local use_printable_binary=0
 	while [ $# -gt 0 ]; do
