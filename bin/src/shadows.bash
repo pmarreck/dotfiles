@@ -4,18 +4,16 @@ shadows() {
 	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 
 	local about usage script_dir test_file self_path
-	about="Report aliases and functions that shadow builtins or PATH executables"
-	usage="Usage: shadows [-h|--help] [-a|--about] [--test]"
-	script_dir="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+	about="Report aliases, functions, and PATH binaries that shadow builtins, PATH executables, or each other"
+	usage="Usage: shadows [-h|--help] [-a|--about] [--test]"	script_dir="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 	test_file="$script_dir/../test/shadows_test"
 	self_path="$(cd "$script_dir/.." && pwd)/shadows"
 
 	case "$1" in
 		-h|--help)
 			echo "$usage"
-			echo "Print aliases/functions that take precedence over builtins or PATH commands."
-			return 0
-			;;
+			echo "Print aliases/functions/binaries that take precedence over builtins or PATH commands."
+			return 0			;;
 		-a|--about)
 			echo "$about"
 			return 0
@@ -132,9 +130,38 @@ shadows() {
 		fi
 	}
 
+	local collect_binary_shadows
+	collect_binary_shadows() {
+		local -A seen_binaries  # maps binary name -> first real path
+		local -A seen_real_paths  # tracks resolved paths to skip symlink duplicates
+		local dir realdir name fullpath realpath
+		local -a path_dirs
+		IFS=':' read -ra path_dirs <<< "$PATH"
+		for dir in "${path_dirs[@]}"; do
+			[[ -d "$dir" ]] || continue
+			realdir="$(cd "$dir" && pwd -P)"
+			while IFS= read -r fullpath; do
+				[[ -x "$fullpath" && -f "$fullpath" ]] || continue
+				name="${fullpath##*/}"				# Resolve to physical path to detect symlink duplicates
+				realpath="$realdir/$name"
+				if [[ -n "${seen_real_paths[$realpath]+x}" ]]; then
+					# Same physical file via symlinked directory — skip
+					continue
+				fi
+				seen_real_paths[$realpath]=1
+				if [[ -n "${seen_binaries[$name]+x}" ]]; then
+					# Different physical file with same name — earlier shadows later
+					local earlier="${seen_binaries[$name]}"
+					results+=("$earlier shadows: $fullpath")
+				else
+					seen_binaries[$name]="$fullpath"
+				fi
+			done < <(compgen -G "$dir/*")
+		done
+	}
+
 	local name
-	for name in "${alias_names[@]}"; do
-		collect_alias_shadows "$name"
+	for name in "${alias_names[@]}"; do		collect_alias_shadows "$name"
 	done
 
 	for name in "${function_names[@]}"; do
@@ -142,6 +169,7 @@ shadows() {
 		collect_function_shadows "$name"
 	done
 
+	collect_binary_shadows
 	local count=${#results[@]}
 	if ((count > 0)); then
 		printf "%s\n" "${results[@]}" | sort

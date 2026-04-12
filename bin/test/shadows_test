@@ -183,8 +183,45 @@ fi
 PATH="$OLDPATH"
 rm -rf "$tmpdir"
 
-if (( fails == 0 )); then
-	echo "All $tests tests passed"
+# Binary shadowing another binary on PATH is reported
+tmpdir2="$(mktemp -d --tmpdir)"
+dir_early="$tmpdir2/early"
+dir_late="$tmpdir2/late"
+mkdir -p "$dir_early" "$dir_late"
+printf '#!/usr/bin/env bash\nprintf "early\\n"\n' > "$dir_early/shadowbin"
+printf '#!/usr/bin/env bash\nprintf "late\\n"\n' > "$dir_late/shadowbin"
+chmod +x "$dir_early/shadowbin" "$dir_late/shadowbin"
+OLDPATH="$PATH"
+PATH="$dir_early:$dir_late:$PATH"
+hash -r 2>/dev/null
+((tests++))
+echo "Testing: binary shadowing another binary on PATH is detected..."
+output="$(shadows)"
+status=$?
+if echo "$output" | grep -q "$dir_early/shadowbin" && echo "$output" | grep -q "$dir_late/shadowbin" && echo "$output" | grep -qi "shadows" && (( status == baseline_count + 1 )); then
+	echo "✓ Test passed: binary shadowing binary detected"
+else
+	echo "✗ Test failed: binary shadowing binary not detected" >&2
+	echo "  Output: $output" >&2
+	echo "  Exit: $status (expected $((baseline_count + 1)))" >&2
+	((fails++))
+fi
+
+# Only the first binary should be listed as the shadower, not the shadowed one
+((tests++))
+echo "Testing: binary shadow reports correct direction (early shadows late)..."
+shadow_line="$(echo "$output" | grep "shadowbin")"
+if [[ "$shadow_line" == *"$dir_early/shadowbin shadows: $dir_late/shadowbin"* ]]; then
+	echo "✓ Test passed: shadow direction is correct"
+else
+	echo "✗ Test failed: shadow direction incorrect" >&2
+	echo "  Line: $shadow_line" >&2
+	((fails++))
+fi
+PATH="$OLDPATH"
+rm -rf "$tmpdir2"
+
+if (( fails == 0 )); then	echo "All $tests tests passed"
 else
 	echo "$fails of $tests tests failed" >&2
 fi
