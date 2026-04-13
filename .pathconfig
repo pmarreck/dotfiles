@@ -71,22 +71,22 @@ else
   DOCUMENTS="$HOME/Documents"
 fi
 export DOCUMENTS
-# Non-Zig projects with custom bin paths
-IGNORE_PREPEND_PATH_WARNINGS=true prepend_path "$DOCUMENTS/ixnay"
-IGNORE_PREPEND_PATH_WARNINGS=true prepend_path "$DOCUMENTS/jumpscript/bin"
-IGNORE_PREPEND_PATH_WARNINGS=true prepend_path "$DOCUMENTS/yt-transcriber"
-IGNORE_PREPEND_PATH_WARNINGS=true prepend_path "$DOCUMENTS/baseN"
-IGNORE_PREPEND_PATH_WARNINGS=true prepend_path "$DOCUMENTS/printable_binary/bin"
-IGNORE_PREPEND_PATH_WARNINGS=true prepend_path "$DOCUMENTS/rm-safe/bin"
 
-# Zig/Nix projects: auto-discover all {result,zig-out}/bin dirs
-# result/bin is prepended last so it takes priority when both exist.
 IGNORE_PREPEND_PATH_WARNINGS=true
 export IGNORE_PREPEND_PATH_WARNINGS
-for dir in "$DOCUMENTS"/*/zig-out/bin; do
+# Non-Zig projects with custom bin paths
+prepend_path "$DOCUMENTS/ixnay/bin"
+prepend_path "$DOCUMENTS/jumpscript/bin"
+prepend_path "$DOCUMENTS/yt-transcriber/bin"
+prepend_path "$DOCUMENTS/printable_binary/bin"
+prepend_path "$DOCUMENTS/rm-safe/bin"
+
+# Zig/Nix projects: auto-discover all {result,zig-out}/bin dirs
+# result/bin is prepended first so zig-out/bin (dev builds) take priority when both exist.
+for dir in "$DOCUMENTS"/*/result/bin; do
   [ -d "$dir" ] && prepend_path "$dir"
 done
-for dir in "$DOCUMENTS"/*/result/bin; do
+for dir in "$DOCUMENTS"/*/zig-out/bin; do
   [ -d "$dir" ] && prepend_path "$dir"
 done
 unset IGNORE_PREPEND_PATH_WARNINGS
