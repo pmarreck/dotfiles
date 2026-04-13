@@ -285,6 +285,79 @@ local function sha256_string(s)
 	return table.concat(hex)
 end
 
+-- xattr FFI
+if IS_MAC then
+	ffi.cdef([[
+		long listxattr(const char *path, char *namebuf, size_t size, int options);
+		long getxattr(const char *path, const char *name, void *value, size_t size, uint32_t position, int options);
+	]])
+else
+	ffi.cdef([[
+		long listxattr(const char *path, char *namebuf, size_t size);
+		long getxattr(const char *path, const char *name, void *value, size_t size);
+	]])
+end
+
+local function list_xattrs(path)
+	local size
+	if IS_MAC then
+		size = tonumber(ffi.C.listxattr(path, nil, 0, 0))
+	else
+		size = tonumber(ffi.C.listxattr(path, nil, 0))
+	end
+	if not size or size <= 0 then return {} end
+
+	local buf = ffi.new("char[?]", size)
+	if IS_MAC then
+		ffi.C.listxattr(path, buf, size, 0)
+	else
+		ffi.C.listxattr(path, buf, size)
+	end
+
+	local names = {}
+	local start = 0
+	for i = 0, size - 1 do
+		if buf[i] == 0 then
+			local name = ffi.string(buf + start, i - start)
+			if #name > 0 then names[#names + 1] = name end
+			start = i + 1
+		end
+	end
+	table.sort(names)
+	return names
+end
+
+local function get_xattr(path, name)
+	local size
+	if IS_MAC then
+		size = tonumber(ffi.C.getxattr(path, name, nil, 0, 0, 0))
+	else
+		size = tonumber(ffi.C.getxattr(path, name, nil, 0))
+	end
+	if not size or size < 0 then return nil end
+	if size == 0 then return "" end
+
+	local buf = ffi.new("char[?]", size)
+	if IS_MAC then
+		ffi.C.getxattr(path, name, buf, size, 0, 0)
+	else
+		ffi.C.getxattr(path, name, buf, size)
+	end
+	return ffi.string(buf, size)
+end
+
+local function collect_xattrs(path)
+	local names = list_xattrs(path)
+	if #names == 0 then return {}, nil end
+	local parts = {}
+	for _, name in ipairs(names) do
+		local val = get_xattr(path, name) or ""
+		parts[#parts + 1] = name .. "=" .. val
+	end
+	local content_hash = sha256_string(table.concat(parts, "\0"))
+	return names, content_hash
+end
+
 -- Validate directories exist (using stat)
 local st_check = ffi.new("struct stat")
 for _, d in ipairs({dir1, dir2}) do
@@ -348,6 +421,9 @@ local function walk_dir(base_path)
 					if ftype == "file" then
 						rec.content_sha256 = sha256_file(full_path)
 					end
+
+					-- Collect xattrs
+					rec.xattr_keys, rec.xattr_content_hash = collect_xattrs(full_path)
 
 					entries[rel_path] = rec
 
@@ -419,6 +495,32 @@ for p in pairs(all_paths) do
 		-- Symlink target
 		if e1.symlink_target ~= e2.symlink_target then
 			diffs[#diffs + 1] = {path = p, field = "symlink_target", val1 = e1.symlink_target or "(none)", val2 = e2.symlink_target or "(none)"}
+		end
+		-- xattr differences
+		local keys1_set, keys2_set = {}, {}
+		for _, k in ipairs(e1.xattr_keys or {}) do keys1_set[k] = true end
+		for _, k in ipairs(e2.xattr_keys or {}) do keys2_set[k] = true end
+		local all_xattr_keys = {}
+		for k in pairs(keys1_set) do all_xattr_keys[k] = true end
+		for k in pairs(keys2_set) do all_xattr_keys[k] = true end
+		local sorted_xkeys = {}
+		for k in pairs(all_xattr_keys) do sorted_xkeys[#sorted_xkeys + 1] = k end
+		table.sort(sorted_xkeys)
+		for _, k in ipairs(sorted_xkeys) do
+			if keys1_set[k] and not keys2_set[k] then
+				diffs[#diffs + 1] = {path = p, field = "xattr:" .. k, val1 = "(present)", val2 = "(absent)"}
+			elseif keys2_set[k] and not keys1_set[k] then
+				diffs[#diffs + 1] = {path = p, field = "xattr:" .. k, val1 = "(absent)", val2 = "(present)"}
+			end
+		end
+		if e1.xattr_content_hash and e2.xattr_content_hash and e1.xattr_content_hash ~= e2.xattr_content_hash then
+			local has_key_diff = false
+			for _, k in ipairs(sorted_xkeys) do
+				if keys1_set[k] ~= keys2_set[k] then has_key_diff = true; break end
+			end
+			if not has_key_diff then
+				diffs[#diffs + 1] = {path = p, field = "xattr_hash", val1 = e1.xattr_content_hash:sub(1, 16), val2 = e2.xattr_content_hash:sub(1, 16)}
+			end
 		end
 	elseif e1 and not e2 then
 		if e1.content_sha256 then

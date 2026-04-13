@@ -118,6 +118,269 @@ test_compare_dirs() {
 	fi
 	rm -rf "$tmpdir"
 
+	# Test 9: metadata differences (mtime) detected
+	(( tests++ ))
+	tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/compare_dirs_test.XXXXXX")
+	mkdir -p "$tmpdir/a" "$tmpdir/b"
+	echo "same" > "$tmpdir/a/file.txt"
+	echo "same" > "$tmpdir/b/file.txt"
+	touch -t 202401151030 "$tmpdir/a/file.txt"
+	touch -t 202401161430 "$tmpdir/b/file.txt"
+	output=$(compare-dirs "$tmpdir/a" "$tmpdir/b" 2>&1)
+	exit_code=$?
+	if [ "$exit_code" -eq 1 ] && [[ "$output" == *"mtime"* ]] && [[ "$output" == *"file.txt"* ]]; then
+		echo "✓ mtime difference detected"
+	else
+		echo "✗ mtime difference: exit=$exit_code output='$output'" >&2
+		(( fails++ ))
+	fi
+	rm -rf "$tmpdir"
+
+	# Test 10: size difference detected
+	(( tests++ ))
+	tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/compare_dirs_test.XXXXXX")
+	mkdir -p "$tmpdir/a" "$tmpdir/b"
+	echo "short" > "$tmpdir/a/file.txt"
+	echo "a longer string" > "$tmpdir/b/file.txt"
+	output=$(compare-dirs "$tmpdir/a" "$tmpdir/b" 2>&1)
+	exit_code=$?
+	if [ "$exit_code" -eq 1 ] && [[ "$output" == *"size"* ]]; then
+		echo "✓ size difference detected"
+	else
+		echo "✗ size difference: exit=$exit_code output='$output'" >&2
+		(( fails++ ))
+	fi
+	rm -rf "$tmpdir"
+
+	# Test 11: rename detection (same content, different name)
+	(( tests++ ))
+	tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/compare_dirs_test.XXXXXX")
+	mkdir -p "$tmpdir/a" "$tmpdir/b"
+	echo "unique content here" > "$tmpdir/a/oldname.txt"
+	echo "unique content here" > "$tmpdir/b/newname.txt"
+	touch -r "$tmpdir/a/oldname.txt" "$tmpdir/b/newname.txt"
+	output=$(compare-dirs "$tmpdir/a" "$tmpdir/b" 2>&1)
+	exit_code=$?
+	if [ "$exit_code" -eq 1 ] && [[ "$output" == *"Renames"* ]] && [[ "$output" == *"oldname.txt"* ]] && [[ "$output" == *"newname.txt"* ]]; then
+		echo "✓ rename detected"
+	else
+		echo "✗ rename detection: exit=$exit_code output='$output'" >&2
+		(( fails++ ))
+	fi
+	rm -rf "$tmpdir"
+
+	# Test 12: file only in one dir (no matching hash on other side)
+	(( tests++ ))
+	tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/compare_dirs_test.XXXXXX")
+	mkdir -p "$tmpdir/a" "$tmpdir/b"
+	echo "only here" > "$tmpdir/a/orphan.txt"
+	output=$(compare-dirs "$tmpdir/a" "$tmpdir/b" 2>&1)
+	exit_code=$?
+	if [ "$exit_code" -eq 1 ] && [[ "$output" == *"Only in"* ]] && [[ "$output" == *"orphan.txt"* ]]; then
+		echo "✓ only-in-one-dir detected"
+	else
+		echo "✗ only-in-one-dir: exit=$exit_code output='$output'" >&2
+		(( fails++ ))
+	fi
+	rm -rf "$tmpdir"
+
+	# Test 13: extended attribute differences (platform-dependent)
+	(( tests++ ))
+	tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/compare_dirs_test.XXXXXX")
+	mkdir -p "$tmpdir/a" "$tmpdir/b"
+	echo "same" > "$tmpdir/a/file.txt"
+	echo "same" > "$tmpdir/b/file.txt"
+	touch -r "$tmpdir/a/file.txt" "$tmpdir/b/file.txt"
+	if xattr -w user.test "value1" "$tmpdir/a/file.txt" 2>/dev/null; then
+		xattr -w user.test "value2" "$tmpdir/b/file.txt" 2>/dev/null
+		output=$(compare-dirs "$tmpdir/a" "$tmpdir/b" 2>&1)
+		exit_code=$?
+		if [ "$exit_code" -eq 1 ] && [[ "$output" == *"xattr"* ]]; then
+			echo "✓ xattr difference detected"
+		else
+			echo "✗ xattr difference: exit=$exit_code output='$output'" >&2
+			(( fails++ ))
+		fi
+	elif setfattr -n user.test -v "value1" "$tmpdir/a/file.txt" 2>/dev/null; then
+		setfattr -n user.test -v "value2" "$tmpdir/b/file.txt" 2>/dev/null
+		output=$(compare-dirs "$tmpdir/a" "$tmpdir/b" 2>&1)
+		exit_code=$?
+		if [ "$exit_code" -eq 1 ] && [[ "$output" == *"xattr"* ]]; then
+			echo "✓ xattr difference detected"
+		else
+			echo "✗ xattr difference: exit=$exit_code output='$output'" >&2
+			(( fails++ ))
+		fi
+	else
+		echo "⊘ xattr test skipped (not supported on this filesystem)"
+	fi
+	rm -rf "$tmpdir"
+
+	# Test 14: xattr presence vs absence
+	(( tests++ ))
+	tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/compare_dirs_test.XXXXXX")
+	mkdir -p "$tmpdir/a" "$tmpdir/b"
+	echo "same" > "$tmpdir/a/file.txt"
+	echo "same" > "$tmpdir/b/file.txt"
+	touch -r "$tmpdir/a/file.txt" "$tmpdir/b/file.txt"
+	if xattr -w user.only_here "val" "$tmpdir/a/file.txt" 2>/dev/null; then
+		output=$(compare-dirs "$tmpdir/a" "$tmpdir/b" 2>&1)
+		exit_code=$?
+		if [ "$exit_code" -eq 1 ] && [[ "$output" == *"user.only_here"* ]]; then
+			echo "✓ xattr presence/absence detected"
+		else
+			echo "✗ xattr presence/absence: exit=$exit_code output='$output'" >&2
+			(( fails++ ))
+		fi
+	elif setfattr -n user.only_here -v "val" "$tmpdir/a/file.txt" 2>/dev/null; then
+		output=$(compare-dirs "$tmpdir/a" "$tmpdir/b" 2>&1)
+		exit_code=$?
+		if [ "$exit_code" -eq 1 ] && [[ "$output" == *"user.only_here"* ]]; then
+			echo "✓ xattr presence/absence detected"
+		else
+			echo "✗ xattr presence/absence: exit=$exit_code output='$output'" >&2
+			(( fails++ ))
+		fi
+	else
+		echo "⊘ xattr presence test skipped (not supported on this filesystem)"
+	fi
+	rm -rf "$tmpdir"
+
+	# Test 15: symlink target differences (default: don't follow)
+	(( tests++ ))
+	tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/compare_dirs_test.XXXXXX")
+	mkdir -p "$tmpdir/a" "$tmpdir/b"
+	echo "target1" > "$tmpdir/target1"
+	echo "target2" > "$tmpdir/target2"
+	ln -s "$tmpdir/target1" "$tmpdir/a/link"
+	ln -s "$tmpdir/target2" "$tmpdir/b/link"
+	output=$(compare-dirs "$tmpdir/a" "$tmpdir/b" 2>&1)
+	exit_code=$?
+	if [ "$exit_code" -eq 1 ] && [[ "$output" == *"symlink_target"* ]]; then
+		echo "✓ symlink target difference detected"
+	else
+		echo "✗ symlink target difference: exit=$exit_code output='$output'" >&2
+		(( fails++ ))
+	fi
+	rm -rf "$tmpdir"
+
+	# Test 16: --follow-symlinks follows through to content
+	(( tests++ ))
+	tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/compare_dirs_test.XXXXXX")
+	mkdir -p "$tmpdir/a" "$tmpdir/b"
+	echo "same content" > "$tmpdir/real_file"
+	ln -s "$tmpdir/real_file" "$tmpdir/a/link"
+	ln -s "$tmpdir/real_file" "$tmpdir/b/link"
+	output=$(compare-dirs --follow-symlinks "$tmpdir/a" "$tmpdir/b" 2>&1)
+	exit_code=$?
+	if [ "$exit_code" -eq 0 ]; then
+		echo "✓ --follow-symlinks: identical targets = no diff"
+	else
+		echo "✗ --follow-symlinks identical: exit=$exit_code output='$output'" >&2
+		(( fails++ ))
+	fi
+	rm -rf "$tmpdir"
+
+	# Test 17: same directory compared to itself → exit 0
+	(( tests++ ))
+	tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/compare_dirs_test.XXXXXX")
+	mkdir -p "$tmpdir/a"
+	echo "hello" > "$tmpdir/a/file.txt"
+	output=$(compare-dirs "$tmpdir/a" "$tmpdir/a" 2>&1)
+	exit_code=$?
+	if [ "$exit_code" -eq 0 ] && [ -z "$output" ]; then
+		echo "✓ same dir compared to itself: exit 0, no output"
+	else
+		echo "✗ same dir to itself: exit=$exit_code output='$output'" >&2
+		(( fails++ ))
+	fi
+	rm -rf "$tmpdir"
+
+	# Test 18: --test flag works (guarded against recursion)
+	(( tests++ ))
+	if [ -n "$COMPARE_DIRS_TEST_RECURSION_GUARD" ]; then
+		echo "✓ --test flag runs tests and passes (skipped inner recursion)"
+	else
+		COMPARE_DIRS_TEST_RECURSION_GUARD=1 compare-dirs --test >/dev/null 2>&1
+		exit_code=$?
+		if [ "$exit_code" -eq 0 ]; then
+			echo "✓ --test flag runs tests and passes"
+		else
+			echo "✗ --test flag: exit=$exit_code" >&2
+			(( fails++ ))
+		fi
+	fi
+
+	# Test 19: nested rename detection (different subdirectory paths)
+	(( tests++ ))
+	tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/compare_dirs_test.XXXXXX")
+	mkdir -p "$tmpdir/a/old_dir" "$tmpdir/b/new_dir"
+	echo "moved content" > "$tmpdir/a/old_dir/file.txt"
+	echo "moved content" > "$tmpdir/b/new_dir/file.txt"
+	touch -r "$tmpdir/a/old_dir/file.txt" "$tmpdir/b/new_dir/file.txt"
+	output=$(compare-dirs "$tmpdir/a" "$tmpdir/b" 2>&1)
+	exit_code=$?
+	if [ "$exit_code" -eq 1 ] && [[ "$output" == *"Renames"* ]] && [[ "$output" == *"old_dir/file.txt"* ]] && [[ "$output" == *"new_dir/file.txt"* ]]; then
+		echo "✓ nested rename detected"
+	else
+		echo "✗ nested rename: exit=$exit_code output='$output'" >&2
+		(( fails++ ))
+	fi
+	rm -rf "$tmpdir"
+
+	# Test 20: comprehensive integration — multiple difference types at once
+	(( tests++ ))
+	tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/compare_dirs_test.XXXXXX")
+	mkdir -p "$tmpdir/a/sub" "$tmpdir/b/sub"
+	echo "version 1" > "$tmpdir/a/changed.txt"
+	echo "version 2" > "$tmpdir/b/changed.txt"
+	touch -r "$tmpdir/a/changed.txt" "$tmpdir/b/changed.txt"
+	echo "rename me" > "$tmpdir/a/before.txt"
+	echo "rename me" > "$tmpdir/b/after.txt"
+	touch -r "$tmpdir/a/before.txt" "$tmpdir/b/after.txt"
+	echo "orphan" > "$tmpdir/a/only_here.txt"
+	echo "new file" > "$tmpdir/b/brand_new.txt"
+	echo "identical" > "$tmpdir/a/sub/same.txt"
+	echo "identical" > "$tmpdir/b/sub/same.txt"
+	touch -r "$tmpdir/a/sub/same.txt" "$tmpdir/b/sub/same.txt"
+
+	output=$(compare-dirs "$tmpdir/a" "$tmpdir/b" 2>&1)
+	exit_code=$?
+	local integration_fails=0
+	if [ "$exit_code" -ne 1 ]; then
+		echo "✗ integration: expected exit 1, got $exit_code" >&2
+		integration_fails=1
+	fi
+	if [[ "$output" != *"changed.txt"* ]] || [[ "$output" != *"content"* ]]; then
+		echo "✗ integration: content diff not shown" >&2
+		integration_fails=1
+	fi
+	if [[ "$output" != *"Renames"* ]] || [[ "$output" != *"before.txt"* ]]; then
+		echo "✗ integration: rename not shown" >&2
+		integration_fails=1
+	fi
+	if [[ "$output" != *"only_here.txt"* ]]; then
+		echo "✗ integration: only-in-dir1 not shown" >&2
+		integration_fails=1
+	fi
+	if [[ "$output" != *"brand_new.txt"* ]]; then
+		echo "✗ integration: only-in-dir2 not shown" >&2
+		integration_fails=1
+	fi
+	if [[ "$output" == *"same.txt"* ]]; then
+		echo "✗ integration: identical file incorrectly shown" >&2
+		integration_fails=1
+	fi
+	if [ "$integration_fails" -eq 0 ]; then
+		echo "✓ comprehensive integration test passed"
+	else
+		echo "✗ comprehensive integration test failed (see above)" >&2
+		echo "  Full output:" >&2
+		echo "$output" >&2
+		(( fails++ ))
+	fi
+	rm -rf "$tmpdir"
+
 	# Summary
 	if [ $fails -gt 0 ]; then
 		echo ""
