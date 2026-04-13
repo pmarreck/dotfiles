@@ -1,0 +1,73 @@
+#!/usr/bin/env luajit
+
+local ABOUT = "Compare two directory trees and report all differences"
+
+local function print_help()
+	io.write([[Usage: compare-dirs [OPTIONS] <dir1> <dir2>
+
+Compare two directory trees and report differences in content,
+metadata, filenames (renames), and extended attributes.
+
+Options:
+  -h, --help           Show this help text
+  --about              One-line description
+  --test               Run associated tests
+  --follow-symlinks    Follow symbolic links (default: don't follow)
+
+Exit codes:
+  0  No differences found
+  1  Differences found
+  2  Error (bad arguments, unreadable directories)
+]])
+end
+
+-- Parse arguments
+local follow_symlinks = false
+local dirs = {}
+
+local i = 1
+while i <= #arg do
+	local a = arg[i]
+	if a == "-h" or a == "--help" then
+		print_help()
+		os.exit(0)
+	elseif a == "--about" then
+		print(ABOUT)
+		os.exit(0)
+	elseif a == "--test" then
+		local test_file = os.getenv("HOME") .. "/dotfiles/bin/test/compare_dirs_test"
+		local ok = os.execute(test_file .. " >/dev/null")
+		-- LuaJIT os.execute returns exit status directly on some systems
+		if type(ok) == "number" then
+			os.exit(ok)
+		else
+			os.exit(ok and 0 or 1)
+		end
+	elseif a == "--follow-symlinks" then
+		follow_symlinks = true
+	elseif a:sub(1, 1) == "-" then
+		io.stderr:write("Unknown option: " .. a .. "\n")
+		print_help()
+		os.exit(2)
+	else
+		dirs[#dirs + 1] = a
+	end
+	i = i + 1
+end
+
+if #dirs ~= 2 then
+	io.stderr:write("Error: exactly 2 directory paths required\n")
+	os.exit(2)
+end
+
+local dir1, dir2 = dirs[1], dirs[2]
+
+-- Validate directories exist
+for _, d in ipairs({dir1, dir2}) do
+	local f = io.open(d)
+	if not f then
+		io.stderr:write("Error: cannot access '" .. d .. "'\n")
+		os.exit(2)
+	end
+	f:close()
+end

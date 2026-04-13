@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+
+test_compare_dirs() {
+	local fails=0
+	local tests=0
+
+	echo "Testing compare-dirs..."
+
+	# Test 1: --help flag
+	(( tests++ ))
+	local help_output
+	help_output=$(compare-dirs --help 2>&1)
+	local exit_code=$?
+	if [ "$exit_code" -eq 0 ] && [[ "$help_output" == *"Usage:"* ]]; then
+		echo "✓ --help prints usage and exits 0"
+	else
+		echo "✗ --help failed: exit=$exit_code output='$help_output'" >&2
+		(( fails++ ))
+	fi
+
+	# Test 2: -h flag (alias)
+	(( tests++ ))
+	help_output=$(compare-dirs -h 2>&1)
+	exit_code=$?
+	if [ "$exit_code" -eq 0 ] && [[ "$help_output" == *"Usage:"* ]]; then
+		echo "✓ -h prints usage and exits 0"
+	else
+		echo "✗ -h failed: exit=$exit_code" >&2
+		(( fails++ ))
+	fi
+
+	# Test 3: --about flag
+	(( tests++ ))
+	local about_output
+	about_output=$(compare-dirs --about 2>&1)
+	exit_code=$?
+	if [ "$exit_code" -eq 0 ] && [ -n "$about_output" ]; then
+		echo "✓ --about prints description and exits 0"
+	else
+		echo "✗ --about failed: exit=$exit_code" >&2
+		(( fails++ ))
+	fi
+
+	# Test 4: no arguments exits with error
+	(( tests++ ))
+	compare-dirs >/dev/null 2>&1
+	exit_code=$?
+	if [ "$exit_code" -eq 2 ]; then
+		echo "✓ no arguments exits 2"
+	else
+		echo "✗ no arguments: expected exit 2, got $exit_code" >&2
+		(( fails++ ))
+	fi
+
+	# Test 5: nonexistent directory exits with error
+	(( tests++ ))
+	compare-dirs /nonexistent/path/aaa /nonexistent/path/bbb >/dev/null 2>&1
+	exit_code=$?
+	if [ "$exit_code" -eq 2 ]; then
+		echo "✓ nonexistent dirs exit 2"
+	else
+		echo "✗ nonexistent dirs: expected exit 2, got $exit_code" >&2
+		(( fails++ ))
+	fi
+
+	# Summary
+	if [ $fails -gt 0 ]; then
+		echo ""
+		echo "compare_dirs test FAILED: $fails of $tests tests failed" >&2
+	else
+		echo ""
+		echo "compare_dirs test PASSED: All $tests tests passed"
+	fi
+	return $fails
+}
+
+# Run if executed directly
+if ! (return 0 2>/dev/null); then
+	test_compare_dirs
+	exit $?
+fi
