@@ -221,6 +221,47 @@ fi
 PATH="$OLDPATH"
 rm -rf "$tmpdir2"
 
+# Filter argument narrows output to matching name
+alias cd='echo alias-cd'
+((tests++))
+echo "Testing: shadows cd filters output to only cd shadows..."
+output="$(shadows cd)"
+status=$?
+if echo "$output" | grep -q "alias cd" && ! echo "$output" | grep -qv "cd"; then
+	echo "✓ Test passed: filter argument shows only matching shadows"
+else
+	echo "✗ Test failed: filter argument did not narrow output" >&2
+	echo "  Output: $output" >&2
+	((fails++))
+fi
+unalias cd
+
+# Filter argument with no match produces no output
+((tests++))
+echo "Testing: shadows with non-matching filter produces no output..."
+output="$(shadows zzz_no_such_command_zzz 2>&1)"
+status=$?
+if [[ -z "$output" ]] && (( status == 0 )); then
+	echo "✓ Test passed: non-matching filter produces empty output"
+else
+	echo "✗ Test failed: non-matching filter should produce empty output with exit 0" >&2
+	echo "  Output: $output" >&2
+	echo "  Exit: $status" >&2
+	((fails++))
+fi
+
+# Help text mentions filter argument
+((tests++))
+echo "Testing: help text mentions filter argument..."
+output="$(shadows -h 2>&1)"
+if echo "$output" | grep -q '\[COMMAND\]'; then
+	echo "✓ Test passed: help text documents filter argument"
+else
+	echo "✗ Test failed: help text does not document filter argument" >&2
+	echo "  Output: $output" >&2
+	((fails++))
+fi
+
 if (( fails == 0 )); then	echo "All $tests tests passed"
 else
 	echo "$fails of $tests tests failed" >&2

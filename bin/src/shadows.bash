@@ -5,7 +5,7 @@ shadows() {
 
 	local about usage script_dir test_file self_path
 	about="Report aliases, functions, and PATH binaries that shadow builtins, PATH executables, or each other"
-	usage="Usage: shadows [-h|--help] [-a|--about] [--test]"	script_dir="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+	usage="Usage: shadows [-h|--help] [-a|--about] [--test] [COMMAND]"	script_dir="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 	test_file="$script_dir/../test/shadows_test"
 	self_path="$(cd "$script_dir/.." && pwd)/shadows"
 
@@ -13,6 +13,7 @@ shadows() {
 		-h|--help)
 			echo "$usage"
 			echo "Print aliases/functions/binaries that take precedence over builtins or PATH commands."
+			echo "If COMMAND is given, only show shadows involving that command name."
 			return 0			;;
 		-a|--about)
 			echo "$about"
@@ -23,6 +24,8 @@ shadows() {
 			return $?
 			;;
 	esac
+
+	local filter="$1"
 
 	local -a alias_names function_names results
 
@@ -170,6 +173,19 @@ shadows() {
 	done
 
 	collect_binary_shadows
+
+	# Apply filter if a command name was given
+	if [[ -n "$filter" ]]; then
+		local -a filtered
+		local line
+		for line in "${results[@]}"; do
+			if [[ "$line" == *"$filter"* ]]; then
+				filtered+=("$line")
+			fi
+		done
+		results=("${filtered[@]}")
+	fi
+
 	local count=${#results[@]}
 	if ((count > 0)); then
 		printf "%s\n" "${results[@]}" | sort
