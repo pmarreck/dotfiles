@@ -184,6 +184,15 @@ shadows() {
 			fi
 		done
 		results=("${filtered[@]}")
+		if ((${#results[@]} == 0)); then
+			if command -v -- "$filter" > /dev/null 2>&1; then
+				echo "Nothing shadows $filter"
+				return 0
+			else
+				echo "$filter is not defined"
+				return 1
+			fi
+		fi
 	fi
 
 	local count=${#results[@]}

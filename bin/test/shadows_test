@@ -236,19 +236,40 @@ else
 fi
 unalias cd
 
-# Filter argument with no match produces no output
+# Filter for undefined command reports "is not defined" and exits 1
 ((tests++))
-echo "Testing: shadows with non-matching filter produces no output..."
+echo "Testing: shadows with undefined command reports not defined..."
 output="$(shadows zzz_no_such_command_zzz 2>&1)"
 status=$?
-if [[ -z "$output" ]] && (( status == 0 )); then
-	echo "✓ Test passed: non-matching filter produces empty output"
+if [[ "$output" == *"zzz_no_such_command_zzz is not defined"* ]] && (( status == 1 )); then
+	echo "✓ Test passed: undefined command reports not defined with exit 1"
 else
-	echo "✗ Test failed: non-matching filter should produce empty output with exit 0" >&2
+	echo "✗ Test failed: undefined command should report not defined with exit 1" >&2
 	echo "  Output: $output" >&2
 	echo "  Exit: $status" >&2
 	((fails++))
 fi
+
+# Filter for defined command with no shadows reports "Nothing shadows ..."
+tmpdir3="$(mktemp -d --tmpdir)"
+printf '#!/usr/bin/env bash\necho hi\n' > "$tmpdir3/zzz_unique_unshadowed_cmd"
+chmod +x "$tmpdir3/zzz_unique_unshadowed_cmd"
+OLDPATH="$PATH"
+PATH="$tmpdir3:$PATH"
+((tests++))
+echo "Testing: shadows with defined but unshadowed command reports nothing shadows it..."
+output="$(shadows zzz_unique_unshadowed_cmd 2>&1)"
+status=$?
+if [[ "$output" == *"Nothing shadows zzz_unique_unshadowed_cmd"* ]] && (( status == 0 )); then
+	echo "✓ Test passed: defined unshadowed command reports nothing shadows it"
+else
+	echo "✗ Test failed: defined unshadowed command should report nothing shadows it with exit 0" >&2
+	echo "  Output: $output" >&2
+	echo "  Exit: $status" >&2
+	((fails++))
+fi
+PATH="$OLDPATH"
+rm -rf "$tmpdir3"
 
 # Help text mentions filter argument
 ((tests++))
