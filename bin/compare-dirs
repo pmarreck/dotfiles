@@ -62,12 +62,509 @@ end
 
 local dir1, dir2 = dirs[1], dirs[2]
 
--- Validate directories exist
+local ffi = require("ffi")
+local bit = require("bit")
+
+-- Platform detection
+local IS_MAC = ffi.os == "OSX"
+local IS_LINUX = ffi.os == "Linux"
+
+-- Common C definitions
+ffi.cdef([[
+	struct passwd { char *pw_name; char *pw_passwd; uint32_t pw_uid; uint32_t pw_gid; long pw_change; char *pw_class; char *pw_gecos; char *pw_dir; char *pw_shell; long pw_expire; int pw_fields; };
+	struct group { char *gr_name; char *gr_passwd; uint32_t gr_gid; char **gr_mem; };
+	struct passwd *getpwuid(uint32_t uid);
+	struct group *getgrgid(uint32_t gid);
+	long readlink(const char *path, char *buf, size_t bufsiz);
+	char *strerror(int errnum);
+]])
+
+if IS_MAC then
+	ffi.cdef([[
+		struct timespec { long tv_sec; long tv_nsec; };
+		struct stat {
+			int32_t   st_dev;
+			uint16_t  st_mode;
+			uint16_t  st_nlink;
+			uint64_t  st_ino;
+			uint32_t  st_uid;
+			uint32_t  st_gid;
+			int32_t   st_rdev;
+			struct timespec st_atimespec;
+			struct timespec st_mtimespec;
+			struct timespec st_ctimespec;
+			struct timespec st_birthtimespec;
+			int64_t   st_size;
+			int64_t   st_blocks;
+			int32_t   st_blksize;
+			uint32_t  st_flags;
+			uint32_t  st_gen;
+			int32_t   st_lspare;
+			int64_t   st_qspare[2];
+		};
+		typedef struct { int __dummy; } DIR;
+		struct dirent {
+			uint64_t d_ino;
+			uint64_t d_seekoff;
+			uint16_t d_reclen;
+			uint16_t d_namlen;
+			uint8_t  d_type;
+			char     d_name[1024];
+		};
+	]])
+elseif IS_LINUX then
+	ffi.cdef([[
+		struct timespec { long tv_sec; long tv_nsec; };
+		struct stat {
+			uint64_t  st_dev;
+			uint64_t  st_ino;
+			uint64_t  st_nlink;
+			uint32_t  st_mode;
+			uint32_t  st_uid;
+			uint32_t  st_gid;
+			uint32_t  __pad0;
+			uint64_t  st_rdev;
+			int64_t   st_size;
+			int64_t   st_blksize;
+			int64_t   st_blocks;
+			struct timespec st_atim;
+			struct timespec st_mtim;
+			struct timespec st_ctim;
+			long      __unused[3];
+		};
+		typedef struct { int __dummy; } DIR;
+		struct dirent {
+			uint64_t d_ino;
+			int64_t  d_off;
+			uint16_t d_reclen;
+			uint8_t  d_type;
+			char     d_name[256];
+		};
+	]])
+else
+	io.stderr:write("Error: unsupported platform: " .. ffi.os .. "\n")
+	os.exit(2)
+end
+
+ffi.cdef([[
+	int lstat(const char *path, struct stat *buf);
+	int stat(const char *path, struct stat *buf);
+	DIR *opendir(const char *name);
+	struct dirent *readdir(DIR *dirp);
+	int closedir(DIR *dirp);
+]])
+
+-- SHA256 via CommonCrypto (macOS) or libcrypto (Linux)
+local crypto_lib
+if IS_MAC then
+	ffi.cdef([[
+		typedef unsigned int CC_LONG;
+		typedef struct {
+			uint32_t state[8];
+			uint64_t count;
+			unsigned char buffer[64];
+		} CC_SHA256_CTX;
+		int CC_SHA256_Init(CC_SHA256_CTX *c);
+		int CC_SHA256_Update(CC_SHA256_CTX *c, const void *data, CC_LONG len);
+		int CC_SHA256_Final(unsigned char *md, CC_SHA256_CTX *c);
+	]])
+else
+	local ok, lib = pcall(ffi.load, "crypto")
+	if not ok then
+		io.stderr:write("Error: libcrypto not found. Install openssl.\n")
+		os.exit(2)
+	end
+	crypto_lib = lib
+	ffi.cdef([[
+		typedef struct {
+			uint32_t h[8];
+			uint32_t Nl, Nh;
+			uint32_t data[16];
+			unsigned int num, md_len;
+		} SHA256_CTX;
+		int SHA256_Init(SHA256_CTX *c);
+		int SHA256_Update(SHA256_CTX *c, const void *data, size_t len);
+		int SHA256_Final(unsigned char *md, SHA256_CTX *c);
+	]])
+end
+
+-- Constants
+local DT_DIR = 4
+local DT_LNK = 10
+local S_IFMT  = 0xF000
+local S_IFREG = 0x8000
+local S_IFDIR = 0x4000
+local S_IFLNK = 0xA000
+local CHUNK_SIZE = 1048576 -- 1MB
+
+-- Helper functions
+local function get_stat_mtime(st)
+	if IS_MAC then return tonumber(st.st_mtimespec.tv_sec)
+	else return tonumber(st.st_mtim.tv_sec) end
+end
+
+local function get_stat_ctime(st)
+	if IS_MAC then return tonumber(st.st_ctimespec.tv_sec)
+	else return tonumber(st.st_ctim.tv_sec) end
+end
+
+local function uid_to_name(uid)
+	local pw = ffi.C.getpwuid(uid)
+	if pw ~= nil then return ffi.string(pw.pw_name) end
+	return tostring(uid)
+end
+
+local function gid_to_name(gid)
+	local gr = ffi.C.getgrgid(gid)
+	if gr ~= nil then return ffi.string(gr.gr_name) end
+	return tostring(gid)
+end
+
+local function read_symlink(path)
+	local buf = ffi.new("char[4096]")
+	local len = tonumber(ffi.C.readlink(path, buf, 4096))
+	if len < 0 then return nil end
+	return ffi.string(buf, len)
+end
+
+local function file_type_from_mode(mode)
+	local fmt = bit.band(mode, S_IFMT)
+	if fmt == S_IFREG then return "file"
+	elseif fmt == S_IFDIR then return "dir"
+	elseif fmt == S_IFLNK then return "symlink"
+	else return "other" end
+end
+
+local stat_func = follow_symlinks and ffi.C.stat or ffi.C.lstat
+
+-- SHA256 functions
+local function sha256_file(path)
+	local f = io.open(path, "rb")
+	if not f then return nil end
+	local hash_buf = ffi.new("unsigned char[32]")
+	if IS_MAC then
+		local ctx = ffi.new("CC_SHA256_CTX")
+		ffi.C.CC_SHA256_Init(ctx)
+		while true do
+			local chunk = f:read(CHUNK_SIZE)
+			if not chunk then break end
+			ffi.C.CC_SHA256_Update(ctx, chunk, #chunk)
+		end
+		ffi.C.CC_SHA256_Final(hash_buf, ctx)
+	else
+		local ctx = ffi.new("SHA256_CTX")
+		crypto_lib.SHA256_Init(ctx)
+		while true do
+			local chunk = f:read(CHUNK_SIZE)
+			if not chunk then break end
+			crypto_lib.SHA256_Update(ctx, chunk, #chunk)
+		end
+		crypto_lib.SHA256_Final(hash_buf, ctx)
+	end
+	f:close()
+	local hex = {}
+	for j = 0, 31 do hex[#hex + 1] = string.format("%02x", hash_buf[j]) end
+	return table.concat(hex)
+end
+
+local function sha256_string(s)
+	local hash_buf = ffi.new("unsigned char[32]")
+	if IS_MAC then
+		local ctx = ffi.new("CC_SHA256_CTX")
+		ffi.C.CC_SHA256_Init(ctx)
+		ffi.C.CC_SHA256_Update(ctx, s, #s)
+		ffi.C.CC_SHA256_Final(hash_buf, ctx)
+	else
+		local ctx = ffi.new("SHA256_CTX")
+		crypto_lib.SHA256_Init(ctx)
+		crypto_lib.SHA256_Update(ctx, s, #s)
+		crypto_lib.SHA256_Final(hash_buf, ctx)
+	end
+	local hex = {}
+	for j = 0, 31 do hex[#hex + 1] = string.format("%02x", hash_buf[j]) end
+	return table.concat(hex)
+end
+
+-- Validate directories exist (using stat)
+local st_check = ffi.new("struct stat")
 for _, d in ipairs({dir1, dir2}) do
-	local f = io.open(d)
-	if not f then
+	if ffi.C.stat(d, st_check) ~= 0 then
 		io.stderr:write("Error: cannot access '" .. d .. "'\n")
 		os.exit(2)
 	end
-	f:close()
+	if file_type_from_mode(st_check.st_mode) ~= "dir" then
+		io.stderr:write("Error: not a directory: '" .. d .. "'\n")
+		os.exit(2)
+	end
 end
+
+-- Walk a directory tree, return map of relative_path -> record
+local function walk_dir(base_path)
+	local entries = {}
+
+	local function walk(rel_prefix)
+		local full = base_path
+		if rel_prefix ~= "" then full = base_path .. "/" .. rel_prefix end
+
+		local dir = ffi.C.opendir(full)
+		if dir == nil then
+			io.stderr:write("WARNING: cannot open directory: " .. full .. "\n")
+			return
+		end
+
+		while true do
+			local ent = ffi.C.readdir(dir)
+			if ent == nil then break end
+			local name = ffi.string(ent.d_name)
+			if name ~= "." and name ~= ".." then
+				local rel_path = (rel_prefix == "") and name or (rel_prefix .. "/" .. name)
+				local full_path = base_path .. "/" .. rel_path
+
+				local st = ffi.new("struct stat")
+				if stat_func(full_path, st) == 0 then
+					local mode = tonumber(st.st_mode)
+					local ftype = file_type_from_mode(mode)
+
+					local rec = {
+						type = ftype,
+						size = tonumber(st.st_size),
+						uid = tonumber(st.st_uid),
+						gid = tonumber(st.st_gid),
+						owner = uid_to_name(st.st_uid),
+						group = gid_to_name(st.st_gid),
+						mode = bit.band(mode, tonumber(0x1FF)),
+						mtime = get_stat_mtime(st),
+						ctime = get_stat_ctime(st),
+						content_sha256 = nil,
+						xattr_keys = {},
+						xattr_content_hash = nil,
+						symlink_target = nil,
+					}
+
+					if ftype == "symlink" and not follow_symlinks then
+						rec.symlink_target = read_symlink(full_path)
+					end
+
+					if ftype == "file" then
+						rec.content_sha256 = sha256_file(full_path)
+					end
+
+					entries[rel_path] = rec
+
+					-- Recurse into directories
+					if ftype == "dir" then
+						walk(rel_path)
+					end
+					-- If following symlinks and it resolved to a dir, recurse
+					if follow_symlinks and ftype == "dir" and tonumber(ent.d_type) == DT_LNK then
+						walk(rel_path)
+					end
+				else
+					io.stderr:write("WARNING: cannot stat: " .. full_path .. "\n")
+				end
+			end
+		end
+
+		ffi.C.closedir(dir)
+	end
+
+	walk("")
+	return entries
+end
+
+-- Collect
+local entries1 = walk_dir(dir1)
+local entries2 = walk_dir(dir2)
+
+-- Diff engine
+local diffs = {}
+local only1 = {}
+local only2 = {}
+local renames = {}
+
+local all_paths = {}
+for p in pairs(entries1) do all_paths[p] = true end
+for p in pairs(entries2) do all_paths[p] = true end
+
+local unmatched1 = {}
+local unmatched2 = {}
+
+for p in pairs(all_paths) do
+	local e1 = entries1[p]
+	local e2 = entries2[p]
+	if e1 and e2 then
+		-- Compare content
+		if e1.content_sha256 and e2.content_sha256 and e1.content_sha256 ~= e2.content_sha256 then
+			diffs[#diffs + 1] = {path = p, field = "content", val1 = e1.content_sha256:sub(1, 16), val2 = e2.content_sha256:sub(1, 16)}
+		end
+		-- Compare metadata
+		if e1.size ~= e2.size then
+			diffs[#diffs + 1] = {path = p, field = "size", val1 = tostring(e1.size), val2 = tostring(e2.size)}
+		end
+		if e1.mode ~= e2.mode then
+			diffs[#diffs + 1] = {path = p, field = "mode", val1 = string.format("%04o", e1.mode), val2 = string.format("%04o", e2.mode)}
+		end
+		if e1.owner ~= e2.owner then
+			diffs[#diffs + 1] = {path = p, field = "owner", val1 = e1.owner, val2 = e2.owner}
+		end
+		if e1.group ~= e2.group then
+			diffs[#diffs + 1] = {path = p, field = "group", val1 = e1.group, val2 = e2.group}
+		end
+		if e1.mtime ~= e2.mtime then
+			diffs[#diffs + 1] = {path = p, field = "mtime", val1 = os.date("%Y-%m-%d %H:%M:%S", e1.mtime), val2 = os.date("%Y-%m-%d %H:%M:%S", e2.mtime)}
+		end
+		if e1.ctime ~= e2.ctime then
+			diffs[#diffs + 1] = {path = p, field = "ctime", val1 = os.date("%Y-%m-%d %H:%M:%S", e1.ctime), val2 = os.date("%Y-%m-%d %H:%M:%S", e2.ctime)}
+		end
+		-- Symlink target
+		if e1.symlink_target ~= e2.symlink_target then
+			diffs[#diffs + 1] = {path = p, field = "symlink_target", val1 = e1.symlink_target or "(none)", val2 = e2.symlink_target or "(none)"}
+		end
+	elseif e1 and not e2 then
+		if e1.content_sha256 then
+			unmatched1[p] = e1.content_sha256
+		else
+			only1[#only1 + 1] = p
+		end
+	elseif e2 and not e1 then
+		if e2.content_sha256 then
+			unmatched2[p] = e2.content_sha256
+		else
+			only2[#only2 + 1] = p
+		end
+	end
+end
+
+-- Rename detection
+local hash_to_paths1 = {}
+for p, h in pairs(unmatched1) do
+	if not hash_to_paths1[h] then hash_to_paths1[h] = {} end
+	hash_to_paths1[h][#hash_to_paths1[h] + 1] = p
+end
+local hash_to_paths2 = {}
+for p, h in pairs(unmatched2) do
+	if not hash_to_paths2[h] then hash_to_paths2[h] = {} end
+	hash_to_paths2[h][#hash_to_paths2[h] + 1] = p
+end
+
+local matched1 = {}
+local matched2 = {}
+
+for h, paths1 in pairs(hash_to_paths1) do
+	local paths2 = hash_to_paths2[h]
+	if paths2 then
+		table.sort(paths1)
+		table.sort(paths2)
+		-- Try basename matching first
+		local used1, used2 = {}, {}
+		for _, p1 in ipairs(paths1) do
+			local base1 = p1:match("[^/]+$")
+			for _, p2 in ipairs(paths2) do
+				if not used2[p2] then
+					local base2 = p2:match("[^/]+$")
+					if base1 == base2 then
+						renames[#renames + 1] = {path1 = p1, path2 = p2, hash = h:sub(1, 16)}
+						used1[p1] = true
+						used2[p2] = true
+						matched1[p1] = true
+						matched2[p2] = true
+						break
+					end
+				end
+			end
+		end
+		-- Match remaining by order
+		local rem1, rem2 = {}, {}
+		for _, p in ipairs(paths1) do if not used1[p] then rem1[#rem1 + 1] = p end end
+		for _, p in ipairs(paths2) do if not used2[p] then rem2[#rem2 + 1] = p end end
+		for j = 1, math.min(#rem1, #rem2) do
+			renames[#renames + 1] = {path1 = rem1[j], path2 = rem2[j], hash = h:sub(1, 16)}
+			matched1[rem1[j]] = true
+			matched2[rem2[j]] = true
+		end
+	end
+end
+
+-- Remaining unmatched go to only1/only2
+for p in pairs(unmatched1) do
+	if not matched1[p] then only1[#only1 + 1] = p end
+end
+for p in pairs(unmatched2) do
+	if not matched2[p] then only2[#only2 + 1] = p end
+end
+
+table.sort(only1)
+table.sort(only2)
+table.sort(renames, function(a, b) return a.path1 < b.path1 end)
+table.sort(diffs, function(a, b)
+	if a.path ~= b.path then return a.path < b.path end
+	local order = {content=1, size=2, mode=3, owner=4, group=5, mtime=6, ctime=7, symlink_target=8, xattr_hash=100}
+	local oa = order[a.field] or (a.field:match("^xattr:") and 50 or 99)
+	local ob = order[b.field] or (b.field:match("^xattr:") and 50 or 99)
+	if oa ~= ob then return oa < ob end
+	return a.field < b.field
+end)
+
+-- Output formatter
+local has_output = false
+
+local function print_section(title)
+	if has_output then io.write("\n") end
+	io.write("=== " .. title .. " ===\n")
+	has_output = true
+end
+
+local function pad(s, w)
+	if #s >= w then return s end
+	return s .. string.rep(" ", w - #s)
+end
+
+-- Only in dir1
+if #only1 > 0 then
+	print_section("Only in " .. dir1)
+	for _, p in ipairs(only1) do
+		io.write("  " .. p .. "\n")
+	end
+end
+
+-- Only in dir2
+if #only2 > 0 then
+	print_section("Only in " .. dir2)
+	for _, p in ipairs(only2) do
+		io.write("  " .. p .. "\n")
+	end
+end
+
+-- Renames
+if #renames > 0 then
+	print_section("Renames")
+	local w1, w2 = 9, 9
+	for _, r in ipairs(renames) do
+		w1 = math.max(w1, #r.path1)
+		w2 = math.max(w2, #r.path2)
+	end
+	io.write("  " .. pad("Dir1 Path", w1) .. " | " .. pad("Dir2 Path", w2) .. " | SHA256 (first 16)\n")
+	io.write("  " .. string.rep("-", w1) .. "-+-" .. string.rep("-", w2) .. "-+-" .. string.rep("-", 17) .. "\n")
+	for _, r in ipairs(renames) do
+		io.write("  " .. pad(r.path1, w1) .. " | " .. pad(r.path2, w2) .. " | " .. r.hash .. "\n")
+	end
+end
+
+-- Differences
+if #diffs > 0 then
+	print_section("Differences")
+	local wp, wf, w1, w2 = 4, 5, 4, 4
+	for _, d in ipairs(diffs) do
+		wp = math.max(wp, #d.path)
+		wf = math.max(wf, #d.field)
+		w1 = math.max(w1, #d.val1)
+		w2 = math.max(w2, #d.val2)
+	end
+	io.write("  " .. pad("Path", wp) .. " | " .. pad("Field", wf) .. " | " .. pad("Dir1", w1) .. " | Dir2\n")
+	io.write("  " .. string.rep("-", wp) .. "-+-" .. string.rep("-", wf) .. "-+-" .. string.rep("-", w1) .. "-+-" .. string.rep("-", w2) .. "\n")
+	for _, d in ipairs(diffs) do
+		io.write("  " .. pad(d.path, wp) .. " | " .. pad(d.field, wf) .. " | " .. pad(d.val1, w1) .. " | " .. d.val2 .. "\n")
+	end
+end
+
+os.exit(has_output and 1 or 0)

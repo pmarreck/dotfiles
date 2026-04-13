@@ -63,6 +63,61 @@ test_compare_dirs() {
 		(( fails++ ))
 	fi
 
+	# Test 6: identical empty directories → exit 0, no output
+	(( tests++ ))
+	local tmpdir
+	tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/compare_dirs_test.XXXXXX")
+	mkdir -p "$tmpdir/a" "$tmpdir/b"
+	local output
+	output=$(compare-dirs "$tmpdir/a" "$tmpdir/b" 2>&1)
+	exit_code=$?
+	if [ "$exit_code" -eq 0 ] && [ -z "$output" ]; then
+		echo "✓ identical empty dirs: exit 0, no output"
+	else
+		echo "✗ identical empty dirs: exit=$exit_code output='$output'" >&2
+		(( fails++ ))
+	fi
+	rm -rf "$tmpdir"
+
+	# Test 7: identical directories with files → exit 0, no output
+	(( tests++ ))
+	tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/compare_dirs_test.XXXXXX")
+	mkdir -p "$tmpdir/a/sub" "$tmpdir/b/sub"
+	echo "hello" > "$tmpdir/a/file.txt"
+	echo "hello" > "$tmpdir/b/file.txt"
+	echo "world" > "$tmpdir/a/sub/nested.txt"
+	echo "world" > "$tmpdir/b/sub/nested.txt"
+	# Match mtimes so metadata is identical
+	touch -r "$tmpdir/a/file.txt" "$tmpdir/b/file.txt"
+	touch -r "$tmpdir/a/sub/nested.txt" "$tmpdir/b/sub/nested.txt"
+	touch -r "$tmpdir/a/sub" "$tmpdir/b/sub"
+	output=$(compare-dirs "$tmpdir/a" "$tmpdir/b" 2>&1)
+	exit_code=$?
+	if [ "$exit_code" -eq 0 ] && [ -z "$output" ]; then
+		echo "✓ identical dirs with files: exit 0, no output"
+	else
+		echo "✗ identical dirs with files: exit=$exit_code output='$output'" >&2
+		(( fails++ ))
+	fi
+	rm -rf "$tmpdir"
+
+	# Test 8: content differences detected
+	(( tests++ ))
+	tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/compare_dirs_test.XXXXXX")
+	mkdir -p "$tmpdir/a" "$tmpdir/b"
+	echo "hello" > "$tmpdir/a/file.txt"
+	echo "world" > "$tmpdir/b/file.txt"
+	touch -r "$tmpdir/a/file.txt" "$tmpdir/b/file.txt"
+	output=$(compare-dirs "$tmpdir/a" "$tmpdir/b" 2>&1)
+	exit_code=$?
+	if [ "$exit_code" -eq 1 ] && [[ "$output" == *"content"* ]] && [[ "$output" == *"file.txt"* ]]; then
+		echo "✓ content difference detected"
+	else
+		echo "✗ content difference: exit=$exit_code output='$output'" >&2
+		(( fails++ ))
+	fi
+	rm -rf "$tmpdir"
+
 	# Summary
 	if [ $fails -gt 0 ]; then
 		echo ""
