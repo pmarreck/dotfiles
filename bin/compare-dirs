@@ -37,7 +37,6 @@ while i <= #arg do
 	elseif a == "--test" then
 		local test_file = os.getenv("HOME") .. "/dotfiles/bin/test/compare_dirs_test"
 		local ok = os.execute(test_file .. " >/dev/null")
-		-- LuaJIT os.execute returns exit status directly on some systems
 		if type(ok) == "number" then
 			os.exit(ok)
 		else
@@ -71,16 +70,16 @@ local IS_LINUX = ffi.os == "Linux"
 
 -- Common C definitions
 ffi.cdef([[
-	struct passwd { char *pw_name; char *pw_passwd; uint32_t pw_uid; uint32_t pw_gid; long pw_change; char *pw_class; char *pw_gecos; char *pw_dir; char *pw_shell; long pw_expire; int pw_fields; };
-	struct group { char *gr_name; char *gr_passwd; uint32_t gr_gid; char **gr_mem; };
-	struct passwd *getpwuid(uint32_t uid);
-	struct group *getgrgid(uint32_t gid);
 	long readlink(const char *path, char *buf, size_t bufsiz);
 	char *strerror(int errnum);
 ]])
 
 if IS_MAC then
 	ffi.cdef([[
+		struct passwd { char *pw_name; char *pw_passwd; uint32_t pw_uid; uint32_t pw_gid; long pw_change; char *pw_class; char *pw_gecos; char *pw_dir; char *pw_shell; long pw_expire; int pw_fields; };
+		struct group { char *gr_name; char *gr_passwd; uint32_t gr_gid; char **gr_mem; };
+		struct passwd *getpwuid(uint32_t uid);
+		struct group *getgrgid(uint32_t gid);
 		struct timespec { long tv_sec; long tv_nsec; };
 		struct stat {
 			int32_t   st_dev;
@@ -114,6 +113,10 @@ if IS_MAC then
 	]])
 elseif IS_LINUX then
 	ffi.cdef([[
+		struct passwd { char *pw_name; char *pw_passwd; uint32_t pw_uid; uint32_t pw_gid; char *pw_gecos; char *pw_dir; char *pw_shell; };
+		struct group { char *gr_name; char *gr_passwd; uint32_t gr_gid; char **gr_mem; };
+		struct passwd *getpwuid(uint32_t uid);
+		struct group *getgrgid(uint32_t gid);
 		struct timespec { long tv_sec; long tv_nsec; };
 		struct stat {
 			uint64_t  st_dev;
@@ -189,8 +192,6 @@ else
 end
 
 -- Constants
-local DT_DIR = 4
-local DT_LNK = 10
 local S_IFMT  = 0xF000
 local S_IFREG = 0x8000
 local S_IFDIR = 0x4000
@@ -198,6 +199,10 @@ local S_IFLNK = 0xA000
 local CHUNK_SIZE = 1048576 -- 1MB
 
 -- Helper functions
+local function get_errno_string()
+	return ffi.string(ffi.C.strerror(ffi.errno()))
+end
+
 local function get_stat_mtime(st)
 	if IS_MAC then return tonumber(st.st_mtimespec.tv_sec)
 	else return tonumber(st.st_mtim.tv_sec) end
@@ -362,7 +367,7 @@ end
 local st_check = ffi.new("struct stat")
 for _, d in ipairs({dir1, dir2}) do
 	if ffi.C.stat(d, st_check) ~= 0 then
-		io.stderr:write("Error: cannot access '" .. d .. "'\n")
+		io.stderr:write("Error: cannot access '" .. d .. "': " .. get_errno_string() .. "\n")
 		os.exit(2)
 	end
 	if file_type_from_mode(st_check.st_mode) ~= "dir" then
@@ -374,6 +379,7 @@ end
 -- Walk a directory tree, return map of relative_path -> record
 local function walk_dir(base_path)
 	local entries = {}
+	local visited_dirs = {} -- dev:ino cycle detection for --follow-symlinks
 
 	local function walk(rel_prefix)
 		local full = base_path
@@ -381,7 +387,7 @@ local function walk_dir(base_path)
 
 		local dir = ffi.C.opendir(full)
 		if dir == nil then
-			io.stderr:write("WARNING: cannot open directory: " .. full .. "\n")
+			io.stderr:write("WARNING: cannot open directory: " .. full .. ": " .. get_errno_string() .. "\n")
 			return
 		end
 
@@ -414,8 +420,10 @@ local function walk_dir(base_path)
 						symlink_target = nil,
 					}
 
-					if ftype == "symlink" and not follow_symlinks then
-						rec.symlink_target = read_symlink(full_path)
+					-- Always read symlink target (readlink only succeeds on actual symlinks)
+					local link_target = read_symlink(full_path)
+					if link_target then
+						rec.symlink_target = link_target
 					end
 
 					if ftype == "file" then
@@ -427,16 +435,16 @@ local function walk_dir(base_path)
 
 					entries[rel_path] = rec
 
-					-- Recurse into directories
+					-- Recurse into directories (with cycle detection)
 					if ftype == "dir" then
-						walk(rel_path)
-					end
-					-- If following symlinks and it resolved to a dir, recurse
-					if follow_symlinks and ftype == "dir" and tonumber(ent.d_type) == DT_LNK then
-						walk(rel_path)
+						local dev_ino = tonumber(st.st_dev) .. ":" .. tonumber(st.st_ino)
+						if not visited_dirs[dev_ino] then
+							visited_dirs[dev_ino] = true
+							walk(rel_path)
+						end
 					end
 				else
-					io.stderr:write("WARNING: cannot stat: " .. full_path .. "\n")
+					io.stderr:write("WARNING: cannot stat: " .. full_path .. ": " .. get_errno_string() .. "\n")
 				end
 			end
 		end
@@ -494,7 +502,9 @@ for p in pairs(all_paths) do
 		end
 		-- Symlink target
 		if e1.symlink_target ~= e2.symlink_target then
-			diffs[#diffs + 1] = {path = p, field = "symlink_target", val1 = e1.symlink_target or "(none)", val2 = e2.symlink_target or "(none)"}
+			if e1.symlink_target or e2.symlink_target then
+				diffs[#diffs + 1] = {path = p, field = "symlink_target", val1 = e1.symlink_target or "(none)", val2 = e2.symlink_target or "(none)"}
+			end
 		end
 		-- xattr differences
 		local keys1_set, keys2_set = {}, {}
@@ -526,13 +536,13 @@ for p in pairs(all_paths) do
 		if e1.content_sha256 then
 			unmatched1[p] = e1.content_sha256
 		else
-			only1[#only1 + 1] = p
+			only1[#only1 + 1] = {path = p, type = e1.type}
 		end
 	elseif e2 and not e1 then
 		if e2.content_sha256 then
 			unmatched2[p] = e2.content_sha256
 		else
-			only2[#only2 + 1] = p
+			only2[#only2 + 1] = {path = p, type = e2.type}
 		end
 	end
 end
@@ -557,7 +567,6 @@ for h, paths1 in pairs(hash_to_paths1) do
 	if paths2 then
 		table.sort(paths1)
 		table.sort(paths2)
-		-- Try basename matching first
 		local used1, used2 = {}, {}
 		for _, p1 in ipairs(paths1) do
 			local base1 = p1:match("[^/]+$")
@@ -575,7 +584,6 @@ for h, paths1 in pairs(hash_to_paths1) do
 				end
 			end
 		end
-		-- Match remaining by order
 		local rem1, rem2 = {}, {}
 		for _, p in ipairs(paths1) do if not used1[p] then rem1[#rem1 + 1] = p end end
 		for _, p in ipairs(paths2) do if not used2[p] then rem2[#rem2 + 1] = p end end
@@ -587,16 +595,16 @@ for h, paths1 in pairs(hash_to_paths1) do
 	end
 end
 
--- Remaining unmatched go to only1/only2
+-- Remaining unmatched files go to only1/only2
 for p in pairs(unmatched1) do
-	if not matched1[p] then only1[#only1 + 1] = p end
+	if not matched1[p] then only1[#only1 + 1] = {path = p, type = "file"} end
 end
 for p in pairs(unmatched2) do
-	if not matched2[p] then only2[#only2 + 1] = p end
+	if not matched2[p] then only2[#only2 + 1] = {path = p, type = "file"} end
 end
 
-table.sort(only1)
-table.sort(only2)
+table.sort(only1, function(a, b) return a.path < b.path end)
+table.sort(only2, function(a, b) return a.path < b.path end)
 table.sort(renames, function(a, b) return a.path1 < b.path1 end)
 table.sort(diffs, function(a, b)
 	if a.path ~= b.path then return a.path < b.path end
@@ -621,19 +629,24 @@ local function pad(s, w)
 	return s .. string.rep(" ", w - #s)
 end
 
+local function format_only_path(entry)
+	if entry.type == "dir" then return entry.path .. "/" end
+	return entry.path
+end
+
 -- Only in dir1
 if #only1 > 0 then
 	print_section("Only in " .. dir1)
-	for _, p in ipairs(only1) do
-		io.write("  " .. p .. "\n")
+	for _, e in ipairs(only1) do
+		io.write("  " .. format_only_path(e) .. "\n")
 	end
 end
 
 -- Only in dir2
 if #only2 > 0 then
 	print_section("Only in " .. dir2)
-	for _, p in ipairs(only2) do
-		io.write("  " .. p .. "\n")
+	for _, e in ipairs(only2) do
+		io.write("  " .. format_only_path(e) .. "\n")
 	end
 end
 
