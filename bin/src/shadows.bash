@@ -179,7 +179,9 @@ shadows() {
 		local -a filtered
 		local line
 		for line in "${results[@]}"; do
-			if [[ "$line" == *"$filter"* ]]; then
+			if [[ "$line" == "alias $filter shadows:"* ]] || \
+			   [[ "$line" == "function $filter shadows:"* ]] || \
+			   [[ "$line" == *"/$filter shadows:"* ]]; then
 				filtered+=("$line")
 			fi
 		done

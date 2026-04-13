@@ -271,6 +271,32 @@ fi
 PATH="$OLDPATH"
 rm -rf "$tmpdir3"
 
+# Filter matches exact command name, not substrings
+tmpdir4="$(mktemp -d --tmpdir)"
+dir4a="$tmpdir4/a"
+dir4b="$tmpdir4/b"
+mkdir -p "$dir4a" "$dir4b"
+printf '#!/usr/bin/env bash\necho a\n' > "$dir4a/testcmd"
+printf '#!/usr/bin/env bash\necho b\n' > "$dir4b/testcmd"
+printf '#!/usr/bin/env bash\necho a\n' > "$dir4a/testcmdx"
+printf '#!/usr/bin/env bash\necho b\n' > "$dir4b/testcmdx"
+chmod +x "$dir4a/testcmd" "$dir4b/testcmd" "$dir4a/testcmdx" "$dir4b/testcmdx"
+OLDPATH="$PATH"
+PATH="$dir4a:$dir4b:$PATH"
+hash -r 2>/dev/null
+((tests++))
+echo "Testing: filter matches exact command name, not substrings..."
+output="$(shadows testcmd)"
+if echo "$output" | grep -q "testcmd" && ! echo "$output" | grep -q "testcmdx"; then
+	echo "✓ Test passed: exact match only, no substring match"
+else
+	echo "✗ Test failed: filter should match exactly, not as substring" >&2
+	echo "  Output: $output" >&2
+	((fails++))
+fi
+PATH="$OLDPATH"
+rm -rf "$tmpdir4"
+
 # Help text mentions filter argument
 ((tests++))
 echo "Testing: help text mentions filter argument..."
