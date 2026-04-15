@@ -83,12 +83,13 @@ prepend_path "$DOCUMENTS/rm-safe/bin"
 
 # Zig/Nix projects: auto-discover all {result,zig-out}/bin dirs
 # result/bin is prepended first so zig-out/bin (dev builds) take priority when both exist.
-for dir in "$DOCUMENTS"/*/result/bin; do
+# Use glob (not raw shell globs) since noglob (set -f) is active globally.
+while IFS= read -r dir; do
   [ -d "$dir" ] && prepend_path "$dir"
-done
-for dir in "$DOCUMENTS"/*/zig-out/bin; do
+done < <(glob "$DOCUMENTS/*/result/bin")
+while IFS= read -r dir; do
   [ -d "$dir" ] && prepend_path "$dir"
-done
+done < <(glob "$DOCUMENTS/*/zig-out/bin")
 unset IGNORE_PREPEND_PATH_WARNINGS
 
 # Now exclude every path from PATH that does not actually exist.
