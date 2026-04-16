@@ -341,7 +341,7 @@ process_file() {
 	# CASE 2: Other Format -> JXL
 	else
 		# Warn about typically-lossy source formats
-		if [[ "$extension" == "jp2" ]]; then
+		if [[ "$extension" == "jp2" || "$extension" == "heic" ]]; then
 			warn_lossy_source "$file"
 		fi
 		# Handle formats needing intermediate conversion (WebP, HEIC)
@@ -351,7 +351,9 @@ process_file() {
 
 			if [[ "$extension" == "heic" ]]; then
 				# Try ImageMagick first, then heif-convert
-				if ! magick "$file" -alpha off -colorspace sRGB "$temp_png" 2>/dev/null; then
+				# Use [0] to select only the first frame (HEIC files can contain
+				# multiple frames, causing ImageMagick to split into numbered files)
+				if ! magick "${file}[0]" -alpha off -colorspace sRGB "$temp_png" 2>/dev/null; then
 					if command -v heif-convert &>/dev/null; then
 						if ! heif-convert "$file" "$temp_png" 2>/dev/null; then
 							err "Failed to convert HEIC file $file to PNG."

@@ -37,7 +37,7 @@ fetch_with_get() {
 
 perform_update() {
 	shopt -s expand_aliases
-	tmp_file=$(mktemp --tmpdir machine_report.XXXXXX)
+	tmp_file=$(mktemp)
 	if fetch_with_get "$update_url" >"$tmp_file"; then
 		mv "$tmp_file" "$report_script"
 		chmod +x "$report_script"
@@ -334,8 +334,15 @@ setup_lastlog_polyfill() {
 
 		if formatted=$(date -d "$iso" '+%a %b %e %H:%M:%S %z %Y' 2>/dev/null); then
 			read -r dow mon day time tz year <<<"$formatted"
-			printf '%-15s %-12s %-17s %s %s %s %s %s %s %s\n' \
-				"$username" "$tty" "$from" "-" "-" "$mon" "$day" "$tz" "$year" "$time"
+			# Only include 'from' if it's an IP; otherwise omit it
+			# so awk field positions match what the upstream expects
+			if [[ "$from" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+				printf '%-15s %-12s %-17s %s %s %s %s %s %s\n' \
+					"$username" "$tty" "$from" "$dow" "$mon" "$day" "$time" "$tz" "$year"
+			else
+				printf '%-15s %-12s %-17s %s %s %s %s %s %s\n' \
+					"$username" "$tty" "" "$dow" "$mon" "$day" "$time" "$tz" "$year"
+			fi
 		else
 			printf '%-15s %-12s %-17s %s\n' "$username" "$tty" "$from" "$iso"
 		fi
@@ -472,4 +479,23 @@ else
 	set --
 fi
 
-source "$report_script"
+# Patch upstream PRINT_DATA truncation bug before sourcing:
+# The upstream uses MAX_DATA_LEN for truncation threshold which misaligns
+# the right border. Fix uses max_data_len (CURRENT_LEN) and always pads.
+_patched=$(mktemp)
+trap 'rm -f "$_patched"' EXIT
+awk '
+/# Truncate or pad data/ {
+    print "    # Truncate or pad data"
+    print "    local data_len=${#data}"
+    print "    if (( data_len > max_data_len )); then"
+    print "        data=$(echo \"$data\" | cut -c 1-$((max_data_len-3)))..."
+    print "    fi"
+    print "    data=$(printf \"%-${max_data_len}s\" \"$data\")"
+    # Skip the original 6 lines after the comment
+    getline; getline; getline; getline; getline; getline
+    next
+}
+{ print }
+' "$report_script" > "$_patched"
+source "$_patched"
