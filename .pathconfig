@@ -1,109 +1,126 @@
 #!/usr/bin/env bash
 
+# Guard against being sourced multiple times (e.g. .bash_profile -> .bashrc both sourcing this)
+[[ "${_PATHCONFIG_LOADED:-}" == "1" ]] && return 0
+
 [[ "$(type -t append_dotfile_progress)" == "function" ]] || . "$HOME/dotfiles/bin/src/append_dotfile_progress.sh"
-[ -n "${DEBUG_SHELLCONFIG}" ] && echo "Entering $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")" || $INTERACTIVE_SHELL && $LOGIN_SHELL && append_dotfile_progress "P"
+[ -n "${DEBUG_SHELLCONFIG}" ] && echo "Entering $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")" || ${INTERACTIVE_SHELL:-false} && ${LOGIN_SHELL:-false} && append_dotfile_progress "P"
 [ -n "${DEBUG_PATHCONFIG}" ] && echo "PATH is: $PATH"
 
-# All path configs here should replace any existing version of themselves in the PATH before appending
-# (idempotent)
+# Capture the truly pristine PATH once per session, then export it so every child shell
+# inherits the same original. PATH is rebuilt from ORIG_PATH every shell — our additions
+# are applied idempotently by construction. To force a re-capture (e.g. after NixOS rebuild),
+# run: unset ORIG_PATH; . ~/.pathconfig
+: "${ORIG_PATH:=$PATH}"
+export ORIG_PATH
 
+# Source path helpers (prepend_path, exclude_path)
 . "$HOME/dotfiles/bin/src/prepend_path.bash"
 
-# gigalixir and other pip3 --user installed tools, per XDG spec
-[ -d $HOME/.local/bin ] && prepend_path $HOME/.local/bin
-
-# add my Scripts bin to PATH
-[ -d $HOME/Scripts ] && prepend_path $HOME/Scripts
-
-# rust/cargo
-[ -d $HOME/.cargo/bin ] && prepend_path $HOME/.cargo/bin
-
-# LM Studio
-[ -d $HOME/.cache/lm-studio/bin ] && prepend_path $HOME/.cache/lm-studio/bin
-
-# npm global packages (user-scoped, since nix store is read-only)
-[ -d $HOME/.npm-global/bin ] && prepend_path $HOME/.npm-global/bin
-
-# where is this garbage in my PATH coming from?
-IGNORE_EXCLUDE_PATH_WARNINGS=true exclude_path '~/.dotnet/tools'
-exclude_path '/usr/local/share/dotnet'
-# exclude_path '/Library/Frameworks/Mono.framework/Versions/Current/Commands' # it keeps reinserting itself??
-# A note on the below: https://support.apple.com/guide/deployment/rapid-security-responses-dep93ff7ea78/web
-exclude_path '/System/Cryptexes/App/usr/bin' || echo "exclude_path not defined in .pathconfig"
-exclude_path '/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin' || echo "exclude_path not defined in .pathconfig"
-exclude_path '/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin' || echo "exclude_path not defined in .pathconfig"
-exclude_path '/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin' || echo "exclude_path not defined in .pathconfig"
-
-# Nix
-# Prefer Nix stuff to both system and homebrew
+# DOCUMENTS varies by platform: on macOS, projects live in Documents-CloudManaged due to
+# iCloud backup race conditions. On Linux, plain Documents.
 if [[ "$OSTYPE" == "darwin"* ]]; then
-  # idempotent nix config that every macos update seems to need
-  # (it checks if it's already been run before and returns if so)
-  if [ -e '/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh' ]; then
-    source '/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh'
-  fi
-  # now since it simply added it to the front without checking if it was already in PATH,
-  # we have to redo its PATH edits to make sure it's only there once
-  [ -d /nix/var/nix/profiles/default/bin ] && prepend_path /nix/var/nix/profiles/default/bin
-  [ -d $HOME/.nix-profile/bin ] && prepend_path $HOME/.nix-profile/bin
-  [ -d /run/current-system/sw/bin ] && prepend_path /run/current-system/sw/bin
-fi
-
-# BINSTUBS
-# add binstub to front of PATH which overrides everything
-# aaaand disabled for security and buggy reasons
-# prepend_path ./bin
-
-# add my user bin to PATH
-# export PATH=$PATH:~/bin
-prepend_path $HOME/bin
-
-# Added by Antigravity
-[ -d "$HOME/.antigravity/antigravity/bin" ] && prepend_path "$HOME/.antigravity/antigravity/bin"
-
-# include the custom project executables I usually like in PATH
-# Due to race condition issues with iCloud backup, on my Mac, my Github projects are in Documents-CloudManaged (alias dcm)
-# and not in ~/Documents, which is where they still live on my Linux installs
-# if on mac, set DOCUMENTS to $HOME/Documents-CloudManaged, otherwise set it to $HOME/Documents
-if [[ "$OSTYPE" == "darwin"* ]]; then
-  DOCUMENTS="$HOME/Documents-CloudManaged"
+	DOCUMENTS="$HOME/Documents-CloudManaged"
 else
-  DOCUMENTS="$HOME/Documents"
+	DOCUMENTS="$HOME/Documents"
 fi
 export DOCUMENTS
 
+# On macOS, source nix-daemon.sh to get env vars (NIX_PATH, NIX_SSL_CERT_FILE, etc).
+# PATH modifications from it are discarded — we manage PATH declaratively below.
+if [[ "$OSTYPE" == "darwin"* ]] && [ -e '/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh' ]; then
+	source '/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh'
+fi
+
+# Declarative list of PATH additions.
+# Order: entries LATER in the list end up CLOSER to the FRONT of PATH (last prepend wins).
+# Non-existent dirs are silently skipped.
+PATH_ADDITIONS=(
+	# User-local bins (XDG, pip --user, etc.)
+	"$HOME/.local/bin"
+	"$HOME/Scripts"
+	"$HOME/.cargo/bin"
+	"$HOME/.cache/lm-studio/bin"
+	"$HOME/.npm-global/bin"
+)
+
+# macOS Nix: prefer Nix over system and Homebrew
+if [[ "$OSTYPE" == "darwin"* ]]; then
+	PATH_ADDITIONS+=(
+		"/nix/var/nix/profiles/default/bin"
+		"$HOME/.nix-profile/bin"
+		"/run/current-system/sw/bin"
+	)
+fi
+
+PATH_ADDITIONS+=(
+	"$HOME/bin"
+	"$HOME/.antigravity/antigravity/bin"
+	# Non-Zig personal projects
+	"$DOCUMENTS/ixnay/bin"
+	"$DOCUMENTS/jumpscript/bin"
+	"$DOCUMENTS/yt-transcriber/bin"
+	"$DOCUMENTS/printable_binary/bin"
+	"$DOCUMENTS/rm-safe/bin"
+)
+
+# Auto-discover Zig/Nix project bin dirs.
+# result/bin goes in first so zig-out/bin (dev builds) ends up closer to the front when both exist.
+# Invoke `glob` by explicit path since noglob (set -f) is active globally AND $HOME/bin
+# may not be in PATH yet at this point (we rebuild PATH from ORIG_PATH).
+_glob="$HOME/dotfiles/bin/glob"
+if [ -x "$_glob" ]; then
+	while IFS= read -r _dir; do
+		PATH_ADDITIONS+=("$_dir")
+	done < <("$_glob" "$DOCUMENTS/*/result/bin")
+	while IFS= read -r _dir; do
+		PATH_ADDITIONS+=("$_dir")
+	done < <("$_glob" "$DOCUMENTS/*/zig-out/bin")
+fi
+unset _glob _dir
+
+# Declarative list of PATH exclusions (mostly macOS cruft that keeps reinserting itself).
+# https://support.apple.com/guide/deployment/rapid-security-responses-dep93ff7ea78/web
+PATH_EXCLUSIONS=(
+	'~/.dotnet/tools'
+	'/usr/local/share/dotnet'
+	'/System/Cryptexes/App/usr/bin'
+	'/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin'
+	'/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin'
+	'/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin'
+)
+
+# Rebuild PATH from the pristine base plus additions. Idempotent by construction.
+PATH="$ORIG_PATH"
 IGNORE_PREPEND_PATH_WARNINGS=true
 export IGNORE_PREPEND_PATH_WARNINGS
-# Non-Zig projects with custom bin paths
-prepend_path "$DOCUMENTS/ixnay/bin"
-prepend_path "$DOCUMENTS/jumpscript/bin"
-prepend_path "$DOCUMENTS/yt-transcriber/bin"
-prepend_path "$DOCUMENTS/printable_binary/bin"
-prepend_path "$DOCUMENTS/rm-safe/bin"
-
-# Zig/Nix projects: auto-discover all {result,zig-out}/bin dirs
-# result/bin is prepended first so zig-out/bin (dev builds) take priority when both exist.
-# Use glob (not raw shell globs) since noglob (set -f) is active globally.
-while IFS= read -r dir; do
-  [ -d "$dir" ] && prepend_path "$dir"
-done < <(glob "$DOCUMENTS/*/result/bin")
-while IFS= read -r dir; do
-  [ -d "$dir" ] && prepend_path "$dir"
-done < <(glob "$DOCUMENTS/*/zig-out/bin")
-unset IGNORE_PREPEND_PATH_WARNINGS
-
-# Now exclude every path from PATH that does not actually exist.
-# I don't like this way of doing it, but it was the only way that worked easily.
-OLD_IFS=$IFS
-IFS=:
-for path in $PATH; do
-  if [ ! -d "$path" ]; then
-    exclude_path "$path"
-  fi
+for _dir in "${PATH_ADDITIONS[@]}"; do
+	[ -d "$_dir" ] && prepend_path "$_dir"
 done
-IFS=$OLD_IFS
-unset OLD_IFS
+unset IGNORE_PREPEND_PATH_WARNINGS _dir
 
-# echo "PATH after config is $PATH"
+# Apply exclusions
+IGNORE_EXCLUDE_PATH_WARNINGS=true
+export IGNORE_EXCLUDE_PATH_WARNINGS
+for _excl in "${PATH_EXCLUSIONS[@]}"; do
+	exclude_path "$_excl"
+done
+unset IGNORE_EXCLUDE_PATH_WARNINGS _excl
+
+# Filter out any path entries that don't actually exist as directories
+_OLD_IFS=$IFS
+IFS=:
+for _path in $PATH; do
+	if [ ! -d "$_path" ]; then
+		exclude_path "$_path"
+	fi
+done
+IFS=$_OLD_IFS
+unset _OLD_IFS _path
+
+export PATH
+
+_PATHCONFIG_LOADED=1
+
 [ -n "${DEBUG_SHELLCONFIG}" ] && echo "Exiting $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")"
 [ -n "${DEBUG_PATHCONFIG}" ] && echo $PATH || :

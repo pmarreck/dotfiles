@@ -72,7 +72,7 @@ fi
 # have to source "edit" function for it to be able to see the functions via "functions"... lol sigh
 . "$HOME/dotfiles/bin/src/edit.bash"
 
-# Pull in path configuration
+# Pull in path configuration (may already be loaded by .bash_profile; guard in .pathconfig handles dedup)
 . $HOME/.pathconfig
 
 # Set SED env var - with Nix, sed is already GNU sed
