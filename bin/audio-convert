@@ -30,14 +30,15 @@ Options:
 	                           Required when invoked as 'audio-convert'.
 	                           With an alias, overrides the alias and warns.
 	--force                    Overwrite existing output files
-	--no-preserve-timestamps   Do not copy mtime from source to output
+	--preserve-timestamps      Copy source mtime to output (default)
+	--no-preserve-timestamps   Do not copy source mtime
 	--bitrate=N                (mp3,aac) Output bitrate in kbps
 	--vbr[=N]                  (mp3 only) VBR mode, optional quality 0-9 (0=best)
 	--title=STR                Write title metadata (default: no metadata)
 	--artist=STR               Write artist metadata
 	--album=STR                Write album metadata
 	--albumartist=STR          Write album-artist metadata
-	--year=STR                 Write year metadata
+	--year=STR, --date=STR     Write year/date metadata (synonyms)
 	--track=STR                Write track metadata
 	--genre=STR                Write genre metadata
 	--comment=STR              Write comment metadata
@@ -136,7 +137,7 @@ apply_matrix() {
 
 	if [[ "$src_class" == "lossy" && "$target_class" == "lossy" ]]; then
 		echo "Warning: converting lossy ($src_codec) to lossy ($target_codec) for $file" >&2
-		echo "  This doubles lossy artifact generation. Prefer the original source." >&2
+		echo "  This compounds lossy compression artifacts. Prefer the original source." >&2
 	fi
 
 	if [[ "$src_class" == "lossless" && "$target_class" == "lossy" ]]; then
@@ -210,6 +211,32 @@ run_ffmpeg() {
 }
 
 
+# Pretty-print a conversion result: "input → output (newsize, pct% of original)"
+print_result() {
+	local input="$1"
+	local output="$2"
+	local orig_size new_size
+	orig_size=$(wc -c < "$input" 2>/dev/null | tr -d ' ')
+	new_size=$(wc -c < "$output" 2>/dev/null | tr -d ' ')
+	if [[ -z "$orig_size" || "$orig_size" -eq 0 ]]; then
+		echo "$input → $output ($new_size bytes)"
+		return
+	fi
+	local pct
+	pct=$(awk -v n="$new_size" -v o="$orig_size" 'BEGIN { printf "%.1f", (n * 100) / o }')
+	# Prefer GNU numfmt if available for human-readable sizes
+	local orig_disp="$orig_size" new_disp="$new_size"
+	if command -v gnumfmt >/dev/null 2>&1; then
+		orig_disp=$(echo "$orig_size" | gnumfmt --to=iec)
+		new_disp=$(echo "$new_size" | gnumfmt --to=iec)
+	elif command -v numfmt >/dev/null 2>&1 && numfmt --to=iec 1 >/dev/null 2>&1; then
+		orig_disp=$(echo "$orig_size" | numfmt --to=iec)
+		new_disp=$(echo "$new_size" | numfmt --to=iec)
+	fi
+	echo "$input → $output ($new_disp, ${pct}% of original)"
+}
+
+
 audio_convert() {
 	local invoked_as
 	invoked_as=$(basename "$0")
@@ -225,7 +252,7 @@ audio_convert() {
 	local -A metadata=()
 	local preserve_timestamps=true
 	# Respect env var first; CLI flags below override
-	if [[ -n "$PRESERVE_TIMESTAMPS" ]]; then
+	if [[ -n "${PRESERVE_TIMESTAMPS-}" ]]; then
 		case "${PRESERVE_TIMESTAMPS,,}" in
 			0|no|false) preserve_timestamps=false ;;
 		esac
@@ -390,6 +417,7 @@ audio_convert() {
 		if [[ "$preserve_timestamps" == "true" ]]; then
 			touch -r "$file" "$out"
 		fi
+		print_result "$file" "$out"
 	done
 	return $failures
 }
