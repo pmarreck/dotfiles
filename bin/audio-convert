@@ -161,18 +161,28 @@ output_path() {
 
 
 # Invoke ffmpeg for a single file. Target selects codec+container.
-# Usage: run_ffmpeg INPUT OUTPUT TARGET BITRATE
-#   BITRATE is in kbps and applies to mp3/aac only; ignored for flac/alac.
+# Usage: run_ffmpeg INPUT OUTPUT TARGET BITRATE VBR
+#   BITRATE - kbps, used when VBR is empty (CBR mode) for mp3/aac
+#   VBR     - empty for CBR mode; numeric level 0-9 for mp3 VBR
 run_ffmpeg() {
 	local input="$1"
 	local output="$2"
 	local target="$3"
 	local bitrate="$4"
+	local vbr="$5"
 
 	local -a codec_arr
 	case "$target" in
-		mp3)  codec_arr=(-c:a libmp3lame -b:a "${bitrate}k") ;;
-		aac)  codec_arr=(-c:a aac -b:a "${bitrate}k") ;;
+		mp3)
+			if [[ -n "$vbr" ]]; then
+				codec_arr=(-c:a libmp3lame -q:a "$vbr")
+			else
+				codec_arr=(-c:a libmp3lame -b:a "${bitrate}k")
+			fi
+			;;
+		aac)
+			codec_arr=(-c:a aac -b:a "${bitrate}k")
+			;;
 		flac) codec_arr=(-c:a flac -compression_level 8) ;;
 		alac) codec_arr=(-c:a alac) ;;
 		*) echo "Error: unsupported target '$target' in run_ffmpeg" >&2; return 1 ;;
@@ -206,6 +216,7 @@ audio_convert() {
 	local files=()
 	local force=false
 	local bitrate=""
+	local vbr=""
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -224,6 +235,8 @@ audio_convert() {
 				;;
 			--force) force=true ;;
 			--bitrate=*) bitrate="${1#*=}" ;;
+			--vbr) vbr="default" ;;
+			--vbr=*) vbr="${1#*=}" ;;
 			--) shift; while [[ $# -gt 0 ]]; do files+=("$1"); shift; done ;;
 			-*) echo "Error: unknown option: $1" >&2; return 1 ;;
 			*) files+=("$1") ;;
@@ -266,13 +279,30 @@ audio_convert() {
 
 	check_dependencies || return 1
 
-	# Default bitrate + stderr announce (only when user did not specify --bitrate)
+	# Validate mutual exclusion of --vbr and --bitrate (both user-provided)
+	if [[ -n "$vbr" && -n "$bitrate" ]]; then
+		echo "Error: --vbr and --bitrate are mutually exclusive" >&2
+		return 1
+	fi
+
+	# --vbr only applies to mp3
+	if [[ -n "$vbr" && "$codec_target" != "mp3" ]]; then
+		echo "Error: --vbr is mp3 only (not supported for $codec_target)" >&2
+		return 1
+	fi
+
+	# Apply defaults only when the user supplied neither --vbr nor --bitrate
 	local bitrate_source="user"
-	if [[ -z "$bitrate" ]]; then
+	if [[ -z "$vbr" && -z "$bitrate" ]]; then
 		case "$codec_target" in
 			mp3) bitrate=192; bitrate_source="default"; echo "Using default bitrate for mp3: 192 kbps CBR" >&2 ;;
 			aac) bitrate=128; bitrate_source="default"; echo "Using default bitrate for aac: 128 kbps CBR" >&2 ;;
 		esac
+	fi
+
+	# Normalize vbr="default" -> numeric level 2 (lame -V 2 ≈ 190 kbps)
+	if [[ "$vbr" == "default" ]]; then
+		vbr="2"
 	fi
 
 	if [[ ${#files[@]} -eq 0 ]]; then
@@ -302,7 +332,7 @@ audio_convert() {
 			continue
 		fi
 
-		if ! run_ffmpeg "$file" "$out" "$codec_target" "$bitrate"; then
+		if ! run_ffmpeg "$file" "$out" "$codec_target" "$bitrate" "$vbr"; then
 			echo "Error: ffmpeg failed for $file" >&2
 			(( failures++ ))
 			continue

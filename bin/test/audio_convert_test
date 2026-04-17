@@ -473,6 +473,51 @@ test_audio_convert() {
 		echo "⊘ mp3 CBR tests skipped (no fixtures)"
 	fi
 
+	# Tests: mp3 VBR + conflict checks
+	if [[ -n "$AUDIO_TEST_DIR" && -d "$AUDIO_TEST_DIR" ]]; then
+		# --vbr produces an mp3 (no default-announce since user specified VBR mode)
+		(( tests++ ))
+		local vbr_in="$AUDIO_TEST_DIR/for_vbr.wav"
+		cp "$AUDIO_TEST_DIR/sine.wav" "$vbr_in"
+		local vbr_out="$AUDIO_TEST_DIR/for_vbr.mp3"
+		rm -f "$vbr_out"
+		local vbr_stderr
+		vbr_stderr=$(mp3 --vbr=2 "$vbr_in" 2>&1 >/dev/null)
+		if [[ -s "$vbr_out" ]] && ! echo "$vbr_stderr" | grep -qi "default bitrate"; then
+			echo "✓ --vbr=2 produces mp3 and suppresses default-announce test passed"
+		else
+			echo "✗ --vbr=2 test failed" >&2
+			echo "  stderr: $vbr_stderr" >&2
+			(( fails++ ))
+		fi
+
+		# --vbr + --bitrate together -> error
+		(( tests++ ))
+		local conflict_stderr; local conflict_rc
+		conflict_stderr=$(mp3 --vbr=2 --bitrate=192 "$vbr_in" 2>&1 >/dev/null); conflict_rc=$?
+		if [[ "$conflict_rc" -ne 0 ]] && echo "$conflict_stderr" | grep -qiE -- "vbr.*bitrate.*mutual|cannot.*combine|--vbr.*--bitrate|mutually exclusive"; then
+			echo "✓ --vbr + --bitrate conflict test passed"
+		else
+			echo "✗ --vbr + --bitrate conflict test failed (rc=$conflict_rc)" >&2
+			echo "  stderr: $conflict_stderr" >&2
+			(( fails++ ))
+		fi
+
+		# --vbr on aac -> error (not supported for aac in this script)
+		(( tests++ ))
+		local aacvbr_stderr; local aacvbr_rc
+		aacvbr_stderr=$(aac --vbr=2 "$vbr_in" 2>&1 >/dev/null); aacvbr_rc=$?
+		if [[ "$aacvbr_rc" -ne 0 ]] && echo "$aacvbr_stderr" | grep -qiE -- "vbr.*mp3 only|vbr.*not supported for aac|vbr is mp3 only"; then
+			echo "✓ --vbr on aac rejected test passed"
+		else
+			echo "✗ --vbr on aac should be rejected test failed (rc=$aacvbr_rc)" >&2
+			echo "  stderr: $aacvbr_stderr" >&2
+			(( fails++ ))
+		fi
+	else
+		echo "⊘ mp3 VBR tests skipped (no fixtures)"
+	fi
+
 	# Report
 	if [ $fails -gt 0 ]; then
 		echo "$fails of $tests audio-convert tests failed!" >&2
