@@ -66,13 +66,13 @@ audio_convert() {
 	self_name=$(basename "${BASH_SOURCE[0]}")
 	local invoked_as
 	invoked_as=$(basename "$0")
-
-	# If sourced, $0 is the shell; fall back to a sensible default
 	case "$invoked_as" in
 		bash|-bash|zsh|-zsh|sh|-sh) invoked_as="audio-convert" ;;
 	esac
 
-	# Parse just enough for meta flags in this task
+	local format_override=""
+	local files=()
+
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 			-h|--help) print_help "$invoked_as"; return 0 ;;
@@ -81,13 +81,60 @@ audio_convert() {
 				"$HOME/dotfiles/bin/test/audio_convert_test"
 				return $?
 				;;
-			*) break ;;
+			-f|--format)
+				shift
+				format_override="$1"
+				;;
+			--format=*)
+				format_override="${1#*=}"
+				;;
+			--) shift; while [[ $# -gt 0 ]]; do files+=("$1"); shift; done ;;
+			-*) echo "Error: unknown option: $1" >&2; return 1 ;;
+			*) files+=("$1") ;;
 		esac
 		shift
 	done
 
-	# No further behavior in this task; subsequent tasks add it.
-	echo "Error: no input files or unimplemented path" >&2
+	# Resolve target format from invocation name
+	local target=""
+	case "$invoked_as" in
+		mp3|aac|m4a|flac|alac) target="$invoked_as" ;;
+		audio-convert)
+			if [[ -z "$format_override" ]]; then
+				echo "Error: audio-convert requires -f/--format FMT (one of: mp3, aac, m4a, flac, alac)" >&2
+				return 1
+			fi
+			;;
+		*)
+			echo "Error: unrecognized invocation name '$invoked_as' (expected one of: mp3, aac, m4a, flac, alac, audio-convert)" >&2
+			return 1
+			;;
+	esac
+
+	if [[ -n "$format_override" ]]; then
+		case "$format_override" in
+			mp3|aac|m4a|flac|alac) ;;
+			*) echo "Error: invalid --format '$format_override' (must be: mp3, aac, m4a, flac, alac)" >&2; return 1 ;;
+		esac
+		if [[ -n "$target" && "$format_override" != "$target" ]]; then
+			echo "Warning: --format=$format_override overrides alias $target" >&2
+		fi
+		target="$format_override"
+	fi
+
+	# Normalize m4a -> aac internally (m4a is an alias for aac codec)
+	local codec_target="$target"
+	case "$codec_target" in
+		m4a) codec_target="aac" ;;
+	esac
+
+	if [[ ${#files[@]} -eq 0 ]]; then
+		echo "Error: no input files" >&2
+		return 1
+	fi
+
+	# Later tasks implement per-file processing.
+	echo "Error: per-file processing not yet implemented" >&2
 	return 1
 }
 

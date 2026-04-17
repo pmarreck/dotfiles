@@ -38,6 +38,20 @@ test_audio_convert() {
 		fi
 	done
 
+	# Test: audio-convert with no --format exits non-zero and lists valid formats
+	(( tests++ ))
+	local noformat_stderr
+	local noformat_rc
+	noformat_stderr=$(audio-convert nofile.wav 2>&1 >/dev/null)
+	noformat_rc=$?
+	if [[ "$noformat_rc" -ne 0 ]] && echo "$noformat_stderr" | grep -qE "mp3.*aac.*flac.*alac"; then
+		echo "✓ audio-convert requires --format test passed"
+	else
+		echo "✗ audio-convert requires --format test failed (rc=$noformat_rc)" >&2
+		echo "  stderr: $noformat_stderr" >&2
+		(( fails++ ))
+	fi
+
 	# Report
 	if [ $fails -gt 0 ]; then
 		echo "$fails of $tests audio-convert tests failed!" >&2
