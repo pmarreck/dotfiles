@@ -66,7 +66,10 @@ check_dependencies() {
 	command -v ffmpeg  >/dev/null 2>&1 || missing+=("ffmpeg")
 	command -v ffprobe >/dev/null 2>&1 || missing+=("ffprobe")
 	if [[ ${#missing[@]} -gt 0 ]]; then
-		echo "Error: ${missing[*]} not found on PATH." >&2
+		local joined
+		printf -v joined '%s, ' "${missing[@]}"
+		joined="${joined%, }"
+		echo "Error: ${joined} not found on PATH." >&2
 		echo "  Install with: nix profile install nixpkgs#ffmpeg" >&2
 		return 1
 	fi
@@ -93,7 +96,7 @@ probe_codec() {
 codec_class() {
 	local codec="$1"
 	case "$codec" in
-		pcm_*|flac|alac) echo "lossless" ;;
+		pcm_*|flac|alac|wmalossless) echo "lossless" ;;
 		mp3|aac|vorbis|opus|wma*) echo "lossy" ;;
 		*) echo "unknown" ;;
 	esac
@@ -208,8 +211,6 @@ run_ffmpeg() {
 
 
 audio_convert() {
-	local self_name
-	self_name=$(basename "${BASH_SOURCE[0]}")
 	local invoked_as
 	invoked_as=$(basename "$0")
 	case "$invoked_as" in
@@ -240,15 +241,35 @@ audio_convert() {
 				;;
 			-f|--format)
 				shift
+				if [[ $# -eq 0 || -z "$1" || "$1" == -* ]]; then
+					echo "Error: -f/--format requires a format argument (mp3, aac, m4a, flac, alac)" >&2
+					return 1
+				fi
 				format_override="$1"
 				;;
 			--format=*)
 				format_override="${1#*=}"
+				if [[ -z "$format_override" ]]; then
+					echo "Error: --format= requires a value (mp3, aac, m4a, flac, alac)" >&2
+					return 1
+				fi
 				;;
 			--force) force=true ;;
-			--bitrate=*) bitrate="${1#*=}" ;;
+			--bitrate=*)
+				bitrate="${1#*=}"
+				if ! [[ "$bitrate" =~ ^[0-9]+$ ]] || (( bitrate < 1 )); then
+					echo "Error: --bitrate requires a positive integer (kbps)" >&2
+					return 1
+				fi
+				;;
 			--vbr) vbr="default" ;;
-			--vbr=*) vbr="${1#*=}" ;;
+			--vbr=*)
+				vbr="${1#*=}"
+				if ! [[ "$vbr" =~ ^[0-9]+$ ]] || (( vbr > 9 )); then
+					echo "Error: --vbr requires a number 0-9 (0=best quality)" >&2
+					return 1
+				fi
+				;;
 			--title=*)       metadata[title]="${1#*=}" ;;
 			--artist=*)      metadata[artist]="${1#*=}" ;;
 			--album=*)       metadata[album]="${1#*=}" ;;
@@ -315,11 +336,10 @@ audio_convert() {
 	fi
 
 	# Apply defaults only when the user supplied neither --vbr nor --bitrate
-	local bitrate_source="user"
 	if [[ -z "$vbr" && -z "$bitrate" ]]; then
 		case "$codec_target" in
-			mp3) bitrate=192; bitrate_source="default"; echo "Using default bitrate for mp3: 192 kbps CBR" >&2 ;;
-			aac) bitrate=128; bitrate_source="default"; echo "Using default bitrate for aac: 128 kbps CBR" >&2 ;;
+			mp3) bitrate=192; echo "Using default bitrate for mp3: 192 kbps CBR" >&2 ;;
+			aac) bitrate=128; echo "Using default bitrate for aac: 128 kbps CBR" >&2 ;;
 		esac
 	fi
 
