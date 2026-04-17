@@ -151,27 +151,35 @@ test_audio_convert() {
 	fi
 
 	# Test: probe_codec returns expected codec for each fixture
-	declare -A expected_codecs=(
-		[sine.wav]="pcm_s16le"
-		[sine.aiff]="pcm_s16be"
-		[sine.mp3]="mp3"
-		[sine_aac.m4a]="aac"
-		[sine.flac]="flac"
-		[sine_alac.m4a]="alac"
-	)
-	for fx in "${!expected_codecs[@]}"; do
-		(( tests++ ))
-		local want="${expected_codecs[$fx]}"
-		local got
-		# Source the script so we can call probe_codec directly
-		got=$(bash -c "source $HOME/dotfiles/bin/audio-convert && probe_codec '$AUDIO_TEST_DIR/$fx'")
-		if [[ "$got" == "$want" ]]; then
-			echo "✓ probe_codec $fx -> $want test passed"
-		else
-			echo "✗ probe_codec $fx expected '$want' got '$got' test failed" >&2
-			(( fails++ ))
-		fi
-	done
+	if [[ -n "$AUDIO_TEST_DIR" && -d "$AUDIO_TEST_DIR" ]]; then
+		local -A expected_codecs=(
+			[sine.wav]="pcm_s16le"
+			[sine.aiff]="pcm_s16be"
+			[sine.mp3]="mp3"
+			[sine_aac.m4a]="aac"
+			[sine.flac]="flac"
+			[sine_alac.m4a]="alac"
+		)
+		# Iterate in deterministic order (hash iteration isn't stable across bash versions)
+		local fixtures=(sine.wav sine.aiff sine.mp3 sine_aac.m4a sine.flac sine_alac.m4a)
+		for fx in "${fixtures[@]}"; do
+			(( tests++ ))
+			local want="${expected_codecs[$fx]}"
+			local got
+			# Source the script so we can call probe_codec directly
+			got=$(AUDIO_CONVERT_SCRIPT="$HOME/dotfiles/bin/audio-convert" \
+				TARGET="$AUDIO_TEST_DIR/$fx" \
+				bash -c 'source "$AUDIO_CONVERT_SCRIPT" && probe_codec "$TARGET"')
+			if [[ "$got" == "$want" ]]; then
+				echo "✓ probe_codec $fx -> $want test passed"
+			else
+				echo "✗ probe_codec $fx expected '$want' got '$got' test failed" >&2
+				(( fails++ ))
+			fi
+		done
+	else
+		echo "⊘ probe_codec tests skipped (no fixtures)"
+	fi
 
 	# Report
 	if [ $fails -gt 0 ]; then
