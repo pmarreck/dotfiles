@@ -61,6 +61,18 @@ Examples:
 EOF
 }
 
+check_dependencies() {
+	local missing=()
+	command -v ffmpeg  >/dev/null 2>&1 || missing+=("ffmpeg")
+	command -v ffprobe >/dev/null 2>&1 || missing+=("ffprobe")
+	if [[ ${#missing[@]} -gt 0 ]]; then
+		echo "Error: ${missing[*]} not found on PATH." >&2
+		echo "  Install with: nix profile install nixpkgs#ffmpeg" >&2
+		return 1
+	fi
+	return 0
+}
+
 audio_convert() {
 	local self_name
 	self_name=$(basename "${BASH_SOURCE[0]}")
@@ -127,6 +139,8 @@ audio_convert() {
 	case "$codec_target" in
 		m4a) codec_target="aac" ;;
 	esac
+
+	check_dependencies || return 1
 
 	if [[ ${#files[@]} -eq 0 ]]; then
 		echo "Error: no input files" >&2

@@ -76,6 +76,25 @@ test_audio_convert() {
 		(( fails++ ))
 	fi
 
+	# Test: missing ffmpeg produces error with nix install hint
+	(( tests++ ))
+	local dep_stderr
+	local ac_path
+	ac_path=$(command -v audio-convert)
+	dep_stderr=$(PATH="/usr/bin:/bin" "$ac_path" -f mp3 nofile.wav 2>&1 >/dev/null) || true
+	# /usr/bin:/bin is unlikely to have ffmpeg on macOS or Nix systems
+	if command -v ffmpeg >/dev/null 2>&1 && [[ ! -x /usr/bin/ffmpeg && ! -x /bin/ffmpeg ]]; then
+		if echo "$dep_stderr" | grep -qi "ffmpeg.*not found"; then
+			echo "✓ missing ffmpeg error test passed"
+		else
+			echo "✗ missing ffmpeg error test failed (no nix hint in stderr)" >&2
+			echo "  stderr: $dep_stderr" >&2
+			(( fails++ ))
+		fi
+	else
+		echo "⊘ missing ffmpeg test skipped (ffmpeg on system PATH)"
+	fi
+
 	# Report
 	if [ $fails -gt 0 ]; then
 		echo "$fails of $tests audio-convert tests failed!" >&2
