@@ -344,6 +344,31 @@ test_audio_convert() {
 		echo "⊘ flac conversion test skipped (no fixtures)"
 	fi
 
+	# Test: alac wav -> alac.m4a produces ALAC codec in m4a
+	if [[ -n "$AUDIO_TEST_DIR" && -d "$AUDIO_TEST_DIR" ]]; then
+		(( tests++ ))
+		local alac_in="$AUDIO_TEST_DIR/for_alac.wav"
+		cp "$AUDIO_TEST_DIR/sine.wav" "$alac_in"
+		local alac_out="$AUDIO_TEST_DIR/for_alac.m4a"
+		rm -f "$alac_out"
+		alac "$alac_in" 2>/dev/null
+		if [[ -s "$alac_out" ]]; then
+			local alac_codec
+			alac_codec=$(ffprobe -v error -select_streams a:0 -show_entries stream=codec_name -of default=nw=1:nk=1 "$alac_out")
+			if [[ "$alac_codec" == "alac" ]]; then
+				echo "✓ alac wav->alac.m4a test passed"
+			else
+				echo "✗ alac output codec expected 'alac' got '$alac_codec' test failed" >&2
+				(( fails++ ))
+			fi
+		else
+			echo "✗ alac conversion produced no output test failed" >&2
+			(( fails++ ))
+		fi
+	else
+		echo "⊘ alac conversion test skipped (no fixtures)"
+	fi
+
 	# Report
 	if [ $fails -gt 0 ]; then
 		echo "$fails of $tests audio-convert tests failed!" >&2
