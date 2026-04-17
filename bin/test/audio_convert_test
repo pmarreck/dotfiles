@@ -291,6 +291,31 @@ test_audio_convert() {
 		echo "⊘ matrix tests skipped (no fixtures)"
 	fi
 
+	# Test: output_path returns expected extension per target
+	local -A expected_ext=(
+		[mp3]="mp3"
+		[aac]="m4a"
+		[m4a]="m4a"
+		[flac]="flac"
+		[alac]="m4a"
+	)
+	local targets=(mp3 aac m4a flac alac)
+	for t in "${targets[@]}"; do
+		(( tests++ ))
+		local want_ext="${expected_ext[$t]}"
+		local got
+		got=$(AUDIO_CONVERT_SCRIPT="$HOME/dotfiles/bin/audio-convert" \
+			INPUT="/tmp/foo.wav" \
+			TARGET="$t" \
+			bash -c 'source "$AUDIO_CONVERT_SCRIPT" && output_path "$INPUT" "$TARGET"')
+		if [[ "$got" == "/tmp/foo.$want_ext" ]]; then
+			echo "✓ output_path $t -> .$want_ext test passed"
+		else
+			echo "✗ output_path $t expected /tmp/foo.$want_ext got '$got' test failed" >&2
+			(( fails++ ))
+		fi
+	done
+
 	# Report
 	if [ $fails -gt 0 ]; then
 		echo "$fails of $tests audio-convert tests failed!" >&2

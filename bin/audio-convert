@@ -145,6 +145,21 @@ apply_matrix() {
 }
 
 
+# output_path INPUT TARGET-NAME -> prints the output file path
+output_path() {
+	local input="$1"
+	local target="$2"
+	local ext
+	case "$target" in
+		mp3)          ext="mp3" ;;
+		aac|m4a|alac) ext="m4a" ;;
+		flac)         ext="flac" ;;
+		*) echo "Error: unknown target '$target' in output_path" >&2; return 1 ;;
+	esac
+	echo "${input%.*}.$ext"
+}
+
+
 audio_convert() {
 	local self_name
 	self_name=$(basename "${BASH_SOURCE[0]}")
