@@ -25,6 +25,9 @@ test_audio_convert() {
 	local fails=0
 	local tests=0
 
+	# Ensure the shared fixture directory is cleaned up whenever this function exits
+	trap 'if [[ -n "$AUDIO_TEST_DIR" && -d "$AUDIO_TEST_DIR" ]]; then rm -rf "$AUDIO_TEST_DIR"; fi; trap - RETURN' RETURN
+
 	# Test 1: --help exits 0 and mentions "Usage"
 	(( tests++ ))
 	if audio-convert --help 2>&1 | grep -qi "usage"; then
@@ -120,34 +123,31 @@ test_audio_convert() {
 	(( tests++ ))
 	local test_dir
 	test_dir=$(mktemp -d --tmpdir audio_convert_test.XXXXXX)
-	local fixture_err_log
-	fixture_err_log=$(mktemp --tmpdir audio_fixture_err.XXXXXX.log)
-	if generate_fixtures "$test_dir" 2>"$fixture_err_log"; then
-		local fx_ok=true
-		for f in sine.wav sine.aiff sine.mp3 sine_aac.m4a sine.flac sine_alac.m4a; do
-			if [[ ! -s "$test_dir/$f" ]]; then
-				fx_ok=false
-				echo "  missing or empty: $test_dir/$f" >&2
+	if [[ -z "$test_dir" || ! -d "$test_dir" ]]; then
+		echo "✗ fixture generation test failed (mktemp -d returned nothing)" >&2
+		(( fails++ ))
+	else
+		local fixture_err_log="$test_dir/fixture_err.log"
+		if generate_fixtures "$test_dir" 2>"$fixture_err_log"; then
+			local fx_ok=true
+			for f in sine.wav sine.aiff sine.mp3 sine_aac.m4a sine.flac sine_alac.m4a; do
+				if [[ ! -s "$test_dir/$f" ]]; then
+					fx_ok=false
+					echo "  missing or empty: $test_dir/$f" >&2
+				fi
+			done
+			if [[ "$fx_ok" == "true" ]]; then
+				echo "✓ fixture generation test passed"
+			else
+				echo "✗ fixture generation test failed (files missing)" >&2
+				(( fails++ ))
 			fi
-		done
-		if [[ "$fx_ok" == "true" ]]; then
-			echo "✓ fixture generation test passed"
 		else
-			echo "✗ fixture generation test failed (files missing)" >&2
+			echo "✗ fixture generation test failed (ffmpeg errors: $(cat "$fixture_err_log"))" >&2
 			(( fails++ ))
 		fi
-	else
-		echo "✗ fixture generation test failed (ffmpeg errors: $(cat "$fixture_err_log"))" >&2
-		(( fails++ ))
-	fi
-	rm -f "$fixture_err_log"
-	# Don't remove test_dir here — later tests reuse it.
-	# Export for subsequent tests.
-	export AUDIO_TEST_DIR="$test_dir"
-
-	# Cleanup shared test directory
-	if [[ -n "$AUDIO_TEST_DIR" && -d "$AUDIO_TEST_DIR" ]]; then
-		rm -rf "$AUDIO_TEST_DIR"
+		# $test_dir is cleaned up by the RETURN trap; no manual cleanup needed here
+		export AUDIO_TEST_DIR="$test_dir"
 	fi
 
 	# Report
