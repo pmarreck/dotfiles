@@ -518,6 +518,81 @@ test_audio_convert() {
 		echo "⊘ mp3 VBR tests skipped (no fixtures)"
 	fi
 
+	# Tests: aac/m4a + .m4a input ambiguity (codec-driven matrix)
+	if [[ -n "$AUDIO_TEST_DIR" && -d "$AUDIO_TEST_DIR" ]]; then
+		# aac wav -> m4a with AAC codec inside
+		(( tests++ ))
+		local aac_in="$AUDIO_TEST_DIR/for_aac.wav"
+		cp "$AUDIO_TEST_DIR/sine.wav" "$aac_in"
+		local aac_out="$AUDIO_TEST_DIR/for_aac.m4a"
+		rm -f "$aac_out"
+		aac "$aac_in" 2>/dev/null
+		if [[ -s "$aac_out" ]]; then
+			local aac_codec
+			aac_codec=$(ffprobe -v error -select_streams a:0 -show_entries stream=codec_name -of default=nw=1:nk=1 "$aac_out")
+			if [[ "$aac_codec" == "aac" ]]; then
+				echo "✓ aac wav->m4a(AAC) test passed"
+			else
+				echo "✗ aac output codec expected 'aac' got '$aac_codec' test failed" >&2
+				(( fails++ ))
+			fi
+		else
+			echo "✗ aac conversion produced no output test failed" >&2
+			(( fails++ ))
+		fi
+
+		# m4a alias produces identical codec (aac) in m4a container
+		(( tests++ ))
+		local m4a_in="$AUDIO_TEST_DIR/for_m4a.wav"
+		cp "$AUDIO_TEST_DIR/sine.wav" "$m4a_in"
+		local m4a_out="$AUDIO_TEST_DIR/for_m4a.m4a"
+		rm -f "$m4a_out"
+		m4a "$m4a_in" 2>/dev/null
+		if [[ -s "$m4a_out" ]]; then
+			local m4a_codec
+			m4a_codec=$(ffprobe -v error -select_streams a:0 -show_entries stream=codec_name -of default=nw=1:nk=1 "$m4a_out")
+			if [[ "$m4a_codec" == "aac" ]]; then
+				echo "✓ m4a alias -> AAC in m4a test passed"
+			else
+				echo "✗ m4a alias codec expected 'aac' got '$m4a_codec' test failed" >&2
+				(( fails++ ))
+			fi
+		else
+			echo "✗ m4a alias produced no output test failed" >&2
+			(( fails++ ))
+		fi
+
+		# .m4a input ambiguity: flac sine_aac.m4a -> errors (lossy->lossless)
+		(( tests++ ))
+		local amb1_stderr; local amb1_rc
+		amb1_stderr=$(flac "$AUDIO_TEST_DIR/sine_aac.m4a" 2>&1 >/dev/null); amb1_rc=$?
+		if [[ "$amb1_rc" -ne 0 ]] && echo "$amb1_stderr" | grep -qiE -- "lossy.*lossless"; then
+			echo "✓ flac on AAC-in-m4a refuses test passed"
+		else
+			echo "✗ flac on AAC-in-m4a should refuse test failed (rc=$amb1_rc)" >&2
+			echo "  stderr: $amb1_stderr" >&2
+			(( fails++ ))
+		fi
+
+		# mp3 sine_alac.m4a -> warns (lossless->lossy), proceeds
+		(( tests++ ))
+		local amb2_in="$AUDIO_TEST_DIR/for_m4a_ambig.m4a"
+		cp "$AUDIO_TEST_DIR/sine_alac.m4a" "$amb2_in"
+		local amb2_out="$AUDIO_TEST_DIR/for_m4a_ambig.mp3"
+		rm -f "$amb2_out"
+		local amb2_stderr
+		amb2_stderr=$(mp3 "$amb2_in" 2>&1 >/dev/null) || true
+		if [[ -s "$amb2_out" ]] && echo "$amb2_stderr" | grep -qiE -- "lossless.*lossy"; then
+			echo "✓ mp3 on ALAC-in-m4a warns and proceeds test passed"
+		else
+			echo "✗ mp3 on ALAC-in-m4a should warn+proceed test failed" >&2
+			echo "  stderr: $amb2_stderr" >&2
+			(( fails++ ))
+		fi
+	else
+		echo "⊘ aac/m4a/ambiguity tests skipped (no fixtures)"
+	fi
+
 	# Report
 	if [ $fails -gt 0 ]; then
 		echo "$fails of $tests audio-convert tests failed!" >&2
