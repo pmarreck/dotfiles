@@ -52,6 +52,30 @@ test_audio_convert() {
 		(( fails++ ))
 	fi
 
+	# Test: alias + --format override warns
+	(( tests++ ))
+	local override_stderr
+	override_stderr=$(mp3 --format=flac nofile.wav 2>&1 >/dev/null)
+	if echo "$override_stderr" | grep -qi -- "--format=flac overrides alias mp3"; then
+		echo "✓ alias override warning test passed"
+	else
+		echo "✗ alias override warning test failed" >&2
+		echo "  stderr: $override_stderr" >&2
+		(( fails++ ))
+	fi
+
+	# Test: alias + matching --format does NOT warn
+	(( tests++ ))
+	local match_stderr
+	match_stderr=$(mp3 --format=mp3 nofile.wav 2>&1 >/dev/null)
+	if ! echo "$match_stderr" | grep -qi "overrides alias"; then
+		echo "✓ alias + matching format does not warn test passed"
+	else
+		echo "✗ alias + matching format should not warn test failed" >&2
+		echo "  stderr: $match_stderr" >&2
+		(( fails++ ))
+	fi
+
 	# Report
 	if [ $fails -gt 0 ]; then
 		echo "$fails of $tests audio-convert tests failed!" >&2
