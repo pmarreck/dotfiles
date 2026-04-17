@@ -409,6 +409,70 @@ test_audio_convert() {
 		echo "⊘ overwrite guard tests skipped (no fixtures)"
 	fi
 
+	# Tests: mp3 CBR conversion and default-bitrate announce behavior
+	if [[ -n "$AUDIO_TEST_DIR" && -d "$AUDIO_TEST_DIR" ]]; then
+		# Basic mp3 wav -> mp3
+		(( tests++ ))
+		local mp3_in="$AUDIO_TEST_DIR/for_mp3.wav"
+		cp "$AUDIO_TEST_DIR/sine.wav" "$mp3_in"
+		local mp3_out="$AUDIO_TEST_DIR/for_mp3.mp3"
+		rm -f "$mp3_out"
+		local mp3_stderr
+		mp3_stderr=$(mp3 "$mp3_in" 2>&1 >/dev/null) || true
+		if [[ -s "$mp3_out" ]]; then
+			local mp3_codec
+			mp3_codec=$(ffprobe -v error -select_streams a:0 -show_entries stream=codec_name -of default=nw=1:nk=1 "$mp3_out")
+			if [[ "$mp3_codec" == "mp3" ]]; then
+				echo "✓ mp3 wav->mp3 test passed"
+			else
+				echo "✗ mp3 output codec expected 'mp3' got '$mp3_codec' test failed" >&2
+				(( fails++ ))
+			fi
+		else
+			echo "✗ mp3 conversion produced no output test failed" >&2
+			(( fails++ ))
+		fi
+
+		# Default-bitrate announcement on stderr when no --bitrate/--vbr
+		(( tests++ ))
+		if echo "$mp3_stderr" | grep -qi "default bitrate.*mp3.*192"; then
+			echo "✓ default bitrate announce test passed"
+		else
+			echo "✗ default bitrate announce test failed" >&2
+			echo "  stderr: $mp3_stderr" >&2
+			(( fails++ ))
+		fi
+
+		# --bitrate=256 respected
+		(( tests++ ))
+		rm -f "$mp3_out"
+		mp3 --bitrate=256 "$mp3_in" 2>/dev/null
+		local mp3_br
+		mp3_br=$(ffprobe -v error -select_streams a:0 -show_entries stream=bit_rate -of default=nw=1:nk=1 "$mp3_out")
+		# Tolerance: expect ~256000 bps
+		if [[ -n "$mp3_br" ]] && (( mp3_br > 200000 && mp3_br < 320000 )); then
+			echo "✓ --bitrate=256 test passed (got $mp3_br bps)"
+		else
+			echo "✗ --bitrate=256 test failed (got $mp3_br bps)" >&2
+			(( fails++ ))
+		fi
+
+		# --bitrate suppresses the default announce
+		(( tests++ ))
+		rm -f "$mp3_out"
+		local br_stderr
+		br_stderr=$(mp3 --bitrate=256 "$mp3_in" 2>&1 >/dev/null) || true
+		if ! echo "$br_stderr" | grep -qi "default bitrate"; then
+			echo "✓ --bitrate suppresses default announce test passed"
+		else
+			echo "✗ --bitrate should suppress default announce test failed" >&2
+			echo "  stderr: $br_stderr" >&2
+			(( fails++ ))
+		fi
+	else
+		echo "⊘ mp3 CBR tests skipped (no fixtures)"
+	fi
+
 	# Report
 	if [ $fails -gt 0 ]; then
 		echo "$fails of $tests audio-convert tests failed!" >&2

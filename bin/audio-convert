@@ -161,22 +161,20 @@ output_path() {
 
 
 # Invoke ffmpeg for a single file. Target selects codec+container.
-# Usage: run_ffmpeg INPUT OUTPUT TARGET
-#   INPUT  - source file path
-#   OUTPUT - destination file path (extension already set by output_path)
-#   TARGET - one of: mp3, aac, flac, alac (m4a normalizes to aac earlier)
-# This task only supports flac and alac (no bitrate knobs); mp3/aac are wired in Task 14.
+# Usage: run_ffmpeg INPUT OUTPUT TARGET BITRATE
+#   BITRATE is in kbps and applies to mp3/aac only; ignored for flac/alac.
 run_ffmpeg() {
 	local input="$1"
 	local output="$2"
 	local target="$3"
+	local bitrate="$4"
 
 	local -a codec_arr
 	case "$target" in
+		mp3)  codec_arr=(-c:a libmp3lame -b:a "${bitrate}k") ;;
+		aac)  codec_arr=(-c:a aac -b:a "${bitrate}k") ;;
 		flac) codec_arr=(-c:a flac -compression_level 8) ;;
 		alac) codec_arr=(-c:a alac) ;;
-		mp3)  codec_arr=(-c:a libmp3lame) ;;
-		aac)  codec_arr=(-c:a aac) ;;
 		*) echo "Error: unsupported target '$target' in run_ffmpeg" >&2; return 1 ;;
 	esac
 
@@ -207,6 +205,7 @@ audio_convert() {
 	local format_override=""
 	local files=()
 	local force=false
+	local bitrate=""
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -224,6 +223,7 @@ audio_convert() {
 				format_override="${1#*=}"
 				;;
 			--force) force=true ;;
+			--bitrate=*) bitrate="${1#*=}" ;;
 			--) shift; while [[ $# -gt 0 ]]; do files+=("$1"); shift; done ;;
 			-*) echo "Error: unknown option: $1" >&2; return 1 ;;
 			*) files+=("$1") ;;
@@ -266,6 +266,15 @@ audio_convert() {
 
 	check_dependencies || return 1
 
+	# Default bitrate + stderr announce (only when user did not specify --bitrate)
+	local bitrate_source="user"
+	if [[ -z "$bitrate" ]]; then
+		case "$codec_target" in
+			mp3) bitrate=192; bitrate_source="default"; echo "Using default bitrate for mp3: 192 kbps CBR" >&2 ;;
+			aac) bitrate=128; bitrate_source="default"; echo "Using default bitrate for aac: 128 kbps CBR" >&2 ;;
+		esac
+	fi
+
 	if [[ ${#files[@]} -eq 0 ]]; then
 		echo "Error: no input files" >&2
 		return 1
@@ -293,7 +302,7 @@ audio_convert() {
 			continue
 		fi
 
-		if ! run_ffmpeg "$file" "$out" "$codec_target"; then
+		if ! run_ffmpeg "$file" "$out" "$codec_target" "$bitrate"; then
 			echo "Error: ffmpeg failed for $file" >&2
 			(( failures++ ))
 			continue
