@@ -1,5 +1,26 @@
 #!/usr/bin/env bash
 
+# Generate standard audio fixtures in $1 (directory).
+# Returns non-zero if any fixture couldn't be made.
+generate_fixtures() {
+	local d="$1"
+	ffmpeg -hide_banner -loglevel error -nostdin -y \
+		-f lavfi -i "sine=frequency=440:duration=0.5" \
+		-ar 44100 -ac 1 "$d/sine.wav" || return 1
+	ffmpeg -hide_banner -loglevel error -nostdin -y \
+		-f lavfi -i "sine=frequency=440:duration=0.5" \
+		-ar 44100 -ac 1 -c:a pcm_s16be "$d/sine.aiff" || return 1
+	ffmpeg -hide_banner -loglevel error -nostdin -y \
+		-i "$d/sine.wav" -c:a libmp3lame -b:a 128k "$d/sine.mp3" || return 1
+	ffmpeg -hide_banner -loglevel error -nostdin -y \
+		-i "$d/sine.wav" -c:a aac -b:a 128k "$d/sine_aac.m4a" || return 1
+	ffmpeg -hide_banner -loglevel error -nostdin -y \
+		-i "$d/sine.wav" -c:a flac "$d/sine.flac" || return 1
+	ffmpeg -hide_banner -loglevel error -nostdin -y \
+		-i "$d/sine.wav" -c:a alac "$d/sine_alac.m4a" || return 1
+	return 0
+}
+
 test_audio_convert() {
 	local fails=0
 	local tests=0
@@ -93,6 +114,40 @@ test_audio_convert() {
 		fi
 	else
 		echo "⊘ missing ffmpeg test skipped (ffmpeg on system PATH)"
+	fi
+
+	# Test: fixture generation works (all files created and non-empty)
+	(( tests++ ))
+	local test_dir
+	test_dir=$(mktemp -d --tmpdir audio_convert_test.XXXXXX)
+	local fixture_err_log
+	fixture_err_log=$(mktemp --tmpdir audio_fixture_err.XXXXXX.log)
+	if generate_fixtures "$test_dir" 2>"$fixture_err_log"; then
+		local fx_ok=true
+		for f in sine.wav sine.aiff sine.mp3 sine_aac.m4a sine.flac sine_alac.m4a; do
+			if [[ ! -s "$test_dir/$f" ]]; then
+				fx_ok=false
+				echo "  missing or empty: $test_dir/$f" >&2
+			fi
+		done
+		if [[ "$fx_ok" == "true" ]]; then
+			echo "✓ fixture generation test passed"
+		else
+			echo "✗ fixture generation test failed (files missing)" >&2
+			(( fails++ ))
+		fi
+	else
+		echo "✗ fixture generation test failed (ffmpeg errors: $(cat "$fixture_err_log"))" >&2
+		(( fails++ ))
+	fi
+	rm -f "$fixture_err_log"
+	# Don't remove test_dir here — later tests reuse it.
+	# Export for subsequent tests.
+	export AUDIO_TEST_DIR="$test_dir"
+
+	# Cleanup shared test directory
+	if [[ -n "$AUDIO_TEST_DIR" && -d "$AUDIO_TEST_DIR" ]]; then
+		rm -rf "$AUDIO_TEST_DIR"
 	fi
 
 	# Report
