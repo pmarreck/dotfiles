@@ -369,6 +369,46 @@ test_audio_convert() {
 		echo "⊘ alac conversion test skipped (no fixtures)"
 	fi
 
+	# Test: re-converting without --force refuses (output already exists)
+	if [[ -n "$AUDIO_TEST_DIR" && -d "$AUDIO_TEST_DIR" ]]; then
+		(( tests++ ))
+		local guard_in="$AUDIO_TEST_DIR/guard.wav"
+		cp "$AUDIO_TEST_DIR/sine.wav" "$guard_in"
+		flac "$guard_in" 2>/dev/null
+		local guard_out="$AUDIO_TEST_DIR/guard.flac"
+		local guard_pre_size
+		guard_pre_size=$(wc -c < "$guard_out")
+		local guard_stderr
+		guard_stderr=$(flac "$guard_in" 2>&1 >/dev/null) || true
+		local guard_post_size
+		guard_post_size=$(wc -c < "$guard_out")
+		if echo "$guard_stderr" | grep -qiE "exists|--force" && [[ "$guard_pre_size" == "$guard_post_size" ]]; then
+			echo "✓ overwrite guard test passed"
+		else
+			echo "✗ overwrite guard test failed" >&2
+			echo "  stderr: $guard_stderr" >&2
+			echo "  pre_size=$guard_pre_size post_size=$guard_post_size" >&2
+			(( fails++ ))
+		fi
+
+		# Test: --force overwrites
+		(( tests++ ))
+		local before_mtime
+		before_mtime=$(stat -f "%m" "$guard_out" 2>/dev/null || stat -c "%Y" "$guard_out")
+		sleep 1
+		flac --force "$guard_in" 2>/dev/null
+		local after_mtime
+		after_mtime=$(stat -f "%m" "$guard_out" 2>/dev/null || stat -c "%Y" "$guard_out")
+		if [[ "$before_mtime" != "$after_mtime" ]]; then
+			echo "✓ --force overwrites test passed"
+		else
+			echo "✗ --force overwrites test failed (mtime unchanged)" >&2
+			(( fails++ ))
+		fi
+	else
+		echo "⊘ overwrite guard tests skipped (no fixtures)"
+	fi
+
 	# Report
 	if [ $fails -gt 0 ]; then
 		echo "$fails of $tests audio-convert tests failed!" >&2

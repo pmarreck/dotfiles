@@ -206,6 +206,7 @@ audio_convert() {
 
 	local format_override=""
 	local files=()
+	local force=false
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -222,6 +223,7 @@ audio_convert() {
 			--format=*)
 				format_override="${1#*=}"
 				;;
+			--force) force=true ;;
 			--) shift; while [[ $# -gt 0 ]]; do files+=("$1"); shift; done ;;
 			-*) echo "Error: unknown option: $1" >&2; return 1 ;;
 			*) files+=("$1") ;;
@@ -284,6 +286,12 @@ audio_convert() {
 		fi
 		local out
 		out=$(output_path "$file" "$target") || { (( failures++ )); continue; }
+
+		if [[ -e "$out" && "$force" != "true" ]]; then
+			echo "Error: output already exists: $out (use --force to overwrite)" >&2
+			(( failures++ ))
+			continue
+		fi
 
 		if ! run_ffmpeg "$file" "$out" "$codec_target"; then
 			echo "Error: ffmpeg failed for $file" >&2
