@@ -99,6 +99,51 @@ codec_class() {
 	esac
 }
 
+# Returns 0 if conversion should proceed, 1 if it should be refused.
+# Prints appropriate warning to stderr when proceeding is noisy.
+apply_matrix() {
+	local src_codec="$1"
+	local target_codec="$2"
+	local file="$3"
+
+	if [[ "$src_codec" == "$target_codec" ]]; then
+		echo "Error: $file is already $target_codec; refusing to convert to same codec." >&2
+		return 1
+	fi
+
+	local src_class target_class
+	src_class=$(codec_class "$src_codec")
+	target_class=$(codec_class "$target_codec")
+
+	if [[ "$src_class" == "unknown" ]]; then
+		echo "Error: unrecognized source codec '$src_codec' for $file" >&2
+		return 1
+	fi
+	if [[ "$target_class" == "unknown" ]]; then
+		echo "Error: unrecognized target codec '$target_codec' (internal bug?)" >&2
+		return 1
+	fi
+
+	if [[ "$src_class" == "lossy" && "$target_class" == "lossless" ]]; then
+		echo "Error: refusing lossy -> lossless conversion for $file" >&2
+		echo "  The damage already done by lossy compression cannot be undone;" >&2
+		echo "  re-encoding to a lossless format only inflates file size." >&2
+		return 1
+	fi
+
+	if [[ "$src_class" == "lossy" && "$target_class" == "lossy" ]]; then
+		echo "Warning: converting lossy ($src_codec) to lossy ($target_codec) for $file" >&2
+		echo "  This doubles lossy artifact generation. Prefer the original source." >&2
+	fi
+
+	if [[ "$src_class" == "lossless" && "$target_class" == "lossy" ]]; then
+		echo "Warning: converting lossless ($src_codec) to lossy ($target_codec) for $file" >&2
+		echo "  This causes data loss. Keep the original if you might want full quality later." >&2
+	fi
+
+	return 0
+}
+
 
 audio_convert() {
 	local self_name
@@ -174,9 +219,24 @@ audio_convert() {
 		return 1
 	fi
 
-	# Later tasks implement per-file processing.
-	echo "Error: per-file processing not yet implemented" >&2
-	return 1
+	local failures=0
+	for file in "${files[@]}"; do
+		if [[ ! -f "$file" ]]; then
+			echo "Error: file not found: $file" >&2
+			(( failures++ ))
+			continue
+		fi
+		local src_codec
+		src_codec=$(probe_codec "$file") || { (( failures++ )); continue; }
+		if ! apply_matrix "$src_codec" "$codec_target" "$file"; then
+			(( failures++ ))
+			continue
+		fi
+		# Later tasks: actual ffmpeg conversion here
+		echo "Error: conversion not yet implemented (matrix check passed for $file)" >&2
+		(( failures++ ))
+	done
+	return $failures
 }
 
 if ! (return 0 2>/dev/null); then

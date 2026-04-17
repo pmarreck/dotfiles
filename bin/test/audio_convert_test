@@ -225,6 +225,72 @@ test_audio_convert() {
 		(( fails++ ))
 	fi
 
+	# Test: matrix enforcement (error/warn/silent per source-target codec-class cross product)
+	if [[ -n "$AUDIO_TEST_DIR" && -d "$AUDIO_TEST_DIR" ]]; then
+		# lossy -> lossless is refused with error (flac sine.mp3)
+		(( tests++ ))
+		local err1_stderr; local err1_rc
+		err1_stderr=$(flac "$AUDIO_TEST_DIR/sine.mp3" 2>&1 >/dev/null); err1_rc=$?
+		if [[ "$err1_rc" -ne 0 ]] && echo "$err1_stderr" | grep -qiE "lossy.*lossless|damage already done|cannot convert lossy"; then
+			echo "✓ lossy -> lossless refusal test passed"
+		else
+			echo "✗ lossy -> lossless refusal test failed (rc=$err1_rc)" >&2
+			echo "  stderr: $err1_stderr" >&2
+			(( fails++ ))
+		fi
+
+		# same-codec is refused (mp3 sine.mp3)
+		(( tests++ ))
+		local err2_stderr; local err2_rc
+		err2_stderr=$(mp3 "$AUDIO_TEST_DIR/sine.mp3" 2>&1 >/dev/null); err2_rc=$?
+		if [[ "$err2_rc" -ne 0 ]] && echo "$err2_stderr" | grep -qiE "already.*mp3|same codec"; then
+			echo "✓ same-codec refusal test passed"
+		else
+			echo "✗ same-codec refusal test failed (rc=$err2_rc)" >&2
+			echo "  stderr: $err2_stderr" >&2
+			(( fails++ ))
+		fi
+
+		# lossy -> lossy warns (aac sine.mp3) — script will still fail with "not implemented"
+		# but we only check that a double-artifact warning appears on stderr
+		(( tests++ ))
+		local warn1_stderr
+		warn1_stderr=$(aac "$AUDIO_TEST_DIR/sine.mp3" 2>&1 >/dev/null) || true
+		if echo "$warn1_stderr" | grep -qiE "double.*artifact|lossy.*lossy"; then
+			echo "✓ lossy -> lossy warning test passed"
+		else
+			echo "✗ lossy -> lossy warning test failed" >&2
+			echo "  stderr: $warn1_stderr" >&2
+			(( fails++ ))
+		fi
+
+		# lossless -> lossy warns (mp3 sine.wav)
+		(( tests++ ))
+		local warn2_stderr
+		warn2_stderr=$(mp3 "$AUDIO_TEST_DIR/sine.wav" 2>&1 >/dev/null) || true
+		if echo "$warn2_stderr" | grep -qiE "data loss|lossless.*lossy"; then
+			echo "✓ lossless -> lossy warning test passed"
+		else
+			echo "✗ lossless -> lossy warning test failed" >&2
+			echo "  stderr: $warn2_stderr" >&2
+			(( fails++ ))
+		fi
+
+		# lossless -> lossless is silent (flac sine.wav) — no warning
+		(( tests++ ))
+		local silent_stderr
+		silent_stderr=$(flac "$AUDIO_TEST_DIR/sine.wav" 2>&1 >/dev/null) || true
+		if ! echo "$silent_stderr" | grep -qiE "warning|data loss|artifact|damage"; then
+			echo "✓ lossless -> lossless silent test passed"
+		else
+			echo "✗ lossless -> lossless should be silent test failed" >&2
+			echo "  stderr: $silent_stderr" >&2
+			(( fails++ ))
+		fi
+	else
+		echo "⊘ matrix tests skipped (no fixtures)"
+	fi
+
 	# Report
 	if [ $fails -gt 0 ]; then
 		echo "$fails of $tests audio-convert tests failed!" >&2
