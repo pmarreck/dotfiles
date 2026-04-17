@@ -316,6 +316,34 @@ test_audio_convert() {
 		fi
 	done
 
+	# Test: flac wav -> flac produces valid flac file, correct codec
+	if [[ -n "$AUDIO_TEST_DIR" && -d "$AUDIO_TEST_DIR" ]]; then
+		(( tests++ ))
+		local flac_in="$AUDIO_TEST_DIR/for_flac.wav"
+		cp "$AUDIO_TEST_DIR/sine.wav" "$flac_in"
+		local flac_out="$AUDIO_TEST_DIR/for_flac.flac"
+		rm -f "$flac_out"
+		local flac_stderr
+		flac_stderr=$(flac "$flac_in" 2>&1 >/dev/null)
+		local flac_rc=$?
+		if [[ "$flac_rc" -eq 0 && -s "$flac_out" ]]; then
+			local flac_codec
+			flac_codec=$(ffprobe -v error -select_streams a:0 -show_entries stream=codec_name -of default=nw=1:nk=1 "$flac_out")
+			if [[ "$flac_codec" == "flac" ]]; then
+				echo "✓ flac wav->flac produces valid flac test passed"
+			else
+				echo "✗ flac output codec expected 'flac' got '$flac_codec' test failed" >&2
+				(( fails++ ))
+			fi
+		else
+			echo "✗ flac conversion failed (rc=$flac_rc)" >&2
+			echo "  stderr: $flac_stderr" >&2
+			(( fails++ ))
+		fi
+	else
+		echo "⊘ flac conversion test skipped (no fixtures)"
+	fi
+
 	# Report
 	if [ $fails -gt 0 ]; then
 		echo "$fails of $tests audio-convert tests failed!" >&2

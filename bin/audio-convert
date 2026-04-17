@@ -160,6 +160,41 @@ output_path() {
 }
 
 
+# Invoke ffmpeg for a single file. Target selects codec+container.
+# Usage: run_ffmpeg INPUT OUTPUT TARGET
+#   INPUT  - source file path
+#   OUTPUT - destination file path (extension already set by output_path)
+#   TARGET - one of: mp3, aac, flac, alac (m4a normalizes to aac earlier)
+# This task only supports flac and alac (no bitrate knobs); mp3/aac are wired in Task 14.
+run_ffmpeg() {
+	local input="$1"
+	local output="$2"
+	local target="$3"
+
+	local -a codec_arr
+	case "$target" in
+		flac) codec_arr=(-c:a flac -compression_level 8) ;;
+		alac) codec_arr=(-c:a alac) ;;
+		mp3)  codec_arr=(-c:a libmp3lame) ;;
+		aac)  codec_arr=(-c:a aac) ;;
+		*) echo "Error: unsupported target '$target' in run_ffmpeg" >&2; return 1 ;;
+	esac
+
+	local -a extra_args=()
+	case "$target" in
+		aac|alac) extra_args+=("-movflags" "+faststart") ;;
+		mp3)      extra_args+=("-write_id3v2" "1") ;;
+	esac
+
+	ffmpeg -hide_banner -loglevel error -nostdin -y \
+		-i "$input" -map 0:a \
+		"${codec_arr[@]}" \
+		-map_metadata -1 \
+		"${extra_args[@]}" \
+		"$output"
+}
+
+
 audio_convert() {
 	local self_name
 	self_name=$(basename "${BASH_SOURCE[0]}")
@@ -247,9 +282,14 @@ audio_convert() {
 			(( failures++ ))
 			continue
 		fi
-		# Later tasks: actual ffmpeg conversion here
-		echo "Error: conversion not yet implemented (matrix check passed for $file)" >&2
-		(( failures++ ))
+		local out
+		out=$(output_path "$file" "$target") || { (( failures++ )); continue; }
+
+		if ! run_ffmpeg "$file" "$out" "$codec_target"; then
+			echo "Error: ffmpeg failed for $file" >&2
+			(( failures++ ))
+			continue
+		fi
 	done
 	return $failures
 }
