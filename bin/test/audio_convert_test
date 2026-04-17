@@ -1,0 +1,745 @@
+#!/usr/bin/env bash
+
+# Generate standard audio fixtures in $1 (directory).
+# Returns non-zero if any fixture couldn't be made.
+generate_fixtures() {
+	local d="$1"
+	ffmpeg -hide_banner -loglevel error -nostdin -y \
+		-f lavfi -i "sine=frequency=440:duration=0.5" \
+		-ar 44100 -ac 1 "$d/sine.wav" || return 1
+	ffmpeg -hide_banner -loglevel error -nostdin -y \
+		-f lavfi -i "sine=frequency=440:duration=0.5" \
+		-ar 44100 -ac 1 -c:a pcm_s16be "$d/sine.aiff" || return 1
+	ffmpeg -hide_banner -loglevel error -nostdin -y \
+		-i "$d/sine.wav" -c:a libmp3lame -b:a 128k "$d/sine.mp3" || return 1
+	ffmpeg -hide_banner -loglevel error -nostdin -y \
+		-i "$d/sine.wav" -c:a aac -b:a 128k "$d/sine_aac.m4a" || return 1
+	ffmpeg -hide_banner -loglevel error -nostdin -y \
+		-i "$d/sine.wav" -c:a flac "$d/sine.flac" || return 1
+	ffmpeg -hide_banner -loglevel error -nostdin -y \
+		-i "$d/sine.wav" -c:a alac "$d/sine_alac.m4a" || return 1
+	return 0
+}
+
+test_audio_convert() {
+	local fails=0
+	local tests=0
+
+	# Ensure the shared fixture directory is cleaned up whenever this function exits
+	trap 'if [[ -n "$AUDIO_TEST_DIR" && -d "$AUDIO_TEST_DIR" ]]; then rm -rf "$AUDIO_TEST_DIR"; fi; trap - RETURN' RETURN
+
+	# Test 1: --help exits 0 and mentions "Usage"
+	(( tests++ ))
+	if audio-convert --help 2>&1 | grep -qi "usage"; then
+		echo "✓ audio-convert --help test passed"
+	else
+		echo "✗ audio-convert --help test failed" >&2
+		(( fails++ ))
+	fi
+
+	# Test 2: --about is exactly one line
+	(( tests++ ))
+	local about_lines
+	about_lines=$(audio-convert --about 2>&1 | wc -l | tr -d ' ')
+	if [[ "$about_lines" == "1" ]]; then
+		echo "✓ audio-convert --about is one line test passed"
+	else
+		echo "✗ audio-convert --about is one line test failed (got $about_lines lines)" >&2
+		(( fails++ ))
+	fi
+
+	# Test 3: Each alias has distinct --about output mentioning its name
+	for alias_name in mp3 aac m4a flac alac; do
+		(( tests++ ))
+		local about_out
+		about_out=$("$alias_name" --about 2>&1)
+		if [[ "$about_out" == "$alias_name - "* ]]; then
+			echo "✓ $alias_name --about starts with '$alias_name - ' test passed"
+		else
+			echo "✗ $alias_name --about starts with '$alias_name - ' test failed" >&2
+			echo "  got: $about_out" >&2
+			(( fails++ ))
+		fi
+	done
+
+	# Test: audio-convert with no --format exits non-zero and lists valid formats
+	(( tests++ ))
+	local noformat_stderr
+	local noformat_rc
+	noformat_stderr=$(audio-convert nofile.wav 2>&1 >/dev/null)
+	noformat_rc=$?
+	if [[ "$noformat_rc" -ne 0 ]] && echo "$noformat_stderr" | grep -qE "mp3.*aac.*flac.*alac"; then
+		echo "✓ audio-convert requires --format test passed"
+	else
+		echo "✗ audio-convert requires --format test failed (rc=$noformat_rc)" >&2
+		echo "  stderr: $noformat_stderr" >&2
+		(( fails++ ))
+	fi
+
+	# Test: alias + --format override warns
+	(( tests++ ))
+	local override_stderr
+	override_stderr=$(mp3 --format=flac nofile.wav 2>&1 >/dev/null)
+	if echo "$override_stderr" | grep -qi -- "--format=flac overrides alias mp3"; then
+		echo "✓ alias override warning test passed"
+	else
+		echo "✗ alias override warning test failed" >&2
+		echo "  stderr: $override_stderr" >&2
+		(( fails++ ))
+	fi
+
+	# Test: alias + matching --format does NOT warn
+	(( tests++ ))
+	local match_stderr
+	match_stderr=$(mp3 --format=mp3 nofile.wav 2>&1 >/dev/null)
+	if ! echo "$match_stderr" | grep -qi "overrides alias"; then
+		echo "✓ alias + matching format does not warn test passed"
+	else
+		echo "✗ alias + matching format should not warn test failed" >&2
+		echo "  stderr: $match_stderr" >&2
+		(( fails++ ))
+	fi
+
+	# Test: missing ffmpeg produces error with nix install hint
+	(( tests++ ))
+	local dep_stderr
+	local ac_path
+	ac_path=$(command -v audio-convert)
+	dep_stderr=$(PATH="/usr/bin:/bin" "$ac_path" -f mp3 nofile.wav 2>&1 >/dev/null) || true
+	# /usr/bin:/bin is unlikely to have ffmpeg on macOS or Nix systems
+	if command -v ffmpeg >/dev/null 2>&1 && [[ ! -x /usr/bin/ffmpeg && ! -x /bin/ffmpeg ]]; then
+		if echo "$dep_stderr" | grep -qi "ffmpeg.*not found"; then
+			echo "✓ missing ffmpeg error test passed"
+		else
+			echo "✗ missing ffmpeg error test failed (no nix hint in stderr)" >&2
+			echo "  stderr: $dep_stderr" >&2
+			(( fails++ ))
+		fi
+	else
+		echo "⊘ missing ffmpeg test skipped (ffmpeg on system PATH)"
+	fi
+
+	# Test: fixture generation works (all files created and non-empty)
+	(( tests++ ))
+	local test_dir
+	test_dir=$(mktemp -d --tmpdir audio_convert_test.XXXXXX)
+	if [[ -z "$test_dir" || ! -d "$test_dir" ]]; then
+		echo "✗ fixture generation test failed (mktemp -d returned nothing)" >&2
+		(( fails++ ))
+	else
+		local fixture_err_log="$test_dir/fixture_err.log"
+		if generate_fixtures "$test_dir" 2>"$fixture_err_log"; then
+			local fx_ok=true
+			for f in sine.wav sine.aiff sine.mp3 sine_aac.m4a sine.flac sine_alac.m4a; do
+				if [[ ! -s "$test_dir/$f" ]]; then
+					fx_ok=false
+					echo "  missing or empty: $test_dir/$f" >&2
+				fi
+			done
+			if [[ "$fx_ok" == "true" ]]; then
+				echo "✓ fixture generation test passed"
+			else
+				echo "✗ fixture generation test failed (files missing)" >&2
+				(( fails++ ))
+			fi
+		else
+			echo "✗ fixture generation test failed (ffmpeg errors: $(cat "$fixture_err_log"))" >&2
+			(( fails++ ))
+		fi
+		# $test_dir is cleaned up by the RETURN trap; no manual cleanup needed here
+		export AUDIO_TEST_DIR="$test_dir"
+	fi
+
+	# Test: probe_codec returns expected codec for each fixture
+	if [[ -n "$AUDIO_TEST_DIR" && -d "$AUDIO_TEST_DIR" ]]; then
+		local -A expected_codecs=(
+			[sine.wav]="pcm_s16le"
+			[sine.aiff]="pcm_s16be"
+			[sine.mp3]="mp3"
+			[sine_aac.m4a]="aac"
+			[sine.flac]="flac"
+			[sine_alac.m4a]="alac"
+		)
+		# Iterate in deterministic order (hash iteration isn't stable across bash versions)
+		local fixtures=(sine.wav sine.aiff sine.mp3 sine_aac.m4a sine.flac sine_alac.m4a)
+		for fx in "${fixtures[@]}"; do
+			(( tests++ ))
+			local want="${expected_codecs[$fx]}"
+			local got
+			# Source the script so we can call probe_codec directly
+			got=$(AUDIO_CONVERT_SCRIPT="$HOME/dotfiles/bin/audio-convert" \
+				TARGET="$AUDIO_TEST_DIR/$fx" \
+				bash -c 'source "$AUDIO_CONVERT_SCRIPT" && probe_codec "$TARGET"')
+			if [[ "$got" == "$want" ]]; then
+				echo "✓ probe_codec $fx -> $want test passed"
+			else
+				echo "✗ probe_codec $fx expected '$want' got '$got' test failed" >&2
+				(( fails++ ))
+			fi
+		done
+	else
+		echo "⊘ probe_codec tests skipped (no fixtures)"
+	fi
+
+	# Test: codec_class returns 'lossless' or 'lossy' correctly
+	local -A expected_classes=(
+		[pcm_s16le]="lossless"
+		[pcm_s16be]="lossless"
+		[pcm_s24le]="lossless"
+		[pcm_f32le]="lossless"
+		[flac]="lossless"
+		[alac]="lossless"
+		[mp3]="lossy"
+		[aac]="lossy"
+		[vorbis]="lossy"
+		[opus]="lossy"
+		[wmav2]="lossy"
+	)
+	# Deterministic order
+	local class_codecs=(pcm_s16le pcm_s16be pcm_s24le pcm_f32le flac alac mp3 aac vorbis opus wmav2)
+	for codec in "${class_codecs[@]}"; do
+		(( tests++ ))
+		local want="${expected_classes[$codec]}"
+		local got
+		got=$(AUDIO_CONVERT_SCRIPT="$HOME/dotfiles/bin/audio-convert" \
+			CODEC="$codec" \
+			bash -c 'source "$AUDIO_CONVERT_SCRIPT" && codec_class "$CODEC"')
+		if [[ "$got" == "$want" ]]; then
+			echo "✓ codec_class $codec -> $want test passed"
+		else
+			echo "✗ codec_class $codec expected '$want' got '$got' test failed" >&2
+			(( fails++ ))
+		fi
+	done
+
+	# Unknown codec classifies as 'unknown'
+	(( tests++ ))
+	local unk
+	unk=$(AUDIO_CONVERT_SCRIPT="$HOME/dotfiles/bin/audio-convert" \
+		CODEC="nonsense_codec" \
+		bash -c 'source "$AUDIO_CONVERT_SCRIPT" && codec_class "$CODEC"')
+	if [[ "$unk" == "unknown" ]]; then
+		echo "✓ codec_class unknown test passed"
+	else
+		echo "✗ codec_class unknown expected 'unknown' got '$unk' test failed" >&2
+		(( fails++ ))
+	fi
+
+	# Test: matrix enforcement (error/warn/silent per source-target codec-class cross product)
+	if [[ -n "$AUDIO_TEST_DIR" && -d "$AUDIO_TEST_DIR" ]]; then
+		# lossy -> lossless is refused with error (flac sine.mp3)
+		(( tests++ ))
+		local err1_stderr; local err1_rc
+		err1_stderr=$(flac "$AUDIO_TEST_DIR/sine.mp3" 2>&1 >/dev/null); err1_rc=$?
+		if [[ "$err1_rc" -ne 0 ]] && echo "$err1_stderr" | grep -qiE "lossy.*lossless|damage already done|cannot convert lossy"; then
+			echo "✓ lossy -> lossless refusal test passed"
+		else
+			echo "✗ lossy -> lossless refusal test failed (rc=$err1_rc)" >&2
+			echo "  stderr: $err1_stderr" >&2
+			(( fails++ ))
+		fi
+
+		# same-codec is refused (mp3 sine.mp3)
+		(( tests++ ))
+		local err2_stderr; local err2_rc
+		err2_stderr=$(mp3 "$AUDIO_TEST_DIR/sine.mp3" 2>&1 >/dev/null); err2_rc=$?
+		if [[ "$err2_rc" -ne 0 ]] && echo "$err2_stderr" | grep -qiE "already.*mp3|same codec"; then
+			echo "✓ same-codec refusal test passed"
+		else
+			echo "✗ same-codec refusal test failed (rc=$err2_rc)" >&2
+			echo "  stderr: $err2_stderr" >&2
+			(( fails++ ))
+		fi
+
+		# lossy -> lossy warns (aac sine.mp3) — script will still fail with "not implemented"
+		# but we only check that a double-artifact warning appears on stderr
+		(( tests++ ))
+		local warn1_stderr
+		warn1_stderr=$(aac "$AUDIO_TEST_DIR/sine.mp3" 2>&1 >/dev/null) || true
+		if echo "$warn1_stderr" | grep -qiE "double.*artifact|lossy.*lossy"; then
+			echo "✓ lossy -> lossy warning test passed"
+		else
+			echo "✗ lossy -> lossy warning test failed" >&2
+			echo "  stderr: $warn1_stderr" >&2
+			(( fails++ ))
+		fi
+
+		# lossless -> lossy warns (mp3 sine.wav)
+		(( tests++ ))
+		local warn2_stderr
+		warn2_stderr=$(mp3 "$AUDIO_TEST_DIR/sine.wav" 2>&1 >/dev/null) || true
+		if echo "$warn2_stderr" | grep -qiE "data loss|lossless.*lossy"; then
+			echo "✓ lossless -> lossy warning test passed"
+		else
+			echo "✗ lossless -> lossy warning test failed" >&2
+			echo "  stderr: $warn2_stderr" >&2
+			(( fails++ ))
+		fi
+
+		# lossless -> lossless is silent (flac sine.wav) — no warning
+		(( tests++ ))
+		local silent_stderr
+		silent_stderr=$(flac "$AUDIO_TEST_DIR/sine.wav" 2>&1 >/dev/null) || true
+		if ! echo "$silent_stderr" | grep -qiE "warning|data loss|artifact|damage"; then
+			echo "✓ lossless -> lossless silent test passed"
+		else
+			echo "✗ lossless -> lossless should be silent test failed" >&2
+			echo "  stderr: $silent_stderr" >&2
+			(( fails++ ))
+		fi
+	else
+		echo "⊘ matrix tests skipped (no fixtures)"
+	fi
+
+	# Test: output_path returns expected extension per target
+	local -A expected_ext=(
+		[mp3]="mp3"
+		[aac]="m4a"
+		[m4a]="m4a"
+		[flac]="flac"
+		[alac]="m4a"
+	)
+	local targets=(mp3 aac m4a flac alac)
+	for t in "${targets[@]}"; do
+		(( tests++ ))
+		local want_ext="${expected_ext[$t]}"
+		local got
+		got=$(AUDIO_CONVERT_SCRIPT="$HOME/dotfiles/bin/audio-convert" \
+			INPUT="/tmp/foo.wav" \
+			TARGET="$t" \
+			bash -c 'source "$AUDIO_CONVERT_SCRIPT" && output_path "$INPUT" "$TARGET"')
+		if [[ "$got" == "/tmp/foo.$want_ext" ]]; then
+			echo "✓ output_path $t -> .$want_ext test passed"
+		else
+			echo "✗ output_path $t expected /tmp/foo.$want_ext got '$got' test failed" >&2
+			(( fails++ ))
+		fi
+	done
+
+	# Test: flac wav -> flac produces valid flac file, correct codec
+	if [[ -n "$AUDIO_TEST_DIR" && -d "$AUDIO_TEST_DIR" ]]; then
+		(( tests++ ))
+		local flac_in="$AUDIO_TEST_DIR/for_flac.wav"
+		cp "$AUDIO_TEST_DIR/sine.wav" "$flac_in"
+		local flac_out="$AUDIO_TEST_DIR/for_flac.flac"
+		rm -f "$flac_out"
+		local flac_stderr
+		flac_stderr=$(flac "$flac_in" 2>&1 >/dev/null)
+		local flac_rc=$?
+		if [[ "$flac_rc" -eq 0 && -s "$flac_out" ]]; then
+			local flac_codec
+			flac_codec=$(ffprobe -v error -select_streams a:0 -show_entries stream=codec_name -of default=nw=1:nk=1 "$flac_out")
+			if [[ "$flac_codec" == "flac" ]]; then
+				echo "✓ flac wav->flac produces valid flac test passed"
+			else
+				echo "✗ flac output codec expected 'flac' got '$flac_codec' test failed" >&2
+				(( fails++ ))
+			fi
+		else
+			echo "✗ flac conversion failed (rc=$flac_rc)" >&2
+			echo "  stderr: $flac_stderr" >&2
+			(( fails++ ))
+		fi
+	else
+		echo "⊘ flac conversion test skipped (no fixtures)"
+	fi
+
+	# Test: alac wav -> alac.m4a produces ALAC codec in m4a
+	if [[ -n "$AUDIO_TEST_DIR" && -d "$AUDIO_TEST_DIR" ]]; then
+		(( tests++ ))
+		local alac_in="$AUDIO_TEST_DIR/for_alac.wav"
+		cp "$AUDIO_TEST_DIR/sine.wav" "$alac_in"
+		local alac_out="$AUDIO_TEST_DIR/for_alac.m4a"
+		rm -f "$alac_out"
+		alac "$alac_in" 2>/dev/null
+		if [[ -s "$alac_out" ]]; then
+			local alac_codec
+			alac_codec=$(ffprobe -v error -select_streams a:0 -show_entries stream=codec_name -of default=nw=1:nk=1 "$alac_out")
+			if [[ "$alac_codec" == "alac" ]]; then
+				echo "✓ alac wav->alac.m4a test passed"
+			else
+				echo "✗ alac output codec expected 'alac' got '$alac_codec' test failed" >&2
+				(( fails++ ))
+			fi
+		else
+			echo "✗ alac conversion produced no output test failed" >&2
+			(( fails++ ))
+		fi
+	else
+		echo "⊘ alac conversion test skipped (no fixtures)"
+	fi
+
+	# Test: re-converting without --force refuses (output already exists)
+	if [[ -n "$AUDIO_TEST_DIR" && -d "$AUDIO_TEST_DIR" ]]; then
+		(( tests++ ))
+		local guard_in="$AUDIO_TEST_DIR/guard.wav"
+		cp "$AUDIO_TEST_DIR/sine.wav" "$guard_in"
+		flac "$guard_in" 2>/dev/null
+		local guard_out="$AUDIO_TEST_DIR/guard.flac"
+		local guard_pre_size
+		guard_pre_size=$(wc -c < "$guard_out")
+		local guard_stderr
+		guard_stderr=$(flac "$guard_in" 2>&1 >/dev/null) || true
+		local guard_post_size
+		guard_post_size=$(wc -c < "$guard_out")
+		if echo "$guard_stderr" | grep -qiE "exists|--force" && [[ "$guard_pre_size" == "$guard_post_size" ]]; then
+			echo "✓ overwrite guard test passed"
+		else
+			echo "✗ overwrite guard test failed" >&2
+			echo "  stderr: $guard_stderr" >&2
+			echo "  pre_size=$guard_pre_size post_size=$guard_post_size" >&2
+			(( fails++ ))
+		fi
+
+		# Test: --force overwrites
+		(( tests++ ))
+		local before_mtime
+		before_mtime=$(stat -f "%m" "$guard_out" 2>/dev/null || stat -c "%Y" "$guard_out")
+		sleep 1
+		flac --force --no-preserve-timestamps "$guard_in" 2>/dev/null
+		local after_mtime
+		after_mtime=$(stat -f "%m" "$guard_out" 2>/dev/null || stat -c "%Y" "$guard_out")
+		if [[ "$before_mtime" != "$after_mtime" ]]; then
+			echo "✓ --force overwrites test passed"
+		else
+			echo "✗ --force overwrites test failed (mtime unchanged)" >&2
+			(( fails++ ))
+		fi
+	else
+		echo "⊘ overwrite guard tests skipped (no fixtures)"
+	fi
+
+	# Tests: mp3 CBR conversion and default-bitrate announce behavior
+	if [[ -n "$AUDIO_TEST_DIR" && -d "$AUDIO_TEST_DIR" ]]; then
+		# Basic mp3 wav -> mp3
+		(( tests++ ))
+		local mp3_in="$AUDIO_TEST_DIR/for_mp3.wav"
+		cp "$AUDIO_TEST_DIR/sine.wav" "$mp3_in"
+		local mp3_out="$AUDIO_TEST_DIR/for_mp3.mp3"
+		rm -f "$mp3_out"
+		local mp3_stderr
+		mp3_stderr=$(mp3 "$mp3_in" 2>&1 >/dev/null) || true
+		if [[ -s "$mp3_out" ]]; then
+			local mp3_codec
+			mp3_codec=$(ffprobe -v error -select_streams a:0 -show_entries stream=codec_name -of default=nw=1:nk=1 "$mp3_out")
+			if [[ "$mp3_codec" == "mp3" ]]; then
+				echo "✓ mp3 wav->mp3 test passed"
+			else
+				echo "✗ mp3 output codec expected 'mp3' got '$mp3_codec' test failed" >&2
+				(( fails++ ))
+			fi
+		else
+			echo "✗ mp3 conversion produced no output test failed" >&2
+			(( fails++ ))
+		fi
+
+		# Default-bitrate announcement on stderr when no --bitrate/--vbr
+		(( tests++ ))
+		if echo "$mp3_stderr" | grep -qi "default bitrate.*mp3.*192"; then
+			echo "✓ default bitrate announce test passed"
+		else
+			echo "✗ default bitrate announce test failed" >&2
+			echo "  stderr: $mp3_stderr" >&2
+			(( fails++ ))
+		fi
+
+		# --bitrate=256 respected
+		(( tests++ ))
+		rm -f "$mp3_out"
+		mp3 --bitrate=256 "$mp3_in" 2>/dev/null
+		local mp3_br
+		mp3_br=$(ffprobe -v error -select_streams a:0 -show_entries stream=bit_rate -of default=nw=1:nk=1 "$mp3_out")
+		# Tolerance: expect ~256000 bps
+		if [[ -n "$mp3_br" ]] && (( mp3_br > 200000 && mp3_br < 320000 )); then
+			echo "✓ --bitrate=256 test passed (got $mp3_br bps)"
+		else
+			echo "✗ --bitrate=256 test failed (got $mp3_br bps)" >&2
+			(( fails++ ))
+		fi
+
+		# --bitrate suppresses the default announce
+		(( tests++ ))
+		rm -f "$mp3_out"
+		local br_stderr
+		br_stderr=$(mp3 --bitrate=256 "$mp3_in" 2>&1 >/dev/null) || true
+		if ! echo "$br_stderr" | grep -qi "default bitrate"; then
+			echo "✓ --bitrate suppresses default announce test passed"
+		else
+			echo "✗ --bitrate should suppress default announce test failed" >&2
+			echo "  stderr: $br_stderr" >&2
+			(( fails++ ))
+		fi
+	else
+		echo "⊘ mp3 CBR tests skipped (no fixtures)"
+	fi
+
+	# Tests: mp3 VBR + conflict checks
+	if [[ -n "$AUDIO_TEST_DIR" && -d "$AUDIO_TEST_DIR" ]]; then
+		# --vbr produces an mp3 (no default-announce since user specified VBR mode)
+		(( tests++ ))
+		local vbr_in="$AUDIO_TEST_DIR/for_vbr.wav"
+		cp "$AUDIO_TEST_DIR/sine.wav" "$vbr_in"
+		local vbr_out="$AUDIO_TEST_DIR/for_vbr.mp3"
+		rm -f "$vbr_out"
+		local vbr_stderr
+		vbr_stderr=$(mp3 --vbr=2 "$vbr_in" 2>&1 >/dev/null)
+		if [[ -s "$vbr_out" ]] && ! echo "$vbr_stderr" | grep -qi "default bitrate"; then
+			echo "✓ --vbr=2 produces mp3 and suppresses default-announce test passed"
+		else
+			echo "✗ --vbr=2 test failed" >&2
+			echo "  stderr: $vbr_stderr" >&2
+			(( fails++ ))
+		fi
+
+		# --vbr + --bitrate together -> error
+		(( tests++ ))
+		local conflict_stderr; local conflict_rc
+		conflict_stderr=$(mp3 --vbr=2 --bitrate=192 "$vbr_in" 2>&1 >/dev/null); conflict_rc=$?
+		if [[ "$conflict_rc" -ne 0 ]] && echo "$conflict_stderr" | grep -qiE -- "vbr.*bitrate.*mutual|cannot.*combine|--vbr.*--bitrate|mutually exclusive"; then
+			echo "✓ --vbr + --bitrate conflict test passed"
+		else
+			echo "✗ --vbr + --bitrate conflict test failed (rc=$conflict_rc)" >&2
+			echo "  stderr: $conflict_stderr" >&2
+			(( fails++ ))
+		fi
+
+		# --vbr on aac -> error (not supported for aac in this script)
+		(( tests++ ))
+		local aacvbr_stderr; local aacvbr_rc
+		aacvbr_stderr=$(aac --vbr=2 "$vbr_in" 2>&1 >/dev/null); aacvbr_rc=$?
+		if [[ "$aacvbr_rc" -ne 0 ]] && echo "$aacvbr_stderr" | grep -qiE -- "vbr.*mp3 only|vbr.*not supported for aac|vbr is mp3 only"; then
+			echo "✓ --vbr on aac rejected test passed"
+		else
+			echo "✗ --vbr on aac should be rejected test failed (rc=$aacvbr_rc)" >&2
+			echo "  stderr: $aacvbr_stderr" >&2
+			(( fails++ ))
+		fi
+	else
+		echo "⊘ mp3 VBR tests skipped (no fixtures)"
+	fi
+
+	# Tests: aac/m4a + .m4a input ambiguity (codec-driven matrix)
+	if [[ -n "$AUDIO_TEST_DIR" && -d "$AUDIO_TEST_DIR" ]]; then
+		# aac wav -> m4a with AAC codec inside
+		(( tests++ ))
+		local aac_in="$AUDIO_TEST_DIR/for_aac.wav"
+		cp "$AUDIO_TEST_DIR/sine.wav" "$aac_in"
+		local aac_out="$AUDIO_TEST_DIR/for_aac.m4a"
+		rm -f "$aac_out"
+		aac "$aac_in" 2>/dev/null
+		if [[ -s "$aac_out" ]]; then
+			local aac_codec
+			aac_codec=$(ffprobe -v error -select_streams a:0 -show_entries stream=codec_name -of default=nw=1:nk=1 "$aac_out")
+			if [[ "$aac_codec" == "aac" ]]; then
+				echo "✓ aac wav->m4a(AAC) test passed"
+			else
+				echo "✗ aac output codec expected 'aac' got '$aac_codec' test failed" >&2
+				(( fails++ ))
+			fi
+		else
+			echo "✗ aac conversion produced no output test failed" >&2
+			(( fails++ ))
+		fi
+
+		# m4a alias produces identical codec (aac) in m4a container
+		(( tests++ ))
+		local m4a_in="$AUDIO_TEST_DIR/for_m4a.wav"
+		cp "$AUDIO_TEST_DIR/sine.wav" "$m4a_in"
+		local m4a_out="$AUDIO_TEST_DIR/for_m4a.m4a"
+		rm -f "$m4a_out"
+		m4a "$m4a_in" 2>/dev/null
+		if [[ -s "$m4a_out" ]]; then
+			local m4a_codec
+			m4a_codec=$(ffprobe -v error -select_streams a:0 -show_entries stream=codec_name -of default=nw=1:nk=1 "$m4a_out")
+			if [[ "$m4a_codec" == "aac" ]]; then
+				echo "✓ m4a alias -> AAC in m4a test passed"
+			else
+				echo "✗ m4a alias codec expected 'aac' got '$m4a_codec' test failed" >&2
+				(( fails++ ))
+			fi
+		else
+			echo "✗ m4a alias produced no output test failed" >&2
+			(( fails++ ))
+		fi
+
+		# .m4a input ambiguity: flac sine_aac.m4a -> errors (lossy->lossless)
+		(( tests++ ))
+		local amb1_stderr; local amb1_rc
+		amb1_stderr=$(flac "$AUDIO_TEST_DIR/sine_aac.m4a" 2>&1 >/dev/null); amb1_rc=$?
+		if [[ "$amb1_rc" -ne 0 ]] && echo "$amb1_stderr" | grep -qiE -- "lossy.*lossless"; then
+			echo "✓ flac on AAC-in-m4a refuses test passed"
+		else
+			echo "✗ flac on AAC-in-m4a should refuse test failed (rc=$amb1_rc)" >&2
+			echo "  stderr: $amb1_stderr" >&2
+			(( fails++ ))
+		fi
+
+		# mp3 sine_alac.m4a -> warns (lossless->lossy), proceeds
+		(( tests++ ))
+		local amb2_in="$AUDIO_TEST_DIR/for_m4a_ambig.m4a"
+		cp "$AUDIO_TEST_DIR/sine_alac.m4a" "$amb2_in"
+		local amb2_out="$AUDIO_TEST_DIR/for_m4a_ambig.mp3"
+		rm -f "$amb2_out"
+		local amb2_stderr
+		amb2_stderr=$(mp3 "$amb2_in" 2>&1 >/dev/null) || true
+		if [[ -s "$amb2_out" ]] && echo "$amb2_stderr" | grep -qiE -- "lossless.*lossy"; then
+			echo "✓ mp3 on ALAC-in-m4a warns and proceeds test passed"
+		else
+			echo "✗ mp3 on ALAC-in-m4a should warn+proceed test failed" >&2
+			echo "  stderr: $amb2_stderr" >&2
+			(( fails++ ))
+		fi
+	else
+		echo "⊘ aac/m4a/ambiguity tests skipped (no fixtures)"
+	fi
+
+	# Tests: metadata flags
+	if [[ -n "$AUDIO_TEST_DIR" && -d "$AUDIO_TEST_DIR" ]]; then
+		# Explicitly-specified metadata appears in output
+		(( tests++ ))
+		local meta_in="$AUDIO_TEST_DIR/for_meta.wav"
+		cp "$AUDIO_TEST_DIR/sine.wav" "$meta_in"
+		local meta_out="$AUDIO_TEST_DIR/for_meta.mp3"
+		rm -f "$meta_out"
+		mp3 --title="Test Title" --artist="Test Artist" --album="Test Album" "$meta_in" 2>/dev/null
+		if [[ -s "$meta_out" ]]; then
+			local got_title got_artist got_album
+			got_title=$(ffprobe -v error -show_entries format_tags=title -of default=nw=1:nk=1 "$meta_out")
+			got_artist=$(ffprobe -v error -show_entries format_tags=artist -of default=nw=1:nk=1 "$meta_out")
+			got_album=$(ffprobe -v error -show_entries format_tags=album -of default=nw=1:nk=1 "$meta_out")
+			if [[ "$got_title" == "Test Title" && "$got_artist" == "Test Artist" && "$got_album" == "Test Album" ]]; then
+				echo "✓ metadata flags propagate test passed"
+			else
+				echo "✗ metadata mismatch: title='$got_title' artist='$got_artist' album='$got_album'" >&2
+				(( fails++ ))
+			fi
+		else
+			echo "✗ metadata test: no output file" >&2
+			(( fails++ ))
+		fi
+
+		# No metadata flags -> output has no title/artist
+		(( tests++ ))
+		local bare_in="$AUDIO_TEST_DIR/for_bare.wav"
+		cp "$AUDIO_TEST_DIR/sine.wav" "$bare_in"
+		local bare_out="$AUDIO_TEST_DIR/for_bare.mp3"
+		rm -f "$bare_out"
+		mp3 "$bare_in" 2>/dev/null
+		if [[ -s "$bare_out" ]]; then
+			local bare_title bare_artist
+			bare_title=$(ffprobe -v error -show_entries format_tags=title -of default=nw=1:nk=1 "$bare_out")
+			bare_artist=$(ffprobe -v error -show_entries format_tags=artist -of default=nw=1:nk=1 "$bare_out")
+			if [[ -z "$bare_title" && -z "$bare_artist" ]]; then
+				echo "✓ no-metadata-by-default test passed"
+			else
+				echo "✗ no-metadata expected empty but got title='$bare_title' artist='$bare_artist'" >&2
+				(( fails++ ))
+			fi
+		else
+			echo "✗ bare test: no output file" >&2
+			(( fails++ ))
+		fi
+	else
+		echo "⊘ metadata tests skipped (no fixtures)"
+	fi
+
+	# Tests: timestamp preservation
+	if [[ -n "$AUDIO_TEST_DIR" && -d "$AUDIO_TEST_DIR" ]]; then
+		# Portable mtime fetch (BSD/GNU)
+		stat_mtime_fn() { stat -f %m "$1" 2>/dev/null || stat -c %Y "$1"; }
+
+		# Default preserves timestamps
+		(( tests++ ))
+		local ts_in="$AUDIO_TEST_DIR/for_ts.wav"
+		cp "$AUDIO_TEST_DIR/sine.wav" "$ts_in"
+		touch -t 200001010000 "$ts_in"
+		local ts_orig
+		ts_orig=$(stat_mtime_fn "$ts_in")
+		local ts_out="$AUDIO_TEST_DIR/for_ts.flac"
+		rm -f "$ts_out"
+		flac "$ts_in" 2>/dev/null
+		local ts_new
+		ts_new=$(stat_mtime_fn "$ts_out")
+		if [[ "$ts_orig" == "$ts_new" ]]; then
+			echo "✓ default timestamp preservation test passed"
+		else
+			echo "✗ default timestamp preservation test failed (orig=$ts_orig new=$ts_new)" >&2
+			(( fails++ ))
+		fi
+
+		# --no-preserve-timestamps disables preservation
+		(( tests++ ))
+		local ts2_in="$AUDIO_TEST_DIR/for_ts2.wav"
+		cp "$AUDIO_TEST_DIR/sine.wav" "$ts2_in"
+		touch -t 200001010000 "$ts2_in"
+		local ts2_orig
+		ts2_orig=$(stat_mtime_fn "$ts2_in")
+		local ts2_out="$AUDIO_TEST_DIR/for_ts2.flac"
+		rm -f "$ts2_out"
+		flac --no-preserve-timestamps "$ts2_in" 2>/dev/null
+		local ts2_new
+		ts2_new=$(stat_mtime_fn "$ts2_out")
+		if [[ "$ts2_orig" != "$ts2_new" ]]; then
+			echo "✓ --no-preserve-timestamps test passed"
+		else
+			echo "✗ --no-preserve-timestamps test failed (timestamps preserved anyway)" >&2
+			(( fails++ ))
+		fi
+
+		# PRESERVE_TIMESTAMPS=false env var
+		(( tests++ ))
+		local ts3_in="$AUDIO_TEST_DIR/for_ts3.wav"
+		cp "$AUDIO_TEST_DIR/sine.wav" "$ts3_in"
+		touch -t 200001010000 "$ts3_in"
+		local ts3_orig
+		ts3_orig=$(stat_mtime_fn "$ts3_in")
+		local ts3_out="$AUDIO_TEST_DIR/for_ts3.flac"
+		rm -f "$ts3_out"
+		PRESERVE_TIMESTAMPS=false flac "$ts3_in" 2>/dev/null
+		local ts3_new
+		ts3_new=$(stat_mtime_fn "$ts3_out")
+		if [[ "$ts3_orig" != "$ts3_new" ]]; then
+			echo "✓ PRESERVE_TIMESTAMPS=false env test passed"
+		else
+			echo "✗ PRESERVE_TIMESTAMPS=false env test failed" >&2
+			(( fails++ ))
+		fi
+	else
+		echo "⊘ timestamp tests skipped (no fixtures)"
+	fi
+
+	# Test: batch with one bad file — other files succeed, exit code = 1
+	if [[ -n "$AUDIO_TEST_DIR" && -d "$AUDIO_TEST_DIR" ]]; then
+		(( tests++ ))
+		local b1="$AUDIO_TEST_DIR/batch1.wav"
+		local b2="$AUDIO_TEST_DIR/batch2.wav"
+		local bbad="$AUDIO_TEST_DIR/does_not_exist.wav"
+		cp "$AUDIO_TEST_DIR/sine.wav" "$b1"
+		cp "$AUDIO_TEST_DIR/sine.wav" "$b2"
+		local b1_out="$AUDIO_TEST_DIR/batch1.flac"
+		local b2_out="$AUDIO_TEST_DIR/batch2.flac"
+		rm -f "$b1_out" "$b2_out"
+		flac "$b1" "$bbad" "$b2" 2>/dev/null
+		local batch_rc=$?
+		if [[ "$batch_rc" -eq 1 && -s "$b1_out" && -s "$b2_out" ]]; then
+			echo "✓ batch processing test passed (rc=1, both good files converted)"
+		else
+			echo "✗ batch processing test failed (rc=$batch_rc)" >&2
+			(( fails++ ))
+		fi
+	else
+		echo "⊘ batch processing test skipped (no fixtures)"
+	fi
+
+	# Report
+	if [ $fails -gt 0 ]; then
+		echo "$fails of $tests audio-convert tests failed!" >&2
+	else
+		echo "All $tests audio-convert tests passed!" >&2
+	fi
+	return $fails
+}
+
+if ! (return 0 2>/dev/null); then
+	test_audio_convert
+fi
