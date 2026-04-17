@@ -150,6 +150,29 @@ test_audio_convert() {
 		export AUDIO_TEST_DIR="$test_dir"
 	fi
 
+	# Test: probe_codec returns expected codec for each fixture
+	declare -A expected_codecs=(
+		[sine.wav]="pcm_s16le"
+		[sine.aiff]="pcm_s16be"
+		[sine.mp3]="mp3"
+		[sine_aac.m4a]="aac"
+		[sine.flac]="flac"
+		[sine_alac.m4a]="alac"
+	)
+	for fx in "${!expected_codecs[@]}"; do
+		(( tests++ ))
+		local want="${expected_codecs[$fx]}"
+		local got
+		# Source the script so we can call probe_codec directly
+		got=$(bash -c "source $HOME/dotfiles/bin/audio-convert && probe_codec '$AUDIO_TEST_DIR/$fx'")
+		if [[ "$got" == "$want" ]]; then
+			echo "✓ probe_codec $fx -> $want test passed"
+		else
+			echo "✗ probe_codec $fx expected '$want' got '$got' test failed" >&2
+			(( fails++ ))
+		fi
+	done
+
 	# Report
 	if [ $fails -gt 0 ]; then
 		echo "$fails of $tests audio-convert tests failed!" >&2

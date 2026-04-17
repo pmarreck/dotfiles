@@ -73,6 +73,23 @@ check_dependencies() {
 	return 0
 }
 
+probe_codec() {
+	local file="$1"
+	if [[ ! -f "$file" ]]; then
+		echo "Error: file not found: $file" >&2
+		return 1
+	fi
+	local codec
+	codec=$(ffprobe -v error -select_streams a:0 \
+		-show_entries stream=codec_name \
+		-of default=nw=1:nk=1 "$file" 2>/dev/null)
+	if [[ -z "$codec" ]]; then
+		echo "Error: could not determine audio codec for $file" >&2
+		return 1
+	fi
+	echo "$codec"
+}
+
 audio_convert() {
 	local self_name
 	self_name=$(basename "${BASH_SOURCE[0]}")
