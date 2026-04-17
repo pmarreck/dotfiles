@@ -181,6 +181,50 @@ test_audio_convert() {
 		echo "⊘ probe_codec tests skipped (no fixtures)"
 	fi
 
+	# Test: codec_class returns 'lossless' or 'lossy' correctly
+	local -A expected_classes=(
+		[pcm_s16le]="lossless"
+		[pcm_s16be]="lossless"
+		[pcm_s24le]="lossless"
+		[pcm_f32le]="lossless"
+		[flac]="lossless"
+		[alac]="lossless"
+		[mp3]="lossy"
+		[aac]="lossy"
+		[vorbis]="lossy"
+		[opus]="lossy"
+		[wmav2]="lossy"
+	)
+	# Deterministic order
+	local class_codecs=(pcm_s16le pcm_s16be pcm_s24le pcm_f32le flac alac mp3 aac vorbis opus wmav2)
+	for codec in "${class_codecs[@]}"; do
+		(( tests++ ))
+		local want="${expected_classes[$codec]}"
+		local got
+		got=$(AUDIO_CONVERT_SCRIPT="$HOME/dotfiles/bin/audio-convert" \
+			CODEC="$codec" \
+			bash -c 'source "$AUDIO_CONVERT_SCRIPT" && codec_class "$CODEC"')
+		if [[ "$got" == "$want" ]]; then
+			echo "✓ codec_class $codec -> $want test passed"
+		else
+			echo "✗ codec_class $codec expected '$want' got '$got' test failed" >&2
+			(( fails++ ))
+		fi
+	done
+
+	# Unknown codec classifies as 'unknown'
+	(( tests++ ))
+	local unk
+	unk=$(AUDIO_CONVERT_SCRIPT="$HOME/dotfiles/bin/audio-convert" \
+		CODEC="nonsense_codec" \
+		bash -c 'source "$AUDIO_CONVERT_SCRIPT" && codec_class "$CODEC"')
+	if [[ "$unk" == "unknown" ]]; then
+		echo "✓ codec_class unknown test passed"
+	else
+		echo "✗ codec_class unknown expected 'unknown' got '$unk' test failed" >&2
+		(( fails++ ))
+	fi
+
 	# Report
 	if [ $fails -gt 0 ]; then
 		echo "$fails of $tests audio-convert tests failed!" >&2

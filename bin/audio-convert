@@ -90,6 +90,16 @@ probe_codec() {
 	echo "$codec"
 }
 
+codec_class() {
+	local codec="$1"
+	case "$codec" in
+		pcm_*|flac|alac) echo "lossless" ;;
+		mp3|aac|vorbis|opus|wma*) echo "lossy" ;;
+		*) echo "unknown" ;;
+	esac
+}
+
+
 audio_convert() {
 	local self_name
 	self_name=$(basename "${BASH_SOURCE[0]}")
