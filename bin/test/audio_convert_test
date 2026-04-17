@@ -708,6 +708,29 @@ test_audio_convert() {
 		echo "⊘ timestamp tests skipped (no fixtures)"
 	fi
 
+	# Test: batch with one bad file — other files succeed, exit code = 1
+	if [[ -n "$AUDIO_TEST_DIR" && -d "$AUDIO_TEST_DIR" ]]; then
+		(( tests++ ))
+		local b1="$AUDIO_TEST_DIR/batch1.wav"
+		local b2="$AUDIO_TEST_DIR/batch2.wav"
+		local bbad="$AUDIO_TEST_DIR/does_not_exist.wav"
+		cp "$AUDIO_TEST_DIR/sine.wav" "$b1"
+		cp "$AUDIO_TEST_DIR/sine.wav" "$b2"
+		local b1_out="$AUDIO_TEST_DIR/batch1.flac"
+		local b2_out="$AUDIO_TEST_DIR/batch2.flac"
+		rm -f "$b1_out" "$b2_out"
+		flac "$b1" "$bbad" "$b2" 2>/dev/null
+		local batch_rc=$?
+		if [[ "$batch_rc" -eq 1 && -s "$b1_out" && -s "$b2_out" ]]; then
+			echo "✓ batch processing test passed (rc=1, both good files converted)"
+		else
+			echo "✗ batch processing test failed (rc=$batch_rc)" >&2
+			(( fails++ ))
+		fi
+	else
+		echo "⊘ batch processing test skipped (no fixtures)"
+	fi
+
 	# Report
 	if [ $fails -gt 0 ]; then
 		echo "$fails of $tests audio-convert tests failed!" >&2
