@@ -24,6 +24,20 @@ test_audio_convert() {
 		(( fails++ ))
 	fi
 
+	# Test 3: Each alias has distinct --about output mentioning its name
+	for alias_name in mp3 aac m4a flac alac; do
+		(( tests++ ))
+		local about_out
+		about_out=$("$alias_name" --about 2>&1)
+		if [[ "$about_out" == "$alias_name - "* ]]; then
+			echo "✓ $alias_name --about starts with '$alias_name - ' test passed"
+		else
+			echo "✗ $alias_name --about starts with '$alias_name - ' test failed" >&2
+			echo "  got: $about_out" >&2
+			(( fails++ ))
+		fi
+	done
+
 	# Report
 	if [ $fails -gt 0 ]; then
 		echo "$fails of $tests audio-convert tests failed!" >&2
