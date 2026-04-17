@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+# audio-convert: convert audio files between formats with safety warnings.
+# Usage: audio-convert -f FORMAT file [file ...]
+# Or invoke via aliases: mp3, aac, m4a, flac, alac
+
+print_about() {
+	local cmd="$1"
+	case "$cmd" in
+		mp3)          echo "mp3 - Convert audio files to MP3 (ffmpeg wrapper with lossy/lossless safety rules)" ;;
+		aac)          echo "aac - Convert audio files to AAC-in-M4A (ffmpeg wrapper with lossy/lossless safety rules)" ;;
+		m4a)          echo "m4a - Alias for aac; converts audio files to AAC-in-M4A" ;;
+		flac)         echo "flac - Convert audio files to FLAC lossless (ffmpeg wrapper with lossy/lossless safety rules)" ;;
+		alac)         echo "alac - Convert audio files to ALAC-in-M4A lossless (ffmpeg wrapper with lossy/lossless safety rules)" ;;
+		*)            echo "audio-convert - Audio format converter (use -f/--format, or invoke via mp3/aac/m4a/flac/alac aliases)" ;;
+	esac
+}
+
+print_help() {
+	local cmd="$1"
+	cat <<EOF
+Usage: $cmd [OPTIONS] FILE [FILE ...]
+
+Convert audio files, enforcing lossy/lossless safety rules via ffprobe codec detection.
+
+Options:
+	-h, --help                 Show this help
+	--about                    One-line summary
+	--test                     Run the test suite
+	-f, --format=FMT           Target format: mp3|aac|m4a|flac|alac
+	                           Required when invoked as 'audio-convert'.
+	                           With an alias, overrides the alias and warns.
+	--force                    Overwrite existing output files
+	--no-preserve-timestamps   Do not copy mtime from source to output
+	--bitrate=N                (mp3,aac) Output bitrate in kbps
+	--vbr[=N]                  (mp3 only) VBR mode, optional quality 0-9 (0=best)
+	--title=STR                Write title metadata (default: no metadata)
+	--artist=STR               Write artist metadata
+	--album=STR                Write album metadata
+	--albumartist=STR          Write album-artist metadata
+	--year=STR                 Write year metadata
+	--track=STR                Write track metadata
+	--genre=STR                Write genre metadata
+	--comment=STR              Write comment metadata
+	--composer=STR             Write composer metadata
+
+Environment:
+	PRESERVE_TIMESTAMPS=false  Disable timestamp preservation (CLI flag wins)
+
+Conversion matrix:
+	lossless -> lossless   silent
+	lossless -> lossy      warn
+	lossy    -> lossy      warn (double artifact generation)
+	lossy    -> lossless   ERROR (damage already done; no advantage)
+	same codec as target   ERROR (already that format)
+
+Examples:
+	mp3 song.wav
+	flac recording.aiff
+	aac --bitrate=192 song.wav
+	mp3 --vbr=0 --title="Foo" song.wav
+EOF
+}
+
+audio_convert() {
+	local self_name
+	self_name=$(basename "${BASH_SOURCE[0]}")
+	local invoked_as
+	invoked_as=$(basename "$0")
+
+	# If sourced, $0 is the shell; fall back to a sensible default
+	case "$invoked_as" in
+		bash|-bash|zsh|-zsh|sh|-sh) invoked_as="audio-convert" ;;
+	esac
+
+	# Parse just enough for meta flags in this task
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+			-h|--help) print_help "$invoked_as"; return 0 ;;
+			--about)   print_about "$invoked_as"; return 0 ;;
+			--test)
+				"$HOME/dotfiles/bin/test/audio_convert_test"
+				return $?
+				;;
+			*) break ;;
+		esac
+		shift
+	done
+
+	# No further behavior in this task; subsequent tasks add it.
+	echo "Error: no input files or unimplemented path" >&2
+	return 1
+}
+
+if ! (return 0 2>/dev/null); then
+	audio_convert "$@"
+fi

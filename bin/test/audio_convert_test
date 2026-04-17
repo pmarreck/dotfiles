@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+
+test_audio_convert() {
+	local fails=0
+	local tests=0
+
+	# Test 1: --help exits 0 and mentions "Usage"
+	(( tests++ ))
+	if audio-convert --help 2>&1 | grep -qi "usage"; then
+		echo "✓ audio-convert --help test passed"
+	else
+		echo "✗ audio-convert --help test failed" >&2
+		(( fails++ ))
+	fi
+
+	# Test 2: --about is exactly one line
+	(( tests++ ))
+	local about_lines
+	about_lines=$(audio-convert --about 2>&1 | wc -l | tr -d ' ')
+	if [[ "$about_lines" == "1" ]]; then
+		echo "✓ audio-convert --about is one line test passed"
+	else
+		echo "✗ audio-convert --about is one line test failed (got $about_lines lines)" >&2
+		(( fails++ ))
+	fi
+
+	# Report
+	if [ $fails -gt 0 ]; then
+		echo "$fails of $tests audio-convert tests failed!" >&2
+	else
+		echo "All $tests audio-convert tests passed!" >&2
+	fi
+	return $fails
+}
+
+if ! (return 0 2>/dev/null); then
+	test_audio_convert
+fi
