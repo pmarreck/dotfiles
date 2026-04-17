@@ -222,6 +222,13 @@ audio_convert() {
 	local bitrate=""
 	local vbr=""
 	local -A metadata=()
+	local preserve_timestamps=true
+	# Respect env var first; CLI flags below override
+	if [[ -n "$PRESERVE_TIMESTAMPS" ]]; then
+		case "${PRESERVE_TIMESTAMPS,,}" in
+			0|no|false) preserve_timestamps=false ;;
+		esac
+	fi
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -251,6 +258,8 @@ audio_convert() {
 			--genre=*)       metadata[genre]="${1#*=}" ;;
 			--comment=*)     metadata[comment]="${1#*=}" ;;
 			--composer=*)    metadata[composer]="${1#*=}" ;;
+			--no-preserve-timestamps) preserve_timestamps=false ;;
+			--preserve-timestamps)    preserve_timestamps=true ;;
 			--) shift; while [[ $# -gt 0 ]]; do files+=("$1"); shift; done ;;
 			-*) echo "Error: unknown option: $1" >&2; return 1 ;;
 			*) files+=("$1") ;;
@@ -357,6 +366,9 @@ audio_convert() {
 			echo "Error: ffmpeg failed for $file" >&2
 			(( failures++ ))
 			continue
+		fi
+		if [[ "$preserve_timestamps" == "true" ]]; then
+			touch -r "$file" "$out"
 		fi
 	done
 	return $failures
