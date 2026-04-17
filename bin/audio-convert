@@ -161,15 +161,18 @@ output_path() {
 
 
 # Invoke ffmpeg for a single file. Target selects codec+container.
-# Usage: run_ffmpeg INPUT OUTPUT TARGET BITRATE VBR
+# Usage: run_ffmpeg INPUT OUTPUT TARGET BITRATE VBR [METADATA_ARGS...]
 #   BITRATE - kbps, used when VBR is empty (CBR mode) for mp3/aac
 #   VBR     - empty for CBR mode; numeric level 0-9 for mp3 VBR
+#   METADATA_ARGS... - alternating -metadata key=value pairs (may be empty)
 run_ffmpeg() {
 	local input="$1"
 	local output="$2"
 	local target="$3"
 	local bitrate="$4"
 	local vbr="$5"
+	shift 5
+	local -a metadata_args=("$@")
 
 	local -a codec_arr
 	case "$target" in
@@ -198,6 +201,7 @@ run_ffmpeg() {
 		-i "$input" -map 0:a \
 		"${codec_arr[@]}" \
 		-map_metadata -1 \
+		"${metadata_args[@]}" \
 		"${extra_args[@]}" \
 		"$output"
 }
@@ -217,6 +221,7 @@ audio_convert() {
 	local force=false
 	local bitrate=""
 	local vbr=""
+	local -A metadata=()
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -237,6 +242,15 @@ audio_convert() {
 			--bitrate=*) bitrate="${1#*=}" ;;
 			--vbr) vbr="default" ;;
 			--vbr=*) vbr="${1#*=}" ;;
+			--title=*)       metadata[title]="${1#*=}" ;;
+			--artist=*)      metadata[artist]="${1#*=}" ;;
+			--album=*)       metadata[album]="${1#*=}" ;;
+			--albumartist=*) metadata[album_artist]="${1#*=}" ;;
+			--year=*|--date=*) metadata[date]="${1#*=}" ;;
+			--track=*)       metadata[track]="${1#*=}" ;;
+			--genre=*)       metadata[genre]="${1#*=}" ;;
+			--comment=*)     metadata[comment]="${1#*=}" ;;
+			--composer=*)    metadata[composer]="${1#*=}" ;;
 			--) shift; while [[ $# -gt 0 ]]; do files+=("$1"); shift; done ;;
 			-*) echo "Error: unknown option: $1" >&2; return 1 ;;
 			*) files+=("$1") ;;
@@ -305,6 +319,13 @@ audio_convert() {
 		vbr="2"
 	fi
 
+	# Build metadata args from user-specified fields
+	local -a metadata_args=()
+	local mk
+	for mk in "${!metadata[@]}"; do
+		metadata_args+=("-metadata" "${mk}=${metadata[$mk]}")
+	done
+
 	if [[ ${#files[@]} -eq 0 ]]; then
 		echo "Error: no input files" >&2
 		return 1
@@ -332,7 +353,7 @@ audio_convert() {
 			continue
 		fi
 
-		if ! run_ffmpeg "$file" "$out" "$codec_target" "$bitrate" "$vbr"; then
+		if ! run_ffmpeg "$file" "$out" "$codec_target" "$bitrate" "$vbr" "${metadata_args[@]}"; then
 			echo "Error: ffmpeg failed for $file" >&2
 			(( failures++ ))
 			continue

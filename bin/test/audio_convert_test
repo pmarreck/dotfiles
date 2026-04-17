@@ -593,6 +593,56 @@ test_audio_convert() {
 		echo "⊘ aac/m4a/ambiguity tests skipped (no fixtures)"
 	fi
 
+	# Tests: metadata flags
+	if [[ -n "$AUDIO_TEST_DIR" && -d "$AUDIO_TEST_DIR" ]]; then
+		# Explicitly-specified metadata appears in output
+		(( tests++ ))
+		local meta_in="$AUDIO_TEST_DIR/for_meta.wav"
+		cp "$AUDIO_TEST_DIR/sine.wav" "$meta_in"
+		local meta_out="$AUDIO_TEST_DIR/for_meta.mp3"
+		rm -f "$meta_out"
+		mp3 --title="Test Title" --artist="Test Artist" --album="Test Album" "$meta_in" 2>/dev/null
+		if [[ -s "$meta_out" ]]; then
+			local got_title got_artist got_album
+			got_title=$(ffprobe -v error -show_entries format_tags=title -of default=nw=1:nk=1 "$meta_out")
+			got_artist=$(ffprobe -v error -show_entries format_tags=artist -of default=nw=1:nk=1 "$meta_out")
+			got_album=$(ffprobe -v error -show_entries format_tags=album -of default=nw=1:nk=1 "$meta_out")
+			if [[ "$got_title" == "Test Title" && "$got_artist" == "Test Artist" && "$got_album" == "Test Album" ]]; then
+				echo "✓ metadata flags propagate test passed"
+			else
+				echo "✗ metadata mismatch: title='$got_title' artist='$got_artist' album='$got_album'" >&2
+				(( fails++ ))
+			fi
+		else
+			echo "✗ metadata test: no output file" >&2
+			(( fails++ ))
+		fi
+
+		# No metadata flags -> output has no title/artist
+		(( tests++ ))
+		local bare_in="$AUDIO_TEST_DIR/for_bare.wav"
+		cp "$AUDIO_TEST_DIR/sine.wav" "$bare_in"
+		local bare_out="$AUDIO_TEST_DIR/for_bare.mp3"
+		rm -f "$bare_out"
+		mp3 "$bare_in" 2>/dev/null
+		if [[ -s "$bare_out" ]]; then
+			local bare_title bare_artist
+			bare_title=$(ffprobe -v error -show_entries format_tags=title -of default=nw=1:nk=1 "$bare_out")
+			bare_artist=$(ffprobe -v error -show_entries format_tags=artist -of default=nw=1:nk=1 "$bare_out")
+			if [[ -z "$bare_title" && -z "$bare_artist" ]]; then
+				echo "✓ no-metadata-by-default test passed"
+			else
+				echo "✗ no-metadata expected empty but got title='$bare_title' artist='$bare_artist'" >&2
+				(( fails++ ))
+			fi
+		else
+			echo "✗ bare test: no output file" >&2
+			(( fails++ ))
+		fi
+	else
+		echo "⊘ metadata tests skipped (no fixtures)"
+	fi
+
 	# Report
 	if [ $fails -gt 0 ]; then
 		echo "$fails of $tests audio-convert tests failed!" >&2
