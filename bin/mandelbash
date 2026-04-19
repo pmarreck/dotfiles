@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-mandelbrot() {
+mandelbash() {
 	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 
 	p=\>\>14 e=echo\ -ne\  S=(B A S H)  I=-16384  t=/tmp/m$$; for x in {1..13}; do \
