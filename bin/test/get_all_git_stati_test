@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+# Tests for get_all_git_stati
+# Exit code == number of failing tests.
+
+make_repo_with_remote() {
+	local dir="$1" remote="$2"
+	mkdir -p "$dir"
+	git init -q --bare "$remote"
+	(
+		cd "$dir" && \
+		git init -q -b main && \
+		echo hello > a && \
+		git add a && \
+		git -c user.email=t@t -c user.name=t commit -q -m init && \
+		git remote add origin "$remote" && \
+		git push -q origin main
+	)
+}
+
+GAGS="$HOME/dotfiles/bin/get_all_git_stati"
+
+FIXT=$(mktemp -d --tmpdir getallgitstati_test.XXXXXX)
+REMOTES=$(mktemp -d --tmpdir getallgitstati_remotes.XXXXXX)
+DIRTY=$(mktemp -d --tmpdir getallgitstati_dirty.XXXXXX)
+EMPTY=$(mktemp -d --tmpdir getallgitstati_empty.XXXXXX)
+trap 'rm -rf "$FIXT" "$REMOTES" "$DIRTY" "$EMPTY"' EXIT
+
+make_repo_with_remote "$FIXT/alpha" "$REMOTES/alpha.git" >/dev/null 2>&1
+make_repo_with_remote "$FIXT/beta"  "$REMOTES/beta.git"  >/dev/null 2>&1
+make_repo_with_remote "$DIRTY/gamma" "$REMOTES/gamma.git" >/dev/null 2>&1
+echo "modified content" > "$DIRTY/gamma/a"
+
+fails=0
+tests=0
+
+# Test 1: output contains each repo path
+((tests++))
+echo "Testing: finds and prints each repo path under start_dir..."
+out=$("$GAGS" "$FIXT" 2>/dev/null)
+if [[ "$out" == *"$FIXT/alpha"* ]] && [[ "$out" == *"$FIXT/beta"* ]]; then
+	echo "✓ Test passed: both repos appear in output"
+else
+	echo "✗ Test failed: expected both repo paths in output" >&2
+	echo "  Output: $out" >&2
+	((fails++))
+fi
+
+# Test 2: no fetch-upstream warnings when remotes are valid
+((tests++))
+echo "Testing: no 'Failed to fetch upstream' warning with valid local remotes..."
+out=$("$GAGS" "$FIXT" 2>&1)
+if [[ "$out" != *"Failed to fetch upstream"* ]]; then
+	echo "✓ Test passed: no fetch warning"
+else
+	echo "✗ Test failed: unexpected fetch warning" >&2
+	echo "  Output: $out" >&2
+	((fails++))
+fi
+
+# Test 3: dirty worktree shows shortstat brackets in output
+((tests++))
+echo "Testing: uncommitted changes produce a shortstat annotation..."
+out=$("$GAGS" "$DIRTY" 2>/dev/null)
+if [[ "$out" == *"$DIRTY/gamma"* ]] && \
+   { [[ "$out" == *"insertion"* ]] || [[ "$out" == *"file changed"* ]] || [[ "$out" == *"deletion"* ]]; }; then
+	echo "✓ Test passed: shortstat present for dirty repo"
+else
+	echo "✗ Test failed: no shortstat in output" >&2
+	echo "  Output: $out" >&2
+	((fails++))
+fi
+
+# Test 4: empty dir produces no stdout
+((tests++))
+echo "Testing: empty start_dir produces no output..."
+out=$("$GAGS" "$EMPTY" 2>/dev/null)
+if [[ -z "$out" ]]; then
+	echo "✓ Test passed: empty dir produces no output"
+else
+	echo "✗ Test failed: expected empty output, got: $out" >&2
+	((fails++))
+fi
+
+# Summary
+if [[ $fails -eq 0 ]]; then
+	echo "All $tests tests passed"
+else
+	echo "$fails of $tests tests failed" >&2
+fi
+exit $fails

@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+
+git-fsck-all() {
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+
+	# Help
+	case "${1:-}" in
+		-h|--help)
+			cat <<-EOF
+				Usage: git-fsck-all [START_DIR]
+
+				Run \`git fsck\` across every git repository found under START_DIR
+				(default: \$HOME). Progress is printed to stderr; final pass/fail
+				report is printed to stdout.
+
+				Exit code: 0 if all repos pass, otherwise the number of failures.
+			EOF
+			return 0
+			;;
+	esac
+
+	local start_dir="${1:-$HOME}"
+	needs fd "install fd-find" || return 1
+	needs git "install git" || return 1
+
+	local -a repos=()
+	local count=0
+	local git_dir proj_root
+
+	# ---- Phase 1: discovery ----
+	while IFS= read -r git_dir; do
+		# fd with --type d emits trailing slashes; normalize first, then strip /.git
+		git_dir="${git_dir%/}"
+		proj_root="${git_dir%/.git}"
+		repos+=("$proj_root")
+		((count++))
+		printf "\rDiscovering git repos: %d found..." "$count" >&2
+	done < <(fd '.git' "$start_dir" --base-directory "$start_dir" \
+		--glob --type d --one-file-system --owner "$USER" --absolute-path \
+		--hidden --threads 4 --no-follow --prune --max-depth 12 --min-depth 0 \
+		--exclude '*com~apple~CloudDocs*' --exclude '*/Library/CloudStorage*' 2>/dev/null)
+	printf "\r\033[K" >&2
+	printf "Discovered %d git repositories.\n" "$count" >&2
+
+	if [ "$count" -eq 0 ]; then
+		echo "No git repositories found under $start_dir."
+		return 0
+	fi
+
+	# ---- Phase 2: validation ----
+	local total="$count"
+	local i=0 passed=0 failed=0
+	local -a failed_repos=()
+	local -a failed_outputs=()
+	local output repo line_width display cols
+	cols="${COLUMNS:-$(tput cols 2>/dev/null || echo 80)}"
+
+	for repo in "${repos[@]}"; do
+		((i++))
+		# Truncate the progress line so it fits one terminal row
+		line_width=$((cols - 1))
+		display="Validating $i/$total: $repo ..."
+		if [ "${#display}" -gt "$line_width" ]; then
+			display="${display:0:$line_width}"
+		fi
+		printf "\r\033[K%s" "$display" >&2
+
+		if output=$(git -C "$repo" fsck --no-dangling --no-progress 2>&1); then
+			((passed++))
+		else
+			((failed++))
+			failed_repos+=("$repo")
+			failed_outputs+=("$output")
+		fi
+	done
+	printf "\r\033[K" >&2
+
+	# ---- Phase 3: report ----
+	printf "git fsck: %d passed, %d failed (of %d total)\n" "$passed" "$failed" "$total"
+	if [ "$failed" -gt 0 ]; then
+		echo
+		echo "Failed repositories:"
+		local j
+		for ((j = 0; j < ${#failed_repos[@]}; j++)); do
+			echo "  ${failed_repos[j]}"
+			if [ -n "${failed_outputs[j]}" ]; then
+				while IFS= read -r line; do
+					echo "    $line"
+				done <<< "${failed_outputs[j]}"
+			fi
+		done
+		return "$failed"
+	fi
+	return 0
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	if [ "$1" = "--test" ]; then
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		$(basename "${0##\-}") "$@"
+	fi
+fi

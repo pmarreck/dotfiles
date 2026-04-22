@@ -1,0 +1,137 @@
+#!/usr/bin/env bash
+# Tests for git-fsck-all
+# Exit code == number of failing tests.
+
+make_repo() {
+	local dir="$1"
+	mkdir -p "$dir"
+	(
+		cd "$dir" && \
+		git init -q -b main && \
+		echo hello > a && \
+		git add a && \
+		git -c user.email=t@t -c user.name=t commit -q -m init
+	)
+}
+
+corrupt_repo() {
+	local dir="$1" obj
+	obj=$(find "$dir/.git/objects" -type f ! -path '*/pack/*' 2>/dev/null | head -n1)
+	[ -z "$obj" ] && return 1
+	chmod +w "$obj"
+	printf "corruption\n" > "$obj"
+}
+
+GFA="$HOME/dotfiles/bin/git-fsck-all"
+
+FIXT=$(mktemp -d --tmpdir gitfsckall_test.XXXXXX)
+EMPTY=$(mktemp -d --tmpdir gitfsckall_empty.XXXXXX)
+ALLGOOD=$(mktemp -d --tmpdir gitfsckall_allgood.XXXXXX)
+trap 'chmod -R +w "$FIXT" "$EMPTY" "$ALLGOOD" 2>/dev/null; rm -rf "$FIXT" "$EMPTY" "$ALLGOOD"' EXIT
+
+make_repo "$FIXT/good" >/dev/null 2>&1
+make_repo "$FIXT/bad"  >/dev/null 2>&1
+corrupt_repo "$FIXT/bad"
+
+make_repo "$ALLGOOD/r1" >/dev/null 2>&1
+make_repo "$ALLGOOD/r2" >/dev/null 2>&1
+
+fails=0
+tests=0
+
+# Test 1: --help exits 0 and prints usage
+((tests++))
+echo "Testing: --help prints usage and exits 0..."
+if out=$("$GFA" --help 2>&1) && [[ "$out" == *"Usage:"* ]]; then
+	echo "✓ Test passed: --help works"
+else
+	echo "✗ Test failed: --help output did not match or exit nonzero" >&2
+	echo "  Output: $out" >&2
+	((fails++))
+fi
+
+# Test 2: exit code equals number of failed repos (1 bad)
+((tests++))
+echo "Testing: exit code equals number of failed repos..."
+"$GFA" "$FIXT" >/dev/null 2>/dev/null
+rc=$?
+if [[ $rc -eq 1 ]]; then
+	echo "✓ Test passed: exit code is 1 for one failing repo"
+else
+	echo "✗ Test failed: expected exit 1, got $rc" >&2
+	((fails++))
+fi
+
+# Test 3: stdout report includes pass/fail counts and the failed repo path
+((tests++))
+echo "Testing: stdout report includes counts and failed repo path..."
+stdout=$("$GFA" "$FIXT" 2>/dev/null)
+if [[ "$stdout" == *"1 passed"* ]] && \
+   [[ "$stdout" == *"1 failed"* ]] && \
+   [[ "$stdout" == *"$FIXT/bad"* ]]; then
+	echo "✓ Test passed: report contains expected fields"
+else
+	echo "✗ Test failed: report missing expected fields" >&2
+	echo "  Stdout: $stdout" >&2
+	((fails++))
+fi
+
+# Test 4: progress lines go to stderr, report to stdout
+((tests++))
+echo "Testing: progress -> stderr, report -> stdout..."
+stdout=$("$GFA" "$FIXT" 2>/dev/null)
+stderr=$("$GFA" "$FIXT" 2>&1 >/dev/null)
+if [[ "$stdout" != *"Discovering"* ]] && \
+   [[ "$stdout" != *"Validating"* ]] && \
+   [[ "$stderr" == *"Discovered"* ]]; then
+	echo "✓ Test passed: streams separated correctly"
+else
+	echo "✗ Test failed: progress/report stream split incorrect" >&2
+	echo "  Stdout: $stdout" >&2
+	echo "  Stderr: $stderr" >&2
+	((fails++))
+fi
+
+# Test 5: empty dir reports no repos and exits 0
+((tests++))
+echo "Testing: empty dir exits 0 with no-repos message..."
+out=$("$GFA" "$EMPTY" 2>/dev/null)
+rc=$?
+if [[ $rc -eq 0 ]] && [[ "$out" == *"No git repositories found"* ]]; then
+	echo "✓ Test passed: empty dir handled"
+else
+	echo "✗ Test failed: rc=$rc, output=$out" >&2
+	((fails++))
+fi
+
+# Test 6: all-healthy repos pass with exit 0
+((tests++))
+echo "Testing: all-healthy repos exit 0 with N passed..."
+out=$("$GFA" "$ALLGOOD" 2>/dev/null)
+rc=$?
+if [[ $rc -eq 0 ]] && [[ "$out" == *"2 passed"* ]] && [[ "$out" == *"0 failed"* ]]; then
+	echo "✓ Test passed: all-healthy case reported correctly"
+else
+	echo "✗ Test failed: rc=$rc output=$out" >&2
+	((fails++))
+fi
+
+# Test 7: failed repo output includes fsck error details
+((tests++))
+echo "Testing: failed-repo report includes fsck error details..."
+out=$("$GFA" "$FIXT" 2>/dev/null)
+if [[ "$out" == *"error"* ]] || [[ "$out" == *"fatal"* ]] || [[ "$out" == *"corrupt"* ]]; then
+	echo "✓ Test passed: fsck error text surfaced"
+else
+	echo "✗ Test failed: no fsck error text in report" >&2
+	echo "  Output: $out" >&2
+	((fails++))
+fi
+
+# Summary
+if [[ $fails -eq 0 ]]; then
+	echo "All $tests tests passed"
+else
+	echo "$fails of $tests tests failed" >&2
+fi
+exit $fails
