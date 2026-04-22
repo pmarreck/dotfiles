@@ -1,0 +1,169 @@
+#!/usr/bin/env bash
+
+epub() {
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+
+	local delete_original=false
+	local keep_mtime=false
+	local force=false
+	local -a positional=()
+	local exit_status=0
+	local about_text="Convert ebook files to EPUB via ebook-convert."
+
+	print_help() {
+		cat <<'EOF'
+Usage: epub [OPTIONS] FILE [FILE...]
+
+Convert ebook FILEs to EPUB using calibre's ebook-convert. Each FILE
+produces a sibling with the same basename and a .epub extension.
+
+Any input format accepted by ebook-convert works (azw, azw3, mobi, lit,
+lrf, pdb, pdf, rtf, fb2, txt, html, ...); the actual format support
+comes from whichever calibre install is on PATH.
+
+Options:
+	-h, --help         Show this help message and exit
+	-a, --about        Print a one-line summary
+	--delete           Remove each source file after a successful conversion
+	--keep-mtime       Preserve the source file's mtime on the resulting .epub
+	--force            Overwrite an existing .epub output
+
+Behavior:
+	- Batching is intentionally omitted. Use the shell (e.g. via `glob`)
+	  to expand patterns: glob epub *.{mobi,azw3}
+	- An input that already has a .epub extension is skipped with a
+	  stderr warning but does not affect the exit status.
+	- Missing files, existing outputs (without --force), and conversion
+	  failures are reported to stderr and counted toward the exit code.
+EOF
+	}
+
+	print_about() {
+		echo "$about_text"
+	}
+
+	require_dependency() {
+		if ! command -v "$1" >/dev/null 2>&1; then
+			echo "Error: required command '$1' not found on PATH" >&2
+			return 1
+		fi
+		return 0
+	}
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+			-h|--help)
+				print_help
+				return 0
+				;;
+			-a|--about)
+				print_about
+				return 0
+				;;
+			--delete)
+				delete_original=true
+				shift
+				;;
+			--keep-mtime)
+				keep_mtime=true
+				shift
+				;;
+			--force)
+				force=true
+				shift
+				;;
+			--)
+				shift
+				while [[ $# -gt 0 ]]; do
+					positional+=("$1")
+					shift
+				done
+				break
+				;;
+			-*)
+				echo "Unknown option: $1" >&2
+				echo "Run 'epub --help' for usage." >&2
+				return 1
+				;;
+			*)
+				positional+=("$1")
+				shift
+				;;
+		esac
+	done
+
+	if ! require_dependency ebook-convert; then
+		return 1
+	fi
+
+	if [[ ${#positional[@]} -eq 0 ]]; then
+		echo "Error: at least one FILE argument is required" >&2
+		echo "Run 'epub --help' for usage." >&2
+		return 1
+	fi
+
+	local input output lower_ext
+	for input in "${positional[@]}"; do
+		if [[ ! -f "$input" ]]; then
+			echo "Skipping missing file: $input" >&2
+			exit_status=1
+			continue
+		fi
+
+		lower_ext="${input##*.}"
+		lower_ext="${lower_ext,,}"
+		if [[ "$lower_ext" == "epub" ]]; then
+			echo "Skipping '$input': already an EPUB" >&2
+			continue
+		fi
+
+		output="${input%.*}.epub"
+
+		if [[ -e "$output" && "$force" != true ]]; then
+			echo "Skipping '$input': output '$output' already exists (use --force to overwrite)" >&2
+			exit_status=1
+			continue
+		fi
+
+		echo "Converting '$input' -> '$output'..."
+		if ! ebook-convert "$input" "$output"; then
+			echo "Conversion failed for '$input'" >&2
+			exit_status=1
+			continue
+		fi
+
+		if [[ "$keep_mtime" == true ]]; then
+			if ! touch -r "$input" "$output"; then
+				echo "Failed to preserve mtime on '$output'" >&2
+				exit_status=1
+			fi
+		fi
+
+		if [[ "$delete_original" == true ]]; then
+			if rm -f -- "$input"; then
+				echo "Deleted '$input'"
+			else
+				echo "Failed to delete '$input'" >&2
+				exit_status=1
+			fi
+		fi
+	done
+
+	return $exit_status
+}
+
+if ! (return 0 2>/dev/null); then
+	if [[ "${1:-}" == "--test" ]]; then
+		shift
+		test_script="$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+		if [[ -x "$test_script" ]]; then
+			"$test_script" "$@" >/dev/null
+			exit $?
+		else
+			echo "No test script found for $(basename "${0##\-}")" >&2
+			exit 1
+		fi
+	else
+		$(basename "${0##\-}") "$@"
+	fi
+fi

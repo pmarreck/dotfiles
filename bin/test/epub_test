@@ -1,0 +1,236 @@
+#!/usr/bin/env bash
+
+test_epub() {
+	local fails=0
+	local tests=0
+	local script="$HOME/dotfiles/bin/epub"
+	local work_root
+	work_root=$(mktemp --tmpdir -d epub_test.XXXXXX)
+	local original_path=$PATH
+
+	trap 'PATH="$original_path"; rm -rf "$work_root"' RETURN
+
+	local fake_bin="$work_root/fake_bin"
+	mkdir -p "$fake_bin"
+
+	cat <<'EOF' >"$fake_bin/ebook-convert"
+#!/usr/bin/env bash
+set -euo pipefail
+input="$1"
+output="$2"
+cp "$input" "$output"
+EOF
+	chmod +x "$fake_bin/ebook-convert"
+
+	PATH="$fake_bin:$HOME/dotfiles/bin:$PATH"
+
+	((tests++))
+	if output=$("$script" -a 2>/dev/null); then
+		if [[ "$output" == "Convert ebook files to EPUB via ebook-convert." ]]; then
+			echo "✓ -a/--about prints one-liner"
+		else
+			echo "✗ -a output unexpected: $output" >&2
+			((fails++))
+		fi
+	else
+		echo "✗ -a flag failed" >&2
+		((fails++))
+	fi
+
+	((tests++))
+	if "$script" -h >/dev/null 2>&1; then
+		echo "✓ -h/--help succeeds"
+	else
+		echo "✗ -h flag failed" >&2
+		((fails++))
+	fi
+
+	((tests++))
+	if ! "$script" >/dev/null 2>&1; then
+		echo "✓ bare invocation fails (FILE required)"
+	else
+		echo "✗ bare invocation should have failed" >&2
+		((fails++))
+	fi
+
+	local case_mobi
+	case_mobi=$(mktemp --tmpdir="$work_root" -d case_mobi.XXXXXX)
+	printf 'alpha' >"$case_mobi/Book.mobi"
+
+	((tests++))
+	if (cd "$case_mobi" && "$script" "Book.mobi" >/dev/null 2>&1); then
+		if [[ -f "$case_mobi/Book.epub" && -f "$case_mobi/Book.mobi" ]]; then
+			echo "✓ converts .mobi and keeps original by default"
+		else
+			echo "✗ .mobi conversion produced wrong files" >&2
+			((fails++))
+		fi
+	else
+		echo "✗ .mobi conversion exited non-zero" >&2
+		((fails++))
+	fi
+
+	local case_azw3
+	case_azw3=$(mktemp --tmpdir="$work_root" -d case_azw3.XXXXXX)
+	printf 'beta' >"$case_azw3/Tome.azw3"
+
+	((tests++))
+	if (cd "$case_azw3" && "$script" "Tome.azw3" >/dev/null 2>&1); then
+		if [[ -f "$case_azw3/Tome.epub" && -f "$case_azw3/Tome.azw3" ]]; then
+			echo "✓ converts .azw3"
+		else
+			echo "✗ .azw3 conversion produced wrong files" >&2
+			((fails++))
+		fi
+	else
+		echo "✗ .azw3 conversion exited non-zero" >&2
+		((fails++))
+	fi
+
+	local case_mixed
+	case_mixed=$(mktemp --tmpdir="$work_root" -d case_mixed.XXXXXX)
+	printf 'gamma' >"$case_mixed/A.mobi"
+	printf 'delta' >"$case_mixed/B.azw3"
+
+	((tests++))
+	if (cd "$case_mixed" && "$script" "A.mobi" "B.azw3" >/dev/null 2>&1); then
+		if [[ -f "$case_mixed/A.epub" && -f "$case_mixed/B.epub" ]]; then
+			echo "✓ handles multiple mixed-format args"
+		else
+			echo "✗ mixed args missing expected outputs" >&2
+			((fails++))
+		fi
+	else
+		echo "✗ mixed args conversion exited non-zero" >&2
+		((fails++))
+	fi
+
+	local case_del
+	case_del=$(mktemp --tmpdir="$work_root" -d case_del.XXXXXX)
+	printf 'epsilon' >"$case_del/Gone.mobi"
+
+	((tests++))
+	if (cd "$case_del" && "$script" --delete "Gone.mobi" </dev/null >/dev/null 2>&1); then
+		if [[ -f "$case_del/Gone.epub" && ! -f "$case_del/Gone.mobi" ]]; then
+			echo "✓ --delete removes original"
+		else
+			echo "✗ --delete did not behave correctly" >&2
+			((fails++))
+		fi
+	else
+		echo "✗ --delete conversion exited non-zero" >&2
+		((fails++))
+	fi
+
+	local case_mtime
+	case_mtime=$(mktemp --tmpdir="$work_root" -d case_mtime.XXXXXX)
+	printf 'zeta' >"$case_mtime/Stamped.azw3"
+	touch -t 202001010000 "$case_mtime/Stamped.azw3"
+
+	((tests++))
+	if (cd "$case_mtime" && "$script" --keep-mtime "Stamped.azw3" >/dev/null 2>&1); then
+		if [[ -f "$case_mtime/Stamped.epub" \
+			&& ! "$case_mtime/Stamped.azw3" -nt "$case_mtime/Stamped.epub" \
+			&& ! "$case_mtime/Stamped.azw3" -ot "$case_mtime/Stamped.epub" ]]; then
+			echo "✓ --keep-mtime preserves source mtime"
+		else
+			echo "✗ --keep-mtime did not preserve mtime" >&2
+			((fails++))
+		fi
+	else
+		echo "✗ --keep-mtime conversion exited non-zero" >&2
+		((fails++))
+	fi
+
+	local case_nomtime
+	case_nomtime=$(mktemp --tmpdir="$work_root" -d case_nomtime.XXXXXX)
+	printf 'zeta-b' >"$case_nomtime/Old.azw3"
+	touch -t 202001010000 "$case_nomtime/Old.azw3"
+
+	((tests++))
+	if (cd "$case_nomtime" && "$script" "Old.azw3" >/dev/null 2>&1); then
+		if [[ -f "$case_nomtime/Old.epub" && "$case_nomtime/Old.epub" -nt "$case_nomtime/Old.azw3" ]]; then
+			echo "✓ default does not preserve mtime"
+		else
+			echo "✗ default mtime behavior unexpected" >&2
+			((fails++))
+		fi
+	else
+		echo "✗ default conversion exited non-zero" >&2
+		((fails++))
+	fi
+
+	local case_exist
+	case_exist=$(mktemp --tmpdir="$work_root" -d case_exist.XXXXXX)
+	printf 'new' >"$case_exist/Book.mobi"
+	printf 'already' >"$case_exist/Book.epub"
+
+	((tests++))
+	if ! (cd "$case_exist" && "$script" "Book.mobi" >/dev/null 2>&1); then
+		if [[ "$(cat "$case_exist/Book.epub")" == "already" ]]; then
+			echo "✓ existing .epub preserved without --force"
+		else
+			echo "✗ existing .epub was overwritten without --force" >&2
+			((fails++))
+		fi
+	else
+		echo "✗ expected non-zero exit when output already exists" >&2
+		((fails++))
+	fi
+
+	local case_force
+	case_force=$(mktemp --tmpdir="$work_root" -d case_force.XXXXXX)
+	printf 'fresh' >"$case_force/Book.mobi"
+	printf 'stale' >"$case_force/Book.epub"
+
+	((tests++))
+	if (cd "$case_force" && "$script" --force "Book.mobi" >/dev/null 2>&1); then
+		if [[ "$(cat "$case_force/Book.epub")" == "fresh" ]]; then
+			echo "✓ --force overwrites existing .epub"
+		else
+			echo "✗ --force did not overwrite .epub" >&2
+			((fails++))
+		fi
+	else
+		echo "✗ --force conversion exited non-zero" >&2
+		((fails++))
+	fi
+
+	local case_epubin
+	case_epubin=$(mktemp --tmpdir="$work_root" -d case_epubin.XXXXXX)
+	printf 'already-epub' >"$case_epubin/Already.epub"
+
+	((tests++))
+	local err_output exit_code
+	err_output=$(cd "$case_epubin" && "$script" "Already.epub" 2>&1 >/dev/null)
+	exit_code=$?
+	if [[ $exit_code -eq 0 && "$err_output" == *"Already.epub"* ]]; then
+		echo "✓ .epub input soft-skipped with stderr warning"
+	else
+		echo "✗ .epub input handling unexpected (exit=$exit_code, stderr=$err_output)" >&2
+		((fails++))
+	fi
+
+	local case_missing
+	case_missing=$(mktemp --tmpdir="$work_root" -d case_missing.XXXXXX)
+
+	((tests++))
+	if ! (cd "$case_missing" && "$script" "doesnotexist.mobi" >/dev/null 2>&1); then
+		echo "✓ missing file produces non-zero exit"
+	else
+		echo "✗ missing file should have failed" >&2
+		((fails++))
+	fi
+
+	if [[ $fails -gt 0 ]]; then
+		echo "$fails of $tests epub tests failed" >&2
+	else
+		echo "All $tests epub tests passed"
+	fi
+
+	return $fails
+}
+
+if ! (return 0 2>/dev/null); then
+	test_epub
+fi
