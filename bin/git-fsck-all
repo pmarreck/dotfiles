@@ -1,38 +1,134 @@
 #!/usr/bin/env bash
 
-git-fsck-all() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+# The SHA-1 of git's always-virtual empty tree.
+EMPTY_TREE_SHA="4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 
-	# Help
-	case "${1:-}" in
-		-h|--help)
-			cat <<-EOF
-				Usage: git-fsck-all [START_DIR]
+# ---- Classification ----
 
-				Run \`git fsck\` across every git repository found under START_DIR
-				(default: \$HOME). Progress is printed to stderr; final pass/fail
-				report is printed to stdout.
-
-				Exit code: 0 if all repos pass, otherwise the number of failures.
-			EOF
-			return 0
-			;;
+# Categorize a single line of `git fsck` output.
+# Categories: jj_lock, ds_store, jj_refnewline, empty_tree, dup_entries,
+#             notice, other, real_error
+classify_fsck_line() {
+	local line="$1"
+	case "$line" in
+		# jj lock files (warning or error). Most specific; check first.
+		*"refs/jj/"*".lock: "*)            echo "jj_lock" ;;
+		# .DS_Store anywhere under refs/
+		*"refs/"*".DS_Store: "*)           echo "ds_store" ;;
+		# jj refMissingNewline (non-lock refs)
+		*"refs/jj/"*": refMissingNewline"*) echo "jj_refnewline" ;;
+		# empty tree missing (git always treats this as virtual-present)
+		"missing tree $EMPTY_TREE_SHA")    echo "empty_tree" ;;
+		# Tree with duplicate entries (may be case-only or true corruption)
+		*"duplicateEntries"*)              echo "dup_entries" ;;
+		# Informational notices (any "notice:" prefix from git-fsck)
+		"notice:"*)                        echo "notice" ;;
+		# Progress / blanks / dangling chatter
+		"Checking "*|"Verifying "*|"dangling "*|"") echo "other" ;;
+		*)                                 echo "real_error" ;;
 	esac
+}
 
-	local start_dir="${1:-$HOME}"
-	needs fd "install fd-find" || return 1
-	needs git "install git" || return 1
+# Extract the refs/... path from an error/warning line. Echoes empty if no match.
+extract_ref_path() {
+	local line="$1"
+	if [[ "$line" =~ ^(error|warning):[[:space:]]+(refs/[^:]+): ]]; then
+		printf '%s\n' "${BASH_REMATCH[2]}"
+	fi
+}
 
-	local -a repos=()
-	local count=0
-	local git_dir proj_root
+# Extract the first 40-hex-char SHA from a line.
+extract_tree_hash() {
+	local line="$1"
+	if [[ "$line" =~ [0-9a-f]{40} ]]; then
+		printf '%s\n' "${BASH_REMATCH[0]}"
+	fi
+}
 
-	# ---- Phase 1: discovery ----
+# List duplicate-entry groups for a tree. One group per line, names separated
+# by TAB. Example:
+#   File<TAB>file
+#   Foo<TAB>FOO<TAB>foo
+tree_duplicate_groups() {
+	local repo="$1" tree_hash="$2"
+	git -C "$repo" ls-tree "$tree_hash" 2>/dev/null | awk '
+		{
+			name = $NF
+			lower = tolower(name)
+			if (lower in bucket) {
+				bucket[lower] = bucket[lower] "\t" name
+				count[lower]++
+			} else {
+				bucket[lower] = name
+				count[lower] = 1
+			}
+		}
+		END {
+			for (k in count) if (count[k] > 1) print bucket[k]
+		}
+	'
+}
+
+# Given duplicate-groups output (tab-separated names, newline-separated groups),
+# return 0 iff every group contains only case-variant spellings (no two names
+# exactly equal).
+groups_are_case_only() {
+	local groups="$1" group
+	local -a names=()
+	local i j
+	while IFS= read -r group; do
+		[ -z "$group" ] && continue
+		IFS=$'\t' read -ra names <<< "$group"
+		for ((i = 0; i < ${#names[@]}; i++)); do
+			for ((j = i + 1; j < ${#names[@]}; j++)); do
+				[ "${names[i]}" = "${names[j]}" ] && return 1
+			done
+		done
+	done <<< "$groups"
+	return 0
+}
+
+# ---- Scan-state globals (populated by scan(), consumed by report()/triage()) ----
+
+SCAN_FAILED_REPOS=()
+SCAN_FAILED_OUTPUTS=()
+# Parallel arrays for case-only dup-entry trees:
+SCAN_DUP_CASE_REPO=()
+SCAN_DUP_CASE_TREE=()
+SCAN_DUP_CASE_GROUPS=()   # newline-separated groups; each group is TAB-separated names
+SCAN_JJ_NOISE_REPOS=()
+SCAN_JJ_NOISE_LINES=0
+SCAN_DS_STORE_FILES=()    # absolute file paths
+SCAN_JJ_LOCK_FILES=()     # absolute file paths
+SCAN_TOTAL_REPOS=0
+SCAN_PASSED=0
+SCAN_FAILED=0
+
+reset_scan_state() {
+	SCAN_FAILED_REPOS=()
+	SCAN_FAILED_OUTPUTS=()
+	SCAN_DUP_CASE_REPO=()
+	SCAN_DUP_CASE_TREE=()
+	SCAN_DUP_CASE_GROUPS=()
+	SCAN_JJ_NOISE_REPOS=()
+	SCAN_JJ_NOISE_LINES=0
+	SCAN_DS_STORE_FILES=()
+	SCAN_JJ_LOCK_FILES=()
+	SCAN_TOTAL_REPOS=0
+	SCAN_PASSED=0
+	SCAN_FAILED=0
+}
+
+# ---- Discovery ----
+
+discover_repos() {
+	local start_dir="$1"
+	local -n _out="$2"
+	local git_dir proj_root count=0
 	while IFS= read -r git_dir; do
-		# fd with --type d emits trailing slashes; normalize first, then strip /.git
 		git_dir="${git_dir%/}"
 		proj_root="${git_dir%/.git}"
-		repos+=("$proj_root")
+		_out+=("$proj_root")
 		((count++))
 		printf "\rDiscovering git repos: %d found..." "$count" >&2
 	done < <(fd '.git' "$start_dir" --base-directory "$start_dir" \
@@ -41,60 +137,306 @@ git-fsck-all() {
 		--exclude '*com~apple~CloudDocs*' --exclude '*/Library/CloudStorage*' 2>/dev/null)
 	printf "\r\033[K" >&2
 	printf "Discovered %d git repositories.\n" "$count" >&2
+}
 
-	if [ "$count" -eq 0 ]; then
-		echo "No git repositories found under $start_dir."
-		return 0
+# ---- Per-repo processing ----
+
+process_repo() {
+	local repo="$1"
+	local gitdir="$repo/.git"
+	local raw line cat ref_path tree_hash
+	raw=$(git -C "$repo" fsck --no-dangling --no-progress 2>&1)
+
+	local real_lines="" jj_noise_here=0 had_jj_noise=0
+
+	while IFS= read -r line; do
+		[ -z "$line" ] && continue
+		cat=$(classify_fsck_line "$line")
+		case "$cat" in
+			jj_refnewline)
+				had_jj_noise=1
+				((jj_noise_here++))
+				;;
+			jj_lock)
+				ref_path=$(extract_ref_path "$line")
+				[ -n "$ref_path" ] && SCAN_JJ_LOCK_FILES+=("$gitdir/$ref_path")
+				;;
+			ds_store)
+				ref_path=$(extract_ref_path "$line")
+				[ -n "$ref_path" ] && SCAN_DS_STORE_FILES+=("$gitdir/$ref_path")
+				;;
+			dup_entries)
+				tree_hash=$(extract_tree_hash "$line")
+				if [ -n "$tree_hash" ]; then
+					local groups pretty g
+					groups=$(tree_duplicate_groups "$repo" "$tree_hash")
+					if [ -n "$groups" ] && groups_are_case_only "$groups"; then
+						SCAN_DUP_CASE_REPO+=("$repo")
+						SCAN_DUP_CASE_TREE+=("$tree_hash")
+						SCAN_DUP_CASE_GROUPS+=("$groups")
+					else
+						real_lines+="$line"$'\n'
+						while IFS= read -r g; do
+							[ -z "$g" ] && continue
+							pretty="${g//$'\t'/, }"
+							real_lines+="      dup: $pretty"$'\n'
+						done <<< "$groups"
+					fi
+				else
+					real_lines+="$line"$'\n'
+				fi
+				;;
+			empty_tree|notice|other)
+				: # suppressed
+				;;
+			*)
+				real_lines+="$line"$'\n'
+				;;
+		esac
+	done <<< "$raw"
+
+	if [ "$had_jj_noise" -eq 1 ]; then
+		SCAN_JJ_NOISE_REPOS+=("$repo")
+		SCAN_JJ_NOISE_LINES=$((SCAN_JJ_NOISE_LINES + jj_noise_here))
 	fi
 
-	# ---- Phase 2: validation ----
-	local total="$count"
-	local i=0 passed=0 failed=0
-	local -a failed_repos=()
-	local -a failed_outputs=()
-	local output repo line_width display cols
-	cols="${COLUMNS:-$(tput cols 2>/dev/null || echo 80)}"
-
-	for repo in "${repos[@]}"; do
-		((i++))
-		# Truncate the progress line so it fits one terminal row
-		line_width=$((cols - 1))
-		display="Validating $i/$total: $repo ..."
-		if [ "${#display}" -gt "$line_width" ]; then
-			display="${display:0:$line_width}"
-		fi
-		printf "\r\033[K%s" "$display" >&2
-
-		if output=$(git -C "$repo" fsck --no-dangling --no-progress 2>&1); then
-			((passed++))
-		else
-			((failed++))
-			failed_repos+=("$repo")
-			failed_outputs+=("$output")
-		fi
-	done
-	printf "\r\033[K" >&2
-
-	# ---- Phase 3: report ----
-	printf "git fsck: %d passed, %d failed (of %d total)\n" "$passed" "$failed" "$total"
-	if [ "$failed" -gt 0 ]; then
-		echo
-		echo "Failed repositories:"
-		local j
-		for ((j = 0; j < ${#failed_repos[@]}; j++)); do
-			echo "  ${failed_repos[j]}"
-			if [ -n "${failed_outputs[j]}" ]; then
-				while IFS= read -r line; do
-					echo "    $line"
-				done <<< "${failed_outputs[j]}"
-			fi
-		done
-		return "$failed"
+	if [ -n "$real_lines" ]; then
+		SCAN_FAILED_REPOS+=("$repo")
+		SCAN_FAILED_OUTPUTS+=("${real_lines%$'\n'}")
+		return 1
 	fi
 	return 0
 }
 
-# Run the function if this script is executed directly
+# ---- Top-level scan (discovery + per-repo) ----
+
+scan() {
+	local start_dir="$1"
+	local -a repos=()
+
+	needs fd "install fd-find" || return 1
+	needs git "install git" || return 1
+
+	discover_repos "$start_dir" repos
+
+	SCAN_TOTAL_REPOS=${#repos[@]}
+	[ "$SCAN_TOTAL_REPOS" -eq 0 ] && return 0
+
+	local cols line_width display total="$SCAN_TOTAL_REPOS" i=0 repo
+	cols="${COLUMNS:-$(tput cols 2>/dev/null || echo 80)}"
+	line_width=$((cols - 1))
+
+	for repo in "${repos[@]}"; do
+		((i++))
+		display="Validating $i/$total: $repo ..."
+		[ "${#display}" -gt "$line_width" ] && display="${display:0:$line_width}"
+		printf "\r\033[K%s" "$display" >&2
+		if process_repo "$repo"; then
+			((SCAN_PASSED++))
+		else
+			((SCAN_FAILED++))
+		fi
+	done
+	printf "\r\033[K" >&2
+}
+
+# ---- Reporting ----
+
+report() {
+	printf "git fsck: %d passed, %d failed (of %d total)\n" \
+		"$SCAN_PASSED" "$SCAN_FAILED" "$SCAN_TOTAL_REPOS"
+
+	if [ "$SCAN_FAILED" -gt 0 ]; then
+		echo
+		echo "Real failures:"
+		local j line
+		for ((j = 0; j < ${#SCAN_FAILED_REPOS[@]}; j++)); do
+			echo "  ${SCAN_FAILED_REPOS[j]}"
+			if [ -n "${SCAN_FAILED_OUTPUTS[j]}" ]; then
+				while IFS= read -r line; do
+					echo "    $line"
+				done <<< "${SCAN_FAILED_OUTPUTS[j]}"
+			fi
+		done
+	fi
+
+	if [ ${#SCAN_DUP_CASE_REPO[@]} -gt 0 ]; then
+		echo
+		echo "Case-only duplicate tree entries (not counted; needs history rewrite to fix):"
+		local k g pretty
+		for ((k = 0; k < ${#SCAN_DUP_CASE_REPO[@]}; k++)); do
+			echo "  ${SCAN_DUP_CASE_REPO[k]} (tree ${SCAN_DUP_CASE_TREE[k]})"
+			while IFS= read -r g; do
+				[ -z "$g" ] && continue
+				pretty="${g//$'\t'/, }"
+				echo "    dup: $pretty"
+			done <<< "${SCAN_DUP_CASE_GROUPS[k]}"
+		done
+	fi
+
+	# Stderr: ignored + fixable summaries
+	local stderr_started=0
+	if [ ${#SCAN_JJ_NOISE_REPOS[@]} -gt 0 ]; then
+		stderr_started=1
+		local uniq_repos
+		uniq_repos=$(printf '%s\n' "${SCAN_JJ_NOISE_REPOS[@]}" | sort -u | wc -l | tr -d ' ')
+		echo >&2
+		echo "Ignored (informational):" >&2
+		echo "  jj refMissingNewline warnings: $uniq_repos repos, $SCAN_JJ_NOISE_LINES lines total" >&2
+	fi
+
+	local ds_count=${#SCAN_DS_STORE_FILES[@]}
+	local jj_count=${#SCAN_JJ_LOCK_FILES[@]}
+	if [ "$ds_count" -gt 0 ] || [ "$jj_count" -gt 0 ]; then
+		[ "$stderr_started" -eq 0 ] && echo >&2
+		echo "Fixable with \`git-fsck-all triage\`:" >&2
+		if [ "$ds_count" -gt 0 ]; then
+			local uniq_ds
+			uniq_ds=$(printf '%s\n' "${SCAN_DS_STORE_FILES[@]}" | sort -u | wc -l | tr -d ' ')
+			echo "  .DS_Store in refs/: $uniq_ds file(s)" >&2
+		fi
+		if [ "$jj_count" -gt 0 ]; then
+			local uniq_jj
+			uniq_jj=$(printf '%s\n' "${SCAN_JJ_LOCK_FILES[@]}" | sort -u | wc -l | tr -d ' ')
+			echo "  Stale jj keep/*.lock files: $uniq_jj file(s)" >&2
+		fi
+	fi
+}
+
+# ---- Triage ----
+
+triage_execute() {
+	local count=0 f
+	local -a ds_uniq=() jj_uniq=()
+	if [ ${#SCAN_DS_STORE_FILES[@]} -gt 0 ]; then
+		while IFS= read -r f; do ds_uniq+=("$f"); done < <(printf '%s\n' "${SCAN_DS_STORE_FILES[@]}" | sort -u)
+	fi
+	if [ ${#SCAN_JJ_LOCK_FILES[@]} -gt 0 ]; then
+		while IFS= read -r f; do jj_uniq+=("$f"); done < <(printf '%s\n' "${SCAN_JJ_LOCK_FILES[@]}" | sort -u)
+	fi
+	for f in "${ds_uniq[@]}" "${jj_uniq[@]}"; do
+		if [ -e "$f" ]; then
+			rm -f "$f" && ((count++))
+		fi
+	done
+	printf 'Triage: removed %d file(s).\n' "$count"
+}
+
+triage() {
+	local yes=0 dry_run=0 start_dir=""
+	while [ $# -gt 0 ]; do
+		case "$1" in
+			-y|--yes)    yes=1; shift ;;
+			-n|--dry-run) dry_run=1; shift ;;
+			-h|--help)
+				cat <<-EOF
+					Usage: git-fsck-all triage [--yes] [--dry-run] [START_DIR]
+
+					Scan git repositories under START_DIR (default: \$HOME) and remove
+					known-safe litter: .DS_Store files inside refs/, and stale
+					.jj/keep/*.lock files.
+
+					Options:
+					  -y, --yes      Skip the confirmation prompt.
+					  -n, --dry-run  Print the plan but don't delete anything.
+				EOF
+				return 0
+				;;
+			*) start_dir="$1"; shift ;;
+		esac
+	done
+	[ -z "$start_dir" ] && start_dir="$HOME"
+
+	scan "$start_dir" || return 1
+
+	local ds_uniq_n=0 jj_uniq_n=0
+	[ ${#SCAN_DS_STORE_FILES[@]} -gt 0 ] && \
+		ds_uniq_n=$(printf '%s\n' "${SCAN_DS_STORE_FILES[@]}" | sort -u | wc -l | tr -d ' ')
+	[ ${#SCAN_JJ_LOCK_FILES[@]} -gt 0 ] && \
+		jj_uniq_n=$(printf '%s\n' "${SCAN_JJ_LOCK_FILES[@]}" | sort -u | wc -l | tr -d ' ')
+
+	if [ "$ds_uniq_n" -eq 0 ] && [ "$jj_uniq_n" -eq 0 ]; then
+		echo "Nothing to triage."
+		return 0
+	fi
+
+	echo "Triage plan:"
+	[ "$ds_uniq_n" -gt 0 ] && echo "  Delete $ds_uniq_n .DS_Store file(s) from refs/"
+	[ "$jj_uniq_n" -gt 0 ] && echo "  Delete $jj_uniq_n stale .jj/keep/*.lock file(s)"
+
+	if [ "$dry_run" -eq 1 ]; then
+		echo "Dry-run: no files deleted."
+		return 0
+	fi
+
+	if [ "$yes" -eq 0 ]; then
+		if [ ! -t 0 ]; then
+			echo "Non-interactive session. Pass --yes to proceed or --dry-run to preview." >&2
+			return 1
+		fi
+		local reply
+		read -r -p "Proceed? [y/N] " reply
+		case "$reply" in
+			[yY]*) ;;
+			*) echo "Aborted."; return 1 ;;
+		esac
+	fi
+
+	triage_execute
+	return 0
+}
+
+# ---- Entry point ----
+
+git-fsck-all() {
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+
+	reset_scan_state
+
+	case "${1:-}" in
+		-h|--help)
+			cat <<-EOF
+				Usage: git-fsck-all [START_DIR]
+				       git-fsck-all triage [--yes] [--dry-run] [START_DIR]
+
+				Run \`git fsck\` across every git repository found under START_DIR
+				(default: \$HOME). Progress is printed to stderr; the final pass/fail
+				verdict and any real failures go to stdout.
+
+				Known-noise (not counted as failures):
+				  - jj refMissingNewline warnings under refs/jj/        (informational)
+				  - "missing tree" for the empty tree (always-virtual)  (silently ignored)
+				  - "HEAD points to an unborn branch" notices           (silently ignored)
+				  - .DS_Store inside refs/                              (use \`triage\` to remove)
+				  - Stale .jj/keep/*.lock files                         (use \`triage\` to remove)
+
+				Duplicate-entry trees: conflicting names are listed in the failure
+				output. Case-only duplicates (rare) are reported separately and
+				not counted as failures.
+
+				Exit code: 0 if all repos pass, otherwise the number of real failures.
+			EOF
+			return 0
+			;;
+		triage)
+			shift
+			triage "$@"
+			return $?
+			;;
+	esac
+
+	local start_dir="${1:-$HOME}"
+	scan "$start_dir" || return 1
+
+	if [ "$SCAN_TOTAL_REPOS" -eq 0 ]; then
+		echo "No git repositories found under $start_dir."
+		return 0
+	fi
+
+	report
+	return "$SCAN_FAILED"
+}
+
 if ! (return 0 2>/dev/null); then
 	if [ "$1" = "--test" ]; then
 		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
