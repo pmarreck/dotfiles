@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+
+test_webping() {
+	local fails=0
+	local tests=0
+
+	# Source webping to expose its top-level helpers
+	source "$HOME/dotfiles/bin/webping"
+
+	local dir
+	dir=$(mktemp --tmpdir -d webping_test.XXXXXX)
+	trap 'rm -rf "$dir"' RETURN
+
+	# Build a synthetic stats dir matching what webping-curl would produce
+	printf '%s\n%s\n%s\n' '0.100' '0.200' '0.300' > "$dir/https___example.com_.log"
+	printf '%s\n%s\n' '0.500' '0.700' > "$dir/https___slow.example_.log"
+	{
+		printf '%s\t%s\n' "https___example.com_" "https://example.com/"
+		printf '%s\t%s\n' "https___slow.example_" "https://slow.example/"
+	} > "$dir/manifest.tsv"
+
+	local out
+	out=$(webping_print_stats "$dir")
+
+	((tests++))
+	if [[ "$out" == *"https://example.com/"* && "$out" == *"https://slow.example/"* ]]; then
+		echo "✓ summary lists all sites by URL"
+	else
+		echo "✗ summary missing site URLs: $out" >&2
+		((fails++))
+	fi
+
+	((tests++))
+	# mean of 0.1, 0.2, 0.3 = 0.200
+	if [[ "$out" == *"0.200"* ]]; then
+		echo "✓ summary computes correct mean"
+	else
+		echo "✗ summary missing expected mean 0.200: $out" >&2
+		((fails++))
+	fi
+
+	((tests++))
+	# min should appear, max should appear
+	if [[ "$out" == *"0.100"* && "$out" == *"0.300"* ]]; then
+		echo "✓ summary reports min and max"
+	else
+		echo "✗ summary missing min/max: $out" >&2
+		((fails++))
+	fi
+
+	((tests++))
+	# sample count — example.com had 3 samples
+	if [[ "$out" == *" 3 "* || "$out" == *"  3 "* ]]; then
+		echo "✓ summary includes sample count"
+	else
+		echo "✗ summary missing count of 3: $out" >&2
+		((fails++))
+	fi
+
+	# Empty stats dir
+	local empty_dir
+	empty_dir=$(mktemp --tmpdir -d webping_empty.XXXXXX)
+	local empty_out
+	empty_out=$(webping_print_stats "$empty_dir")
+	rm -rf "$empty_dir"
+
+	((tests++))
+	if [[ -z "$empty_out" || "$empty_out" == *"no samples"* ]]; then
+		echo "✓ empty stats dir produces empty or 'no samples' output"
+	else
+		echo "✗ unexpected output for empty dir: $empty_out" >&2
+		((fails++))
+	fi
+
+	# Missing dir
+	local missing_out
+	missing_out=$(webping_print_stats "/nonexistent/path/xyz")
+
+	((tests++))
+	if [[ -z "$missing_out" ]]; then
+		echo "✓ missing stats dir produces no output"
+	else
+		echo "✗ missing dir produced output: $missing_out" >&2
+		((fails++))
+	fi
+
+	# Slug helper round-trips reasonable URLs to safe filenames
+	((tests++))
+	local slug
+	slug=$(webping_safe_name "https://google.com/")
+	if [[ "$slug" == "https___google.com_" ]]; then
+		echo "✓ webping_safe_name slugs URL safely"
+	else
+		echo "✗ unexpected slug '$slug'" >&2
+		((fails++))
+	fi
+
+	if [[ $fails -gt 0 ]]; then
+		echo "$fails of $tests webping tests failed" >&2
+	else
+		echo "All $tests webping tests passed"
+	fi
+	return $fails
+}
+
+if ! (return 0 2>/dev/null); then
+	test_webping
+fi

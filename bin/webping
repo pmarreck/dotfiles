@@ -12,6 +12,9 @@ DESCRIPTION:
 	Sites are resolved to their final redirect destinations once at startup to avoid
 	redirect overhead during monitoring, providing more accurate response time measurements.
 
+	On exit, prints an average-response-time summary per site (count, min, mean, max),
+	collected from per-sample logs in /tmp/webping-<pid>/.
+
 USAGE:
 	webping [--about|--help]
 
@@ -62,10 +65,10 @@ resolve_redirects() {
 			site="https://$site"
 		fi
 		debug "Resolving redirects for $site..."
-		local curl_args
-		curl_args=$(get_curl_args "$site")
 		# Do not use -f so HTTP errors still provide url_effective. If empty, fall back to original site.
-		resolved_site=$(eval "curl -L -s -o /dev/null -w \"%{url_effective}\" $curl_args \"$site\"")
+		declare -a CURL_ARGS=()
+		while IFS= read -r line; do CURL_ARGS+=("$line"); done < <(get_curl_args "$site")
+		resolved_site=$(curl -L -s -o /dev/null -w '%{url_effective}' "${CURL_ARGS[@]}" "$site")
 		if [[ -z "$resolved_site" ]]; then
 			resolved_site="$site"
 		fi
@@ -114,6 +117,66 @@ check_dependencies() {
 	fi
 }
 
+# URL → safe filename slug. Round-trippable via the manifest, not the slug itself.
+webping_safe_name() {
+	local url="$1"
+	printf '%s' "$url" | tr -c 'A-Za-z0-9._-' '_'
+}
+
+# Print average-response-time summary by reading per-site logs from $1.
+# The directory must contain manifest.tsv (slug<TAB>url) and one <slug>.log
+# per site, each line a single time_total value (seconds, float).
+webping_print_stats() {
+	local dir="$1"
+	[[ -d "$dir" ]] || return 0
+	[[ -f "$dir/manifest.tsv" ]] || return 0
+
+	local has_data=0
+	local slug url log
+	while IFS=$'\t' read -r slug url; do
+		[[ -n "$slug" && -n "$url" ]] || continue
+		log="$dir/${slug}.log"
+		[[ -s "$log" ]] || continue
+		has_data=1
+		break
+	done < "$dir/manifest.tsv"
+
+	if [[ $has_data -eq 0 ]]; then
+		echo "(no samples collected)"
+		return 0
+	fi
+
+	echo
+	echo "webping response-time summary (seconds):"
+	printf '  %-50s %5s %8s %8s %8s\n' "site" "n" "min" "mean" "max"
+	printf '  %-50s %5s %8s %8s %8s\n' \
+		"--------------------------------------------------" \
+		"-----" "--------" "--------" "--------"
+
+	while IFS=$'\t' read -r slug url; do
+		[[ -n "$slug" && -n "$url" ]] || continue
+		log="$dir/${slug}.log"
+		[[ -s "$log" ]] || continue
+		awk -v site="$url" '
+			BEGIN { min = -1; max = 0; sum = 0; n = 0 }
+			{
+				v = $1 + 0
+				sum += v
+				n++
+				if (min < 0 || v < min) min = v
+				if (v > max) max = v
+			}
+			END {
+				if (n > 0) {
+					display = site
+					if (length(display) > 50) display = substr(display, 1, 47) "..."
+					printf "  %-50s %5d %8.3f %8.3f %8.3f\n", display, n, min, sum/n, max
+				}
+			}
+		' "$log"
+	done < "$dir/manifest.tsv"
+}
+
 webping() {
 	# Parse arguments before checking dependencies
 	case "${1:-}" in
@@ -143,20 +206,40 @@ webping() {
 	local session_name
 	session_name="webping_session_$$"
 
+	# Per-sample stats directory. /tmp (not $TMPDIR) for stability across the
+	# tmux server boundary — tmux may already be running with a different env.
+	local stats_dir="/tmp/webping-$$"
+	rm -rf -- "$stats_dir"
+	mkdir -p "$stats_dir"
+
 	# Get sites from environment or use defaults
 	local sites
 	readarray -t sites < <(parse_sites)
 
 	if [ ${#sites[@]} -eq 0 ]; then
 		echo "No sites configured. Set WEBPING_SITES or use defaults." >&2
+		rm -rf -- "$stats_dir"
 		return 1
 	fi
 
 	# Resolve redirects
 	readarray -t resolved_sites < <(resolve_redirects "${sites[@]}")
 
+	# Manifest: slug<TAB>url, one line per site, used by webping_print_stats
+	local site safe
+	: > "$stats_dir/manifest.tsv"
+	for site in "${resolved_sites[@]}"; do
+		safe=$(webping_safe_name "$site")
+		printf '%s\t%s\n' "$safe" "$site" >> "$stats_dir/manifest.tsv"
+	done
+
+	# Env-prefix the tmux pane commands so webping-curl writes samples even if
+	# a pre-existing tmux server doesn't carry the parent's env.
+	local stats_prefix="WEBPING_STATS_DIR='$stats_dir' "
+
 	# Create the tmux session with the first site using gping --cmd
-	tmux new-session -d -s "${session_name}" "gping -n 1 --cmd \"$(build_curl_command "${resolved_sites[0]}")\""
+	tmux new-session -d -s "${session_name}" \
+		"${stats_prefix}gping -n 1 --cmd \"$(build_curl_command "${resolved_sites[0]}")\""
 
 	# Set up key binding to kill the entire session with 'q'
 	# Note: This is a global binding, so we must unbind it when done
@@ -164,8 +247,8 @@ webping() {
 
 	# Split horizontally for remaining sites (creates horizontal stripes)
 	for ((i=1; i<${#resolved_sites[@]}; i++)); do
-		local site="${resolved_sites[$i]}"
-		tmux split-window -v "gping -n 1 --cmd \"$(build_curl_command "$site")\""
+		local site_n="${resolved_sites[$i]}"
+		tmux split-window -v "${stats_prefix}gping -n 1 --cmd \"$(build_curl_command "$site_n")\""
 		# Select even layout to keep panes equal sized
 		tmux select-layout even-vertical
 	done
@@ -173,8 +256,12 @@ webping() {
 	# Attach to the session (blocks until session ends or detach)
 	tmux attach-session -t "${session_name}"
 
-	# Clean up: remove the global 'q' binding so it doesn't affect other sessions
+	# Clean up tmux state regardless of how attach exited
 	tmux unbind-key -n q 2>/dev/null
+
+	# Print stats summary, then remove the temp dir
+	webping_print_stats "$stats_dir"
+	rm -rf -- "$stats_dir"
 }
 
 # Run the function if this script is executed directly

@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+
+test_webping_curl() {
+	local fails=0
+	local tests=0
+	local script="$HOME/dotfiles/bin/webping-curl"
+	local work_root
+	work_root=$(mktemp --tmpdir -d webping_curl_test.XXXXXX)
+	local original_path="$PATH"
+
+	trap 'PATH="$original_path"; rm -rf "$work_root"' RETURN
+
+	local fake_bin="$work_root/fake_bin"
+	mkdir -p "$fake_bin"
+
+	# Stub curl: record its argv to a file, exit 0 without making any network call.
+	cat > "$fake_bin/curl" <<'EOF'
+#!/usr/bin/env bash
+{
+	printf 'argc=%d\n' "$#"
+	for arg in "$@"; do
+		printf 'arg=<%s>\n' "$arg"
+	done
+} > "$WEBPING_CURL_TEST_LOG"
+exit 0
+EOF
+	chmod +x "$fake_bin/curl"
+
+	PATH="$fake_bin:$PATH"
+	export WEBPING_CURL_TEST_LOG="$work_root/curl_argv.log"
+
+	"$script" "https://example.com" >/dev/null 2>&1
+
+	((tests++))
+	if [[ -f "$WEBPING_CURL_TEST_LOG" ]]; then
+		echo "✓ stub curl was invoked"
+	else
+		echo "✗ stub curl never ran (PATH override or webping-curl exited early)" >&2
+		((fails++))
+		echo "$fails of $tests webping-curl tests failed" >&2
+		return $fails
+	fi
+
+	((tests++))
+	# The Accept header value should appear as a single argv element (no surrounding quotes,
+	# no splitting on spaces or commas).
+	if grep -Fxq 'arg=<Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8>' "$WEBPING_CURL_TEST_LOG"; then
+		echo "✓ Accept header passed as a single argv element"
+	else
+		echo "✗ Accept header was split across multiple argv elements" >&2
+		((fails++))
+	fi
+
+	((tests++))
+	# The User-Agent should be exactly the realistic Chrome string, as one argv element.
+	if grep -Fxq 'arg=<Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36>' "$WEBPING_CURL_TEST_LOG"; then
+		echo "✓ User-Agent passed as a single argv element"
+	else
+		echo "✗ User-Agent was split or malformed" >&2
+		((fails++))
+	fi
+
+	((tests++))
+	# The URL should appear exactly once. Today, broken tokenization causes header
+	# fragments to be passed as additional positional URLs; this test catches that.
+	local url_count
+	url_count=$(grep -Fc 'arg=<https://example.com>' "$WEBPING_CURL_TEST_LOG")
+	if [[ "$url_count" == "1" ]]; then
+		echo "✓ exactly one URL passed to curl"
+	else
+		echo "✗ expected 1 URL arg, got $url_count" >&2
+		((fails++))
+	fi
+
+	((tests++))
+	# No argv element should start with a stray double-quote — that's a clear sign
+	# of broken tokenization (literal quote characters surviving as part of an arg).
+	if ! grep -Eq 'arg=<"' "$WEBPING_CURL_TEST_LOG"; then
+		echo "✓ no argv element contains a stray quote character"
+	else
+		echo "✗ argv contains stray-quote elements (broken tokenization)" >&2
+		((fails++))
+	fi
+
+	((tests++))
+	# Sanity bound on argc: 1 URL + ~14 -H pairs (28) + UA (2) + http2 + compressed
+	# + connect-timeout pair + max-time pair + -L + -s + -o /dev/null = ~40. The
+	# pre-fix broken tokenization produced ~60 by splitting headers. Anything over
+	# 50 implies tokenization is still wrong.
+	local argc
+	argc=$(awk -F= '/^argc=/{print $2}' "$WEBPING_CURL_TEST_LOG")
+	if [[ -n "$argc" && $argc -le 50 ]]; then
+		echo "✓ argc is in expected range ($argc)"
+	else
+		echo "✗ argc unexpected: $argc (>50 implies tokenization is still broken)" >&2
+		((fails++))
+	fi
+
+	if [[ $fails -gt 0 ]]; then
+		echo "$fails of $tests webping-curl tests failed" >&2
+	else
+		echo "All $tests webping-curl tests passed"
+	fi
+	return $fails
+}
+
+if ! (return 0 2>/dev/null); then
+	test_webping_curl
+fi
