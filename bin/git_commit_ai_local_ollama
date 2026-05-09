@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 
-# Use a local LLM for generating AI-powered git commit messages
-git_commit_ai_local() {
-	OPENAI_MODEL="$DEFAULT_LOCAL_AI_MODEL" \
-	OPENAI_HOST="$DEFAULT_LOCAL_AI_HOST" \
+# Use a local Ollama server for generating AI-powered git commit messages
+git_commit_ai_local_ollama() {
+	OPENAI_MODEL="${OPENAI_MODEL:-$DEFAULT_LOCAL_AI_MODEL}" \
+	OPENAI_HOST="${OPENAI_HOST:-$DEFAULT_LOCAL_AI_HOST}" \
 	OPENAI_PATH="/api/chat" \
 	OPENAI_PROTOCOL="http" \
 	OPENAI_API_KEY="fake" \

@@ -40,8 +40,9 @@ git_commit_ai() {
 	user_prompt="Output only the git commit command for the following git diff. Do not include any markdown formatting, triple backticks, discussion, or description. Do not include any 'git add' command; the user will do that if necessary. Provide the command in plain text, exactly as it should be entered in a command-line interface. If multiple lines of commit messages are required, use separate '-m' arguments to git. If no diff data is present, just state 'No diff data'."
 	trap 'rm -f "$temp_json" && rm -f "$temp_json_out"' EXIT # ensure temp file is cleaned up on exit
 
+	# Detect Ollama-style API by path, not hostname — both Ollama and oMLX run on localhost
 	local_llm=false
-	if [[ "$openai_host" == localhost* ]]; then
+	if [[ "$openai_path" == "/api/chat" ]]; then
 		local_llm=true
 	fi
 

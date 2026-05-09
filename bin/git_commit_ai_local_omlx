@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+
+# Use a local oMLX server for generating AI-powered git commit messages.
+# oMLX exposes an OpenAI-compatible API; auth via OMLX_API_KEY.
+git_commit_ai_local_omlx() {
+	if [[ -z "$OMLX_API_KEY" ]]; then
+		echo "OMLX_API_KEY is not defined." >&2
+		return 1
+	fi
+	OPENAI_MODEL="${OPENAI_MODEL:-${OMLX_MODEL:-gemma4-heretical-mlx-8bit}}" \
+	OPENAI_HOST="${OMLX_HOST:-localhost:8000}" \
+	OPENAI_PATH="${OMLX_PATH:-/v1/chat/completions}" \
+	OPENAI_PROTOCOL="${OMLX_PROTOCOL:-http}" \
+	OPENAI_API_KEY="$OMLX_API_KEY" \
+	git_commit_ai
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

@@ -61,7 +61,7 @@ PATH_ADDITIONS+=(
 	"$DOCUMENTS/jumpscript/bin"
 	"$DOCUMENTS/yt-transcriber/bin"
 	"$DOCUMENTS/printable_binary/bin"
-	"$DOCUMENTS/rm-safe/bin"
+	"$DOCUMENTS/rm_safe/bin"
 )
 
 # Auto-discover Zig/Nix project bin dirs.

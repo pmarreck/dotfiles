@@ -183,7 +183,8 @@ alias loc='tokei'
 alias procs=list-procs
 
 alias gcai=git_commit_ai
-alias gcail=git_commit_ai_local
+alias gcail=git_commit_ai_local_omlx
+alias git_commit_ai_local=git_commit_ai_local_omlx
 
 # homebrew utils
 # alias bubu='brew update && brew upgrade'
