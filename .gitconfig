@@ -2,7 +2,6 @@
 [user]
 # Please adapt and uncomment the following lines:
 	name = Peter Marreck
-	email = [EMAIL_ADDRESS]
 [core]
 	precomposeUnicode = true
 	pager = delta --tabs=2
