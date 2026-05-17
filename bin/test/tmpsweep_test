@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+
+# 'tmpsweep' should be on PATH already, so no need to source it
+
+test_tmpsweep() {
+	local fails=0
+	local tests=0
+	local root
+	root=$(mktemp -d --tmpdir tmpsweep_test.XXXXXX) || { echo "mktemp failed" >&2; return 1; }
+	# Make sure we clean up the fake root no matter what
+	trap "rm -rf '$root'" RETURN
+
+	# Find a definitely-dead PID by spawning a child, waiting, then confirming
+	local dead_pid
+	( exec true ) & dead_pid=$!
+	wait "$dead_pid" 2>/dev/null
+	# Bail if PID got recycled before we could use it
+	if kill -0 "$dead_pid" 2>/dev/null; then
+		echo "could not obtain a dead PID for testing" >&2
+		return 1
+	fi
+
+	# Seed: dead PID dir, alive PID dir (this shell), non-numeric dir, stray file
+	local alive_pid=$$
+	mkdir -p "$root/$alive_pid"
+	mkdir -p "$root/$dead_pid"
+	mkdir -p "$root/non-numeric"
+	echo "leave alone" > "$root/some-file"
+	echo "alive content" > "$root/$alive_pid/file"
+	echo "dead content"  > "$root/$dead_pid/file"
+
+	# --- Test 1: default sweep removes only the orphan dir
+	(( tests++ ))
+	TMPSWEEP_ROOT="$root" tmpsweep > /dev/null
+	assert "$?" == "0" "tmpsweep should exit 0"
+	(( fails += $? ))
+
+	(( tests++ ))
+	[ -d "$root/$alive_pid" ]
+	assert "$?" == "0" "alive PID dir must survive default sweep"
+	(( fails += $? ))
+
+	(( tests++ ))
+	[ ! -e "$root/$dead_pid" ]
+	assert "$?" == "0" "dead PID dir must be removed by default sweep"
+	(( fails += $? ))
+
+	(( tests++ ))
+	[ -d "$root/non-numeric" ]
+	assert "$?" == "0" "non-numeric dir must be left alone"
+	(( fails += $? ))
+
+	(( tests++ ))
+	[ -f "$root/some-file" ]
+	assert "$?" == "0" "stray file must be left alone"
+	(( fails += $? ))
+
+	# --- Test 2: dry-run reports but does not delete
+	mkdir -p "$root/$dead_pid"
+	echo "dead content" > "$root/$dead_pid/file"
+
+	(( tests++ ))
+	TMPSWEEP_ROOT="$root" tmpsweep --dry-run > /dev/null
+	assert "$?" == "0" "tmpsweep --dry-run should exit 0"
+	(( fails += $? ))
+
+	(( tests++ ))
+	[ -d "$root/$dead_pid" ]
+	assert "$?" == "0" "dead PID dir must remain after --dry-run"
+	(( fails += $? ))
+
+	# --- Test 3: --verbose mentions the dead PID
+	(( tests++ ))
+	local out
+	out=$(TMPSWEEP_ROOT="$root" tmpsweep --verbose 2>&1)
+	assert "$out" =~ "$dead_pid" "verbose output must mention the dead PID"
+	(( fails += $? ))
+
+	# --- Test 4: refuses obviously-dangerous root
+	(( tests++ ))
+	TMPSWEEP_ROOT="$HOME" tmpsweep > /dev/null 2>&1
+	local rc=$?
+	assert "$rc" != "0" "must refuse to operate on \$HOME"
+	(( fails += $? ))
+
+	# --- Test 5: no orphans -> no output on stdout
+	(( tests++ ))
+	local out2
+	out2=$(TMPSWEEP_ROOT="$root" tmpsweep)
+	assert "$out2" == "" "no output expected when nothing to sweep"
+	(( fails += $? ))
+
+	if [ $fails -gt 0 ]; then
+		red_text "$fails of $tests tmpsweep tests failed!\n" >&2
+	else
+		green_text "All $tests tmpsweep tests passed!\n" >&2
+	fi
+	return $fails
+}
+
+# Run the tests if this file is executed directly
+if [ "$(basename "${0##\-}")" = "tmpsweep_test" ]; then
+	test_tmpsweep
+fi

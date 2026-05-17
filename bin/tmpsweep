@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+
+tmpsweep() {
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+
+	local dry_run=0
+	local verbose=0
+
+	while [ $# -gt 0 ]; do
+		case "$1" in
+			-h|--help)
+				cat <<-USAGE
+				Usage: tmpsweep [-n|--dry-run] [-v|--verbose]
+
+				Remove orphaned /tmp/<numeric-PID> directories whose owning process
+				is no longer running. Targets only numeric-named directories at the
+				root of /tmp (matches the per-shell TMPDIR convention from
+				~/dotfiles/.envconfig).
+
+				Options:
+				  -n, --dry-run  Identify and report; do not delete
+				  -v, --verbose  List each orphan (pid + size) before the summary
+				  -h, --help     Show this help
+
+				Environment:
+				  TMPSWEEP_ROOT  Override sweep root (default: /tmp). Test-only.
+				USAGE
+				return 0
+				;;
+			-n|--dry-run) dry_run=1 ;;
+			-v|--verbose) verbose=1 ;;
+			*) echo "tmpsweep: unknown option: $1" >&2; return 2 ;;
+		esac
+		shift
+	done
+
+	local root="${TMPSWEEP_ROOT:-/tmp}"
+	local resolved
+	resolved=$(cd "$root" 2>/dev/null && pwd -P) || {
+		echo "tmpsweep: root inaccessible: $root" >&2
+		return 3
+	}
+
+	# Safety: refuse roots that would be catastrophic if accidentally targeted
+	case "$resolved" in
+		/|/etc|/home|/Users|/var|/usr|"$HOME")
+			echo "tmpsweep: refusing to operate on $resolved" >&2
+			return 4
+			;;
+	esac
+
+	local count=0 total_kb=0
+	local entry pid sz_kb
+
+	for entry in "$resolved"/*; do
+		[ -d "$entry" ] || continue
+		pid="${entry##*/}"
+		case "$pid" in
+			''|*[!0-9]*) continue ;;
+		esac
+		# Process still alive -> skip
+		if kill -0 "$pid" 2>/dev/null; then
+			continue
+		fi
+		sz_kb=$(du -sk "$entry" 2>/dev/null | awk '{print $1}')
+		sz_kb=${sz_kb:-0}
+		if [ "$verbose" -eq 1 ]; then
+			printf '%s\t%d KiB\n' "$pid" "$sz_kb"
+		fi
+		if [ "$dry_run" -eq 0 ]; then
+			if ! rm -rf "$entry"; then
+				echo "tmpsweep: failed to remove $entry" >&2
+				continue
+			fi
+		fi
+		count=$((count + 1))
+		total_kb=$((total_kb + sz_kb))
+	done
+
+	local action="removed"
+	[ "$dry_run" -eq 1 ] && action="would remove"
+	if [ "$count" -gt 0 ] || [ "$verbose" -eq 1 ]; then
+		printf 'tmpsweep: %s %d orphaned dir(s) (%d MiB freed)\n' "$action" "$count" "$((total_kb / 1024))"
+	fi
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Source the test definitions then run; stdout muted, stderr preserved
+		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+		test_tmpsweep > /dev/null
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

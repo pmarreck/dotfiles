@@ -1,7 +1,14 @@
 #!/usr/bin/env bash
 
-# Guard against being sourced multiple times (e.g. .bash_profile -> .bashrc both sourcing this)
-[[ "${_PATHCONFIG_LOADED:-}" == "1" ]] && return 0
+# NOTE: this file is intentionally idempotent — PATH is rebuilt from ORIG_PATH
+# on every invocation, so re-sourcing always produces the same result.
+# An earlier "_PATHCONFIG_LOADED guard" was removed 2026-05-17 after it caused
+# a Claude-Code-staleness bug: Claude inherited PATH from the launching shell
+# but never re-ran .pathconfig because the non-exported _PATHCONFIG_LOADED flag
+# unset in the subshell silently masked a stale PATH snapshot.
+# Lesson: when construction is idempotent, "skip if already loaded" is a
+# pessimization that trades a few ms of redundant work for a real staleness
+# footgun. Re-sourcing must be cheap and correct, full stop.
 
 [[ "$(type -t append_dotfile_progress)" == "function" ]] || . "$HOME/dotfiles/bin/src/append_dotfile_progress.sh"
 [ -n "${DEBUG_SHELLCONFIG}" ] && echo "Entering $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")" || ${INTERACTIVE_SHELL:-false} && ${LOGIN_SHELL:-false} && append_dotfile_progress "P"
@@ -119,8 +126,6 @@ IFS=$_OLD_IFS
 unset _OLD_IFS _path
 
 export PATH
-
-_PATHCONFIG_LOADED=1
 
 [ -n "${DEBUG_SHELLCONFIG}" ] && echo "Exiting $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")"
 [ -n "${DEBUG_PATHCONFIG}" ] && echo $PATH || :

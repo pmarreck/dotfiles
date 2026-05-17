@@ -251,6 +251,9 @@ export CHARSET_HEX="${CHARSET_NUM}abcdef"
 TMPDIR=$(realpath "/tmp")
 TMPDIR="$TMPDIR/$$" && mkdir -p "$TMPDIR" # a canonical process-ID-specific temp directory
 export TMPDIR
+# Auto-clean our per-shell TMPDIR on exit (pairs with the TMPDIR setup three lines above).
+# Doesn't fire on SIGKILL / power loss; `tmpsweep` reaps any orphans those leave behind.
+trap 'rm -rf -- "$TMPDIR"' EXIT
 
 # Bash integer handling
 # In case you have to ever recompute it:
