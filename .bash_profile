@@ -9,13 +9,13 @@
 
 # Require at least Bash 4.2
 if [[ $BASH_VERSION =~ ^([0-9]+)\.([0-9]+) ]]; then
-  if (( BASH_REMATCH[1] > 4 || ( BASH_REMATCH[1] == 4 && BASH_REMATCH[2] >= 2 ) )); then
-    : # echo "Bash version is greater than or equal to 4.2"
-  else
-    echo "Warning: Bash version less than 4.2 detected. Expect incompatible behavior." >&2
-  fi
+	if (( BASH_REMATCH[1] > 4 || ( BASH_REMATCH[1] == 4 && BASH_REMATCH[2] >= 2 ) )); then
+		: # echo "Bash version is greater than or equal to 4.2"
+	else
+		echo "Warning: Bash version less than 4.2 detected. Expect incompatible behavior." >&2
+	fi
 else
-  echo "Warning: Couldn't parse Bash version: $BASH_VERSION" >&2
+	echo "Warning: Couldn't parse Bash version: $BASH_VERSION" >&2
 fi
 
 # since .bash_profile is usually only included for non-login shells
@@ -31,15 +31,14 @@ shopt -q login_shell && LOGIN_SHELL=true || LOGIN_SHELL=false
 
 # subtle shell characteristics indication, but only if interactive
 if $INTERACTIVE_SHELL; then
-    append_dotfile_progress "interactive"
-    if $LOGIN_SHELL; then
-        append_dotfile_progress "login"
-    else
-        append_dotfile_progress "non-login"
-    fi
+	append_dotfile_progress "interactive"
+	if $LOGIN_SHELL; then
+		append_dotfile_progress "login"
+	else
+		append_dotfile_progress "non-login"
+	fi
 fi
 
-# most things should be sourced via source_relative... except source_relative itself
 # if the function is not already defined, define it. use posix syntax for portability
 # shellcheck disable=SC1090
 
@@ -53,18 +52,18 @@ fi
 # Set SED env var to first gnu sed found on PATH; otherwise warn
 # Set SED env var - with Nix, sed is already GNU sed
 if [ -z ${SED+x} ]; then
-  if [[ "$(sed --version 2>/dev/null | head -1)" =~ .*GNU.* ]]; then
-    export SED="sed"
-  else
-    echo "Warning from .bash_profile: sed is not GNU sed. Some scripts may fail." >&2
-    export SED="sed"
-  fi
+	if [[ "$(sed --version 2>/dev/null | head -1)" =~ .*GNU.* ]]; then
+		export SED="sed"
+	else
+		echo "Warning from .bash_profile: sed is not GNU sed. Some scripts may fail." >&2
+		export SED="sed"
+	fi
 fi
 
 # echo "SED in .bash_profile:56 is: $SED"
 # Awk-ward! (see note below about "using the right awk"...)
 [ -z "${AWK+x}" ] && \
-  export AWK=$(command -v frawk || command -v gawk || command -v awk)
+	export AWK=$(command -v frawk || command -v gawk || command -v awk)
 
 # Warp terminal seems to have nonstandard behavior and non-gnu sed breaks things
 # so we are using this workaround:
@@ -73,15 +72,15 @@ fi
 # Find the first GNU sed in PATH
 unset SED
 for candidate_sed in $(type -a -p gsed) $(type -a -p sed); do
-  if [[ "$($candidate_sed --version 2>/dev/null | head -1)" =~ .*GNU.* ]]; then
-    export SED=$candidate_sed
-    break
-  fi
+	if [[ "$($candidate_sed --version 2>/dev/null | head -1)" =~ .*GNU.* ]]; then
+		export SED=$candidate_sed
+		break
+	fi
 done
 # Warn if no GNU sed found
 if [ -z ${SED+x} ]; then
-  echo "Warning from .bash_profile: No GNU sed found in PATH. This may result in problems. Using system's default sed." >&2
-  export SED=`which sed`
+	echo "Warning from .bash_profile: No GNU sed found in PATH. This may result in problems. Using system's default sed." >&2
+	export SED=`which sed`
 fi
 
 # enable timing debugging
@@ -103,7 +102,7 @@ fi
 # enable tests if any script modification times are different
 # Skip for LLM assistants to prevent hangs
 if [[ "${SKIP_COMPLEX_SHELL_SETUP:-false}" != "true" ]] && [[ "${ENABLE_DOTFILE_TESTS:-false}" == "true" ]]; then
-  . "${HOME}/dotfiles/run_tests_on_change.sh"
+	. "${HOME}/dotfiles/run_tests_on_change.sh"
 fi
 
 truthy DEBUG_SHELLCONFIG && echo "Exiting $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")"

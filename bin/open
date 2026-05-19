@@ -2,11 +2,12 @@
 
 open() {
 	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-	
+
 	# Detect OS
 	if [[ "$OSTYPE" == "darwin"* ]]; then
 		# On macOS, use the system's open command
-		command /usr/bin/open "$@"
+		# if no args, open current dir
+		command /usr/bin/open "${@:-.}"
 	else
 		# On Linux, use xdg-open
 		# if no args, open current dir

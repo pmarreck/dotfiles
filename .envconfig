@@ -59,7 +59,7 @@ export LANGUAGE=en_US
 export LC_CTYPE="en_US.UTF-8"
 
 # Fixed PAC_USE_AUR logic - was using $(...) which always returns 0
-if [ -f /etc/os-release ] && grep -q '^NAME="Arch' /etc/os-release; then
+if [ -f /etc/os-release ] && "${GREP_QUIET[@]}" '^NAME="Arch' /etc/os-release; then
     export PAC_USE_AUR=true
 fi
 

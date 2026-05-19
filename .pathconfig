@@ -19,6 +19,8 @@
 # are applied idempotently by construction. To force a re-capture (e.g. after NixOS rebuild),
 # run: unset ORIG_PATH; . ~/.pathconfig
 : "${ORIG_PATH:=$PATH}"
+# export read-only:
+readonly ORIG_PATH
 export ORIG_PATH
 
 # Source path helpers (prepend_path, exclude_path)

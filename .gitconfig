@@ -2,12 +2,15 @@
 [user]
 # Please adapt and uncomment the following lines:
 	name = Peter Marreck
+	email = lumbergh@gmail.com
 [core]
 	precomposeUnicode = true
-	pager = delta --tabs=2
+	#pager = delta --tabs=2
+	pager = hunk pager
 	editor = code --wait
 [interactive]
-	difffilter = delta --tabs=2
+	#difffilter = delta --tabs=2
+	difffilter = hunk pager
 [delta]
 	navigate = true
 	side-by-side = true
@@ -36,8 +39,6 @@
 [init]
 	defaultBranch = yolo
 [credential "https://github.com"]
-	helper =
 	helper = !/run/current-system/sw/bin/gh auth git-credential
 [credential "https://gist.github.com"]
-	helper =
 	helper = !/run/current-system/sw/bin/gh auth git-credential

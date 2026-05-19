@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 
+(( ${#GREP_QUIET[@]} )) || export GREP_QUIET=(grep -q) # Ensure GREP_QUIET is set
+
 ansi-chart() {
 	local reset="\e[0m"
-	
+
 	# Function to determine if background is light or dark
 	# Returns 0 for light (use black text), 1 for dark (use white text)
 	is_light_bg() {
@@ -11,13 +13,13 @@ ansi-chart() {
 		local luminance=$(( (r * 299 + g * 587 + b * 114) / 1000 ))
 		[[ $luminance -gt 128 ]]
 	}
-	
+
 	# 3/4-bit colors (always supported)
 	echo -e "\n${reset}=== 3/4-bit ANSI Colors (Standard 16 Colors) ==="
 	echo "Foreground: \\e[30-37m and \\e[90-97m (bright)"
 	echo "Background: \\e[40-47m and \\e[100-107m (bright)"
 	echo ""
-	
+
 	# Foreground colors
 	echo "Foreground colors:"
 	for i in {30..37} {90..97}; do
@@ -25,7 +27,7 @@ ansi-chart() {
 		[[ $i == 37 ]] && echo ""
 	done
 	echo -e "\n"
-	
+
 	# Background colors
 	echo "Background colors:"
 	for i in {40..47}; do
@@ -52,14 +54,14 @@ ansi-chart() {
 		esac
 	done
 	echo -e "\n"
-	
+
 	# Check for 256 color support
-	if [[ "$TERM" == *"256color"* ]] || [[ -n "$COLORTERM" ]] || tput colors 2>/dev/null | grep -q "256\|16777216"; then
+	if [[ "$TERM" == *"256color"* ]] || [[ -n "$COLORTERM" ]] || tput colors 2>/dev/null | "${GREP_QUIET[@]}" "256\|16777216"; then
 		echo -e "\n${reset}=== 8-bit ANSI Colors (256 Colors) ==="
 		echo "Foreground: \\e[38;5;<0-255>m"
 		echo "Background: \\e[48;5;<0-255>m"
 		echo ""
-		
+
 		# Foreground - System colors (0-15)
 		echo "Foreground - System colors (0-15):"
 		for i in {0..15}; do
@@ -67,7 +69,7 @@ ansi-chart() {
 			[[ $i == 7 || $i == 15 ]] && echo ""
 		done
 		echo ""
-		
+
 		# Foreground - Color cube (16-231)
 		echo "Foreground - 6x6x6 Color cube (16-231):"
 		for r in {0..5}; do
@@ -81,7 +83,7 @@ ansi-chart() {
 			echo ""
 		done
 		echo ""
-		
+
 		# Foreground - Grayscale (232-255)
 		echo "Foreground - Grayscale (232-255):"
 		for i in {232..255}; do
@@ -89,7 +91,7 @@ ansi-chart() {
 			[[ $(( (i - 232 + 1) % 12 )) == 0 ]] && echo ""
 		done
 		echo -e "\n"
-		
+
 		# Background - System colors (0-15)
 		echo "Background - System colors (0-15):"
 		for i in {0..15}; do
@@ -104,7 +106,7 @@ ansi-chart() {
 			[[ $i == 7 || $i == 15 ]] && echo ""
 		done
 		echo ""
-		
+
 		# Background - Color cube (16-231) - sample every 6th color for readability
 		echo "Background - 6x6x6 Color cube (16-231, sampled):"
 		for r in {0..5}; do
@@ -126,7 +128,7 @@ ansi-chart() {
 			echo ""
 		done
 		echo ""
-		
+
 		# Background - Grayscale (232-255)
 		echo "Background - Grayscale (232-255):"
 		for i in {232..255}; do
@@ -140,14 +142,14 @@ ansi-chart() {
 		done
 		echo ""
 	fi
-	
+
 	# Check for 24-bit true color support
 	if [[ "$COLORTERM" == "truecolor" ]] || [[ "$COLORTERM" == "24bit" ]] || [[ "$TERM" == *"direct"* ]]; then
 		echo -e "\n${reset}=== 24-bit True Color (16.7 million colors) ==="
 		echo "Foreground: \\e[38;2;<r>;<g>;<b>m (r,g,b = 0-255)"
 		echo "Background: \\e[48;2;<r>;<g>;<b>m (r,g,b = 0-255)"
 		echo ""
-		
+
 		# Foreground - RGB gradient samples
 		echo "Foreground - RGB gradient samples:"
 		# Red gradient
@@ -168,7 +170,7 @@ ansi-chart() {
 			printf "\e[38;2;0;0;${b}m■\e[0m "
 		done
 		echo -e "\n"
-		
+
 		# Background - RGB gradient samples
 		echo "Background - RGB gradient samples:"
 		# Red gradient
@@ -201,7 +203,7 @@ ansi-chart() {
 			fi
 		done
 		echo -e "\n"
-		
+
 		# Rainbow gradient with alphabet
 		echo "Foreground - Rainbow gradient (alphabet):"
 		local alphabet="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
@@ -210,13 +212,13 @@ ansi-chart() {
 			local hue=$((i * 360 / steps))
 			local r g b
 			local char="${alphabet:$i:1}"
-			
+
 			# HSV to RGB conversion (simplified, S=1, V=1)
 			local h=$((hue / 60))
 			local f=$((hue % 60))
 			local x=$((255 * f / 60))
 			local y=$((255 * (60 - f) / 60))
-			
+
 			case $h in
 				0) r=255; g=$x; b=0 ;;
 				1) r=$y; g=255; b=0 ;;
@@ -226,22 +228,22 @@ ansi-chart() {
 				5) r=255; g=0; b=$y ;;
 				*) r=255; g=0; b=0 ;;
 			esac
-			
+
 			printf "\e[38;2;${r};${g};${b}m${char}\e[0m"
 		done
 		echo -e "\n"
-		
+
 		echo "Background - Rainbow gradient:"
 		for ((i=0; i<steps; i++)); do
 			local hue=$((i * 360 / steps))
 			local r g b
-			
+
 			# HSV to RGB conversion (simplified, S=1, V=1)
 			local h=$((hue / 60))
 			local f=$((hue % 60))
 			local x=$((255 * f / 60))
 			local y=$((255 * (60 - f) / 60))
-			
+
 			case $h in
 				0) r=255; g=$x; b=0 ;;
 				1) r=$y; g=255; b=0 ;;
@@ -251,7 +253,7 @@ ansi-chart() {
 				5) r=255; g=0; b=$y ;;
 				*) r=255; g=0; b=0 ;;
 			esac
-			
+
 			if is_light_bg $r $g $b; then
 				printf "\e[48;2;${r};${g};${b};30m \e[0m"
 			else
@@ -260,7 +262,7 @@ ansi-chart() {
 		done
 		echo ""
 	fi
-	
+
 	echo ""
 }
 

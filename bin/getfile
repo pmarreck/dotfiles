@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+(( ${#GREP_QUIET[@]} )) || export GREP_QUIET=(grep -q) # Ensure GREP_QUIET is set
+
 usage() {
 	cat <<'USAGE'
 Usage: getfile [options] URL [URL...]
@@ -48,7 +50,7 @@ stream_download() {
 find_stream_unzipper() {
 	if command -v bsdtar >/dev/null 2>&1; then
 		echo bsdtar
-	elif tar --version 2>&1 | grep -q libarchive; then
+	elif tar --version 2>&1 | "${GREP_QUIET[@]}" libarchive; then
 		echo tar
 	else
 		return 1

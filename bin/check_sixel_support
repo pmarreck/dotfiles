@@ -2,8 +2,9 @@
 
 check_sixel_support() {
 		[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+		(( ${#GREP_QUIET[@]} )) || export GREP_QUIET=(grep -q) # Ensure GREP_QUIET is set
 		# Check if the terminal supports Sixel via infocmp
-		if infocmp -1 | grep -q "sixel"; then
+		if infocmp -1 | "${GREP_QUIET[@]}" "sixel"; then
 				[ -n "$DEBUG_SHELLCONFIG" ] && echo "Sixel support detected via terminfo." >&2
 				return 0
 		fi

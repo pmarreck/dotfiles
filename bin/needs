@@ -3,9 +3,14 @@
 needs() {
 	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	local bin="$1"
+	local err_msg="%s is required but it's not installed or in PATH"
 	shift
 	command -v "$bin" >/dev/null 2>&1 || {
-		printf "%s is required but it's not installed or in PATH; %s\n" "$bin" "$*" >&2
+		if (( $# )); then
+			printf "${err_msg}; %s\n" "$bin" "$*" >&2
+		else
+			printf "${err_msg}\n" "$bin" >&2
+		fi
 		return 1
 	}
 }

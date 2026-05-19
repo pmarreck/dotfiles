@@ -6,6 +6,8 @@
 YELLOW='\033[1;33m'
 RESET='\033[0m'
 
+(( ${#GREP_QUIET[@]} )) || export GREP_QUIET=(grep -q) # Ensure GREP_QUIET is set
+
 warn_lossy() {
 	echo -e "${YELLOW}Warning:${RESET} $1 is from a lossy source format." >&2
 	echo -e "${YELLOW}  Converting lossy→lossless does not recover lost data, bloats file size, and accumulates artifacts on re-encoding.${RESET}" >&2
@@ -99,12 +101,12 @@ jxl_is_lossless() {
 	info=$(jxlinfo "$file" 2>/dev/null)
 	# If JPEG reconstruction data is present, the source was a lossy JPEG
 	# even if the JXL encoding itself was lossless
-	if echo "$info" | grep -q "JPEG bitstream reconstruction"; then
+	if echo "$info" | "${GREP_QUIET[@]}" "JPEG bitstream reconstruction"; then
 		return 1
 	fi
 	# jxlinfo reports "lossless" or "(possibly) lossless" for d=0
 	# and "lossy" for d>0
-	if echo "$info" | grep -q "lossless"; then
+	if echo "$info" | "${GREP_QUIET[@]}" "lossless"; then
 		return 0
 	else
 		return 1

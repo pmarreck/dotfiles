@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+(( ${#GREP_QUIET[@]} )) || export GREP_QUIET=(grep -q) # Ensure GREP_QUIET is set
+
 edit() {
 	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	if [ $# -eq 0 ]; then
@@ -14,11 +16,11 @@ edit() {
 	# if the file is a function, edit it by running it with EDIT=1 (which in my bash functions will fire up an editor at that line)
 	elif contains "$(functions)" $1; then
 		EDIT=1 $1
-	# if the file is an executable, edit it
+	# if the file is an executable script, edit it
 	elif contains "$(executables --scripts)" $1; then
 		local full_path=$(which "$1")
 		# search for presence of "unset EDIT" in file to assume it uses my pattern of firing up an editor for that file or function if EDIT is set and it is run
-		if grep -q "unset EDIT" "$full_path"; then
+		if "${GREP_QUIET[@]}" "unset EDIT" "$full_path"; then
 			EDIT=1 "$1"
 		else
 			choose_editor "$full_path"
