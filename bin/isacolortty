@@ -2,7 +2,17 @@
 
 isacolortty() {
 	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-	[[ "$TERM" =~ 'color' ]] && return 0 || return 1
+	# Precedence: NO_COLOR > FORCE_COLOR > COLORTERM > TERM allowlist > TERM substring
+	[ -n "${NO_COLOR:-}" ] && return 1
+	[ -n "${FORCE_COLOR:-}" ] && return 0
+	case "${COLORTERM:-}" in
+		truecolor|24bit|yes|true) return 0 ;;
+	esac
+	# Modern color terminals whose TERM lacks the literal substring "color"
+	case "${TERM:-}" in
+		xterm-ghostty|ghostty|xterm-kitty|kitty|wezterm|alacritty) return 0 ;;
+	esac
+	[[ "${TERM:-}" =~ color ]] && return 0 || return 1
 }
 
 # Run the function if this script is executed directly
@@ -10,7 +20,8 @@ if ! (return 0 2>/dev/null); then
 	# Check if we are running tests
 	if [ "$1" = "--test" ]; then
 		# Run tests from the test file
-		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+		_test_file="$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+		if [ -f "$_test_file" ]; then . "$_test_file" > /dev/null; fi
 	else
 		# If called directly, pass all arguments to the function
 		$(basename "${0##\-}") "$@"

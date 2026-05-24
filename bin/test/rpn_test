@@ -75,6 +75,4 @@ rpn_test() {
 }
 
 # Run the tests if this file is executed directly
-if ! (return 0 2>/dev/null); then
   rpn_test
-fi

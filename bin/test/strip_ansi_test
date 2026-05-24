@@ -10,6 +10,4 @@ test_strip_ansi() {
 }
   
 # Run the tests if this file is executed directly
-if ! (return 0 2>/dev/null); then
   test_strip_ansi
-fi

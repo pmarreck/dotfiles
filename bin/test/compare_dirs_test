@@ -393,7 +393,5 @@ test_compare_dirs() {
 }
 
 # Run if executed directly
-if ! (return 0 2>/dev/null); then
 	test_compare_dirs
 	exit $?
-fi

@@ -98,7 +98,4 @@ test_tmpsweep() {
 	return $fails
 }
 
-# Run the tests if this file is executed directly
-if [ "$(basename "${0##\-}")" = "tmpsweep_test" ]; then
-	test_tmpsweep
-fi
+test_tmpsweep

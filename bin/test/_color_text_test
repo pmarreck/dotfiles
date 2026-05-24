@@ -28,7 +28,7 @@ fi
 FUNCTION_NAME="${COLOR_NAME}_text"
 
 # Compare the hexdump output to avoid escape sequence interpretation issues
-result="$($FUNCTION_NAME "test" | hexdump -C)"
+result="$(TERM=xterm-256color $FUNCTION_NAME "test" | hexdump -C)"
 expected="$(printf "\033[${COLOR_CODE}mtest\033[0m" | hexdump -C)"
 
 if [ "$result" = "$expected" ]; then

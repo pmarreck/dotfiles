@@ -359,7 +359,8 @@ decrypt() {
 
 if ! (return 0 2>/dev/null); then
 	if [ "$1" = "--test" ]; then
-		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+		_test_file="$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+		if [ -f "$_test_file" ]; then . "$_test_file" > /dev/null; fi
 	else
 		$(basename "${0##\-}") "$@"
 	fi

@@ -129,7 +129,5 @@ test_ds_bore() {
 	fi
 }
 
-if ! (return 0 2>/dev/null); then
 	test_ds_bore
 	exit $?
-fi

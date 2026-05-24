@@ -8,6 +8,4 @@ test_trim() {
 }
 
 # Run the tests if this file is executed directly
-if [ "$(basename "${0##\-}")" = "trim_test" ]; then
   test_trim
-fi

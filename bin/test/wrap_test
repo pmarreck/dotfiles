@@ -53,6 +53,4 @@ baz quux"
   return $test_fail_count
 }
 
-if [ "$(basename "${0##\-}")" = "wrap_test" ]; then
   wrap_test
-fi

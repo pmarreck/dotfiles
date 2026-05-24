@@ -117,6 +117,4 @@ test_encrypt_decrypt() {
 }
 
 # Run the test function if this file is executed directly
-if ! (return 0 2>/dev/null); then
   test_encrypt_decrypt
-fi

@@ -14,11 +14,9 @@ test_echo_rand_color() {
   assert "$?" == "0"
   
   # Test that the output contains ANSI color codes
-  echo "$output" | grep -q "\e\["
+  echo "$output" | grep -q $'\e\['
   assert "$?" == "0"
 }
 
 # Run the test if this script is executed directly
-if ! (return 0 2>/dev/null); then
   test_echo_rand_color
-fi

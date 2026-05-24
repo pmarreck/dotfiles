@@ -9,7 +9,4 @@ bin2hex_test() {
   assert "$(hex2bin "5065746572" | bin2hex)" == "5065746572" "bin2hex function should accept a pipe"
 }
 
-# Run the test if this script is executed directly
-if ! (return 0 2>/dev/null); then
-  "$(basename "${0##-}")"
-fi
+bin2hex_test

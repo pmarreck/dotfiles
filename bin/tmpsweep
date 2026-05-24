@@ -88,9 +88,9 @@ tmpsweep() {
 if ! (return 0 2>/dev/null); then
 	# Check if we are running tests
 	if [ "$1" = "--test" ]; then
-		# Source the test definitions then run; stdout muted, stderr preserved
-		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
-		test_tmpsweep > /dev/null
+		# Source the test file (runs the test unconditionally); stdout muted, stderr preserved
+		_test_file="$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+		if [ -f "$_test_file" ]; then . "$_test_file" > /dev/null; fi
 	else
 		# If called directly, pass all arguments to the function
 		$(basename "${0##\-}") "$@"

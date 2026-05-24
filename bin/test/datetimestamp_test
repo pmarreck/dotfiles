@@ -73,7 +73,5 @@ EOF
 	fi
 }
 
-if ! (return 0 2>/dev/null); then
 	test_datetimestamp
 	exit $?
-fi

@@ -10,6 +10,4 @@ test_div() {
 }
 
 # Run the test if this script is executed directly
-if ! (return 0 2>/dev/null); then
   test_div
-fi

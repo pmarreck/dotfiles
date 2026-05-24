@@ -2,14 +2,25 @@
 
 # Test the repeat function
 test_repeat() {
-  # Test repeating a command multiple times
-  assert "$(repeat 3 "echo -n \"hi \"")" == 'hi hi hi '
-  
-  # Test that return code is summed up from failed commands
+  local fails=0
+  local tests=0
+
+  # Test repeating a command multiple times (args passed separately, not as one quoted string)
+  (( tests++ ))
+  assert "$(repeat 3 echo -n "hi ")" == 'hi hi hi '
+  (( fails += $? ))
+
+  # Return code is summed up from failed commands
+  (( tests++ ))
   assert "$(repeat 3 false; echo $?)" == "3"
+  (( fails += $? ))
+
+  if [ $fails -gt 0 ]; then
+    red_text "$fails of $tests repeat tests failed!\n" >&2
+  else
+    green_text "All $tests repeat tests passed!\n" >&2
+  fi
+  return $fails
 }
 
-# Run the test if this script is executed directly
-if ! (return 0 2>/dev/null); then
-  test_repeat
-fi
+test_repeat

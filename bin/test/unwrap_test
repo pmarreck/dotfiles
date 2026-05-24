@@ -57,10 +57,8 @@ unwrap_test() {
 }
 
 # Run the tests if this file is executed directly
-if [ "$(basename "${0##\-}")" = "unwrap_test" ]; then
   # debug "we are running unwrap_test because the basename is unwrap_test"
   unwrap_test
 else
   : # debug "we are not running unwrap_test because the basename is not unwrap_test"
-fi
 # debug "we are leaving unwrap_test script"

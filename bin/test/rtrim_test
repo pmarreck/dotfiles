@@ -1,1 +1,39 @@
-ltrim_test
+#!/usr/bin/env bash
+
+# Test file for ltrim and related functions
+
+# Add your tests here
+echo "Testing ltrim and rtrim functions..."
+
+test_trims() {
+	local result1=$(rtrim "   test input  ")
+	local expected1="   test input"
+	local result2=$(ltrim "   test input  ")
+	local expected2="test input  "
+	local result3=$(echo "   test input  " | ltrim)
+	local expected3="test input  "
+	local fails=0
+	local tests=0
+
+	(( tests++ ))
+	assert "$result1" == "$expected1" "rtrim should remove trailing whitespace"
+	(( fails += $? ))
+
+	(( tests++ ))
+	assert "$result2" == "$expected2" "ltrim should remove leading whitespace"
+	(( fails += $? ))
+
+	(( tests++ ))
+	assert "$result3" == "$expected3" "ltrim should handle piped input"
+	(( fails += $? ))
+
+	if [ $fails -gt 0 ]; then
+		red_text "$fails of $tests trim tests failed!\n" >&2
+	else
+		green_text "All $tests trim tests passed!\n" >&2
+	fi
+	return $fails
+}
+
+# Run the test if this script is executed directly
+	test_trims

@@ -231,6 +231,4 @@ EOF
 	return $fails
 }
 
-if ! (return 0 2>/dev/null); then
 	test_epub
-fi

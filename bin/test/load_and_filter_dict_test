@@ -168,7 +168,5 @@ test_load_and_filter_dict() {
 }
 
 # Run the test if this script is executed directly
-if ! (return 0 2>/dev/null); then
 	test_load_and_filter_dict
 	exit $?
-fi

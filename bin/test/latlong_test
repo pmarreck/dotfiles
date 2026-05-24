@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 
 latlong_test() {
-	export needs() { :; }
+	# Stub the `needs` helper so latlong doesn't try to validate dependencies
+	needs() { :; }
+	export -f needs
 
-	LATLONG_OVERRIDE="40.123,-73.456" assert "$(latlong)" == "40.123,-73.456"
+	assert "$(LATLONG_OVERRIDE='40.123,-73.456' latlong)" == "40.123,-73.456"
+
 	unset -f needs
 }
 
-if [ "$(basename "${0##-}")" = "latlong_test" ]; then
-	latlong_test
-fi
+latlong_test

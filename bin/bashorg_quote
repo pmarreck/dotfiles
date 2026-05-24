@@ -38,7 +38,8 @@ if ! (return 0 2>/dev/null); then
 	# Check if we are running tests
 	if [ "$1" = "--test" ]; then
 		# Run tests from the test file
-		. "$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+		_test_file="$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+		if [ -f "$_test_file" ]; then . "$_test_file" > /dev/null; fi
 	else
 		# If called directly, pass all arguments to the function
 		$(basename "${0##\-}") "$@"

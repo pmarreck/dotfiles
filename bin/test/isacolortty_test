@@ -2,13 +2,84 @@
 
 # Test the isacolortty function
 test_isacolortty() {
-  TERM=xterm-256color isacolortty
-  assert "$?" == "0"
-  TERM=dumb isacolortty
-  assert "$?" == "1"
+	local fails=0
+	local tests=0
+
+	# --- Positive cases (color-capable) ---
+
+	(( tests++ ))
+	TERM=xterm-256color isacolortty
+	assert "$?" == "0" "xterm-256color should be color-capable"
+	(( fails += $? ))
+
+	# Modern terminals that lack the literal substring "color" in TERM
+	(( tests++ ))
+	TERM=xterm-ghostty isacolortty
+	assert "$?" == "0" "xterm-ghostty (Ghostty) should be color-capable"
+	(( fails += $? ))
+
+	(( tests++ ))
+	TERM=xterm-kitty isacolortty
+	assert "$?" == "0" "xterm-kitty (Kitty) should be color-capable"
+	(( fails += $? ))
+
+	(( tests++ ))
+	TERM=wezterm isacolortty
+	assert "$?" == "0" "wezterm should be color-capable"
+	(( fails += $? ))
+
+	(( tests++ ))
+	TERM=alacritty isacolortty
+	assert "$?" == "0" "alacritty should be color-capable"
+	(( fails += $? ))
+
+	# COLORTERM should be respected even when TERM looks dumb
+	(( tests++ ))
+	COLORTERM=truecolor TERM=dumb NO_COLOR= isacolortty
+	assert "$?" == "0" "COLORTERM=truecolor should force color-capable"
+	(( fails += $? ))
+
+	(( tests++ ))
+	COLORTERM=24bit TERM=dumb NO_COLOR= isacolortty
+	assert "$?" == "0" "COLORTERM=24bit should force color-capable"
+	(( fails += $? ))
+
+	# FORCE_COLOR escape hatch
+	(( tests++ ))
+	FORCE_COLOR=1 TERM=dumb COLORTERM= NO_COLOR= isacolortty
+	assert "$?" == "0" "FORCE_COLOR=1 should force color-capable"
+	(( fails += $? ))
+
+	# --- Negative cases ---
+
+	(( tests++ ))
+	TERM=dumb COLORTERM= FORCE_COLOR= NO_COLOR= isacolortty
+	assert "$?" == "1" "TERM=dumb should NOT be color-capable"
+	(( fails += $? ))
+
+	(( tests++ ))
+	TERM=unknown COLORTERM= FORCE_COLOR= NO_COLOR= isacolortty
+	assert "$?" == "1" "TERM=unknown should NOT be color-capable"
+	(( fails += $? ))
+
+	# NO_COLOR per https://no-color.org — wins over everything else
+	(( tests++ ))
+	NO_COLOR=1 TERM=xterm-256color COLORTERM=truecolor FORCE_COLOR=1 isacolortty
+	assert "$?" == "1" "NO_COLOR=1 must disable color even with otherwise-positive signals"
+	(( fails += $? ))
+
+	# Empty TERM, no overrides
+	(( tests++ ))
+	TERM="" COLORTERM= FORCE_COLOR= NO_COLOR= isacolortty
+	assert "$?" == "1" "Empty TERM with no overrides should NOT be color-capable"
+	(( fails += $? ))
+
+	if [ $fails -gt 0 ]; then
+		red_text "$fails of $tests isacolortty tests failed!\n" >&2
+	else
+		green_text "All $tests isacolortty tests passed!\n" >&2
+	fi
+	return $fails
 }
 
-# Run the test if this script is executed directly
-if ! (return 0 2>/dev/null); then
-  test_isacolortty
-fi
+test_isacolortty

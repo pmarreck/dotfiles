@@ -108,7 +108,5 @@ test_screenrez() {
 	fi
 }
 
-if ! (return 0 2>/dev/null); then
 	test_screenrez
 	exit $?
-fi
