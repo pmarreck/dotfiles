@@ -83,8 +83,16 @@ fi
 # have to source "edit" function for it to be able to see the functions via "functions"... lol sigh
 . "$HOME/dotfiles/bin/src/edit.bash"
 
-# Pull in path configuration (may already be loaded by .bash_profile; guard in .pathconfig handles dedup)
-. $HOME/.pathconfig
+# Pull in path configuration — but only if .bash_profile hasn't already done so.
+# We detect that by inspecting the BASH_SOURCE call stack (local to this source
+# chain, NOT an exported variable) — so we avoid the Claude-staleness footgun
+# of the old `_PATHCONFIG_LOADED` guard while still skipping the redundant
+# second source on the login path (.bash_profile -> .bashrc -> .pathconfig 2x).
+# Fresh shells (no parent .bash_profile in chain) still source normally.
+case " ${BASH_SOURCE[*]} " in
+	*"/.bash_profile "*) ;;  # parent .bash_profile already sourced .pathconfig
+	*) . $HOME/.pathconfig ;;
+esac
 
 # Set SED env var - with Nix, sed is already GNU sed
 if [ -z ${SED+x} ]; then

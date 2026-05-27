@@ -35,9 +35,38 @@ else
 fi
 export DOCUMENTS
 
+# Ensure a modern bash (from Nix) is reachable on PATH so #!/usr/bin/env bash
+# subprocesses don't fall back to macOS's /bin/bash 3.2 during early bootstrap.
+# nix-daemon.sh (sourced below) only adds ~/.nix-profile/bin and /nix/var/nix/profiles/default/bin,
+# neither of which contains bash on this system — bash 5 lives in nix-darwin's
+# system profile at /run/current-system/sw/bin, which isn't added until later
+# in this file. Idempotent via the case-dedup; safe on every re-source.
+case "$OSTYPE" in
+	darwin*|linux*)
+		if [ -x /run/current-system/sw/bin/bash ]; then
+			_modern_bash_dir=/run/current-system/sw/bin
+		elif [ -x "$HOME/.nix-profile/bin/bash" ]; then
+			_modern_bash_dir="$HOME/.nix-profile/bin"
+		else
+			echo "Warning from .pathconfig: no Nix bash found at /run/current-system/sw/bin/bash or ~/.nix-profile/bin/bash" >&2
+			echo "         #!/usr/bin/env bash subprocesses may fall back to /bin/bash 3.2 on macOS" >&2
+			_modern_bash_dir=""
+		fi
+		if [ -n "$_modern_bash_dir" ]; then
+			case ":$PATH:" in
+				*":$_modern_bash_dir:"*) ;;
+				*) PATH="$_modern_bash_dir:$PATH" ;;
+			esac
+		fi
+		unset _modern_bash_dir
+		;;
+esac
+
 # On macOS, source nix-daemon.sh to get env vars (NIX_PATH, NIX_SSL_CERT_FILE, etc).
 # PATH modifications from it are discarded — we manage PATH declaratively below.
-if [[ "$OSTYPE" == "darwin"* ]] && [ -e '/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh' ]; then
+# Guarded by NIX_PATH check: nix-daemon.sh is expensive (~50ms) and only needs to
+# run once per session — its env vars are exported, so re-sources can skip it.
+if [[ "$OSTYPE" == "darwin"* ]] && [ -z "$NIX_PATH" ] && [ -e '/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh' ]; then
 	source '/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh'
 fi
 
@@ -75,18 +104,17 @@ PATH_ADDITIONS+=(
 
 # Auto-discover Zig/Nix project bin dirs.
 # result/bin goes in first so zig-out/bin (dev builds) ends up closer to the front when both exist.
-# Invoke `glob` by explicit path since noglob (set -f) is active globally AND $HOME/bin
-# may not be in PATH yet at this point (we rebuild PATH from ORIG_PATH).
-_glob="$HOME/dotfiles/bin/glob"
-if [ -x "$_glob" ]; then
-	while IFS= read -r _dir; do
-		PATH_ADDITIONS+=("$_dir")
-	done < <("$_glob" "$DOCUMENTS/*/result/bin")
-	while IFS= read -r _dir; do
-		PATH_ADDITIONS+=("$_dir")
-	done < <("$_glob" "$DOCUMENTS/*/zig-out/bin")
-fi
-unset _glob _dir
+# Use inline native globbing (noglob is on globally via set -f) — avoids subprocess fork
+# AND avoids #!/usr/bin/env bash resolving to /bin/bash 3.2 during early bootstrap.
+_saved_f=$-
+set +f
+shopt -s nullglob
+for _dir in "$DOCUMENTS"/*/result/bin "$DOCUMENTS"/*/zig-out/bin; do
+	PATH_ADDITIONS+=("$_dir")
+done
+shopt -u nullglob
+[[ "$_saved_f" == *f* ]] && set -f
+unset _saved_f _dir
 
 # Declarative list of PATH exclusions (mostly macOS cruft that keeps reinserting itself).
 # https://support.apple.com/guide/deployment/rapid-security-responses-dep93ff7ea78/web

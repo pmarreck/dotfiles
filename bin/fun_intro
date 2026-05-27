@@ -1,21 +1,61 @@
 #!/usr/bin/env bash
 
+# fun_intro — random decoration shown at login interactive shells.
+#
+# Modes (mutually exclusive):
+#   (no args)              Pick a random "fun thing" and execute it (default).
+#   --test                 Run every "fun thing" in sequence (testing).
+#   --pick-one             Pick a random fun thing and execute it to stdout.
+#                          (Identical to default but explicit; used by cache regen.)
+#   --regenerate-cache     Run --pick-one inside expect's PTY (so ANSI is preserved
+#                          even though we're not on a real TTY) and atomically
+#                          write the captured bytes to the cache file. 5-second
+#                          timeout via expect's `set timeout 5`. Errors logged to
+#                          ${XDG_CACHE_HOME:-$HOME/.cache}/dotfiles/fun_intro/error.log.
+#                          Falls back to direct invocation + FORCE_COLOR if expect
+#                          isn't on PATH.
+#   --cache-path           Print the cache file path and exit (for shell wiring).
+
+_fun_intro_cache_dir() {
+	printf '%s/dotfiles/fun_intro\n' "${XDG_CACHE_HOME:-$HOME/.cache}"
+}
+_fun_intro_cache_file() {
+	printf '%s/cached\n' "$(_fun_intro_cache_dir)"
+}
+_fun_intro_error_log() {
+	printf '%s/error.log\n' "$(_fun_intro_cache_dir)"
+}
+
 fun_intro() {
 	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-	local test_all
-	if [ "$1" == "--test" ]; then
-		test_all=true
-	fi
-	sixel_less="fortune warhammer_quote bashorg_quote chuck mandelbash asciidragon asciidragon_anim just_one_taoup times_older_than_samson"
-	# This one requires a Sixel-capable terminal
-	sixel_ful="inthebeginning"
-	if ! $SIXEL_CAPABLE; then
-		_fun_things="$sixel_less"
+
+	local mode="default"
+	case "${1:-}" in
+		--test)              mode="test" ;;
+		--pick-one)          mode="pick-one" ;;
+		--regenerate-cache)  mode="regenerate-cache" ;;
+		--cache-path)        _fun_intro_cache_file; return 0 ;;
+		"")                  mode="default" ;;
+		*)                   echo "fun_intro: unknown arg: $1" >&2; return 2 ;;
+	esac
+
+	# Decoration scripts. Order doesn't matter; one is picked at random.
+	# image_capable_only items use display_image (which prefers kitty, falls
+	# back to sixel) — so they need IMAGE_CAPABLE, not just SIXEL_CAPABLE.
+	local text_only="fortune warhammer_quote bashorg_quote chuck mandelbash asciidragon just_one_taoup times_older_than_samson"
+	local image_capable_only="inthebeginning"
+	local _fun_things
+	if ${IMAGE_CAPABLE:-false}; then
+		_fun_things="$text_only $image_capable_only"
 	else
-		_fun_things="$sixel_less $sixel_ful"
+		_fun_things="$text_only"
 	fi
-	if [ -n "$test_all" ]; then
-		local retcode
+	# Backward-compat var names some callers may reference:
+	sixel_less="$text_only"
+	sixel_ful="$image_capable_only"
+
+	if [ "$mode" = "test" ]; then
+		local retcode _selected_fun_thing
 		for _selected_fun_thing in $_fun_things; do
 			note "Running '$_selected_fun_thing' from fun_intro:"
 			if command -v "$_selected_fun_thing" >/dev/null 2>&1; then
@@ -31,6 +71,55 @@ fun_intro() {
 		done
 		return
 	fi
+
+	if [ "$mode" = "regenerate-cache" ]; then
+		# Run --pick-one inside expect so the spawned command sees a PTY and
+		# emits ANSI even though we're (likely) a detached bg fork without a
+		# real controlling terminal. Atomic write via .new + mv.
+		local cache_dir cache_file err_log tmp_file rc
+		cache_dir=$(_fun_intro_cache_dir)
+		cache_file=$(_fun_intro_cache_file)
+		err_log=$(_fun_intro_error_log)
+		mkdir -p "$cache_dir" || return 1
+		tmp_file="${cache_file}.new.$$"
+
+		if command -v expect >/dev/null 2>&1; then
+			# expect: spawn fun_intro --pick-one in PTY, 5s timeout, capture
+			# all output, write to tmp file, then atomic rename.
+			expect -c "
+				log_user 0
+				set timeout 5
+				spawn -noecho fun_intro --pick-one
+				expect {
+					timeout {
+						puts stderr \"fun_intro --regenerate-cache: timed out after 5s\"
+						exit 124
+					}
+					eof
+				}
+				puts -nonewline \$expect_out(buffer)
+			" >"$tmp_file" 2>>"$err_log"
+			rc=$?
+		else
+			# Fallback: no expect. Force-color env vars; emits plain text for
+			# scripts that strictly require a TTY (unavoidable without PTY).
+			echo "$(date '+%Y-%m-%dT%H:%M:%S') fun_intro --regenerate-cache: expect not on PATH, falling back to direct (color may be lost)" >>"$err_log"
+			FORCE_COLOR=1 CLICOLOR_FORCE=1 TERM="${TERM:-xterm-256color}" \
+				fun_intro --pick-one >"$tmp_file" 2>>"$err_log"
+			rc=$?
+		fi
+
+		if [ "$rc" -eq 0 ] && [ -s "$tmp_file" ]; then
+			mv "$tmp_file" "$cache_file"
+		else
+			/bin/rm -f "$tmp_file"
+			echo "$(date '+%Y-%m-%dT%H:%M:%S') fun_intro --regenerate-cache: rc=$rc, no cache written" >>"$err_log"
+		fi
+		return "$rc"
+	fi
+
+	# Default and --pick-one share the same single-pick behavior.
+	local _selected_fun_thing
 	_selected_fun_thing=$(echo "$_fun_things" | tr ' ' '\n' | shuf -n 1)
 	if [ -n "$DEBUG_SHELLCONFIG" ]; then
 		echo "Running '$_selected_fun_thing' from fun_intro"

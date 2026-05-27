@@ -164,9 +164,16 @@ fi
 # NOTE: Now configured via starship in apply-hooks
 # $INTERACTIVE_SHELL && . $HOME/.commandpromptconfig
 
-# Pull in path configuration AGAIN because macos keeps mangling it
-# (also did it in .bashrc)
-. $HOME/.pathconfig
+# Pull in path configuration — but only if .bash_profile or .bashrc hasn't
+# already done so upstream in this source chain. (Historically defensive against
+# macOS mangling, but mangling happens at login time, before this re-source.)
+# BASH_SOURCE check is bash-only; non-bash sh has empty BASH_SOURCE so the
+# fallback fires normally. Catches both login chain (.bash_profile upstream)
+# and standalone bash interactive (.bashrc upstream).
+case " ${BASH_SOURCE[*]:-} " in
+	*"/.bash_profile "*|*"/.bashrc "*) ;;  # parent already sourced .pathconfig
+	*) . $HOME/.pathconfig ;;
+esac
 # [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced .pathconfig"
 
 # codex function/wrapper
@@ -195,9 +202,35 @@ if [ "$SIXEL_CAPABLE" -eq 0 ]; then
 else
   SIXEL_CAPABLE="false"
 fi
-export SIXEL_ENV SIXEL_CAPABLE
 
-${INTERACTIVE_SHELL:-false} && ${LOGIN_SHELL:-false} && fun_intro
+# Also detect kitty graphics protocol (Ghostty, kitty, WezTerm). display_image
+# prefers kitty when available, falls back to sixel — so IMAGE_CAPABLE is the
+# real "can we render images" gate, broader than SIXEL_CAPABLE alone.
+check_kitty_support >/dev/null 2>&1 && KITTY_CAPABLE="true" || KITTY_CAPABLE="false"
+if [ "$SIXEL_CAPABLE" = "true" ] || [ "$KITTY_CAPABLE" = "true" ]; then
+  IMAGE_CAPABLE="true"
+else
+  IMAGE_CAPABLE="false"
+fi
+export SIXEL_ENV SIXEL_CAPABLE KITTY_CAPABLE IMAGE_CAPABLE
+
+if ${INTERACTIVE_SHELL:-false} && ${LOGIN_SHELL:-false} && [ -z "$SHELL_STARTUP_BENCHMARK" ]; then
+	# Decoration via cache: display previously-cached pick instantly, then
+	# bg-fork a regenerator so the NEXT shell has a fresh pick ready. The
+	# regenerator uses expect to allocate a PTY (preserves ANSI), times out
+	# after 5s (expect's `set timeout 5`), and logs to error.log on failure.
+	# Cold start (no cache yet): fall through to a normal synchronous fun_intro
+	# so the user sees something this time too, AND prime the cache for next.
+	_fi_cache="${XDG_CACHE_HOME:-$HOME/.cache}/dotfiles/fun_intro/cached"
+	if [ -s "$_fi_cache" ]; then
+		cat "$_fi_cache"
+	else
+		fun_intro
+	fi
+	# Double-fork so the regenerator survives this shell's exit.
+	( ( fun_intro --regenerate-cache </dev/null >/dev/null 2>&1 & ) & ) </dev/null >/dev/null 2>&1
+	unset _fi_cache
+fi
 
 [ -n "$DEBUG_SHELLCONFIG" ] && echo "Exiting $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")"
 [ -n "$DEBUG_PATHCONFIG" ] && echo $PATH || :

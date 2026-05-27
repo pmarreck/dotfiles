@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+
+# Test that bin/glob works without depending on the compgen builtin.
+#
+# Background: Nix's pkgs.bash is a stripped build without programmable
+# completion (no compgen, no complete). It gets injected onto PATH by any
+# Nix devshell via stdenv. When glob's #!/usr/bin/env bash shebang resolves
+# to that minimal bash, calls to `compgen -G` fail with "command not found".
+#
+# This test simulates that environment by running glob under a bash with
+# compgen explicitly disabled (`enable -n compgen`). If glob still expands
+# patterns correctly, it's not depending on compgen.
+
+fails=0
+tests=0
+
+# Set up a temp dir with predictable contents
+TEST_DIR=$(mktemp -d --tmpdir glob_no_compgen.XXXXXX)
+trap 'rm -rf "$TEST_DIR"' EXIT
+touch "$TEST_DIR/alpha.txt" "$TEST_DIR/beta.txt" "$TEST_DIR/gamma.log"
+touch "$TEST_DIR/.hidden_alpha"
+
+GLOB="$HOME/dotfiles/bin/glob"
+
+# Test 1: glob expands a pattern when invoked from a parent shell that has
+# compgen disabled. This is the parent-shell case (parent runs glob, parent's
+# state is irrelevant because glob is a subprocess).
+# But more importantly: test that glob ITSELF doesn't crash if its own bash
+# happens to lack compgen. We simulate this by re-execing glob through a
+# wrapper that disables compgen via BASH_ENV.
+((tests++))
+echo "Testing: glob works under a bash with compgen disabled..."
+
+# Create a BASH_ENV file that disables compgen in any non-interactive bash
+DISABLE_COMPGEN_FILE="$TEST_DIR/disable_compgen.sh"
+cat > "$DISABLE_COMPGEN_FILE" <<'EOF'
+enable -n compgen 2>/dev/null
+EOF
+
+# Run glob with BASH_ENV pointing to that file — every non-interactive bash
+# subprocess (including glob's own shebang invocation) will source it and
+# end up without compgen as a builtin.
+# NOTE: quote the pattern so the test shell doesn't pre-expand it — we want
+# glob's own code path to do the expansion (that's the path that hits compgen).
+result=$(BASH_ENV="$DISABLE_COMPGEN_FILE" "$GLOB" ls "$TEST_DIR/*.txt" 2>&1)
+exit_code=$?
+
+if [[ $exit_code -eq 0 ]] \
+	&& [[ "$result" == *"alpha.txt"* ]] \
+	&& [[ "$result" == *"beta.txt"* ]] \
+	&& [[ "$result" != *"command not found"* ]]; then
+	echo "✓ Test passed: glob works without compgen builtin"
+else
+	echo "✗ Test failed: glob errored or returned wrong output without compgen" >&2
+	echo "  exit_code=$exit_code" >&2
+	echo "  output:" >&2
+	echo "$result" | sed 's/^/    /' >&2
+	((fails++))
+fi
+
+# Test 2: regression — glob still works normally (with compgen available).
+# Same quoting note as Test 1: pass a literal pattern so glob expands it.
+((tests++))
+echo "Testing: glob still works in normal environment..."
+result=$("$GLOB" ls "$TEST_DIR/*.txt" 2>&1)
+exit_code=$?
+
+if [[ $exit_code -eq 0 ]] && [[ "$result" == *"alpha.txt"* ]] && [[ "$result" == *"beta.txt"* ]]; then
+	echo "✓ Test passed: glob works normally"
+else
+	echo "✗ Test failed: glob broken in normal environment" >&2
+	echo "  exit_code=$exit_code, output: $result" >&2
+	((fails++))
+fi
+
+# Test 3: glob preserves caller's noglob state regardless of what it was
+((tests++))
+echo "Testing: glob doesn't leak set +f / nullglob into caller's shell..."
+# Source glob's helper directly and confirm options are restored.
+# (This is a more direct test of the helper's state isolation property.)
+state_before=$(bash -c 'set -f; bash -c "
+	source \"$HOME/dotfiles/bin/src/expand_glob.bash\" 2>/dev/null || true
+	# After sourcing, check our state
+	echo \"set:\$-\"
+	shopt nullglob | awk \"{print \\\"nullglob:\\\" \\\$2}\"
+	expand_glob \"/tmp/*\" >/dev/null 2>&1 || true
+	echo \"after-set:\$-\"
+	shopt nullglob | awk \"{print \\\"after-nullglob:\\\" \\\$2}\"
+"' 2>&1)
+
+# If expand_glob exists and properly isolates state, set -f survives and
+# nullglob stays off.
+if [[ "$state_before" == *"after-set:"*"f"* ]] && [[ "$state_before" == *"after-nullglob:off"* ]]; then
+	echo "✓ Test passed: expand_glob isolates state changes via subshell"
+else
+	echo "✗ Test failed: expand_glob leaked state into caller" >&2
+	echo "  output: $state_before" >&2
+	((fails++))
+fi
+
+# Summary
+if (( fails == 0 )); then
+	echo "All $tests tests passed"
+else
+	echo "$fails of $tests tests failed" >&2
+fi
+exit $fails

@@ -9,6 +9,18 @@ silence() {
 	"$@" >/dev/null 2>&1
 }
 
+# Pull in expand_glob helper (replaces former compgen -G dependency).
+# Sourcing fails-fast loudly if missing — glob's two expansion sites require it.
+if ! declare -F expand_glob >/dev/null 2>&1; then
+	if [ -r "${BASH_SOURCE[0]%/*}/src/expand_glob.bash" ]; then
+		. "${BASH_SOURCE[0]%/*}/src/expand_glob.bash"
+	elif [ -r "$HOME/dotfiles/bin/src/expand_glob.bash" ]; then
+		. "$HOME/dotfiles/bin/src/expand_glob.bash"
+	else
+		echo "glob: cannot locate bin/src/expand_glob.bash" >&2
+		exit 127
+	fi
+fi
 glob() {
 	# Help function
 	_show_help() {
@@ -679,9 +691,10 @@ EOF
 			debug "Processing glob pattern: $arg"
 			_glob_patterns_seen+=("$arg")
 
-			# Use compgen -G for expansion — handles spaces, **, extglob natively
+			# Native bash glob expansion via expand_glob helper (subshell-isolated).
+			# Avoids depending on compgen, which is absent in Nix's stripped pkgs.bash.
 			local matches=()
-			mapfile -t matches < <(compgen -G "$arg")
+			mapfile -t matches < <(expand_glob "$arg")
 
 			if [[ ${#matches[@]} -eq 0 ]]; then
 				debug "No matches found for pattern: $arg - skipping"
@@ -708,11 +721,10 @@ EOF
 			if [[ "$_basename" == .* ]]; then
 				continue
 			fi
-			# Check if enabling dotglob would yield additional dotfile matches
-			shopt -s dotglob
+			# Check if enabling dotglob would yield additional dotfile matches.
+			# expand_glob's subshell isolates the dotglob change from caller state.
 			local _dot_matches=()
-			mapfile -t _dot_matches < <(compgen -G "$_pattern")
-			shopt -u dotglob
+			mapfile -t _dot_matches < <(expand_glob "$_pattern" "dotglob")
 			local _m
 			for _m in "${_dot_matches[@]}"; do
 				local _mbase="${_m##*/}"

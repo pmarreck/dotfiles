@@ -1,0 +1,176 @@
+#!/usr/bin/env bash
+
+# Measures end-to-end shell startup time for a fresh interactive login shell.
+#
+# Method: spawn a uniquely-named detached tmux session running `bash -l -i`,
+# pre-buffer `exit\n` so it fires the instant readline is ready, time the
+# round-trip via $EPOCHREALTIME (bash 5+, microsecond precision).
+#
+# Sets SHELL_STARTUP_BENCHMARK=1 in the spawned shell's env so decoration
+# (fun_intro) is skipped — we want to measure shell init proper, not the
+# random per-shell fortune/quote pick (which has large timing variance).
+#
+# tmux-quickref still fires once per session (it's deterministic and is a
+# legitimate part of "tmux session startup cost"), so it stays in the number.
+#
+# Usage:
+#   bin/test/shell_startup_time_test               # default: 10 iterations
+#   ITERATIONS=20 bin/test/shell_startup_time_test
+#   TIMEOUT=10 bin/test/shell_startup_time_test    # per-iteration timeout (sec)
+
+set -u
+
+ITERATIONS="${ITERATIONS:-10}"
+TIMEOUT="${TIMEOUT:-5}"
+SESSION_PREFIX="shell-startup-test-$$"
+
+# Discard one warmup pass to absorb cold filesystem caches (tmux binary load,
+# bash binary load, fs metadata for dotfiles). The warmup is *not* counted.
+WARMUP_ITERATIONS=1
+
+# Sanity: bash 5+ required for $EPOCHREALTIME
+if [[ -z "${EPOCHREALTIME:-}" ]]; then
+	echo "shell_startup_time_test: requires bash >= 5 (EPOCHREALTIME unavailable in $BASH_VERSION)" >&2
+	exit 2
+fi
+
+# Sanity: tmux must exist
+if ! command -v tmux >/dev/null 2>&1; then
+	echo "shell_startup_time_test: tmux not found on PATH" >&2
+	exit 2
+fi
+
+# Run one iteration. Echoes the elapsed time in seconds (float) on success,
+# echoes "TIMEOUT" and returns 1 on timeout, echoes "ERROR" and returns 2 on
+# infrastructure failure (couldn't create session, etc.).
+run_one() {
+	local iter="$1"
+	local session="${SESSION_PREFIX}-${iter}"
+	local t_start t_end elapsed
+
+	t_start=$EPOCHREALTIME
+
+	# Create detached tmux session running login interactive bash with the
+	# benchmark env var set. -x/-y are arbitrary terminal dimensions —
+	# tmux requires them for detached sessions.
+	if ! SHELL_STARTUP_BENCHMARK=1 tmux new-session -d -s "$session" -x 80 -y 24 'bash -l -i' 2>/dev/null; then
+		echo "ERROR"
+		return 2
+	fi
+
+	# Pre-buffer exit. tmux input is buffered until readline is ready,
+	# so this fires the moment the shell can accept it.
+	tmux send-keys -t "$session" 'exit' Enter 2>/dev/null
+
+	# Wait for the session to terminate (shell exited). Poll every 25ms.
+	# Cap total wait at $TIMEOUT seconds.
+	local poll_interval_us=25000  # 25ms in microseconds
+	local timeout_us=$((TIMEOUT * 1000000))
+	local waited_us=0
+	while tmux has-session -t "$session" 2>/dev/null; do
+		if (( waited_us >= timeout_us )); then
+			tmux kill-session -t "$session" 2>/dev/null
+			echo "TIMEOUT"
+			return 1
+		fi
+		# bash builtin sleep with sub-second support (requires bash 4+ on most builds)
+		# Use sleep(1) coreutils for portability.
+		sleep 0.025
+		waited_us=$((waited_us + poll_interval_us))
+	done
+
+	t_end=$EPOCHREALTIME
+	# EPOCHREALTIME is "secs.usecs" — bc handles the arithmetic
+	elapsed=$(echo "$t_end - $t_start" | bc -l)
+	echo "$elapsed"
+	return 0
+}
+
+# Compute simple stats. Reads space-separated floats on stdin, emits a
+# formatted "min=X median=Y mean=Z max=W" line.
+stats() {
+	local nums=( "$@" )
+	local n=${#nums[@]}
+	(( n == 0 )) && { echo "no samples"; return; }
+
+	# Sort ascending using sort(1) on a newline-joined input
+	local sorted
+	sorted=( $(printf '%s\n' "${nums[@]}" | sort -g) )
+
+	local min="${sorted[0]}"
+	local max="${sorted[$((n-1))]}"
+
+	# Median (interpolated for even N)
+	local median
+	if (( n % 2 == 1 )); then
+		median="${sorted[$((n/2))]}"
+	else
+		local mid_lo="${sorted[$((n/2-1))]}"
+		local mid_hi="${sorted[$((n/2))]}"
+		median=$(echo "scale=6; ($mid_lo + $mid_hi) / 2" | bc -l)
+	fi
+
+	# Mean
+	local sum=0
+	local v
+	for v in "${nums[@]}"; do
+		sum=$(echo "$sum + $v" | bc -l)
+	done
+	local mean
+	mean=$(echo "scale=6; $sum / $n" | bc -l)
+
+	printf 'min=%.3fs  median=%.3fs  mean=%.3fs  max=%.3fs  (n=%d)\n' \
+		"$min" "$median" "$mean" "$max" "$n"
+}
+
+main() {
+	echo "shell_startup_time_test: $ITERATIONS iterations (+ $WARMUP_ITERATIONS warmup), ${TIMEOUT}s timeout each"
+	echo "  (decoration skipped via SHELL_STARTUP_BENCHMARK=1)"
+	echo
+
+	# Warmup — discard
+	local i
+	for ((i=0; i<WARMUP_ITERATIONS; i++)); do
+		echo -n "  warmup $((i+1)): "
+		local w
+		w=$(run_one "warmup-$i")
+		echo "$w (discarded)"
+	done
+
+	# Real iterations
+	local samples=()
+	local fails=0
+	for ((i=1; i<=ITERATIONS; i++)); do
+		echo -n "  iter $i: "
+		local t
+		t=$(run_one "$i")
+		case "$t" in
+			TIMEOUT)
+				echo "TIMEOUT (>${TIMEOUT}s)" >&2
+				((fails++))
+				;;
+			ERROR)
+				echo "ERROR (couldn't create session)" >&2
+				((fails++))
+				;;
+			*)
+				printf '%.3fs\n' "$t"
+				samples+=("$t")
+				;;
+		esac
+	done
+
+	echo
+	if (( ${#samples[@]} > 0 )); then
+		echo -n "Results: "
+		stats "${samples[@]}"
+	fi
+	if (( fails > 0 )); then
+		echo "$fails of $ITERATIONS iterations failed" >&2
+		exit 1
+	fi
+	echo "All $ITERATIONS iterations completed."
+	exit 0
+}
+
+main "$@"

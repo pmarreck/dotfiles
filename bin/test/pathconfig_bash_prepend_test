@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+
+# Test that .pathconfig does not invoke subprocesses through an old bash
+# during its own execution. Specifically: nix-daemon.sh adds ~/.nix-profile/bin
+# and /nix/var/nix/profiles/default/bin to PATH but neither contains bash on
+# this system. On nix-darwin, bash 5 lives at /run/current-system/sw/bin/bash.
+# If that dir isn't on PATH when .pathconfig spawns a subprocess (like bin/glob),
+# /usr/bin/env bash falls back to /bin/bash 3.2, which lacks mapfile/globstar/etc
+# and emits cryptic errors mid-startup.
+
+fails=0
+tests=0
+
+BOOTSTRAP_BASH="/run/current-system/sw/bin/bash"
+[ -x "$BOOTSTRAP_BASH" ] || BOOTSTRAP_BASH="$BASH"
+
+# Test 1: Sourcing .pathconfig from a stripped PATH produces no bash-3.x errors.
+# These are the canonical bash-3.2 failure modes: mapfile builtin doesn't exist,
+# globstar shopt doesn't exist, compgen may not be a builtin.
+((tests++))
+echo "Testing: .pathconfig source produces no bash-3.x error output..."
+stderr_output=$(env -i HOME="$HOME" OSTYPE="$OSTYPE" PATH="/usr/bin:/bin" "$BOOTSTRAP_BASH" --noprofile --norc -c '
+	. "$HOME/.pathconfig"
+' 2>&1 >/dev/null)
+
+if echo "$stderr_output" | grep -qE "mapfile: command not found|globstar: invalid shell option|compgen: command not found"; then
+	echo "✗ Test failed: bash-3.x errors detected during .pathconfig source" >&2
+	echo "  stderr was:" >&2
+	echo "$stderr_output" | sed 's/^/    /' >&2
+	((fails++))
+else
+	echo "✓ Test passed: no bash-3.x errors during .pathconfig source"
+fi
+
+# Test 2: After sourcing .pathconfig, a subprocess #!/usr/bin/env bash resolves
+# to bash >= 4. (End-state check — should already pass, included for regression.)
+((tests++))
+echo "Testing: subprocess #!/usr/bin/env bash gets modern bash after .pathconfig..."
+subprocess_version=$(env -i HOME="$HOME" OSTYPE="$OSTYPE" PATH="/usr/bin:/bin" "$BOOTSTRAP_BASH" --noprofile --norc -c '
+	. "$HOME/.pathconfig" 2>/dev/null
+	/usr/bin/env bash -c "echo \$BASH_VERSION"
+' 2>/dev/null)
+
+if [[ "$subprocess_version" =~ ^([0-9]+)\. ]] && (( BASH_REMATCH[1] >= 4 )); then
+	echo "✓ Test passed: subprocess bash is $subprocess_version (>= 4)"
+else
+	echo "✗ Test failed: subprocess bash version is '$subprocess_version' (expected >= 4)" >&2
+	((fails++))
+fi
+
+# Test 3: Idempotency — re-sourcing .pathconfig doesn't add duplicate entries
+# for the modern-bash dir we prepend.
+((tests++))
+echo "Testing: re-sourcing .pathconfig keeps PATH free of duplicates..."
+dup_count=$(env -i HOME="$HOME" OSTYPE="$OSTYPE" PATH="/usr/bin:/bin" "$BOOTSTRAP_BASH" --noprofile --norc -c '
+	. "$HOME/.pathconfig" 2>/dev/null
+	. "$HOME/.pathconfig" 2>/dev/null
+	. "$HOME/.pathconfig" 2>/dev/null
+	echo "$PATH" | tr ":" "\n" | grep -c "/run/current-system/sw/bin\$"
+' 2>/dev/null)
+
+if [[ "$dup_count" -le 1 ]]; then
+	echo "✓ Test passed: no duplicates after triple-source (count=$dup_count)"
+else
+	echo "✗ Test failed: duplicate entries found (count=$dup_count)" >&2
+	((fails++))
+fi
+
+# Summary
+if (( fails == 0 )); then
+	echo "All $tests tests passed"
+else
+	echo "$fails of $tests tests failed" >&2
+fi
+exit $fails
