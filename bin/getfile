@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-(( ${#GREP_QUIET[@]} )) || export GREP_QUIET=(grep -q) # Ensure GREP_QUIET is set
+# Rehydrate the exported GREP_QUIET string into an argv array, defaulting to
+# `grep -q`. Bash arrays can't be exported, so child scripts receive the string
+# form and reconstruct the array here (safe under `set -u`).
+read -ra GREP_QUIET_ARRAY <<< "${GREP_QUIET:-grep -q}"
 
 usage() {
 	cat <<'USAGE'
@@ -50,7 +53,7 @@ stream_download() {
 find_stream_unzipper() {
 	if command -v bsdtar >/dev/null 2>&1; then
 		echo bsdtar
-	elif tar --version 2>&1 | "${GREP_QUIET[@]}" libarchive; then
+	elif tar --version 2>&1 | "${GREP_QUIET_ARRAY[@]}" libarchive; then
 		echo tar
 	else
 		return 1

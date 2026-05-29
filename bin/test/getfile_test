@@ -109,6 +109,19 @@ fi
 wait "$pid1" 2>/dev/null || true
 wait "$pid2" 2>/dev/null || true
 
+# Test 5: runs cleanly when GREP_QUIET is unset in the environment
+# Regression: bash arrays cannot be exported, so child scripts never inherit
+# GREP_QUIET. The old guard `(( ${#GREP_QUIET[@]} ))` itself tripped `set -u`
+# with "unbound variable" before its fallback could run.
+((tests++))
+err=$(env -u GREP_QUIET getfile --help 2>&1 >/dev/null)
+if [ -z "$err" ]; then
+	echo "✓ Runs cleanly with GREP_QUIET unset"
+else
+	echo "✗ Errored with GREP_QUIET unset: $err" >&2
+	((fails++))
+fi
+
 if [ "$fails" -eq 0 ]; then
 	echo "All $tests tests passed"
 else

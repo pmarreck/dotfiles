@@ -44,15 +44,16 @@ debug() {
 }
 
 # For ripgrepping instead of grepping, with fallback.
-# Note use of an array instead of a string
-# because relying on word-splitting is fragile and becomes
-# shell-injection bait the moment arguments become dynamic
+# Exported as a STRING (bash arrays cannot be exported to child processes).
+# Consumers rehydrate it into an argv array with:
+#   read -ra GREP_QUIET_ARRAY <<< "${GREP_QUIET:-grep -q}"
+# which keeps word-splitting/globbing safe while still crossing the exec boundary.
 if needs rg "please install ripgrep"; then
-	GREP_QUIET=(rg -q --fixed-strings)
+	export GREP_QUIET="rg -q --fixed-strings"
 else
-	GREP_QUIET=(grep -q)
+	export GREP_QUIET="grep -q"
 fi
-export GREP_QUIET
+read -ra GREP_QUIET_ARRAY <<< "$GREP_QUIET"
 
 # determine shell characteristics
 # is this an interactive shell? login shell?
@@ -61,7 +62,7 @@ shopt -q login_shell && LOGIN_SHELL=true || LOGIN_SHELL=false
 [[ $- == *i* ]] && INTERACTIVE_SHELL=true || INTERACTIVE_SHELL=false
 
 # Detect if being run by Claude CLI or other LLM assistants and skip complex setup
-if [[ "${PPID:-}" ]] && ps -p "${PPID}" -o comm= 2>/dev/null | "${GREP_QUIET[@]}" "claude\|llm\|assistant"; then
+if [[ "${PPID:-}" ]] && ps -p "${PPID}" -o comm= 2>/dev/null | "${GREP_QUIET_ARRAY[@]}" "claude\|llm\|assistant"; then
 		export SKIP_COMPLEX_SHELL_SETUP=true
 elif [[ "$0" == *"claude"* ]] || [[ "${_:-}" == *"claude"* ]]; then
 		export SKIP_COMPLEX_SHELL_SETUP=true
@@ -206,7 +207,7 @@ if [ "$AWK" = "" ]; then
 fi
 # echo "AWK in .bashrc:258 is: $AWK"
 # using the right awk is a PITA on macOS vs. Linux so let's ensure GNU Awk everywhere
-is_gnu_awk=$($AWK --version | "${GREP_QUIET[@]}" -m 1 'GNU Awk' && echo true || echo false)
+is_gnu_awk=$($AWK --version | "${GREP_QUIET_ARRAY[@]}" -m 1 'GNU Awk' && echo true || echo false)
 [ "${PLATFORM}$(basename $AWK)" == "macawk" ] && \
 	$is_gnu_awk && \
 	echo "WARNING: The awk on PATH is not GNU Awk on macOS, which may cause problems" >&2

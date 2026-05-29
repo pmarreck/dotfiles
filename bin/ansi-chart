@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-(( ${#GREP_QUIET[@]} )) || export GREP_QUIET=(grep -q) # Ensure GREP_QUIET is set
+read -ra GREP_QUIET_ARRAY <<< "${GREP_QUIET:-grep -q}" # rehydrate exported string (arrays aren't exportable)
 
 ansi-chart() {
 	local reset="\e[0m"
@@ -56,7 +56,7 @@ ansi-chart() {
 	echo -e "\n"
 
 	# Check for 256 color support
-	if [[ "$TERM" == *"256color"* ]] || [[ -n "$COLORTERM" ]] || tput colors 2>/dev/null | "${GREP_QUIET[@]}" "256\|16777216"; then
+	if [[ "$TERM" == *"256color"* ]] || [[ -n "$COLORTERM" ]] || tput colors 2>/dev/null | "${GREP_QUIET_ARRAY[@]}" "256\|16777216"; then
 		echo -e "\n${reset}=== 8-bit ANSI Colors (256 Colors) ==="
 		echo "Foreground: \\e[38;5;<0-255>m"
 		echo "Background: \\e[48;5;<0-255>m"

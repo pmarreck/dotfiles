@@ -7,8 +7,8 @@ YELLOW='\033[1;33m'
 RED='\033[1;31m'
 RESET='\033[0m'
 
-# Ensure GREP_QUIET is set
-(( ${#GREP_QUIET[@]} )) || export GREP_QUIET=(grep -q)
+# rehydrate exported GREP_QUIET string into an argv array (arrays aren't exportable)
+read -ra GREP_QUIET_ARRAY <<< "${GREP_QUIET:-grep -q}"
 
 warn_alpha() {
 	echo -e "${YELLOW}Warning:${RESET} $1 has an alpha channel which JPEG does not support." >&2
@@ -121,7 +121,7 @@ EOF
 # Check if a JXL has JPEG reconstruction data
 jxl_has_jpeg_recon() {
 	local file="$1"
-	jxlinfo "$file" 2>/dev/null | "${GREP_QUIET[@]}" "JPEG bitstream reconstruction"
+	jxlinfo "$file" 2>/dev/null | "${GREP_QUIET_ARRAY[@]}" "JPEG bitstream reconstruction"
 }
 
 # Check if a JXL was encoded lossily (no JPEG recon AND reported as lossy)
@@ -129,11 +129,11 @@ jxl_is_lossy() {
 	local file="$1"
 	local info
 	info=$(jxlinfo "$file" 2>/dev/null)
-	if echo "$info" | "${GREP_QUIET[@]}" "JPEG bitstream reconstruction"; then
+	if echo "$info" | "${GREP_QUIET_ARRAY[@]}" "JPEG bitstream reconstruction"; then
 		return 1  # JPEG recon = not "lossy JXL" in the traditional sense
 	fi
 	# "lossy" without "lossless"
-	if echo "$info" | "${GREP_QUIET[@]}" "lossy" && ! echo "$info" | "${GREP_QUIET[@]}" "lossless"; then
+	if echo "$info" | "${GREP_QUIET_ARRAY[@]}" "lossy" && ! echo "$info" | "${GREP_QUIET_ARRAY[@]}" "lossless"; then
 		return 0
 	fi
 	return 1
@@ -142,7 +142,7 @@ jxl_is_lossy() {
 # Check if source has alpha channel
 has_alpha_channel() {
 	local file="$1"
-	magick identify -verbose "$file" 2>/dev/null | "${GREP_QUIET[@]}" "Alpha"
+	magick identify -verbose "$file" 2>/dev/null | "${GREP_QUIET_ARRAY[@]}" "Alpha"
 }
 
 # Known lossy source formats (not JXL — handled separately)
