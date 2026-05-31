@@ -84,6 +84,43 @@ else
 	echo "✓ Test skipped: expect not on PATH (would use direct fallback)"
 fi
 
+# Test 4b: byte-fidelity regression test. The expect capture path MUST
+# preserve every byte of the spawned command's output — no truncation, no
+# lost ESC bytes, no LF->CRLF translation. We previously broke this by using
+# expect_out(buffer) (capped at match_max=2000, and silently drops the first
+# emitted ESC), and by not setting stty -opost (PTY adds CR before LF, which
+# corrupts kitty graphics protocol bytes from inthebeginning). This test
+# catches both regressions using mandelbash, which:
+#   - starts its output with an ESC byte (catches lost-first-ESC bug)
+#   - is much larger than 2000 chars (catches truncation bug)
+#   - emits ANSI color sequences (catches mangling)
+((tests++))
+if command -v expect >/dev/null 2>&1 && command -v mandelbash >/dev/null 2>&1; then
+	echo "Testing: expect capture is byte-identical to direct invocation (mandelbash)..."
+	direct_file="$XDG_CACHE_HOME/_mandelbash_direct"
+	captured_file="$XDG_CACHE_HOME/_mandelbash_captured"
+	mandelbash >"$direct_file" 2>&1
+	expect -c "
+		set timeout 10
+		spawn -noecho sh -c \"stty -opost; mandelbash\"
+		expect {
+			timeout { exit 124 }
+			eof
+		}
+	" >"$captured_file" 2>/dev/null
+	if diff -q "$direct_file" "$captured_file" >/dev/null 2>&1; then
+		echo "✓ Test passed: $(wc -c <"$direct_file") bytes captured byte-identically"
+	else
+		direct_bytes=$(wc -c <"$direct_file")
+		captured_bytes=$(wc -c <"$captured_file")
+		echo "✗ Test failed: direct=$direct_bytes captured=$captured_bytes" >&2
+		((fails++))
+	fi
+	/bin/rm -f "$direct_file" "$captured_file"
+else
+	echo "✓ Test skipped: expect or mandelbash not on PATH"
+fi
+
 # Test 5: --regenerate-cache respects timeout. We synthesize a slow script
 # by temporarily putting a sleep-script earlier on PATH that fun_intro might
 # pick. Easier: directly verify expect's timeout fires by spawning a known-hung

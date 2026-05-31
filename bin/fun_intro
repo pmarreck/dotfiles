@@ -86,10 +86,25 @@ fun_intro() {
 		if command -v expect >/dev/null 2>&1; then
 			# expect: spawn fun_intro --pick-one in PTY, 5s timeout, capture
 			# all output, write to tmp file, then atomic rename.
+			#
+			# Two non-obvious choices here, both load-bearing:
+			#   1. We do NOT use `log_user 0` + `puts $expect_out(buffer)`.
+			#      That path silently truncates anything past expect's match_max
+			#      (default 2000 chars) and can even drop the FIRST emitted ESC
+			#      byte, which is fatal for any output that starts with an
+			#      escape sequence (mandelbash, kitty graphics from
+			#      inthebeginning, …). Instead we let expect log spawn output
+			#      to its stdout (the default, log_user 1) and shell-redirect
+			#      stdout to the cache file. No buffer cap, no truncation.
+			#   2. We wrap the spawn in `sh -c "stty -opost; …"` to disable
+			#      the PTY's output post-processing. Without this, the PTY
+			#      translates LF -> CRLF and may mangle other bytes — which
+			#      corrupts the binary kitty-graphics protocol stream used by
+			#      inthebeginning, causing the terminal to render the bytes
+			#      as raw text rather than an image.
 			expect -c "
-				log_user 0
 				set timeout 5
-				spawn -noecho fun_intro --pick-one
+				spawn -noecho sh -c \"stty -opost; fun_intro --pick-one\"
 				expect {
 					timeout {
 						puts stderr \"fun_intro --regenerate-cache: timed out after 5s\"
@@ -97,7 +112,6 @@ fun_intro() {
 					}
 					eof
 				}
-				puts -nonewline \$expect_out(buffer)
 			" >"$tmp_file" 2>>"$err_log"
 			rc=$?
 		else
