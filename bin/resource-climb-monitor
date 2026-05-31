@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+# resource-climb-monitor — watch for the slow climb toward fork/FD exhaustion
+# that wedges the whole machine (Watchman runaway, issue facebook/watchman#1306).
+#
+# Samples cheap kernel counters on an interval, logs a timestamped TSV, and
+# fires a native macOS desktop notification (osascript — no homebrew) the FIRST
+# time any metric crosses a WARN or ALARM threshold (state-tracked, no spam).
+#
+# Tracks the metrics that actually matter for THIS failure:
+#   - watchman process count   (the #1306 "thousands of procs" smoking gun)
+#   - per-uid process count vs kern.maxprocperuid
+#   - system-wide process count vs kern.maxproc
+#   - open files vs kern.maxfiles
+#
+# Usage:  resource-climb-monitor [interval_seconds]   (default 20)
+# Log:    $TMPDIR/resource-climb.tsv  (and a human log alongside)
+# Stop:   touch $TMPDIR/resource-climb.stop   (or kill the process)
+set -u
+
+INTERVAL="${1:-20}"
+UID_NUM="$(id -u)"
+TSV="${TMPDIR:-/tmp}/resource-climb.tsv"
+LOG="${TMPDIR:-/tmp}/resource-climb.log"
+STOP="${TMPDIR:-/tmp}/resource-climb.stop"
+LOCK="${TMPDIR:-/tmp}/resource-climb.lock"
+
+# Single-instance guard: refuse to start if another copy is already alive.
+# Prevents the launchd agent and a manual `nohup` run from double-sampling.
+if [ -f "$LOCK" ]; then
+	other_pid="$(cat "$LOCK" 2>/dev/null)"
+	if [ -n "$other_pid" ] && kill -0 "$other_pid" 2>/dev/null; then
+		echo "resource-climb-monitor already running (pid $other_pid); exiting." >&2
+		exit 0
+	fi
+fi
+echo "$$" > "$LOCK"
+trap 'rm -f "$LOCK" 2>/dev/null' EXIT INT TERM
+
+# Static ceilings (read once).
+MAXPROC="$(sysctl -n kern.maxproc 2>/dev/null || echo 0)"
+MAXPROCPERUID="$(sysctl -n kern.maxprocperuid 2>/dev/null || echo 0)"
+MAXFILES="$(sysctl -n kern.maxfiles 2>/dev/null || echo 0)"
+
+# WARN at 60% of a ceiling, ALARM at 80%. Watchman proc count is absolute:
+# WARN at 50 procs, ALARM at 200 (a healthy system runs 1-2).
+warn_pct=60
+alarm_pct=80
+WM_WARN=50
+WM_ALARM=200
+
+notified_warn=""   # space-delimited set of metrics already WARNed
+notified_alarm=""
+
+note() { # level, title, message
+	local level="$1" title="$2" msg="$3"
+	local sound="Submarine"
+	[ "$level" = "ALARM" ] && sound="Sosumi"
+	# Channel 1: native banner. NOTE: macOS Focus modes (esp. "Work Mode", which
+	# auto-engages in Terminal — ironically hiding alerts exactly when you're at
+	# the keyboard) can suppress the VISUAL banner. So banners are necessary but
+	# NOT sufficient; the louder channels below exist precisely for that case.
+	osascript -e "display notification \"${msg}\" with title \"${title}\" sound name \"${sound}\"" >/dev/null 2>&1 || true
+
+	# Channel 2 (ALARM only): break through Focus. Three Focus-proof paths —
+	#   a) terminal bell + inline bold-red text (you're looking at the terminal)
+	#   b) spoken warning via `say` (audio has no Focus filter; impossible to miss)
+	#   c) a louder repeat banner with "critical"-style wording
+	# WARN stays gentle (banner+log) to avoid alert fatigue; only the genuine
+	# fork/FD-exhaustion ALARM escalates.
+	if [ "$level" = "ALARM" ]; then
+		printf '\a\033[1;41;97m  %s — %s  \033[0m\n' "$title" "$msg" >&2   # bell + red block
+		say -v Samantha "Warning. Resource exhaustion imminent. ${msg}" >/dev/null 2>&1 &
+	fi
+
+	printf '%s  [%s] %s — %s\n' "$(date '+%H:%M:%S')" "$level" "$title" "$msg" | tee -a "$LOG"
+}
+
+contains() { case " $1 " in *" $2 "*) return 0;; *) return 1;; esac; }
+
+check() { # metric_name, current, ceiling, human_label
+	local name="$1" cur="$2" ceil="$3" label="$4"
+	[ "$ceil" -gt 0 ] || return 0
+	local pct=$(( cur * 100 / ceil ))
+	if [ "$pct" -ge "$alarm_pct" ] && ! contains "$notified_alarm" "$name"; then
+		notified_alarm="$notified_alarm $name"
+		note ALARM "⛔ Resource ALARM: $label" "${cur}/${ceil} (${pct}%) — fork/FD exhaustion imminent. Run: watchman shutdown-server"
+	elif [ "$pct" -ge "$warn_pct" ] && ! contains "$notified_warn" "$name"; then
+		notified_warn="$notified_warn $name"
+		note WARN "⚠️ Resource climbing: $label" "${cur}/${ceil} (${pct}%) and rising"
+	fi
+}
+
+check_abs() { # metric_name, current, warn, alarm, human_label
+	local name="$1" cur="$2" w="$3" a="$4" label="$5"
+	if [ "$cur" -ge "$a" ] && ! contains "$notified_alarm" "$name"; then
+		notified_alarm="$notified_alarm $name"
+		note ALARM "⛔ $label" "${cur} processes — runaway confirmed (#1306). Run: watchman shutdown-server"
+	elif [ "$cur" -ge "$w" ] && ! contains "$notified_warn" "$name"; then
+		notified_warn="$notified_warn $name"
+		note WARN "⚠️ $label" "${cur} processes and climbing (healthy = 1-2)"
+	fi
+}
+
+# TSV header
+if [ ! -f "$TSV" ]; then
+	printf 'epoch\ttime\twatchman_procs\tuid_procs\tuid_max\ttotal_procs\tsys_max\topen_files\tfiles_max\n' > "$TSV"
+fi
+note INFO "📊 resource-climb-monitor started" "interval=${INTERVAL}s  maxproc=${MAXPROC}  maxprocperuid=${MAXPROCPERUID}  maxfiles=${MAXFILES}"
+
+rm -f "$STOP" 2>/dev/null
+while [ ! -f "$STOP" ]; do
+	# One /bin/ps invocation, parsed two ways (minimize forks).
+	psout="$(/bin/ps -axo uid,comm 2>/dev/null)"
+	total_procs="$(printf '%s\n' "$psout" | tail -n +2 | wc -l | tr -d ' ')"
+	uid_procs="$(printf '%s\n' "$psout" | awk -v u="$UID_NUM" 'NR>1 && $1==u' | wc -l | tr -d ' ')"
+	wm_procs="$(printf '%s\n' "$psout" | grep -c '[w]atchman' || true)"
+	open_files="$(sysctl -n kern.num_files 2>/dev/null || echo 0)"
+
+	now="$(date +%s)"; hms="$(date '+%H:%M:%S')"
+	printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+		"$now" "$hms" "$wm_procs" "$uid_procs" "$MAXPROCPERUID" "$total_procs" "$MAXPROC" "$open_files" "$MAXFILES" >> "$TSV"
+
+	check_abs watchman "$wm_procs" "$WM_WARN" "$WM_ALARM" "Watchman process count"
+	check uid_procs "$uid_procs" "$MAXPROCPERUID" "per-uid processes"
+	check sys_procs "$total_procs" "$MAXPROC" "system processes"
+	check files "$open_files" "$MAXFILES" "open files"
+
+	sleep "$INTERVAL"
+done
+note INFO "🛑 resource-climb-monitor stopped" "stop file detected"
