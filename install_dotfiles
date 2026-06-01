@@ -17,6 +17,7 @@ declare -a dotfiles=(
     .gitignore
     .inputrc
     .netrc.gpg
+    .npmrc
     .pathconfig
     .pre-oh-my-bash.bashrc
     .profile
