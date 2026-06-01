@@ -6,4 +6,4 @@ if [ -z "${DOCUMENTS:-}" ]; then
 fi
 
 rm -f "ZIG_RECENT_API_CHANGES_2025.md"
-ln -s "$DOCUMENTS/Obsidian Vaults/Peter Marreck/ZIG_RECENT_API_CHANGES_2025.md" "ZIG_RECENT_API_CHANGES_2025.md"
+ln -s "$DOCUMENTS/Obsidian Vaults/Peter Marreck/ZIG_RECENT_API_CHANGES.md" "ZIG_RECENT_API_CHANGES.md"
