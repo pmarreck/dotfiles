@@ -102,14 +102,16 @@ PATH_ADDITIONS+=(
 	"$DOCUMENTS/rm_safe/bin"
 )
 
-# Auto-discover Zig/Nix project bin dirs.
-# result/bin goes in first so zig-out/bin (dev builds) ends up closer to the front when both exist.
+# Auto-discover personal project bin dirs under $DOCUMENTS.
+# Plain bin/ (e.g. promoted script tools like random, uuidv7) is globbed first, then
+# result/bin, then zig-out/bin — so for a project that has built artifacts, those end up
+# closer to the front of PATH (last prepend wins) than the raw checked-in bin/.
 # Use inline native globbing (noglob is on globally via set -f) — avoids subprocess fork
 # AND avoids #!/usr/bin/env bash resolving to /bin/bash 3.2 during early bootstrap.
 _saved_f=$-
 set +f
 shopt -s nullglob
-for _dir in "$DOCUMENTS"/*/result/bin "$DOCUMENTS"/*/zig-out/bin; do
+for _dir in "$DOCUMENTS"/*/bin "$DOCUMENTS"/*/result/bin "$DOCUMENTS"/*/zig-out/bin; do
 	PATH_ADDITIONS+=("$_dir")
 done
 shopt -u nullglob

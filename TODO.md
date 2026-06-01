@@ -51,7 +51,6 @@ As of last check, these were among the remaining:
 - `datetimestamp` 
 - `decrypt`
 - `div`
-- `drandom`
 - `ds_bore`
 - `exclude_path`
 - `expand`

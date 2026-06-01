@@ -150,9 +150,10 @@ Since all `bin/` scripts are on PATH, these utilities are available:
 
 #### Random Number Generation
 
-- **`nrandom`**: Normal distribution random numbers
-- **`drandom`**: Deterministic random numbers (for reproducible testing)
-- **`random`**: High-quality uniform random numbers using system entropy
+The `random` / `nrandom` / `drandom` generators were promoted to their own repo
+(github.com/pmarreck/random, checked out at ~/Documents-CloudManaged/random) and
+remain on PATH from there via .pathconfig's $DOCUMENTS/*/bin auto-discovery.
+`nrandom` / `drandom` are symlinks that select normalized / deterministic mode.
 
 ### Advanced Development Utilities
 
