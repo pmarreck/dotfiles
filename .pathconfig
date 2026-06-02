@@ -103,15 +103,18 @@ PATH_ADDITIONS+=(
 )
 
 # Auto-discover personal project bin dirs under $DOCUMENTS.
-# Plain bin/ (e.g. promoted script tools like random, uuidv7) is globbed first, then
-# result/bin, then zig-out/bin — so for a project that has built artifacts, those end up
-# closer to the front of PATH (last prepend wins) than the raw checked-in bin/.
+# Source bin/ is globbed LAST so it ends up CLOSEST to the front of PATH (last prepend
+# wins) — a project's checked-in/dev bin/ takes precedence over its built result/bin or
+# zig-out/bin. This keeps the edit-run loop live for interpreted tools (random, uuidv7,
+# os_counters) and for dev wrappers (e.g. ffpw's bin/ffpw auto-rebuilds + execs the binary),
+# so a stale `nix build` result/ no longer shadows the source you're editing. `nix build`
+# stays canonical for CI/release; `nix profile install` / systemPackages for installs.
 # Use inline native globbing (noglob is on globally via set -f) — avoids subprocess fork
 # AND avoids #!/usr/bin/env bash resolving to /bin/bash 3.2 during early bootstrap.
 _saved_f=$-
 set +f
 shopt -s nullglob
-for _dir in "$DOCUMENTS"/*/bin "$DOCUMENTS"/*/result/bin "$DOCUMENTS"/*/zig-out/bin; do
+for _dir in "$DOCUMENTS"/*/result/bin "$DOCUMENTS"/*/zig-out/bin "$DOCUMENTS"/*/bin; do
 	PATH_ADDITIONS+=("$_dir")
 done
 shopt -u nullglob
