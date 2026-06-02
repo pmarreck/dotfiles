@@ -7,7 +7,8 @@
 `jj` can manage a brand-new repo or one that already has a `.git` directory. The **colocated** mode is the most useful for interop — it keeps a real `.git/` directory alongside `.jj/`, so other tools (`gh`, IDE git integrations, GitHub Actions checkout, pre-commit hooks) still work normally.
 
 ```bash
-# Initialize a brand-new colocated repo in the current directory
+# Initialize a brand-new colocated repo in the current directory.
+# (--colocate is the default in jj 0.41+; the flag is harmless. Use --no-colocate to opt out.)
 jj git init --colocate
 
 # Convert an existing git repo to be jj-managed (run inside the repo)
@@ -127,15 +128,18 @@ jj bookmark create <name> -r @
 # Create and switch to a bookmark (similar to git checkout -b)
 jj bookmark create <name> && jj edit <name>
 
-# Update a bookmark to point to another revision
+# Update a bookmark to point to another revision (forward only by default)
 jj bookmark set <name> <revision>
 
 # Move a bookmark (often used to update a bookmark to point to current working copy)
+# Use --allow-backwards to move a bookmark backwards or sideways:
 jj bookmark set <name> @
+jj bookmark set <name> <revision> --allow-backwards
 
 # Track or inspect remote bookmarks
-jj bookmark track <name>@<remote>
+jj bookmark track <name> --remote=<remote>
 jj bookmark list --remote <remote>
+jj bookmark list --all-remotes                # show everything (local + every remote)
 ```
 
 Bookmarks are jj's branch equivalent; there is no "current" bookmark. Bookmarks do not move when you create new commits, but they follow rewrites.
@@ -158,11 +162,22 @@ jj git export
 # Push changes to GitHub (defaults to tracked bookmarks)
 jj git push
 
-# Push a specific bookmark (mirrors git push origin <branch>)
+# Push a specific bookmark (mirrors git push origin <branch>).
+# In jj 0.41+, new bookmarks are auto-tracked on push — no --allow-new needed.
+# (--allow-new still works but is deprecated; tracking can also be auto-configured via
+# remotes.<name>.auto-track-bookmarks.)
 jj git push -b <bookmark_name>
 
-# Allow a brand-new remote bookmark to be created (like git push --set-upstream)
-jj git push -b <bookmark_name> --allow-new
+# Push a commit by change-id — auto-creates a `push-<changeid>` bookmark.
+# Ideal for one-shot WIP / "open a PR for this change" workflows.
+jj git push --change @
+
+# Push a new bookmark under an explicit name without creating it locally first
+jj git push --named myfeature=@
+
+# Push a commit that has no description yet (otherwise rejected).
+# Default: jj refuses to push commits with empty descriptions.
+jj git push -b <bookmark_name> --allow-empty-description
 
 # Push to a specific remote
 jj git push --remote <name> -b <bookmark_name>
@@ -207,7 +222,7 @@ Notes:
 1. Run `jj git fetch` to bring down the latest remote refs.
 2. Use `jj rebase -d <bookmark>@<remote>` (or merge) so your commits sit on the desired remote tip.
 3. In colocated workspaces, jj auto-imports/exports on every command; in non-colocated workspaces, use `jj git export` after jj changes and `jj git import` after git changes.
-4. Push with `jj git push -b <bookmark>` (add `--allow-new` for brand-new remote branches).
+4. Push with `jj git push -b <bookmark>` — new bookmarks are auto-tracked on push in jj 0.41+; for one-shot WIP/PR, `jj git push --change @` auto-creates a `push-<changeid>` bookmark and pushes it.
 5. If you moved refs in Git directly, mirror those moves back into jj with `jj git import`.
 
 ## Common Revision Specifiers
