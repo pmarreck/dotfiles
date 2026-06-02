@@ -2,20 +2,83 @@
 
 ## Basic Operations
 
-### Commits
+### Initializing a Repository
+
+`jj` can manage a brand-new repo or one that already has a `.git` directory. The **colocated** mode is the most useful for interop — it keeps a real `.git/` directory alongside `.jj/`, so other tools (`gh`, IDE git integrations, GitHub Actions checkout, pre-commit hooks) still work normally.
+
 ```bash
-# Update the description of the current change and create a new empty change on top
+# Initialize a brand-new colocated repo in the current directory
+jj git init --colocate
+
+# Convert an existing git repo to be jj-managed (run inside the repo)
+jj git init --colocate
+
+# Clone an existing remote as a colocated repo (colocation is the default;
+# use --no-colocate to disable)
+jj git clone --colocate <git-url> <dir>
+
+# Create a jj repo backed by an existing Git repo at a different path
+jj git init --git-repo <path-to-git-repo> <name>
+
+# Check or change colocation mode of an existing repo
+jj git colocation status
+jj git colocation enable
+jj git colocation disable
+```
+
+> ⚠️ **Set up `.gitignore` BEFORE running `jj git init --colocate`.** `jj` snapshots
+> the working copy on every command, and anything not gitignored at init time gets
+> swept into the initial change. Cleaning it up afterward is annoying — you have to
+> abandon/squash and re-snapshot, and if you've already pushed, the bad blobs live
+> in the remote history. Common offenders to ignore first: build output dirs
+> (`node_modules/`, `target/`, `build/`, `dist/`), secrets (`.env`, credentials
+> files), OS junk (`.DS_Store`, `Thumbs.db`), editor swap/backup files, and large
+> binary artifacts.
+>
+> If you've already done the init without ignoring something, see *Undo an
+> Accidental Working-Copy Snapshot* below — the recipe is `.gitignore` the path
+> first, then `jj file untrack`.
+
+### Identity & Config
+
+```bash
+# Configure identity (jj uses --user instead of git's --global)
+jj config set --user user.name "Your Name"
+jj config set --user user.email you@example.com
+
+# Edit config by scope
+jj config edit --user
+jj config edit --repo
+jj config edit --workspace
+```
+
+### Commits
+
+```bash
+# Finalize the current change AND open a new empty change on top.
+# This is the right tool for landing a sequence of separate commits.
 jj commit -m "Commit message"
 
-# Edit the description of the current commit
+# Edit JUST the description of the current change (no finalize, no new change).
+# After this, further edits keep modifying the same change.
 jj describe -m "New commit message"
 
-# Set the working-copy revision (for amend-style edits, prefer `jj new` + `jj squash`)
+# Set the working-copy revision (for amend-style edits,
+# prefer `jj new` + `jj squash`)
 jj edit @
 
 # Create a new empty change on top of current commit (or a specified revision)
 jj new
 ```
+
+> ⚠️ **Common pitfall**: using `jj describe -m` between push cycles when you
+> meant `jj commit -m`. `describe` only renames the current change — subsequent
+> edits stack onto the same change, and successive `describe`/push cycles
+> sideways-overwrite the same commit on origin under different messages while
+> accumulating diff. Looks like N separate commits in your terminal scrollback,
+> but only one commit exists in git history. Use `jj commit -m` whenever you
+> want the current change to be done and a fresh empty change ready for the
+> next feature.
 
 ### Viewing Changes
 ```bash
@@ -47,34 +110,6 @@ jj config set --repo snapshot.auto-track "none()"
 # Manually track or untrack paths
 jj file track <paths>
 jj file untrack <paths>
-```
-
-### Git-friendly Setup
-
-```bash
-# Clone an existing Git repo (colocation is the default; use --no-colocate to disable)
-jj git clone <git-url> <dir>
-
-# Create a new Git-backed jj repo (colocated by default)
-jj git init
-jj git init <name>
-
-# Create a jj repo backed by an existing Git repo
-jj git init --git-repo <path-to-git-repo> <name>
-
-# Check or change colocation mode
-jj git colocation status
-jj git colocation enable
-jj git colocation disable
-
-# Configure identity (jj uses --user instead of git's --global)
-jj config set --user user.name "Peter Marreck"
-jj config set --user user.email lumbergh@gmail.com
-
-# Edit config by scope
-jj config edit --user
-jj config edit --repo
-jj config edit --workspace
 ```
 
 ### Branching and Naming Commits
@@ -244,7 +279,30 @@ jj op revert <operation_id>
 jj op restore <operation_id>
 ```
 
+## Undo an Accidental Working-Copy Snapshot
+
+jj auto-snapshots **all** non-ignored working-copy files into `@` on every
+command. Colocating a repo (`jj git init --colocate`) or running any jj command
+while build caches / vendored deps / scratch files are still untracked will
+pull that junk into your change. Two ways to back it out:
+
+```bash
+# BEST for untracked junk: ignore it, then untrack it (files stay on disk).
+# `jj file untrack` refuses unless the path is gitignored, so ignore it first.
+echo 'some-build-dir/' >> .gitignore
+jj file untrack some-build-dir scratch some-cache.bin
+
+# Operation-log rewind: undoes the LAST operation (rebase/squash/describe/etc.).
+jj undo                      # revert the most recent op
+jj op restore <operation_id> # rewind to a known-good op (see `jj op log`)
+```
+
+Caveat: `jj undo` / `jj op restore` alone will **not** keep untracked files out —
+the next jj command re-snapshots them. For stray untracked files the durable fix
+is always *gitignore + `jj file untrack`* (or delete the files). Tested on jj 0.41.
+
 ## Restore and Revert
+
 
 ```bash
 # Restore paths from another revision into the working copy
