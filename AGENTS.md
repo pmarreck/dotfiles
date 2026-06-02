@@ -112,7 +112,7 @@ Since all `bin/` scripts are on PATH, these utilities are available:
 
 - **`repeat`**: Repeat a command N times (e.g., `repeat 5 echo "hello"`)
 - **`assert`**: Assert conditions in scripts
-- **Various counters**: Global counter implementations for testing/debugging
+- **Various counters**: cross-process atomic counters (`counter`/`fs-counter`/`posix-counter`/`sysv-counter`) were promoted to github.com/pmarreck/os_counters (`~/Documents-CloudManaged/os_counters`); still on PATH from there via `$DOCUMENTS/*/bin`
 
 #### Command Inspection
 
