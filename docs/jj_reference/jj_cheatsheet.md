@@ -1,22 +1,59 @@
-# Jujutsu (jj) Quick Reference
+# Jujutsu (`jj`) Quick Reference (For Users and Agents)
+
+## For Git Users: The Mental-Model Shifts
+
+The command-translation table below is necessary but not sufficient. A few git assumptions don't carry over — internalize these and the rest of `jj` stops looking weird.
+
+**1. No staging area.** Your working copy IS a commit (the `@` commit). Every `jj` command auto-snapshots it. There's no `add` step and no index. When done, `jj commit -m` finalizes it and opens a fresh empty one. To split changes (the `git add -p` workflow), commit everything and then `jj split`.
+
+**2. Commits have two IDs: change_id (stable) and commit_id (mutates).** In git, rewriting (rebase, amend) creates brand-new SHAs and the originals fall into reflog. In `jj`, the `change_id` is a stable identity that persists through rewrites — only the `commit_id` (the Git SHA equivalent) changes. Bookmarks and references survive rebases/squashes by tracking the change_id. `jj evolog` shows every prior commit_id of one change_id.
+
+**3. Rewriting is safe and routine.** Git users learn to fear `rebase -i` and `--force` push. In `jj`, every rewrite is recorded in `jj op log` and undoable with `jj undo` / `jj op restore`. Rewriting a commit in a stack auto-rebases all descendants. You don't plan defensively around it.
+
+**4. Conflicts are first-class state, not blockers.** Git stops the world at a conflict and forces resolution before you proceed. In `jj`, a conflict is a property of a commit — that commit is still valid; you can move it, rebase it, push it, or commit on top of it. You resolve when *you* decide, not when the tool demands.
+
+**5. Bookmarks aren't branches — they're stable pointers.** Git branches advance automatically when you commit. `jj` bookmarks DON'T move when you create new commits; you explicitly `jj bookmark set <name> @` to advance one. There's no "current branch" / HEAD-attached-to-a-ref concept — `@` is the whole story. Conceptually, a bookmark is closer to a movable tag than a git branch.
+
+**6. Two logs, not one.** `jj log` shows the change graph (commits + working copy + relationships). `jj op log` shows repo-level operations (every command that changed state). Git only has the former. The second log is what makes `jj`'s "undo my whole bad day" superpowers possible — `jj op restore <op_id>` rewinds the entire repo to any prior moment.
+
+## Quickstart: Converting Common Git Commands
+
+| Git Command              | Jujutsu Equivalent                 |
+|--------------------------|-----------------------------------|
+| `git add`                | Automatic with jj (or `jj file track`) |
+| `git commit`             | `jj commit -m "message"`           |
+| `git commit --amend`     | `jj new` + `jj squash --into @-`    |
+| `git checkout branch`    | `jj edit branch_name`              |
+| `git branch`             | `jj bookmark list`                 |
+| `git branch name`        | `jj bookmark create name`          |
+| `git push`               | `jj git push`                      |
+| `git pull`               | `jj git fetch` + `jj rebase -d <bookmark>@<remote>` |
+| `git log`                | `jj log`                           |
+| `git diff`               | `jj diff`                          |
+| `git rebase`             | `jj rebase`                        |
+| `git reset --hard HEAD~1`| `jj abandon @`                     |
+| `git stash`              | Not needed (auto-snapshots)        |
+| `git commit --fixup` + `git rebase --autosquash` | `jj absorb` (auto-routes hunks to ancestors) |
+| `git reflog` (per-commit only) | `jj evolog -r <change_id>` (per-change predecessor chain) |
+
 
 ## Basic Operations
 
 ### Initializing a Repository
 
-`jj` can manage a brand-new repo or one that already has a `.git` directory. The **colocated** mode is the most useful for interop — it keeps a real `.git/` directory alongside `.jj/`, so other tools (`gh`, IDE git integrations, GitHub Actions checkout, pre-commit hooks) still work normally.
+`jj` can manage a brand-new repo or one that already has a `.git` directory. The **colocated** mode (which is now the default in `jj 0.41+`) is the most useful for interop — it keeps a real `.git/` directory alongside `.jj/`, so other tools (`gh`, IDE git integrations, GitHub Actions checkout, pre-commit hooks) still work normally.
 
 ```bash
 # Initialize a brand-new colocated repo in the current directory.
 # (--colocate is the default in jj 0.41+; the flag is harmless. Use --no-colocate to opt out.)
-jj git init --colocate
+jj git init [--colocate]
 
 # Convert an existing git repo to be jj-managed (run inside the repo)
-jj git init --colocate
+jj git init [--colocate]
 
 # Clone an existing remote as a colocated repo (colocation is the default;
 # use --no-colocate to disable)
-jj git clone --colocate <git-url> <dir>
+jj git clone [--colocate] <git-url> <dir>
 
 # Create a jj repo backed by an existing Git repo at a different path
 jj git init --git-repo <path-to-git-repo> <name>
@@ -27,7 +64,7 @@ jj git colocation enable
 jj git colocation disable
 ```
 
-> ⚠️ **Set up `.gitignore` BEFORE running `jj git init --colocate`.** `jj` snapshots
+> ⚠️ **Set up `.gitignore` BEFORE running `jj git init [--colocate]`.** `jj` snapshots
 > the working copy on every command, and anything not gitignored at init time gets
 > swept into the initial change. Cleaning it up afterward is annoying — you have to
 > abandon/squash and re-snapshot, and if you've already pushed, the bad blobs live
@@ -80,6 +117,8 @@ jj new
 > but only one commit exists in git history. Use `jj commit -m` whenever you
 > want the current change to be done and a fresh empty change ready for the
 > next feature.
+>
+> **Agents:** finish each unit of work (tests green, build clean) with `jj commit -m`. Reserve `jj describe -m` for renaming the in-progress change between micro-edits.
 
 ### Viewing Changes
 ```bash
@@ -101,6 +140,8 @@ jj diff --from <rev1> --to <rev2>
 # Show diff between a revision and its parent(s)
 jj diff -r <rev>
 ```
+
+> **Agents:** spew-mode `jj log` burns context fast. Default to `jj log -n 5 --no-graph` for compact output, or `-T '<template>'` for machine-readable fields — useful templates: `change_id.shortest()`, `commit_id.shortest()`, `description.first_line()`, `bookmarks`, `author.email()`.
 
 ### Working Copy & Tracking
 ```bash
@@ -231,9 +272,33 @@ Notes:
 - `@-` - Parent of current working copy
 - `@--` - Grandparent of current working copy
 - `<bookmark>@<remote>` - Remote-tracking bookmark (e.g., `main@origin`)
-- `<commit_id>` - Specific commit by ID (prefix is enough to be unique)
-- `<change_id>` - Change ID (shown at the start of `jj log`, stable across rewrites)
+- `<commit_id>` - Specific commit by ID (shortest unique prefix is enough — see below)
+- `<change_id>` - Change ID (shown at the start of `jj log`, stable across rewrites; **also accepts shortest unique prefix**)
 - `<bookmark_name>` - Points to commit with that bookmark
+
+### Shortest-Unique-Prefix IDs
+
+Both `commit_id` and `change_id` accept the **shortest prefix that is currently unique** in the repo. In a small/young repo that's often **1–3 characters**; even huge repos rarely need more than 4–6. `jj log` visually marks the unique prefix vs. the disambiguator: the unique part is rendered brightly (typically magenta for change_id, blue for commit_id) and the rest is dimmed — so a quick glance tells you exactly how many characters you need to copy.
+
+```bash
+# Real `jj log` line looks like (color stripped):
+#   qpvuntsm  yourname@example.com  2026-06-03 14:22:11  abc123de
+#   ^^^^                                                  ^^^^
+#   bright change-id prefix          dimmed disambig.    bright commit-id prefix
+
+# Use just the bright part — jj resolves it
+jj show qp           # uses change_id "qp..."
+jj describe -r abc   # uses commit_id "abc..."
+jj rebase -d qp -s xyz
+```
+
+When/if a future commit collides with your short prefix, jj refuses with `error: Change ID prefix "qp" is ambiguous` (it does NOT silently pick one). Lengthen the prefix and retry — usually one more character disambiguates.
+
+> **Power tool for AI agents.** Agents handle IDs as strings; the prefix discipline means an agent can pull change IDs from `jj log` output and use them verbatim, without needing to track the full 32-char ID. Pair with `--no-graph` and `-T 'change_id.shortest() ++ "\n"'` to get *just* the shortest prefix per line in machine-readable form:
+>
+> ```bash
+> jj log --no-graph -T 'change_id.shortest() ++ " " ++ description.first_line() ++ "\n"'
+> ```
 
 ## Common Workflows
 
@@ -266,18 +331,57 @@ jj squash --from <rev> --into <target>
 jj rebase -s <start>..<end> -d <target>
 ```
 
+### Absorb working-copy changes into the right ancestors
+
+`jj absorb` solves a workflow that's tedious by hand: you make broad fixes across a working stack of commits, then want each fix to land in the *correct* ancestor (not all dumped into the tip). Absorb pattern-matches your working-copy hunks against each ancestor's diff and pushes every unambiguous hunk into the nearest ancestor that already touched those same lines.
+
+```bash
+# Push each working-copy hunk into the closest ancestor that already
+# touched those same lines. Ambiguous changes stay in @.
+jj absorb
+
+# Limit which ancestors are eligible targets
+jj absorb --into <revset>
+
+# Choose the source revision (default: @)
+jj absorb --from <revset>
+
+# Preview what would move where without applying
+jj absorb -p
+```
+
+> **Power tool for AI agents.** Agents tend to make broad changes across many files when fixing a class of issue. Instead of threading `jj squash --interactive --from @ --into <ancestor>` per hunk by hand, the agent can make the full edit pass, then `jj absorb` to sort everything into the right commits automatically. Especially useful for: cross-cutting refactors that touch multiple commits in a stack, applying review feedback that spans several layers of work, and de-noising a working copy before code review.
+>
+> Caveats:
+> - Only absorbs **unambiguous** hunks (exactly one ancestor touches those lines). Anything ambiguous stays in `@` — review with `jj diff` afterward.
+> - Won't traverse conflicts — clean working tree first (`jj resolve`).
+> - Best paired with a stack of small, semantically-distinct commits. A monolithic ancestor will swallow everything.
+> - Pair with `jj evolog -p -r <ancestor>` after absorbing to verify each commit's diff is still coherent.
+
 ## Working with Conflicts
 
 ```bash
 # View conflicted files
 jj status
 
-# Resolve conflicts with merge tool
+# List all conflicts (non-interactive; useful for scripting/agents)
+jj resolve --list
+
+# Resolve conflicts with the configured external merge tool (interactive)
 jj resolve <file_path>
+
+# Resolve all conflicts non-interactively by always picking one side:
+jj resolve --tool :ours      # take side #1 (working copy / "our" side)
+jj resolve --tool :theirs    # take side #2 (incoming / "their" side)
 
 # After resolving, continue with the operation
 jj commit -m "Resolved conflicts"
 ```
+
+> **Agents:** `jj resolve` defaults to an external merge tool, but three non-interactive paths exist:
+> - `jj resolve --list` to discover conflicts programmatically.
+> - `jj resolve --tool :ours` / `--tool :theirs` for the built-in side-pickers when one side is known correct.
+> - For nuanced conflicts neither side handles cleanly: edit conflict markers (`<<<<<<<` / `=======` / `>>>>>>>`) directly in the working copy; any subsequent jj command re-snapshots, and once the markers are gone the conflict clears automatically.
 
 ## Operation Log (Undo/Redo)
 
@@ -293,6 +397,43 @@ jj redo
 jj op revert <operation_id>
 jj op restore <operation_id>
 ```
+
+> **Agents:** if a multi-step rewrite went sideways, `jj op log -n 20` shows everything you did and `jj op restore <op_id>` rewinds the entire repo to that moment. The "I broke it" panic button — coarser than `jj evolog` but covers anything.
+
+## Evolution Log (Per-Change History)
+
+`jj evolog` is the **per-change** counterpart to `jj op log` (which is repo-wide). It shows every prior version of a single change — each snapshot, describe, squash, rebase, abandon, etc. — so you can recover, inspect, or restore content from a specific moment in a commit's history without unwinding the whole repo.
+
+```bash
+# Show the predecessor chain of the current change (@)
+jj evolog
+
+# Same for a specific change/commit
+jj evolog -r <change_id>
+
+# Include patches (diff at each step) for the full forensic view
+jj evolog -p
+
+# Linear / no-graph output — easier to parse programmatically
+jj evolog --no-graph
+```
+
+Recovery recipes:
+
+```bash
+# Restore a clobbered commit message from a prior predecessor
+jj describe -m "$(jj evolog -r @ -T 'description ++ "\n"' --no-graph | sed -n '2p')"
+
+# Restore file content from a specific predecessor (without changing other files)
+jj restore --from <predecessor_id> -r @ <paths>
+
+# Re-run a destructive operation differently:
+# 1) jj evolog -p   → find the predecessor that had the right state
+# 2) jj op log      → find the operation_id of when it was right
+# 3) jj op restore <operation_id>  → rewind the whole repo to that moment
+```
+
+> **Power tool for AI agents.** When an agent runs several rewriting operations (squash, rebase, describe, abandon) and you want to know exactly what it touched on a specific commit, `jj evolog -p -r <change_id>` shows the diff at every intermediate step. Combined with `jj restore --from <predecessor>`, you can selectively roll back individual changes to a single commit without disturbing siblings — much finer-grained than `jj op restore`, which rewinds the whole repo state.
 
 ## Undo an Accidental Working-Copy Snapshot
 
@@ -318,7 +459,6 @@ is always *gitignore + `jj file untrack`* (or delete the files). Tested on jj 0.
 
 ## Restore and Revert
 
-
 ```bash
 # Restore paths from another revision into the working copy
 jj restore --from <rev> --into @ <paths>
@@ -337,20 +477,3 @@ jj revert -r <rev> -o <dest>
 6. `jj git` subcommands provide interop with git repositories
 7. `jj log` shows the change ID first, then the commit ID
 
-## Converting Common Git Commands
-
-| Git Command              | Jujutsu Equivalent                 |
-|--------------------------|-----------------------------------|
-| `git add`                | Automatic with jj (or `jj file track`) |
-| `git commit`             | `jj commit -m "message"`           |
-| `git commit --amend`     | `jj new` + `jj squash --into @-`    |
-| `git checkout branch`    | `jj edit branch_name`              |
-| `git branch`             | `jj bookmark list`                 |
-| `git branch name`        | `jj bookmark create name`          |
-| `git push`               | `jj git push`                      |
-| `git pull`               | `jj git fetch` + `jj rebase -d <bookmark>@<remote>` |
-| `git log`                | `jj log`                           |
-| `git diff`               | `jj diff`                          |
-| `git rebase`             | `jj rebase`                        |
-| `git reset --hard HEAD~1`| `jj abandon @`                     |
-| `git stash`              | Not needed (auto-snapshots)        |
