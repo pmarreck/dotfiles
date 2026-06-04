@@ -266,6 +266,31 @@ Notes:
 4. Push with `jj git push -b <bookmark>` — new bookmarks are auto-tracked on push in jj 0.41+; for one-shot WIP/PR, `jj git push --change @` auto-creates a `push-<changeid>` bookmark and pushes it.
 5. If you moved refs in Git directly, mirror those moves back into jj with `jj git import`.
 
+## Workspaces (jj's "worktrees") vs. Git Worktrees
+
+**jj has no `git worktree` equivalent and does not understand git's worktrees.** `jj git` has no `worktree` subcommand. jj's own multiple-working-copy feature is `jj workspace`:
+
+```bash
+jj workspace add <path>      # create an additional working copy (jj's "worktree")
+jj workspace list            # list jj workspaces (a raw `git worktree` is INVISIBLE here)
+jj workspace forget <name>   # stop tracking a jj workspace
+jj workspace root            # path of the current workspace
+jj workspace update-stale    # refresh a workspace whose working copy went stale
+```
+
+**Gotcha — a raw `git worktree add` is invisible to jj.** It lives only in git's `.git/worktrees/…`; `jj workspace list` won't show it and no jj command can remove it. Claude Code's own worktree isolation (e.g. `~/.claude-worktrees/…`) is git-native too, so cleaning those up is a git-only job:
+
+```bash
+# Remove a git worktree jj can't see (git is the ONLY tool that can):
+git worktree remove [--force] <path>   # --force if it has uncommitted/redundant changes
+git worktree prune                     # tidy stale .git/worktrees entries
+# Then delete the leftover branch the jj-native way (keeps jj as source of truth):
+jj bookmark delete <name>
+jj git export                          # propagate the deletion to git's ref
+```
+
+Rule of thumb: for isolated working copies under jj, prefer `jj workspace add` over `git worktree add`. If a git worktree already exists, only git can tear it down — do the worktree mechanics in git, then delete the branch/bookmark via jj.
+
 ## Common Revision Specifiers
 
 - `@` - Current working copy
