@@ -1,5 +1,13 @@
 #!/usr/bin/env luajit
 
+-- PERF NOTE (deferred 2026-06-05): This script uses the table-accumulator +
+-- table.concat pattern in several places (notably the recursive directory walk
+-- around lines 360, 399-400, and 521-523). LuaJIT's string.buffer with the
+-- FFI reserve/commit path would eliminate per-fragment allocations and is a
+-- candidate for a perf pass — see ~/.claude/CLAUDE.md "LuaJIT Performance"
+-- for the canonical idiom. Deferred for now: not a measured bottleneck and
+-- changing it would mean re-validating the diff output across edge cases.
+-- Benchmark with `hyperfine -N --warmup 3` before/after if you do this.
 local ABOUT = "Compare two directory trees and report all differences"
 
 local function print_help()
