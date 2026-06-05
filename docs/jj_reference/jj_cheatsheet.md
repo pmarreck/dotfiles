@@ -248,11 +248,39 @@ push = "origin"
 jj git remote list
 jj git remote add origin <ssh-url>
 
-# If git shows "HEAD (no branch)", reattach:
-git switch -c <branch>
-# then export jj state into git (if needed)
-jj git export
+# If git shows "HEAD (no branch)", see the next section to point HEAD at a
+# real branch name. (Avoid `git switch`/`git checkout` in jj-managed repos —
+# raw git ops can desync jj's view. Prefer the symref technique below.)
 ```
+
+### Leaving git on a real branch name (colocated repos)
+
+In a colocated repo jj keeps git's `HEAD` **detached at `@-`** on purpose: that
+way stray `git` operations can't accidentally move your bookmarks. The cost is
+that anything reading git directly — shell prompts (starship), IDEs, some CI
+checkout steps — reports a bare commit hash / "detached HEAD" instead of a
+branch name.
+
+To leave git *thinking it's on a branch*, point `HEAD` at the bookmark that
+sits on `@-`:
+
+```bash
+# Standard way (if raw git is available):
+git symbolic-ref HEAD refs/heads/<bookmark>
+
+# If raw git is blocked (e.g. a block-git hook), write the symref file
+# directly — this is byte-for-byte what `git symbolic-ref` produces:
+printf 'ref: refs/heads/<bookmark>\n' > .git/HEAD
+```
+
+Prerequisite: a bookmark must actually point at `@-` (the parent of the empty
+working-copy commit). Set one first if needed: `jj bookmark set <name> -r @-`.
+
+**CAVEAT — treat this as an end-of-work tidy step.** Any jj command that *moves
+the working copy* (`jj new`, `jj commit`, `jj squash`, `jj rebase`, `jj edit`,
+`jj git push`, …) re-detaches `HEAD` at the new `@-`. Read-only commands
+(`jj status`, `jj log`, `jj diff`, `jj bookmark list`) leave a symbolic `HEAD`
+untouched. So finish all your jj operations first, then set `HEAD` last.
 
 Notes:
 - In a colocated repo, `jj git push` uses jj's remote list, not git's. Add the remote in jj or set `[git] fetch/push` in `.jj/repo/config`.
