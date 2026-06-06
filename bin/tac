@@ -1,14 +1,28 @@
 #!/usr/bin/env bash
 
+# bin/tac — wrapper preferring GNU tac (gtac) over any system tac.
+#
+# Why: this dotfiles environment assumes GNU tac semantics. On macOS there is
+# no system tac at all; coreutils provides gtac, and we want scripts to keep
+# saying 'tac'. On Linux /usr/bin/tac IS the GNU one — no warning fires.
+#
+# Design tension (we know): when gtac is unavailable, we fall back to the
+# first non-self tac on PATH. If that fallback is non-GNU we warn to stderr
+# in orange — the caller probably wants GNU semantics and will misbehave
+# silently otherwise. Set MUTE_GNU_WRAPPER_WARNINGS=1 to suppress.
+#
+# Recursion guard: the function below resolves the wrapper's own canonical
+# path and skips any fallback candidate whose readlink -f matches it — so
+# the wrapper can't pick itself up via PATH lookup.
+
 tac() {
-	# Resolve THIS script's canonical path so we can rule it out of the
-	# tac search and avoid infinite recursion when PATH puts us first.
 	local self
 	self=$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null) || self="${BASH_SOURCE[0]}"
 
 	local whichtac
 	# Prefer gtac (full path via type -P; gtac is never us)
 	whichtac=$(type -P gtac 2>/dev/null)
+	local is_gnu=1
 	if [ -z "$whichtac" ]; then
 		# No gtac — find the first tac on PATH whose canonical path isn't us
 		local candidate canonical
@@ -20,10 +34,19 @@ tac() {
 				break
 			fi
 		done < <(type -aP tac 2>/dev/null)
+		# Detect whether the fallback is GNU. GNU has `--version` and
+		# prints "(GNU coreutils)"; BSD-flavored tools error out instead.
+		is_gnu=0
+		if [ -n "$whichtac" ] && "$whichtac" --version 2>/dev/null | grep -q GNU; then
+			is_gnu=1
+		fi
 	fi
 	if [ -z "$whichtac" ]; then
 		echo "Error: Neither gtac nor a non-wrapper tac is available." >&2
 		return 1
+	fi
+	if (( ! is_gnu )) && [ -z "$MUTE_GNU_WRAPPER_WARNINGS" ]; then
+		printf '\033[38;5;208mwarning: bin/tac is using non-GNU tac (%s); GNU semantics may not apply\033[0m\n' "$whichtac" >&2
 	fi
 	"$whichtac" "$@"
 }

@@ -1,14 +1,30 @@
 #!/usr/bin/env bash
 
+# bin/date — wrapper preferring GNU date (gdate) over BSD date.
+#
+# Why: this dotfiles environment assumes GNU date semantics (e.g.,
+# '+%N' nanoseconds, '-d "relative"' parsing). On macOS, /bin/date is BSD;
+# coreutils provides gdate, and we want scripts to keep saying 'date'.
+#
+# Design tension (we know): when gdate is unavailable, we fall back to
+# the first non-self date on PATH. If that fallback is non-GNU (BSD on
+# macOS) we warn to stderr in orange — the caller probably wants GNU
+# semantics and will misbehave silently otherwise. This will also warn
+# for legitimate BSD-aware callers; set MUTE_GNU_WRAPPER_WARNINGS=1 in
+# that case (or globally if the noise outweighs the safety net).
+#
+# Recursion guard: the function below resolves the wrapper's own
+# canonical path and skips any fallback candidate whose readlink -f
+# matches it — so the wrapper can't pick itself up via PATH lookup.
+
 date() {
-	# Resolve THIS script's canonical path so we can rule it out of the
-	# date search and avoid infinite recursion when PATH puts us first.
 	local self
 	self=$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null) || self="${BASH_SOURCE[0]}"
 
 	local whichdate
 	# Prefer gdate (full path via type -P; gdate is never us)
 	whichdate=$(type -P gdate 2>/dev/null)
+	local is_gnu=1
 	if [ -z "$whichdate" ]; then
 		# No gdate — find the first date on PATH whose canonical path isn't us
 		local candidate canonical
@@ -20,10 +36,19 @@ date() {
 				break
 			fi
 		done < <(type -aP date 2>/dev/null)
+		# Detect whether the fallback is GNU. GNU has `--version` and
+		# prints "(GNU coreutils)"; BSD prints usage to stderr and exits non-zero.
+		is_gnu=0
+		if [ -n "$whichdate" ] && "$whichdate" --version 2>/dev/null | grep -q GNU; then
+			is_gnu=1
+		fi
 	fi
 	if [ -z "$whichdate" ]; then
 		echo "Error: Neither gdate nor a non-wrapper date is available." >&2
 		return 1
+	fi
+	if (( ! is_gnu )) && [ -z "$MUTE_GNU_WRAPPER_WARNINGS" ]; then
+		printf '\033[38;5;208mwarning: bin/date is using non-GNU date (%s); GNU semantics may not apply\033[0m\n' "$whichdate" >&2
 	fi
 	"$whichdate" "$@"
 }

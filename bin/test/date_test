@@ -17,15 +17,15 @@ WRAPPER_DIR="$(dirname "$WRAPPER_CANONICAL")"
 # wrapper would recurse on `whichdate=date` falling through to the wrapper.
 ((tests++))
 echo "Testing: wrapper does not recurse when only itself is the first date..."
-output=$(PATH="$WRAPPER_DIR:/bin:/usr/bin" timeout 3 "$WRAPPER" '+%Y' 2>&1)
+output=$(PATH="$WRAPPER_DIR:/bin:/usr/bin" timeout 3 "$WRAPPER" '+%Y' 2>/dev/null)
 rc=$?
 if [[ $rc -eq 124 ]]; then
 	echo "✗ Test failed: hit 3s timeout — wrapper is recursing into itself" >&2
 	((fails++))
 elif [[ $rc -eq 0 ]] && [[ "$output" =~ ^[0-9]{4}$ ]]; then
 	echo "✓ Test passed: rc=0, output is a 4-digit year ('$output')"
-elif [[ $rc -eq 1 ]] && [[ "$output" == *Error* ]]; then
-	echo "✓ Test passed: clean error (rc=1)"
+elif [[ $rc -eq 1 ]]; then
+	echo "✓ Test passed: clean error (rc=1, no real date reachable)"
 else
 	echo "✗ Test failed: rc=$rc output='$output'" >&2
 	((fails++))
@@ -48,8 +48,8 @@ if [[ -z "$REAL_DATE" ]]; then
 	echo "✓ Test skipped: no non-wrapper date on this system"
 else
 	REAL_DATE_DIR="$(dirname "$REAL_DATE")"
-	# /usr/bin needed for basename which the wrapper uses at line 26
-	output=$(PATH="$WRAPPER_DIR:$REAL_DATE_DIR:/usr/bin" timeout 3 "$WRAPPER" '+%Y' 2>&1)
+	# /usr/bin needed for basename which the wrapper uses at the end of the script
+	output=$(PATH="$WRAPPER_DIR:$REAL_DATE_DIR:/usr/bin" timeout 3 "$WRAPPER" '+%Y' 2>/dev/null)
 	rc=$?
 	if [[ $rc -eq 0 ]] && [[ "$output" =~ ^[0-9]{4}$ ]]; then
 		echo "✓ Test passed: real date used (year='$output')"
@@ -71,6 +71,32 @@ if [[ $rc -eq 0 ]] && [[ "$output" =~ ^[0-9]{4}$ ]]; then
 	echo "✓ Test passed: year output is '$output'"
 else
 	echo "✗ Test failed: rc=$rc output='$output'" >&2
+	((fails++))
+fi
+
+# Test 4: when the fallback is non-GNU (BSD /bin/date on macOS), the wrapper
+# must warn to stderr that GNU semantics may not apply. On Linux this skips
+# because the system date IS GNU and no warning is expected.
+((tests++))
+echo "Testing: wrapper warns to stderr when fallback is non-GNU..."
+err_output=$(PATH="$WRAPPER_DIR:/bin:/usr/bin" timeout 3 "$WRAPPER" '+%Y' 2>&1 >/dev/null)
+if [[ "$err_output" == *non-GNU* ]] || [[ "$err_output" == *"not GNU"* ]] || [[ "$err_output" == *warning* ]]; then
+	echo "✓ Test passed: warning emitted on non-GNU fallback"
+elif [[ "$(uname)" == "Linux" ]]; then
+	echo "✓ Test skipped: Linux fallback /bin/date is GNU, no warning expected"
+else
+	echo "✗ Test failed: expected warning, got: '$err_output'" >&2
+	((fails++))
+fi
+
+# Test 5: MUTE_GNU_WRAPPER_WARNINGS=1 must suppress the warning entirely.
+((tests++))
+echo "Testing: MUTE_GNU_WRAPPER_WARNINGS=1 suppresses the warning..."
+err_output=$(MUTE_GNU_WRAPPER_WARNINGS=1 PATH="$WRAPPER_DIR:/bin:/usr/bin" timeout 3 "$WRAPPER" '+%Y' 2>&1 >/dev/null)
+if [[ -z "$err_output" ]]; then
+	echo "✓ Test passed: no stderr output when muted"
+else
+	echo "✗ Test failed: warning still emitted despite mute env: '$err_output'" >&2
 	((fails++))
 fi
 

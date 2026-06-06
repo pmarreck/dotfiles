@@ -1,14 +1,29 @@
 #!/usr/bin/env bash
 
+# bin/shuf — wrapper preferring GNU shuf (gshuf) over any system shuf.
+#
+# Why: this dotfiles environment assumes GNU shuf semantics. On macOS there
+# is no system shuf at all; coreutils provides gshuf, and we want scripts
+# to keep saying 'shuf'. On Linux /usr/bin/shuf IS the GNU one — no warning
+# fires.
+#
+# Design tension (we know): when gshuf is unavailable, we fall back to the
+# first non-self shuf on PATH. If that fallback is non-GNU we warn to
+# stderr in orange — the caller probably wants GNU semantics and will
+# misbehave silently otherwise. Set MUTE_GNU_WRAPPER_WARNINGS=1 to suppress.
+#
+# Recursion guard: the function below resolves the wrapper's own canonical
+# path and skips any fallback candidate whose readlink -f matches it — so
+# the wrapper can't pick itself up via PATH lookup.
+
 shuf() {
-	# Resolve THIS script's canonical path so we can rule it out of the
-	# shuf search and avoid infinite recursion when PATH puts us first.
 	local self
 	self=$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null) || self="${BASH_SOURCE[0]}"
 
 	local whichshuf
 	# Prefer gshuf (full path via type -P; gshuf is never us)
 	whichshuf=$(type -P gshuf 2>/dev/null)
+	local is_gnu=1
 	if [ -z "$whichshuf" ]; then
 		# No gshuf — find the first shuf on PATH whose canonical path isn't us
 		local candidate canonical
@@ -20,10 +35,19 @@ shuf() {
 				break
 			fi
 		done < <(type -aP shuf 2>/dev/null)
+		# Detect whether the fallback is GNU. GNU has `--version` and
+		# prints "(GNU coreutils)"; BSD-flavored tools error out instead.
+		is_gnu=0
+		if [ -n "$whichshuf" ] && "$whichshuf" --version 2>/dev/null | grep -q GNU; then
+			is_gnu=1
+		fi
 	fi
 	if [ -z "$whichshuf" ]; then
 		echo "Error: Neither gshuf nor a non-wrapper shuf is available." >&2
 		return 1
+	fi
+	if (( ! is_gnu )) && [ -z "$MUTE_GNU_WRAPPER_WARNINGS" ]; then
+		printf '\033[38;5;208mwarning: bin/shuf is using non-GNU shuf (%s); GNU semantics may not apply\033[0m\n' "$whichshuf" >&2
 	fi
 	"$whichshuf" "$@"
 }
