@@ -19,25 +19,17 @@ find_binary() {
   fi
 }
 
-# Warp terminal seems to have nonstandard behavior and non-gnu sed breaks things
-# so we are using this workaround:
-# Set SED env var to first gnu sed found on PATH; otherwise warn
-# Use [[ "$($candidate_sed --version 2>/dev/null | head -1)" =~ .*GNU.* ]] to detect
-# Find the first GNU sed in PATH if SED is unset
-if [ -z ${SED+x} ]; then
-  for candidate_sed in $(type -a -p gsed) $(type -a -p sed); do
-    if [[ "$($candidate_sed --version 2>/dev/null | head -1)" =~ .*GNU.* ]]; then
-      export SED=$candidate_sed
-      break
-    fi
-  done
-  # Warn if no GNU sed found
-  if [ -z ${SED+x} ]; then
-    echo "Warning from .bashrc: No GNU sed found in PATH. This may result in problems. Using system's default sed." >&2
-    export SED=`which sed`
-  fi
-fi
-# echo "SED in .bashrc:56 is: $SED"
+# Pre-resolve GNU-preferred tools once per shell so hot-path scripts can call
+# them as $SED / $DATE / $TAC / $SHUF and skip the wrapper-script fork-per-
+# invocation cost. Falls back to a non-GNU candidate with a one-time stderr
+# warning if no GNU variant is reachable (MUTE_GNU_WRAPPER_WARNINGS=1 silences).
+# Originally added because Warp terminal has nonstandard behavior and non-GNU
+# sed breaks things; broadened later to date/tac/shuf as the same pattern.
+. "$HOME/dotfiles/bin/src/export_gnu_tool.bash"
+_export_gnu_tool SED  sed  gsed
+_export_gnu_tool DATE date gdate
+_export_gnu_tool TAC  tac  gtac
+_export_gnu_tool SHUF shuf gshuf
 # Awk-ward! (see note below about "using the right awk"...)
 [ -z "${AWK+x}" ] && \
   export AWK=$(command -v frawk || command -v gawk || command -v awk)

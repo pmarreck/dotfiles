@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+
+# Tests for bin/src/export_gnu_tool.bash — the _export_gnu_tool helper that
+# resolves a GNU-preferred tool once and exports it as an env var.
+
+fails=0
+tests=0
+
+. "$HOME/dotfiles/bin/src/export_gnu_tool.bash"
+
+# Test 1: basic GNU detect — clear SED, call helper, expect SED resolved to GNU.
+((tests++))
+echo "Testing: _export_gnu_tool SED sed gsed sets SED to a GNU sed..."
+unset SED
+_export_gnu_tool SED sed gsed
+if [ -n "${SED:-}" ] && [[ "$("$SED" --version 2>/dev/null | head -1)" =~ .*GNU.* ]]; then
+	echo "✓ Test passed: SED=$SED is GNU"
+else
+	echo "✗ Test failed: SED='${SED:-}' not detected as GNU" >&2
+	((fails++))
+fi
+
+# Test 2: idempotent — won't override an already-set var.
+((tests++))
+echo "Testing: _export_gnu_tool is idempotent when var is already set..."
+SED=/foo/bar
+_export_gnu_tool SED sed gsed
+if [ "$SED" = "/foo/bar" ]; then
+	echo "✓ Test passed: existing SED preserved"
+else
+	echo "✗ Test failed: SED was overwritten to '$SED'" >&2
+	((fails++))
+fi
+
+# Test 3: skips $HOME/dotfiles/bin/ wrappers (relevant for date/tac/shuf where
+# our own wrapper would proxy --version through to GNU and falsely look GNU).
+((tests++))
+echo "Testing: _export_gnu_tool TAC tac gtac doesn't pick up our wrapper..."
+unset TAC
+_export_gnu_tool TAC tac gtac
+case "$TAC" in
+	"$HOME/dotfiles/bin/"*|"$HOME/bin/"*)
+		echo "✗ Test failed: TAC=$TAC is a wrapper script, not a real binary" >&2
+		((fails++))
+		;;
+	*)
+		if [ -n "${TAC:-}" ] && [[ "$("$TAC" --version 2>/dev/null | head -1)" =~ .*GNU.* ]]; then
+			echo "✓ Test passed: TAC=$TAC is GNU and not a wrapper"
+		else
+			echo "✗ Test failed: TAC='${TAC:-}' not GNU" >&2
+			((fails++))
+		fi
+		;;
+esac
+
+# Test 4: returns nonzero when neither tool is anywhere reachable.
+((tests++))
+echo "Testing: _export_gnu_tool returns 1 when neither tool exists..."
+unset NONEXISTENT_TOOL
+PATH= _export_gnu_tool NONEXISTENT_TOOL no_such_xyzzy no_such_gxyzzy 2>/dev/null
+rc=$?
+if [ "$rc" -ne 0 ] && [ -z "${NONEXISTENT_TOOL:-}" ]; then
+	echo "✓ Test passed: rc=$rc, var not set"
+else
+	echo "✗ Test failed: rc=$rc NONEXISTENT_TOOL='${NONEXISTENT_TOOL:-}'" >&2
+	((fails++))
+fi
+
+if (( fails == 0 )); then
+	echo "All $tests tests passed"
+else
+	echo "$fails of $tests tests failed" >&2
+fi
+exit $fails
