@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+
+# Tests for bin/tac wrapper.
+#
+# Bug being prevented: the wrapper used to set whichtac=tac (literal string)
+# and then call $whichtac, which resolves through PATH and finds the wrapper
+# itself — infinite recursion. The fix uses full paths (via type -P) and
+# rules out the wrapper's own canonical path when falling back to a non-gtac
+# tac.
+
+fails=0
+tests=0
+
+WRAPPER="$HOME/dotfiles/bin/tac"
+WRAPPER_CANONICAL="$(readlink -f "$WRAPPER")"
+WRAPPER_DIR="$(dirname "$WRAPPER_CANONICAL")"
+
+# Test 1: When PATH puts the wrapper first AND has no gtac AND has no other tac,
+# the wrapper must error cleanly with rc=1 — NOT recurse into itself until
+# stack overflow / timeout.
+# Build a minimal PATH: wrapper dir for tac lookup, plus a system bin dir for
+# bash (so the shebang can resolve) — but no dir that contains gtac or a non-
+# wrapper tac. On macOS /usr/bin has neither; on Linux /usr/bin typically has
+# tac, so we use bash's containing dir alone (sufficient for the shebang).
+# Use /bin:/usr/bin for the shell shebang + basename. On macOS neither contains
+# tac or gtac, so the only tac reachable is the wrapper itself — perfect for
+# triggering the recursion bug. On Linux /usr/bin typically has tac, so this
+# test exercises the "fall back to non-wrapper tac" path instead; either way
+# the wrapper must NOT recurse.
+((tests++))
+echo "Testing: wrapper errors cleanly when only itself is reachable on PATH..."
+output=$(PATH="$WRAPPER_DIR:/bin:/usr/bin" timeout 3 "$WRAPPER" <<<"hello" 2>&1)
+rc=$?
+# Accept either: clean rc=1 with an Error message (macOS path, no real tac
+# anywhere), or rc=0 with the input echoed back (Linux path, /usr/bin/tac
+# found and used by the wrapper). The forbidden outcome is rc=124 (timeout)
+# which means the wrapper recursed.
+if [[ $rc -eq 124 ]]; then
+	echo "✗ Test failed: hit 3s timeout — wrapper is recursing into itself" >&2
+	((fails++))
+elif [[ $rc -eq 1 ]] && [[ "$output" == *Error* ]]; then
+	echo "✓ Test passed: clean error (rc=1, no real tac reachable)"
+elif [[ $rc -eq 0 ]] && [[ "$output" == "hello" ]]; then
+	echo "✓ Test passed: rc=0, found and used a non-wrapper tac on PATH"
+else
+	echo "✗ Test failed: rc=$rc output='$output' (expected rc=1 Error or rc=0 reversed input)" >&2
+	((fails++))
+fi
+
+# Test 2: When PATH has wrapper-dir first AND a real tac is reachable elsewhere
+# on PATH (no gtac), the wrapper must find and use the real tac.
+((tests++))
+echo "Testing: wrapper falls back to a real tac when gtac is unavailable..."
+# Discover any tac on PATH that isn't us.
+REAL_TAC=""
+while IFS= read -r candidate; do
+	[[ -z "$candidate" ]] && continue
+	canon="$(readlink -f "$candidate" 2>/dev/null)"
+	if [[ "$canon" != "$WRAPPER_CANONICAL" ]]; then
+		REAL_TAC="$candidate"
+		break
+	fi
+done < <(type -aP tac 2>/dev/null)
+
+if [[ -z "$REAL_TAC" ]]; then
+	echo "✓ Test skipped: no non-wrapper tac on this system to fall back to"
+else
+	REAL_TAC_DIR="$(dirname "$REAL_TAC")"
+	output=$(PATH="$WRAPPER_DIR:$REAL_TAC_DIR" timeout 3 "$WRAPPER" <<<$'a\nb\nc' 2>&1)
+	rc=$?
+	expected=$'c\nb\na'
+	if [[ $rc -eq 0 ]] && [[ "$output" == "$expected" ]]; then
+		echo "✓ Test passed: real tac used (from $REAL_TAC_DIR), output reversed"
+	elif [[ $rc -eq 124 ]]; then
+		echo "✗ Test failed: hit 3s timeout — wrapper is recursing" >&2
+		((fails++))
+	else
+		echo "✗ Test failed: rc=$rc output='$output'" >&2
+		((fails++))
+	fi
+fi
+
+# Test 3: With the normal PATH (gtac present in Peter's env), the wrapper just works.
+((tests++))
+echo "Testing: wrapper uses gtac when available..."
+output=$("$WRAPPER" <<<$'a\nb\nc' 2>&1)
+rc=$?
+expected=$'c\nb\na'
+if [[ $rc -eq 0 ]] && [[ "$output" == "$expected" ]]; then
+	echo "✓ Test passed: output reversed correctly"
+else
+	echo "✗ Test failed: rc=$rc output='$output'" >&2
+	((fails++))
+fi
+
+if (( fails == 0 )); then
+	echo "All $tests tests passed"
+else
+	echo "$fails of $tests tests failed" >&2
+fi
+exit $fails

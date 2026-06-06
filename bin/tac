@@ -1,17 +1,31 @@
 #!/usr/bin/env bash
 
 tac() {
+	# Resolve THIS script's canonical path so we can rule it out of the
+	# tac search and avoid infinite recursion when PATH puts us first.
+	local self
+	self=$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null) || self="${BASH_SOURCE[0]}"
+
 	local whichtac
-	# prefer gtac, fall back to tac
-	if type -P gtac &> /dev/null; then
-		whichtac=gtac
-	elif type -P tac &> /dev/null; then
-		whichtac=tac
-	else
-		echo "Error: Neither gtac nor tac command is available." >&2
+	# Prefer gtac (full path via type -P; gtac is never us)
+	whichtac=$(type -P gtac 2>/dev/null)
+	if [ -z "$whichtac" ]; then
+		# No gtac — find the first tac on PATH whose canonical path isn't us
+		local candidate canonical
+		while IFS= read -r candidate; do
+			[ -z "$candidate" ] && continue
+			canonical=$(readlink -f "$candidate" 2>/dev/null) || canonical="$candidate"
+			if [ "$canonical" != "$self" ]; then
+				whichtac="$candidate"
+				break
+			fi
+		done < <(type -aP tac 2>/dev/null)
+	fi
+	if [ -z "$whichtac" ]; then
+		echo "Error: Neither gtac nor a non-wrapper tac is available." >&2
 		return 1
 	fi
-	$whichtac "$@"
+	"$whichtac" "$@"
 }
 
 # Run the function if this script is executed directly
