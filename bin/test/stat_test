@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+
+# Tests for bin/stat wrapper. See bin/test/tac_test for the full design rationale.
+# Bug being prevented: whichstat=stat (literal name) → $whichstat resolves
+# through PATH and finds the wrapper itself → infinite recursion. Plus:
+# non-GNU fallback (BSD stat on macOS) must warn unless MUTE_GNU_WRAPPER_WARNINGS=1.
+
+fails=0
+tests=0
+
+WRAPPER="$HOME/dotfiles/bin/stat"
+WRAPPER_CANONICAL="$(readlink -f "$WRAPPER")"
+WRAPPER_DIR="$(dirname "$WRAPPER_CANONICAL")"
+
+# We use `stat <path>` (no flags) since that succeeds on both BSD and GNU
+# without flag-syntax incompatibilities. A successful stat just exits 0
+# and prints metadata; that's all the recursion tests need to verify.
+
+# Test 1: PATH puts wrapper first AND has no gstat. Wrapper must not recurse.
+# /usr/bin/stat exists on macOS (BSD) and Linux (GNU); the wrapper-with-fix
+# should find it and use it.
+((tests++))
+echo "Testing: wrapper does not recurse when only itself is the first stat..."
+output=$(PATH="$WRAPPER_DIR:/bin:/usr/bin" timeout 3 "$WRAPPER" /tmp 2>/dev/null)
+rc=$?
+if [[ $rc -eq 124 ]]; then
+	echo "✗ Test failed: hit 3s timeout — wrapper is recursing into itself" >&2
+	((fails++))
+elif [[ $rc -eq 0 ]] && [[ -n "$output" ]]; then
+	echo "✓ Test passed: rc=0, fallback stat produced output"
+elif [[ $rc -eq 1 ]]; then
+	echo "✓ Test passed: clean error (rc=1, no real stat reachable)"
+else
+	echo "✗ Test failed: rc=$rc output='$output'" >&2
+	((fails++))
+fi
+
+# Test 2: wrapper-dir + real stat dir (no gstat) → uses real stat.
+((tests++))
+echo "Testing: wrapper falls back to a real stat when gstat is unavailable..."
+REAL_STAT=""
+while IFS= read -r candidate; do
+	[[ -z "$candidate" ]] && continue
+	canon="$(readlink -f "$candidate" 2>/dev/null)"
+	if [[ "$canon" != "$WRAPPER_CANONICAL" ]]; then
+		REAL_STAT="$candidate"
+		break
+	fi
+done < <(type -aP stat 2>/dev/null)
+
+if [[ -z "$REAL_STAT" ]]; then
+	echo "✓ Test skipped: no non-wrapper stat on this system"
+else
+	REAL_STAT_DIR="$(dirname "$REAL_STAT")"
+	# /bin needed for macOS bash (shebang), /usr/bin for basename (script footer)
+	output=$(PATH="$WRAPPER_DIR:$REAL_STAT_DIR:/bin:/usr/bin" timeout 3 "$WRAPPER" /tmp 2>/dev/null)
+	rc=$?
+	if [[ $rc -eq 0 ]] && [[ -n "$output" ]]; then
+		echo "✓ Test passed: real stat used (from $REAL_STAT_DIR)"
+	elif [[ $rc -eq 124 ]]; then
+		echo "✗ Test failed: hit 3s timeout — wrapper is recursing" >&2
+		((fails++))
+	else
+		echo "✗ Test failed: rc=$rc output='$output'" >&2
+		((fails++))
+	fi
+fi
+
+# Test 3: normal PATH (gstat present) → wrapper uses gstat. We verify by
+# passing -c '%Y' which only GNU stat understands (BSD uses -f '%m').
+((tests++))
+echo "Testing: wrapper uses gstat when available (proven by GNU -c flag)..."
+output=$("$WRAPPER" -c '%Y' /tmp 2>/dev/null)
+rc=$?
+if [[ $rc -eq 0 ]] && [[ "$output" =~ ^[0-9]+$ ]]; then
+	echo "✓ Test passed: gstat understood GNU -c flag, output is epoch ('$output')"
+else
+	echo "✗ Test failed: rc=$rc output='$output' (gstat expected to accept -c)" >&2
+	((fails++))
+fi
+
+# Test 4: when the fallback is non-GNU (BSD /usr/bin/stat on macOS), warn to stderr.
+((tests++))
+echo "Testing: wrapper warns to stderr when fallback is non-GNU..."
+err_output=$(PATH="$WRAPPER_DIR:/bin:/usr/bin" timeout 3 "$WRAPPER" /tmp 2>&1 >/dev/null)
+if [[ "$err_output" == *non-GNU* ]] || [[ "$err_output" == *warning* ]]; then
+	echo "✓ Test passed: warning emitted on non-GNU fallback"
+elif [[ "$(uname)" == "Linux" ]]; then
+	echo "✓ Test skipped: Linux fallback /usr/bin/stat is GNU, no warning expected"
+else
+	echo "✗ Test failed: expected warning, got: '$err_output'" >&2
+	((fails++))
+fi
+
+# Test 5: MUTE_GNU_WRAPPER_WARNINGS=1 suppresses the warning.
+((tests++))
+echo "Testing: MUTE_GNU_WRAPPER_WARNINGS=1 suppresses the warning..."
+err_output=$(MUTE_GNU_WRAPPER_WARNINGS=1 PATH="$WRAPPER_DIR:/bin:/usr/bin" timeout 3 "$WRAPPER" /tmp 2>&1 >/dev/null)
+if [[ -z "$err_output" ]]; then
+	echo "✓ Test passed: no stderr output when muted"
+else
+	echo "✗ Test failed: warning still emitted despite mute env: '$err_output'" >&2
+	((fails++))
+fi
+
+if (( fails == 0 )); then
+	echo "All $tests tests passed"
+else
+	echo "$fails of $tests tests failed" >&2
+fi
+exit $fails

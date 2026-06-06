@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+
+# bin/sed — wrapper preferring GNU sed (gsed) over any system sed.
+#
+# Why: this dotfiles environment assumes GNU sed semantics (-i without
+# backup arg, -E/-r, branches, etc.). On macOS, /usr/bin/sed is BSD;
+# coreutils provides gsed, and we want scripts to keep saying 'sed'.
+#
+# Bonus: on macOS the filesystem is case-insensitive by default, so a
+# typo like `SED ...` (someone meant `$SED ...` and forgot the $)
+# would otherwise silently invoke BSD sed and produce wrong results.
+# Having this wrapper on PATH means even the uppercase typo resolves
+# into the wrapper → gsed, preserving correctness at the cost of one
+# bash fork. Slow but correct beats silent and wrong.
+#
+# Design tension (we know): when gsed is unavailable, we fall back to
+# the first non-self sed on PATH. If that fallback is non-GNU (BSD on
+# macOS) we warn to stderr in orange. Set MUTE_GNU_WRAPPER_WARNINGS=1
+# to suppress.
+#
+# Recursion guard: the function below resolves the wrapper's own
+# canonical path and skips any fallback candidate whose readlink -f
+# matches it — so the wrapper can't pick itself up via PATH lookup.
+
+sed() {
+	local self
+	self=$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null) || self="${BASH_SOURCE[0]}"
+
+	local whichsed
+	# Prefer gsed (full path via type -P; gsed is never us)
+	whichsed=$(type -P gsed 2>/dev/null)
+	local is_gnu=1
+	if [ -z "$whichsed" ]; then
+		# No gsed — find the first sed on PATH whose canonical path isn't us
+		local candidate canonical
+		while IFS= read -r candidate; do
+			[ -z "$candidate" ] && continue
+			canonical=$(readlink -f "$candidate" 2>/dev/null) || canonical="$candidate"
+			if [ "$canonical" != "$self" ]; then
+				whichsed="$candidate"
+				break
+			fi
+		done < <(type -aP sed 2>/dev/null)
+		# Detect whether the fallback is GNU. GNU has `--version` and
+		# prints "(GNU sed)"; BSD prints usage to stderr and exits non-zero.
+		is_gnu=0
+		if [ -n "$whichsed" ] && "$whichsed" --version 2>/dev/null | grep -q GNU; then
+			is_gnu=1
+		fi
+	fi
+	if [ -z "$whichsed" ]; then
+		echo "Error: Neither gsed nor a non-wrapper sed is available." >&2
+		return 1
+	fi
+	if (( ! is_gnu )) && [ -z "$MUTE_GNU_WRAPPER_WARNINGS" ]; then
+		printf '\033[38;5;208mwarning: bin/sed is using non-GNU sed (%s); GNU semantics may not apply\033[0m\n' "$whichsed" >&2
+	fi
+	"$whichsed" "$@"
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		_test_file="$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+		if [ -f "$_test_file" ]; then . "$_test_file" > /dev/null; fi
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

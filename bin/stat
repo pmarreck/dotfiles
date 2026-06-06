@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+
+# bin/stat — wrapper preferring GNU stat (gstat) over any system stat.
+#
+# Why: this dotfiles environment assumes GNU stat semantics (-c FORMAT,
+# %Y/%s/%n directives, etc.). On macOS, /usr/bin/stat is BSD with a
+# completely different syntax (-f FORMAT, %m/%z/%N); coreutils provides
+# gstat, and we want scripts to keep saying 'stat'.
+#
+# Bonus: on macOS the filesystem is case-insensitive by default, so a
+# typo like `STAT ...` (someone meant `$STAT ...` and forgot the $)
+# would otherwise silently invoke BSD stat — and BSD stat doesn't
+# even understand GNU's -c flag, so the script would fail loudly there.
+# Still, having the wrapper on PATH means even the uppercase typo
+# routes through gstat for correctness.
+#
+# Design tension (we know): when gstat is unavailable, we fall back to
+# the first non-self stat on PATH. If that fallback is non-GNU (BSD on
+# macOS) we warn to stderr in orange. Set MUTE_GNU_WRAPPER_WARNINGS=1
+# to suppress.
+#
+# Recursion guard: the function below resolves the wrapper's own
+# canonical path and skips any fallback candidate whose readlink -f
+# matches it — so the wrapper can't pick itself up via PATH lookup.
+
+stat() {
+	local self
+	self=$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null) || self="${BASH_SOURCE[0]}"
+
+	local whichstat
+	# Prefer gstat (full path via type -P; gstat is never us)
+	whichstat=$(type -P gstat 2>/dev/null)
+	local is_gnu=1
+	if [ -z "$whichstat" ]; then
+		# No gstat — find the first stat on PATH whose canonical path isn't us
+		local candidate canonical
+		while IFS= read -r candidate; do
+			[ -z "$candidate" ] && continue
+			canonical=$(readlink -f "$candidate" 2>/dev/null) || canonical="$candidate"
+			if [ "$canonical" != "$self" ]; then
+				whichstat="$candidate"
+				break
+			fi
+		done < <(type -aP stat 2>/dev/null)
+		# Detect whether the fallback is GNU. GNU has `--version` and
+		# prints "(GNU coreutils)"; BSD prints usage to stderr and exits non-zero.
+		is_gnu=0
+		if [ -n "$whichstat" ] && "$whichstat" --version 2>/dev/null | grep -q GNU; then
+			is_gnu=1
+		fi
+	fi
+	if [ -z "$whichstat" ]; then
+		echo "Error: Neither gstat nor a non-wrapper stat is available." >&2
+		return 1
+	fi
+	if (( ! is_gnu )) && [ -z "$MUTE_GNU_WRAPPER_WARNINGS" ]; then
+		printf '\033[38;5;208mwarning: bin/stat is using non-GNU stat (%s); GNU semantics may not apply\033[0m\n' "$whichstat" >&2
+	fi
+	"$whichstat" "$@"
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		_test_file="$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+		if [ -f "$_test_file" ]; then . "$_test_file" > /dev/null; fi
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi
