@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+# shell_startup_test — assert the "env bucket" loads across bash's startup
+# quadrants. The env bucket = everything a *script* needs regardless of
+# interactivity: ~/bin on PATH (so `needs` & friends resolve), $EDITOR/$VISUAL,
+# $VOLTA_HOME, pnpm. Interactive-only decoration (prompt/aliases) is NOT tested.
+#
+# Direct run:  bin/test/shell_startup_test   (progress -> stdout, fails -> stderr)
+# Exit code  = number of failed quadrants.
+#
+# Refactor target: a single ~/.shellenv that is sourced by
+#   - .bash_profile  (login shells)
+#   - .bashrc        (non-login interactive shells, e.g. tmux panes)
+#   - $BASH_ENV      (non-interactive shells, e.g. `ssh host cmd`, scripts)
+# Until ~/.shellenv exists, the non-interactive quadrant is expected to FAIL
+# (the TDD "red" that this refactor turns green).
+
+set -u
+
+BASH_BIN="${BASH:-}"; [ -x "$BASH_BIN" ] || BASH_BIN="$(command -v bash)"
+# A pristine, SSH-like base PATH: deliberately NO ~/bin — exactly what sshd
+# hands a fresh shell before our dotfiles run. The env bucket must add the rest.
+BASE_PATH="/run/current-system/sw/bin:/usr/bin:/bin"
+ME="$(id -un)"
+
+# One-line probe emitting the env facts we assert on.
+PROBE='printf "needs=%s editor=%s volta=%s hasbin=%s pnpm=%s\n" "$(command -v needs >/dev/null 2>&1 && echo ok || echo MISSING)" "${EDITOR:-UNSET}" "${VOLTA_HOME:-UNSET}" "$(case ":$PATH:" in *":$HOME/bin:"*) echo yes ;; *) echo no ;; esac)" "$(command -v pnpm >/dev/null 2>&1 && echo ok || echo MISSING)"'
+
+fails=0
+
+# clean_run <extra VAR=VAL ...> -- <bash flags...> : run the probe in a pristine,
+# SSH-like environment and echo its stdout.
+clean_run() {
+	local -a envextra=()
+	while [ "$1" != "--" ]; do envextra+=("$1"); shift; done
+	shift
+	# `timeout` bounds any hang/regression (see the BASH_ENV fork-bomb note in ~/.shellenv).
+	# Generous: the full interactive .bashrc startup is heavy, and may be slow under load.
+	timeout 20 env -i \
+		HOME="$HOME" USER="$ME" LOGNAME="$ME" TERM=xterm \
+		SHELL="$BASH_BIN" PATH="$BASE_PATH" \
+		"${envextra[@]}" \
+		"$BASH_BIN" "$@" -c "$PROBE" 2>/dev/null
+}
+
+check() { # <label> <probe-output>
+	local label="$1" out="$2"
+	if [[ "$out" == *"needs=ok"* && "$out" == *"hasbin=yes"* && "$out" != *"editor=UNSET"* ]]; then
+		echo "✓ $label  [$out]"
+	else
+		echo "✗ $label  [${out:-<no output>}]" >&2
+		((fails++))
+	fi
+}
+
+echo "# shell startup quadrants — env bucket presence"
+
+# login interactive: .bash_profile -> (.shellenv) -> .bashrc
+check "login interactive      (bash -li)" \
+	"$(clean_run -- -l -i)"
+
+# non-login interactive: .bashrc only (this is the tmux-pane case)
+check "non-login interactive  (bash -i, ~tmux)" \
+	"$(clean_run -- -i)"
+
+# non-interactive: $BASH_ENV -> .shellenv (ssh-cmd / script case)
+check "non-interactive        (BASH_ENV, ~ssh cmd)" \
+	"$(clean_run "BASH_ENV=$HOME/.shellenv" --)"
+
+if (( fails )); then
+	echo "$fails quadrant(s) missing the env bucket" >&2
+else
+	echo "all quadrants carry the env bucket"
+fi
+exit "$fails"

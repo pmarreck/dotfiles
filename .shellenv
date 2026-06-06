@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+# ~/.shellenv — the single "env bucket".
+#
+# Everything a shell needs REGARDLESS of interactivity lives here: PATH, env
+# vars, tool homes, and the helpers the env files lean on. Decorative /
+# interactive-only config (prompt, aliases, keybindings) stays in ~/.bashrc.
+#
+# Sourced by:
+#   ~/.bash_profile  (login shells)
+#   ~/.bashrc        (non-login interactive shells, e.g. tmux panes — guarded)
+#   $BASH_ENV        (non-interactive shells: `ssh host cmd`, scripts)  [wiring TBD]
+#
+# Safe + cheap to re-source: .pathconfig rebuilds PATH idempotently; the rest are
+# pure assignments. Keep this file FAST and side-effect-light — once wired to
+# $BASH_ENV it runs for every non-interactive bash subprocess.
+
+# Currently bash-only (it sources bash files that use arrays / [[ ]]).
+[ -n "${BASH_VERSION:-}" ] || return 0 2>/dev/null
+
+# Skip the redundant re-source within one shell (the .bashrc guard relies on this
+# marker). .pathconfig is still re-run on every fresh shell — that's intentional.
+[ -n "${__SHELLENV_LOADED:-}" ] && return 0 2>/dev/null
+
+# CRITICAL: set + export the marker IMMEDIATELY, before any work below. When this
+# file is reached via $BASH_ENV, every sub-bash spawned below (e.g. `$(distro)`,
+# `needs ...`) inherits $BASH_ENV and would re-source this file — set the marker
+# first so those children short-circuit at the guard above. Without this you get
+# an unbounded BASH_ENV recursion (fork bomb). Do NOT move this lower.
+export __SHELLENV_LOADED=1
+
+# --- shell characteristics (referenced by .pathconfig / .envconfig) ---
+shopt -q login_shell 2>/dev/null && LOGIN_SHELL=true || LOGIN_SHELL=false
+case $- in *i*) INTERACTIVE_SHELL=true ;; *) INTERACTIVE_SHELL=false ;; esac
+
+# --- helpers the env files lean on (truthy/debug) ---
+. "$HOME/dotfiles/bin/src/truthy.sh"
+
+# --- ripgrep-or-grep quiet helper (exported as a string; arrays can't cross exec) ---
+if command -v rg >/dev/null 2>&1; then
+	export GREP_QUIET="rg -q --fixed-strings"
+else
+	export GREP_QUIET="grep -q"
+fi
+read -ra GREP_QUIET_ARRAY <<< "$GREP_QUIET"
+
+# --- PATH (idempotent) — provides ~/bin (needs, prepend_path, exclude_path), DOCUMENTS ---
+. "$HOME/.pathconfig"
+
+# --- GNU sed / awk (referenced by .envconfig and many scripts) ---
+if [ -z "${SED+x}" ]; then
+	for _c in $(type -a -p gsed 2>/dev/null) $(type -a -p sed 2>/dev/null); do
+		if "$_c" --version 2>/dev/null | head -1 | "${GREP_QUIET_ARRAY[@]}" GNU; then
+			export SED="$_c"; break
+		fi
+	done
+	[ -z "${SED+x}" ] && export SED="sed"
+	unset _c
+fi
+[ -z "${AWK+x}" ] && export AWK="$(command -v frawk || command -v gawk || command -v awk)"
+
+# --- locale ---
+export LANG=en_US.UTF-8
+
+# --- platform (used by .envconfig and scripts) ---
+export PLATFORM
+case "$OSTYPE" in
+	darwin*)              export PLATFORM="mac";     export DISTRO="macOS"   ;;
+	linux*)              export PLATFORM="linux";   export DISTRO="$(distro 2>/dev/null)" ;;
+	msys*|cygwin*|mingw*) export PLATFORM="windows"; export DISTRO="Windows" ;;
+	*)                   export PLATFORM="$OSTYPE" ;;
+esac
+
+# --- preferred editors (scripts & git read $EDITOR / $VISUAL) ---
+unset VISUAL EDITOR
+if [[ -n "${SSH_CONNECTION:-}" ]]; then
+	needs micro "please install the micro editor; defaulting to nano" && export EDITOR='micro' || export EDITOR='nano'
+	unset VISUAL  # signals "no GUI context" to downstream tooling
+else
+	needs micro "please install the micro editor; defaulting to nano for EDITOR" && export EDITOR='micro' || export EDITOR='nano'
+	if needs zeditor; then
+		export VISUAL='zeditor'   # NixOS: the real Zed editor; bare `zed` is the ZFS Event Daemon
+	elif needs zed "please install the Zed text editor"; then
+		export VISUAL='zed'       # macOS: the Zed CLI is `zed`
+	elif needs code "please install the VSCode editor and commandline access for it"; then
+		export VISUAL='code'
+	else
+		export VISUAL="$EDITOR"
+	fi
+fi
+
+# --- Node toolchain: VOLTA OWNS IT; pnpm is the package manager only ---
+# (decision 2026-06-06; see the note synced to the Mac's ~/dotfiles/inbox)
+# Rules: no corepack; never `pnpm add -g` (use `volta install`); no `pnpm env`.
+export VOLTA_HOME="$HOME/.volta"
+export VOLTA_FEATURE_PNPM=1     # without this, Volta's pnpm shim has nothing behind it
+export PNPM_HOME="$HOME/.local/share/pnpm"
+# (PATH entries for these are added by .pathconfig)
+
+# --- toolchain guardrail (interactive only) — warn if a non-Volta pnpm shadows the shim ---
+if ${INTERACTIVE_SHELL:-false}; then
+	_pnpm="$(command -v pnpm 2>/dev/null)"
+	if [ -n "$_pnpm" ] && case "$_pnpm" in "$VOLTA_HOME"/*) false ;; *) true ;; esac; then
+		printf 'shellenv: WARNING pnpm on PATH is not the Volta shim (%s) — corepack/brew/standalone pnpm may conflict; Volta owns pnpm\n' "$_pnpm" >&2
+	fi
+	unset _pnpm
+fi
+# (note: __SHELLENV_LOADED is set+exported at the TOP, intentionally, to prevent
+# BASH_ENV recursion — see the comment up there.)
