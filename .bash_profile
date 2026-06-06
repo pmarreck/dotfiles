@@ -117,3 +117,6 @@ truthy DEBUG_PATHCONFIG && echo "$PATH" || :
 # Added by LM Studio CLI (lms)
 # export PATH="$PATH:/Users/pmarreck/.cache/lm-studio/bin"
 # End of LM Studio CLI section
+export VOLTA_HOME="$HOME/.volta"
+export VOLTA_FEATURE_PNPM=1 # let Volta manage pnpm cross-platform; without this the bare pnpm shim has nothing behind it
+export PATH="$VOLTA_HOME/bin:$PATH"

@@ -22,6 +22,12 @@ else
 	echo "Warning: Couldn't parse Bash version: $BASH_VERSION"
 fi
 
+# When .bashrc is sourced directly (non-login interactive shell — e.g. SSH sessions,
+# tmux panes, editor subshells), .bash_profile hasn't run, so .pathconfig hasn't either
+# and ~/bin (which holds `needs` and friends) isn't on PATH yet. .pathconfig is idempotent
+# and cheap by design, so ensure it has run before anything below calls `needs`.
+command -v needs >/dev/null 2>&1 || . "$HOME/.pathconfig"
+
 # Turn off command hashing
 set +h
 
@@ -137,8 +143,10 @@ unset VISUAL EDITOR
 		unset VISUAL # note: this indicates to other tooling later on that we are not in a GUI context
 	else
 		needs micro "please install the micro editor; defaulting to nano for EDITOR" && export EDITOR='micro' || export EDITOR='nano'
-		if needs zed "please install the Zed text editor"; then
-			export VISUAL='zed'
+		if needs zeditor; then
+			export VISUAL='zeditor' # NixOS: the real Zed editor binary is `zeditor`; bare `zed` is the ZFS Event Daemon
+		elif needs zed "please install the Zed text editor"; then
+			export VISUAL='zed' # macOS: the Zed CLI is `zed`
 		elif needs code "please install the VSCode editor and commandline access for it"; then
 			export VISUAL='code'
 		else
@@ -340,3 +348,5 @@ export DRANDOM_CONTEXT=$$
 
 # peon-ping quick controls
 [ -f ~/.claude/hooks/peon-ping/completions.bash ] && source ~/.claude/hooks/peon-ping/completions.bash
+export VOLTA_HOME="$HOME/.volta"
+export PATH="$VOLTA_HOME/bin:$PATH"
