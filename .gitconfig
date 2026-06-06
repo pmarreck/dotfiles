@@ -42,3 +42,5 @@
 	helper = !/run/current-system/sw/bin/gh auth git-credential
 [credential "https://gist.github.com"]
 	helper = !/run/current-system/sw/bin/gh auth git-credential
+[coderabbit]
+	machineId = cli/a5d949f300404850869e8c8728883c16
