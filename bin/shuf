@@ -1,17 +1,31 @@
 #!/usr/bin/env bash
 
 shuf() {
+	# Resolve THIS script's canonical path so we can rule it out of the
+	# shuf search and avoid infinite recursion when PATH puts us first.
+	local self
+	self=$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null) || self="${BASH_SOURCE[0]}"
+
 	local whichshuf
-	# prefer gshuf, fall back to shuf
-	if type -P gshuf &> /dev/null; then
-		whichshuf=gshuf
-	elif type -P shuf &> /dev/null; then
-		whichshuf=shuf
-	else
-		echo "Error: Neither gshuf nor shuf command is available." >&2
+	# Prefer gshuf (full path via type -P; gshuf is never us)
+	whichshuf=$(type -P gshuf 2>/dev/null)
+	if [ -z "$whichshuf" ]; then
+		# No gshuf — find the first shuf on PATH whose canonical path isn't us
+		local candidate canonical
+		while IFS= read -r candidate; do
+			[ -z "$candidate" ] && continue
+			canonical=$(readlink -f "$candidate" 2>/dev/null) || canonical="$candidate"
+			if [ "$canonical" != "$self" ]; then
+				whichshuf="$candidate"
+				break
+			fi
+		done < <(type -aP shuf 2>/dev/null)
+	fi
+	if [ -z "$whichshuf" ]; then
+		echo "Error: Neither gshuf nor a non-wrapper shuf is available." >&2
 		return 1
 	fi
-	$whichshuf "$@"
+	"$whichshuf" "$@"
 }
 
 # Run the function if this script is executed directly

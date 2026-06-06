@@ -1,17 +1,31 @@
 #!/usr/bin/env bash
 
 date() {
+	# Resolve THIS script's canonical path so we can rule it out of the
+	# date search and avoid infinite recursion when PATH puts us first.
+	local self
+	self=$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null) || self="${BASH_SOURCE[0]}"
+
 	local whichdate
-	# prefer gdate, fall back to date
-	if type -P gdate &> /dev/null; then
-		whichdate=gdate
-	elif type -P date &> /dev/null; then
-		whichdate=date
-	else
-		echo "Error: Neither gdate nor date command is available." >&2
+	# Prefer gdate (full path via type -P; gdate is never us)
+	whichdate=$(type -P gdate 2>/dev/null)
+	if [ -z "$whichdate" ]; then
+		# No gdate — find the first date on PATH whose canonical path isn't us
+		local candidate canonical
+		while IFS= read -r candidate; do
+			[ -z "$candidate" ] && continue
+			canonical=$(readlink -f "$candidate" 2>/dev/null) || canonical="$candidate"
+			if [ "$canonical" != "$self" ]; then
+				whichdate="$candidate"
+				break
+			fi
+		done < <(type -aP date 2>/dev/null)
+	fi
+	if [ -z "$whichdate" ]; then
+		echo "Error: Neither gdate nor a non-wrapper date is available." >&2
 		return 1
 	fi
-	$whichdate "$@"
+	"$whichdate" "$@"
 }
 
 # Run the function if this script is executed directly

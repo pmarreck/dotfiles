@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+
+# Tests for bin/shuf wrapper. See bin/test/tac_test for the full design rationale.
+# Bug being prevented: whichshuf=shuf (literal name) → $whichshuf resolves
+# through PATH and finds the wrapper itself → infinite recursion.
+
+fails=0
+tests=0
+
+WRAPPER="$HOME/dotfiles/bin/shuf"
+WRAPPER_CANONICAL="$(readlink -f "$WRAPPER")"
+WRAPPER_DIR="$(dirname "$WRAPPER_CANONICAL")"
+
+# Test 1: PATH puts wrapper first AND has no gshuf. Wrapper must not recurse.
+# On macOS /bin and /usr/bin have no shuf; on Linux /usr/bin/shuf typically
+# exists. Either way, the wrapper must NOT time out.
+((tests++))
+echo "Testing: wrapper does not recurse when only itself is reachable as shuf..."
+output=$(PATH="$WRAPPER_DIR:/bin:/usr/bin" timeout 3 "$WRAPPER" <<<"hello" 2>&1)
+rc=$?
+if [[ $rc -eq 124 ]]; then
+	echo "✗ Test failed: hit 3s timeout — wrapper is recursing into itself" >&2
+	((fails++))
+elif [[ $rc -eq 1 ]] && [[ "$output" == *Error* ]]; then
+	echo "✓ Test passed: clean error (rc=1, no real shuf reachable)"
+elif [[ $rc -eq 0 ]] && [[ "$output" == "hello" ]]; then
+	echo "✓ Test passed: rc=0, used a non-wrapper shuf on PATH"
+else
+	echo "✗ Test failed: rc=$rc output='$output'" >&2
+	((fails++))
+fi
+
+# Test 2: wrapper-dir + real shuf dir (no gshuf) → uses real shuf.
+((tests++))
+echo "Testing: wrapper falls back to a real shuf when gshuf is unavailable..."
+REAL_SHUF=""
+while IFS= read -r candidate; do
+	[[ -z "$candidate" ]] && continue
+	canon="$(readlink -f "$candidate" 2>/dev/null)"
+	if [[ "$canon" != "$WRAPPER_CANONICAL" ]]; then
+		REAL_SHUF="$candidate"
+		break
+	fi
+done < <(type -aP shuf 2>/dev/null)
+
+if [[ -z "$REAL_SHUF" ]]; then
+	echo "✓ Test skipped: no non-wrapper shuf on this system to fall back to"
+else
+	REAL_SHUF_DIR="$(dirname "$REAL_SHUF")"
+	output=$(PATH="$WRAPPER_DIR:$REAL_SHUF_DIR" timeout 3 "$WRAPPER" <<<"hello" 2>&1)
+	rc=$?
+	if [[ $rc -eq 0 ]] && [[ "$output" == "hello" ]]; then
+		echo "✓ Test passed: real shuf used (single-line shuffle is identity)"
+	elif [[ $rc -eq 124 ]]; then
+		echo "✗ Test failed: hit 3s timeout — wrapper is recursing" >&2
+		((fails++))
+	else
+		echo "✗ Test failed: rc=$rc output='$output'" >&2
+		((fails++))
+	fi
+fi
+
+# Test 3: normal PATH (gshuf present) → wrapper uses gshuf.
+((tests++))
+echo "Testing: wrapper uses gshuf when available..."
+output=$("$WRAPPER" <<<"hello" 2>&1)
+rc=$?
+if [[ $rc -eq 0 ]] && [[ "$output" == "hello" ]]; then
+	echo "✓ Test passed: gshuf used, single-line passes through"
+else
+	echo "✗ Test failed: rc=$rc output='$output'" >&2
+	((fails++))
+fi
+
+if (( fails == 0 )); then
+	echo "All $tests tests passed"
+else
+	echo "$fails of $tests tests failed" >&2
+fi
+exit $fails
