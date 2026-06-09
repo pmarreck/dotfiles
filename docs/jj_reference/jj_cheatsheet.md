@@ -384,6 +384,98 @@ jj squash --from <rev> --into <target>
 jj rebase -s <start>..<end> -d <target>
 ```
 
+### Splitting one change into focused commits
+
+When `@` has accumulated several unrelated concerns (a feature in `src/`, a
+docs tweak, a config change) and you want to land them as **N separate, clean
+commits — one per concern, each containing ONLY its files** — the idiomatic,
+least-error-prone tool is repeated **`jj commit <paths> -m`**. Each call peels
+the named paths off into the commit it closes and leaves the remainder in a
+fresh `@`. After the last group, `@` is left empty — exactly the "empty working
+commit on top" end-state you want.
+
+```bash
+# Working copy @ holds: src/feature.zig src/helper.zig docs/README.md config.toml
+jj commit -m "feat: feature implementation" src/feature.zig src/helper.zig
+jj commit -m "docs: add readme"             docs/README.md
+jj commit -m "chore: config tweak"          config.toml
+# Result: 3 focused commits, each with only its files, and an empty @ on top.
+
+# Verify each commit is clean:
+jj log -T 'change_id.shortest() ++ " " ++ description.first_line() ++ "\n"' --no-graph
+jj diff -r <change_id> --summary    # per-commit file list
+```
+
+`jj commit <paths>` is **not interactive** (it takes exactly the paths you
+name); `[FILESETS]` also accepts jj fileset expressions (`glob:`, `~`, etc.),
+not just literal paths. Paths with spaces must be quoted.
+
+**Alternative: `jj split <filesets> -m`.** Selected files go into a *new parent*
+commit; the *remainder stays in `@`*. This is the right tool when you want the
+remainder to keep being the working copy, but it's clunkier for the
+"N-commits-then-empty-@" goal because the last group lands in `@` (you'd
+`jj describe` it, not `jj commit`, and `@` is left non-empty unless you
+`jj new`). Note the bookmark difference: **`jj split` (without `-o`/`-A`/`-B`)
+moves a bookmark forward from the old change to the child; `jj commit` does
+not move bookmarks.** Interactive splitting (`jj split` / `jj split -i` with no
+filesets) opens a diff editor for hunk-level surgery — the `git add -p`
+analogue. `jj split` can also extract the selected changes to an arbitrary
+location with `-o <dest>` / `-A <after>` / `-B <before>` instead of leaving
+them inline. (Verified on jj 0.41.)
+
+### Advancing a bookmark after a rewrite (no "Refusing to move backwards" friction)
+
+**Key fact: you almost never need to re-set the bookmark.** Bookmarks track the
+stable `change_id`, so when the commit a bookmark points to is *rewritten in
+place* — `jj squash`, `jj describe`, `jj rebase`, amend — **jj automatically
+advances the bookmark to the new commit**. The `change_id` is unchanged; only
+the `commit_id` (git SHA) mutates, and the bookmark follows it. Official docs:
+*"Bookmarks automatically move when revisions are rewritten … bookmarks and the
+working-copy will move along with it … following along the change-id."*
+
+```bash
+# Setup: @ is an empty working commit on top; yolo points at @- (the real tip).
+jj bookmark create yolo -r @-          # or: jj bookmark set yolo -r @-
+
+# ...later, rewrite that commit IN PLACE — any of these:
+jj describe @- -m "reworded"           # yolo auto-follows -> X'
+printf 'more\n' >> file.txt; jj squash # squash empty-@ edits into @-; yolo auto-follows
+jj squash --into @-                    # same; yolo auto-follows
+
+# Bookmark is ALREADY on the rewritten commit. Do nothing. No flag. No warning.
+jj bookmark list                       # yolo: <change_id> <new_commit_id> ...
+```
+
+**Why the warning appears, and how to avoid it.** `jj bookmark set <name> -r T`
+refuses with `Refusing to move bookmark backwards or sideways: <name>` whenever
+`T` is **not a descendant** of where the bookmark currently sits — i.e. you're
+asking it to go *backwards* (to an ancestor) or *sideways* (to a divergent
+sibling). In the rewrite workflow this only happens if you *manually re-set the
+bookmark you didn't need to touch* — e.g. targeting a now-orphaned/stale
+`commit_id` from before the rewrite, or a parallel commit. The fix is to stop
+re-setting it: after an in-place rewrite the auto-follow has already done the
+right thing.
+
+```bash
+# If you DO want to (re)point it deliberately and it's genuinely going forward,
+# this is clean (the empty @ means @- is always a descendant of the old tip):
+jj bookmark set yolo -r @-             # no flag needed when moving forward
+
+# Only when intentionally moving BACKWARDS/SIDEWAYS (reset to an older commit,
+# pick a different sibling) do you need the override:
+jj bookmark set  yolo -r <older> --allow-backwards   # alias: -B
+jj bookmark move yolo --to <rev>    --allow-backwards # 'move' updates existing only
+
+# Pointing a bookmark to where it already is = harmless no-op:
+#   jj bookmark set  -> "Nothing changed."
+#   jj bookmark move -> "No bookmarks to update."
+```
+
+Rule of thumb: **set the bookmark on `@-` once; rewrite freely; never re-set it
+to follow a rewrite — jj already moved it.** Reach for `--allow-backwards`/`-B`
+only for an intentional backwards/sideways reset, never for routine advancing.
+(Verified on jj 0.41.)
+
 ### Absorb working-copy changes into the right ancestors
 
 `jj absorb` solves a workflow that's tedious by hand: you make broad fixes across a working stack of commits, then want each fix to land in the *correct* ancestor (not all dumped into the tip). Absorb pattern-matches your working-copy hunks against each ancestor's diff and pushes every unambiguous hunk into the nearest ancestor that already touched those same lines.
