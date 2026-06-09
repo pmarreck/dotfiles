@@ -333,10 +333,6 @@ export DRANDOM_CONTEXT=$$
 # export PATH="$PATH:/Users/pmarreck/.cache/lm-studio/bin"
 # End of LM Studio CLI section
 
-# pnpm
-export PNPM_HOME="$HOME/.local/share/pnpm"
-prepend_path "$PNPM_HOME"
-# pnpm end
 # Append Warp and McFly history to shell history
 # if command -v warp-history &> /dev/null; then
 # 	warp-history --shell bash

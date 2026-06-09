@@ -101,6 +101,7 @@ unset MAILCHECK
 # Node.js
 export NODE_PATH=/usr/local/lib/node
 export VOLTA_HOME="$HOME/.volta"
+export PNPM_HOME="$HOME/.local/share/pnpm"
 
 # ANSI color escape-code constants
 # On SGR: https://en.wikipedia.org/wiki/ANSI_escape_code#SGR
