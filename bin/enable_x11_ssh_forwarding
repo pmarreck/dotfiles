@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+
+# Enable X11 forwarding for outbound ssh by rewriting the fragment that
+# ~/.ssh/config Includes ahead of its Host * block (first value wins).
+# Counterpart: disable_x11_ssh_forwarding. Heads-up: with forwarding on,
+# ssh runs xauth against $DISPLAY, which auto-launches XQuartz via launchd.
+enable_x11_ssh_forwarding() {
+	local conf="${X11_SSH_FORWARDING_CONF:-$HOME/.ssh/config.d/x11_forwarding}"
+	mkdir -p "$(dirname "$conf")"
+	printf 'Host *\n  ForwardX11 yes\n' > "$conf"
+	chmod 600 "$conf"
+	echo "X11 forwarding for outbound ssh: ENABLED ($conf)"
+	echo "XQuartz will auto-launch on your next ssh. Turn back off with: disable_x11_ssh_forwarding"
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		_test_file="$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+		if [ -f "$_test_file" ]; then . "$_test_file" > /dev/null; fi
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

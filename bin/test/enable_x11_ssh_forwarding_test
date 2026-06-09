@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+
+# Test the enable_x11_ssh_forwarding function
+enable_x11_ssh_forwarding_test() {
+  local fails=0
+  local tmpdir
+  tmpdir=$(mktemp -d --tmpdir enable_x11_ssh_forwarding_test.XXXXXX)
+  local frag="$tmpdir/x11_forwarding"
+
+  # Writes a Host * fragment enabling ForwardX11, creating parent dirs as needed
+  X11_SSH_FORWARDING_CONF="$frag" enable_x11_ssh_forwarding >/dev/null
+  assert "$(cat "$frag" 2>/dev/null)" == "Host *
+  ForwardX11 yes" "enable_x11_ssh_forwarding should write a 'Host *' ForwardX11 yes fragment"
+  ((fails+=$?))
+
+  # Resolved client config sees forwarding enabled via Include, beating a later
+  # Host * no. Mirrors the real ~/.ssh/config layout: a preceding Host block
+  # would swallow a bare Include (Host blocks run to the next Host/Match
+  # keyword), so the Include must follow a Match all.
+  printf 'Host other.example\n  ForwardX11 no\n\nMatch all\nInclude %s\n\nHost *\n  ForwardX11 no\n' "$frag" > "$tmpdir/config"
+  assert "$(ssh -G -F "$tmpdir/config" example.com | grep '^forwardx11 ')" == "forwardx11 yes" \
+    "ssh -G should resolve forwardx11 yes when the fragment is enabled"
+  ((fails+=$?))
+
+  # Idempotent: running twice leaves the same content
+  X11_SSH_FORWARDING_CONF="$frag" enable_x11_ssh_forwarding >/dev/null
+  assert "$(grep -c ForwardX11 "$frag")" == "1" "enable_x11_ssh_forwarding should be idempotent"
+  ((fails+=$?))
+
+  rm -rf "$tmpdir"
+  return "$fails"
+}
+
+enable_x11_ssh_forwarding_test

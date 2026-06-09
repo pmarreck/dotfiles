@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+
+# Test the disable_x11_ssh_forwarding function
+disable_x11_ssh_forwarding_test() {
+  local fails=0
+  local tmpdir
+  tmpdir=$(mktemp -d --tmpdir disable_x11_ssh_forwarding_test.XXXXXX)
+  local frag="$tmpdir/x11_forwarding"
+
+  # Overwrites an enabled fragment with an explicit ForwardX11 no
+  printf 'Host *\n  ForwardX11 yes\n' > "$frag"
+  X11_SSH_FORWARDING_CONF="$frag" disable_x11_ssh_forwarding >/dev/null
+  assert "$(cat "$frag" 2>/dev/null)" == "Host *
+  ForwardX11 no" "disable_x11_ssh_forwarding should write a 'Host *' ForwardX11 no fragment"
+  ((fails+=$?))
+
+  # Resolved client config sees forwarding disabled even if a later Host * says
+  # yes. Mirrors the real ~/.ssh/config layout (Match all closes any preceding
+  # Host block so the Include applies to every host).
+  printf 'Host other.example\n  ForwardX11 yes\n\nMatch all\nInclude %s\n\nHost *\n  ForwardX11 yes\n' "$frag" > "$tmpdir/config"
+  assert "$(ssh -G -F "$tmpdir/config" example.com | grep '^forwardx11 ')" == "forwardx11 no" \
+    "ssh -G should resolve forwardx11 no when the fragment is disabled"
+  ((fails+=$?))
+
+  rm -rf "$tmpdir"
+  return "$fails"
+}
+
+disable_x11_ssh_forwarding_test

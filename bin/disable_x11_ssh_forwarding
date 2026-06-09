@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+
+# Disable X11 forwarding for outbound ssh by rewriting the fragment that
+# ~/.ssh/config Includes ahead of its Host * block (first value wins).
+# Counterpart: enable_x11_ssh_forwarding. One-off forwarding is still
+# available without re-enabling globally: ssh -X host (or -Y for trusted).
+disable_x11_ssh_forwarding() {
+	local conf="${X11_SSH_FORWARDING_CONF:-$HOME/.ssh/config.d/x11_forwarding}"
+	mkdir -p "$(dirname "$conf")"
+	printf 'Host *\n  ForwardX11 no\n' > "$conf"
+	chmod 600 "$conf"
+	echo "X11 forwarding for outbound ssh: DISABLED ($conf)"
+	echo "One-off forwarding still works per-invocation: ssh -X host (or -Y for trusted)"
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		_test_file="$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+		if [ -f "$_test_file" ]; then . "$_test_file" > /dev/null; fi
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi
