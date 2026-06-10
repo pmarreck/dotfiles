@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+
+# Drift sentinel for root-owned system mutations declared in the nix-darwin
+# flake (~/.config/nix/darwin-configuration.nix, extraActivation). macOS major
+# updates may wipe these between rebuilds; activation reasserts them, but only
+# when a rebuild runs — this check surfaces the gap at shell init instead of
+# at first silent failure. Silent and exit 0 when everything is in place;
+# warns on stderr and exits with the count of missing mutations otherwise.
+# CHECK_SYSTEM_MUTATIONS_ROOT prefixes all paths (for tests).
+check-system-mutations() {
+	case "${1:-}" in
+		-h|--help)
+			echo "usage: check-system-mutations  # warn if flake-declared root artifacts have drifted"
+			echo "Checks /usr/local/sbin/llm-admin, /etc/sudoers.d/llm-admin, and pam_tid in /etc/pam.d/sudo_local."
+			echo "Silent + exit 0 when all present; exit = missing count. Fix: sudo darwin-rebuild switch --flake ~/.config/nix"
+			return 0
+			;;
+	esac
+	local root="${CHECK_SYSTEM_MUTATIONS_ROOT:-}"
+	local missing=0
+	if [ ! -x "$root/usr/local/sbin/llm-admin" ]; then
+		echo "check-system-mutations: /usr/local/sbin/llm-admin missing or not executable" >&2
+		((missing++))
+	fi
+	if [ ! -f "$root/etc/sudoers.d/llm-admin" ]; then
+		echo "check-system-mutations: /etc/sudoers.d/llm-admin (sudoers drop-in) missing" >&2
+		((missing++))
+	fi
+	if ! grep -q pam_tid "$root/etc/pam.d/sudo_local" 2>/dev/null; then
+		echo "check-system-mutations: pam_tid not configured in /etc/pam.d/sudo_local" >&2
+		((missing++))
+	fi
+	if [ "$missing" -gt 0 ]; then
+		echo "check-system-mutations: $missing system mutation(s) missing — run: sudo darwin-rebuild switch --flake ~/.config/nix" >&2
+	fi
+	return "$missing"
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		_test_file="$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+		if [ -f "$_test_file" ]; then . "$_test_file" > /dev/null; fi
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

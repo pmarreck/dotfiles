@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+
+# Test the check-system-mutations function
+check_system_mutations_test() {
+  local fails=0 tmpdir out status
+  tmpdir=$(mktemp -d --tmpdir check_system_mutations_test.XXXXXX)
+
+  # Fake root with every mutation present -> silent success
+  mkdir -p "$tmpdir/full/usr/local/sbin" "$tmpdir/full/etc/sudoers.d" "$tmpdir/full/etc/pam.d"
+  touch "$tmpdir/full/usr/local/sbin/llm-admin" && chmod +x "$tmpdir/full/usr/local/sbin/llm-admin"
+  touch "$tmpdir/full/etc/sudoers.d/llm-admin"
+  echo "auth       sufficient     pam_tid.so" > "$tmpdir/full/etc/pam.d/sudo_local"
+
+  out=$(CHECK_SYSTEM_MUTATIONS_ROOT="$tmpdir/full" check-system-mutations 2>&1)
+  status=$?
+  assert "$status" == "0" "all mutations present should exit 0"
+  ((fails+=$?))
+  assert "$out" == "" "all mutations present should be silent (runs at shell init)"
+  ((fails+=$?))
+
+  # Empty fake root -> all 3 missing, warning names the fix
+  mkdir -p "$tmpdir/empty"
+  out=$(CHECK_SYSTEM_MUTATIONS_ROOT="$tmpdir/empty" check-system-mutations 2>&1)
+  status=$?
+  assert "$status" == "3" "empty root should report 3 missing mutations via exit code"
+  ((fails+=$?))
+  assert "$out" =~ "llm-admin" "warning should name the missing artifact"
+  ((fails+=$?))
+  assert "$out" =~ "darwin-rebuild switch" "warning should name the fix"
+  ((fails+=$?))
+
+  # Partial: only the sudoers drop-in missing -> exit 1
+  mkdir -p "$tmpdir/partial/usr/local/sbin" "$tmpdir/partial/etc/pam.d"
+  touch "$tmpdir/partial/usr/local/sbin/llm-admin" && chmod +x "$tmpdir/partial/usr/local/sbin/llm-admin"
+  echo "auth       sufficient     pam_tid.so" > "$tmpdir/partial/etc/pam.d/sudo_local"
+  out=$(CHECK_SYSTEM_MUTATIONS_ROOT="$tmpdir/partial" check-system-mutations 2>&1)
+  status=$?
+  assert "$status" == "1" "one missing mutation should exit 1"
+  ((fails+=$?))
+  assert "$out" =~ "sudoers" "warning should identify the sudoers drop-in"
+  ((fails+=$?))
+
+  rm -rf "$tmpdir"
+  return "$fails"
+}
+
+check_system_mutations_test
