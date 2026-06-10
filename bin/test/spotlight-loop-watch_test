@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+
+# Test the spotlight-loop-watch function
+spotlight_loop_watch_test() {
+  local fails=0 tmpdir out status i
+  tmpdir=$(mktemp -d --tmpdir spotlight_loop_watch_test.XXXXXX)
+
+  # Fixture 1: the pathological loop — 60 failed-unlink lines (default threshold 50)
+  for ((i = 0; i < 60; i++)); do
+    echo "2026-06-05 15:59:00.${i}00000-0400 0x765c48 Default 0x0 538 0 mds_stores: (SpotlightIndex) [com.apple.spotlightindex:IVFVectorIndex] IVFVectorIndex::unlink:4752 failed 0 <private>"
+  done > "$tmpdir/looping.log"
+
+  out=$(SPOTLIGHT_LOOP_WATCH_LOG_FILE="$tmpdir/looping.log" SPOTLIGHT_LOOP_WATCH_NO_NOTIFY=1 spotlight-loop-watch 2>&1)
+  status=$?
+  assert "$status" == "1" "should exit 1 when failed-unlink count exceeds threshold"
+  ((fails+=$?))
+  assert "$out" =~ "ALERT" "should emit an ALERT when over threshold"
+  ((fails+=$?))
+  assert "$out" =~ "60 unlink-failed" "should report the failed-unlink count"
+  ((fails+=$?))
+
+  # Fixture 2: benign rebuild chatter — heavy IVFVectorIndex activity but only
+  # 3 failed unlinks. Must NOT alert (a looser grep that matched any
+  # IVFVectorIndex line false-positived on exactly this during the 2026-06
+  # post-reset reindex).
+  {
+    for ((i = 0; i < 50; i++)); do
+      echo "2026-06-10 10:26:21.000000-0400 0x765c48 Default 0x0 538 0 mds_stores: (SpotlightIndex) [com.apple.spotlightindex:IVFVectorIndex] create vectorIndex: <private>"
+      echo "2026-06-10 10:26:21.100000-0400 0x765c48 Default 0x0 538 0 mds_stores: (SpotlightIndex) [com.apple.spotlightindex:IVFVectorIndex] [<private>] mergeUpdateSet 0x7c6c0b900 <private> to <private> total 12287"
+    done
+    for ((i = 0; i < 3; i++)); do
+      echo "2026-06-10 10:26:22.000000-0400 0x765c48 Default 0x0 538 0 mds_stores: (SpotlightIndex) [com.apple.spotlightindex:IVFVectorIndex] IVFVectorIndex::unlink:4752 failed 0 <private>"
+    done
+  } > "$tmpdir/rebuild.log"
+
+  out=$(SPOTLIGHT_LOOP_WATCH_LOG_FILE="$tmpdir/rebuild.log" SPOTLIGHT_LOOP_WATCH_NO_NOTIFY=1 spotlight-loop-watch 2>&1)
+  status=$?
+  assert "$status" == "0" "benign rebuild chatter should not alert"
+  ((fails+=$?))
+  assert "$out" !=~ "ALERT" "no ALERT for benign rebuild chatter"
+  ((fails+=$?))
+  assert "$out" =~ "3 unlink-failed" "should still report the small true count"
+  ((fails+=$?))
+
+  # Threshold is env-overridable
+  out=$(SPOTLIGHT_LOOP_WATCH_LOG_FILE="$tmpdir/rebuild.log" SPOTLIGHT_LOOP_WATCH_NO_NOTIFY=1 SPOTLIGHT_LOOP_WATCH_THRESHOLD=2 spotlight-loop-watch 2>&1)
+  status=$?
+  assert "$status" == "1" "SPOTLIGHT_LOOP_WATCH_THRESHOLD should override the default"
+  ((fails+=$?))
+
+  rm -rf "$tmpdir"
+  return "$fails"
+}
+
+spotlight_loop_watch_test

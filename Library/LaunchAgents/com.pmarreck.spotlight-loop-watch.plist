@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.pmarreck.spotlight-loop-watch</string>
+
+    <!-- bash via the STABLE nix-darwin symlink, never a versioned /nix/store path
+         (that hash changes on every darwin-rebuild and would break this agent). -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/run/current-system/sw/bin/bash</string>
+        <string>/Users/pmarreck/dotfiles/bin/spotlight-loop-watch</string>
+    </array>
+
+    <!-- Every 15 minutes; the script inspects the last 5m of unified log, so
+         detection lag is at most ~15m — days ahead of the wedge this guards
+         against. No KeepAlive: exit 1 is the ALERT signal, not a crash. -->
+    <key>StartInterval</key>
+    <integer>900</integer>
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Low priority: `log show` over 5m costs a few seconds; never compete
+         with real work (especially not with a reindexing mds_stores). -->
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>Nice</key>
+    <integer>10</integer>
+    <key>LowPriorityIO</key>
+    <true/>
+
+    <!-- One combined log: count lines and ALERT lines interleave in order,
+         which is what you want to read after a notification fires. -->
+    <key>StandardOutPath</key>
+    <string>/Users/pmarreck/Library/Logs/spotlight-loop-watch.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/pmarreck/Library/Logs/spotlight-loop-watch.log</string>
+</dict>
+</plist>

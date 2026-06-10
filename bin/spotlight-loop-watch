@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+
+# Watchdog for the CoreSpotlight stuck-tombstone bug: mds_stores busy-loops on
+# IVFVectorIndex::unlink with no backoff, silently starving the indexing
+# pipeline until the machine wedges (see memory note
+# user_spotlight_stuck_loop_pattern.md). Counts ONLY 'unlink:<N> failed' lines
+# — benign IVFVectorIndex create/merge chatter floods the log during normal
+# reindexing and must not trigger. Run periodically via the LaunchAgent
+# com.pmarreck.spotlight-loop-watch. Exits 1 (and notifies) when over threshold.
+#
+# Env overrides:
+#   SPOTLIGHT_LOOP_WATCH_WINDOW     minutes of log to inspect (default 5)
+#   SPOTLIGHT_LOOP_WATCH_THRESHOLD  failed-unlink lines to tolerate (default 50)
+#   SPOTLIGHT_LOOP_WATCH_LOG_FILE   read this file instead of `log show` (tests)
+#   SPOTLIGHT_LOOP_WATCH_NO_NOTIFY  set to suppress the macOS notification
+spotlight-loop-watch() {
+	local window="${SPOTLIGHT_LOOP_WATCH_WINDOW:-5}"
+	local threshold="${SPOTLIGHT_LOOP_WATCH_THRESHOLD:-50}"
+	local count
+	if [ -n "${SPOTLIGHT_LOOP_WATCH_LOG_FILE:-}" ]; then
+		count=$(grep -cE 'unlink:[0-9]+ failed' "$SPOTLIGHT_LOOP_WATCH_LOG_FILE")
+	else
+		count=$(/usr/bin/log show --predicate 'process == "mds_stores"' --last "${window}m" 2>/dev/null \
+			| grep -cE 'unlink:[0-9]+ failed')
+	fi
+	echo "$(date '+%Y-%m-%d %H:%M:%S') spotlight-loop-watch: $count unlink-failed lines in last ${window}m (threshold $threshold)"
+	if [ "$count" -gt "$threshold" ]; then
+		echo "ALERT: mds_stores stuck-unlink loop suspected ($count failed unlinks in ${window}m)." >&2
+		echo "Diagnose/mitigate per memory note spotlight-stuck-loop-pattern; capture evidence with: sudo fs_usage -w -f filesys mds_stores" >&2
+		if [ -z "${SPOTLIGHT_LOOP_WATCH_NO_NOTIFY:-}" ]; then
+			/usr/bin/osascript -e "display notification \"$count failed unlinks in ${window}m — mds_stores stuck loop suspected. Capture: sudo fs_usage mds_stores\" with title \"spotlight-loop-watch\" sound name \"Basso\"" >/dev/null 2>&1
+		fi
+		return 1
+	fi
+	return 0
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		_test_file="$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+		if [ -f "$_test_file" ]; then . "$_test_file" > /dev/null; fi
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi
