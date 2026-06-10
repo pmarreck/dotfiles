@@ -1,0 +1,43 @@
+#!/bin/bash
+# llm-admin — sudo allowlist wrapper for LLM agents. READ-ONLY diagnostics only.
+#
+# This file is the SOURCE OF TRUTH (version-controlled). The live copy runs as
+# root from /usr/local/sbin. SECURITY INVARIANTS — keep all of these true:
+#   1. Install a COPY owned root:wheel mode 0755 — NEVER symlink into a
+#      user-writable location (that hands root execution to anyone who can
+#      edit the target, defeating the entire point).
+#   2. Every exec line is a FIXED string with absolute paths. Subcommands take
+#      no user-controlled arguments; "$@" must never reach a privileged exec.
+#   3. Additions must be read-only diagnostics. Nothing that writes user-chosen
+#      paths, nothing that can shell out or page (no less/vim/find/-exec).
+#   4. After editing, reinstall and re-verify:
+#      sudo install -o root -g wheel -m 0755 ~/dotfiles/security/llm-admin /usr/local/sbin/llm-admin
+#
+# Granted via /etc/sudoers.d/llm-admin:
+#      pmarreck ALL=(root) NOPASSWD: /usr/local/sbin/llm-admin
+
+set -euo pipefail
+export PATH=/usr/bin:/bin:/usr/sbin:/sbin
+
+usage() {
+	cat <<'EOF'
+usage: llm-admin <subcommand>
+Read-only privileged diagnostics preapproved for LLM agents:
+  mdutil-status   Spotlight indexing status, all volumes (mdutil -s -a)
+  sshd-config     Effective sshd configuration (sshd -T)
+  fsusage-mds     File syscalls of mds_stores, 15s capture (fs_usage -t 15)
+  spindump-mds    10s spindump of mds_stores -> /tmp/llm-admin-mds.spindump.txt
+  list            Show this list
+EOF
+}
+
+case "${1:-}" in
+	mdutil-status) exec /usr/bin/mdutil -s -a ;;
+	sshd-config)   exec /usr/sbin/sshd -T ;;
+	fsusage-mds)   exec /usr/bin/fs_usage -w -f filesys -t 15 mds_stores ;;
+	# spindump writes, but only to this fixed /tmp path — the one carve-out,
+	# needed for stuck-loop evidence capture (see spotlight-loop-watch).
+	spindump-mds)  exec /usr/sbin/spindump mds_stores 10 -file /tmp/llm-admin-mds.spindump.txt ;;
+	list|--list|-l|help|--help|-h) usage ;;
+	*) usage >&2; exit 64 ;;
+esac
