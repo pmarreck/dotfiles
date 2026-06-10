@@ -5,6 +5,14 @@
 # Counterpart: enable_x11_ssh_forwarding. One-off forwarding is still
 # available without re-enabling globally: ssh -X host (or -Y for trusted).
 disable_x11_ssh_forwarding() {
+	case "${1:-}" in
+		-h|--help)
+			echo "usage: disable_x11_ssh_forwarding  # default outbound ssh X11 forwarding OFF"
+			echo "Writes a 'Host *' ForwardX11 no fragment to \${X11_SSH_FORWARDING_CONF:-~/.ssh/config.d/x11_forwarding}."
+			echo "One-off forwarding still works per-invocation: ssh -X host (or -Y for trusted)"
+			return 0
+			;;
+	esac
 	local conf="${X11_SSH_FORWARDING_CONF:-$HOME/.ssh/config.d/x11_forwarding}"
 	mkdir -p "$(dirname "$conf")"
 	printf 'Host *\n  ForwardX11 no\n' > "$conf"

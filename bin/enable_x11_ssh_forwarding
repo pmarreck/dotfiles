@@ -5,6 +5,14 @@
 # Counterpart: disable_x11_ssh_forwarding. Heads-up: with forwarding on,
 # ssh runs xauth against $DISPLAY, which auto-launches XQuartz via launchd.
 enable_x11_ssh_forwarding() {
+	case "${1:-}" in
+		-h|--help)
+			echo "usage: enable_x11_ssh_forwarding  # default outbound ssh X11 forwarding ON"
+			echo "Writes a 'Host *' ForwardX11 yes fragment to \${X11_SSH_FORWARDING_CONF:-~/.ssh/config.d/x11_forwarding},"
+			echo "which ~/.ssh/config Includes ahead of its Host * block. Counterpart: disable_x11_ssh_forwarding"
+			return 0
+			;;
+	esac
 	local conf="${X11_SSH_FORWARDING_CONF:-$HOME/.ssh/config.d/x11_forwarding}"
 	mkdir -p "$(dirname "$conf")"
 	printf 'Host *\n  ForwardX11 yes\n' > "$conf"

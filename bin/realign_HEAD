@@ -10,6 +10,14 @@
 # refuses to create branches (typo guard).
 realign_HEAD() {
 	local branch="${1:-}"
+	case "$branch" in
+		-h|--help)
+			echo "usage: realign_HEAD <branchname>  # reattach detached git HEAD to <branchname> at the current commit"
+			echo "The jj colocated workflow leaves git HEAD detached; run this after jj git push to make the git side normal."
+			echo "Never touches worktree/index (branch -f + symbolic-ref). Refuses if HEAD is on another branch."
+			return 0
+			;;
+	esac
 	if [ -z "$branch" ]; then
 		echo "usage: realign_HEAD <branchname>" >&2
 		return 64

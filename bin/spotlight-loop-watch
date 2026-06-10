@@ -14,6 +14,15 @@
 #   SPOTLIGHT_LOOP_WATCH_LOG_FILE   read this file instead of `log show` (tests)
 #   SPOTLIGHT_LOOP_WATCH_NO_NOTIFY  set to suppress the macOS notification
 spotlight-loop-watch() {
+	case "${1:-}" in
+		-h|--help)
+			echo "usage: spotlight-loop-watch  # alert if mds_stores is stuck in its unlink loop"
+			echo "Counts 'unlink:<N> failed' mds_stores lines in the last \${SPOTLIGHT_LOOP_WATCH_WINDOW:-5}m of unified log;"
+			echo "over \${SPOTLIGHT_LOOP_WATCH_THRESHOLD:-50} -> macOS notification + ALERT on stderr + exit 1."
+			echo "Runs every 15m via LaunchAgent com.pmarreck.spotlight-loop-watch; log: ~/Library/Logs/spotlight-loop-watch.log"
+			return 0
+			;;
+	esac
 	local window="${SPOTLIGHT_LOOP_WATCH_WINDOW:-5}"
 	local threshold="${SPOTLIGHT_LOOP_WATCH_THRESHOLD:-50}"
 	local count
