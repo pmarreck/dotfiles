@@ -30,6 +30,13 @@ check-system-mutations() {
 		echo "check-system-mutations: pam_tid not configured in /etc/pam.d/sudo_local" >&2
 		((missing++))
 	fi
+	# Warn-only staleness check (doesn't count as missing): the installed
+	# wrapper exists but predates the newest subcommand, meaning a rebuild
+	# hasn't run since the source (~/.config/nix/files/llm-admin) changed.
+	# Marker = most recently added subcommand; bump when adding new ones.
+	if [ -f "$root/usr/local/sbin/llm-admin" ] && ! grep -q spotlight-exclusions "$root/usr/local/sbin/llm-admin" 2>/dev/null; then
+		echo "check-system-mutations: installed llm-admin is outdated — run: sudo darwin-rebuild switch --flake ~/.config/nix" >&2
+	fi
 	if [ "$missing" -gt 0 ]; then
 		echo "check-system-mutations: $missing system mutation(s) missing — run: sudo darwin-rebuild switch --flake ~/.config/nix" >&2
 	fi
