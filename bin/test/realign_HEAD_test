@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+
+# Test the realign_HEAD function
+realign_HEAD_test() {
+  local fails=0 tmpdir repo out status
+  tmpdir=$(mktemp -d --tmpdir realign_HEAD_test.XXXXXX)
+  repo="$tmpdir/repo"
+
+  # Scratch repo: two commits on master, then simulate the jj colocated state:
+  # HEAD detached at the newer commit, master pointing one behind.
+  git init -q -b master "$repo"
+  git -C "$repo" -c user.email=t@t -c user.name=t commit -q --allow-empty -m one
+  git -C "$repo" -c user.email=t@t -c user.name=t commit -q --allow-empty -m two
+  git -C "$repo" checkout -q --detach
+  git -C "$repo" branch -f master HEAD~1
+  echo "uncommitted" > "$repo/dirty.txt"
+
+  # Missing arg → usage, exit 64
+  out=$(cd "$repo" && realign_HEAD 2>&1)
+  status=$?
+  assert "$status" == "64" "missing branchname should exit 64"
+  ((fails+=$?))
+  assert "$out" =~ "usage" "missing branchname should print usage"
+  ((fails+=$?))
+
+  # Nonexistent branch → refuse (no silent branch creation on typos)
+  out=$(cd "$repo" && realign_HEAD no-such-branch 2>&1)
+  status=$?
+  assert "$status" == "1" "nonexistent branch should be refused"
+  ((fails+=$?))
+
+  # The real job: attach HEAD to master, master moved up to the detached commit
+  local detached_sha
+  detached_sha=$(git -C "$repo" rev-parse HEAD)
+  out=$(cd "$repo" && realign_HEAD master 2>&1)
+  status=$?
+  assert "$status" == "0" "realign_HEAD master should succeed on detached HEAD"
+  ((fails+=$?))
+  assert "$(git -C "$repo" symbolic-ref -q HEAD)" == "refs/heads/master" "HEAD should be attached to master"
+  ((fails+=$?))
+  assert "$(git -C "$repo" rev-parse master)" == "$detached_sha" "master should point at the formerly detached commit"
+  ((fails+=$?))
+  assert "$(cat "$repo/dirty.txt")" == "uncommitted" "worktree must be untouched (symbolic-ref, not checkout)"
+  ((fails+=$?))
+
+  # Idempotent: already attached to target branch → no-op success
+  out=$(cd "$repo" && realign_HEAD master 2>&1)
+  status=$?
+  assert "$status" == "0" "already attached to target branch should be a no-op success"
+  ((fails+=$?))
+
+  # Attached to a DIFFERENT branch → refuse to move anything
+  git -C "$repo" branch -q other
+  git -C "$repo" symbolic-ref HEAD refs/heads/other
+  out=$(cd "$repo" && realign_HEAD master 2>&1)
+  status=$?
+  assert "$status" == "1" "attached to a different branch should be refused"
+  ((fails+=$?))
+  assert "$out" =~ "other" "refusal should name the currently attached branch"
+  ((fails+=$?))
+
+  rm -rf "$tmpdir"
+  return "$fails"
+}
+
+realign_HEAD_test
