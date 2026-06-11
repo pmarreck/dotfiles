@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+
+# Test the notify-peter function
+notify_peter_test() {
+  local fails=0 out status
+
+  # Default mode: macOS notification via osascript
+  out=$(NOTIFY_PETER_DRY_RUN=1 notify-peter "build done" 2>&1)
+  status=$?
+  assert "$status" == "0" "default notification mode should succeed"
+  ((fails+=$?))
+  assert "$out" =~ "display notification" "default mode should use display notification"
+  ((fails+=$?))
+  assert "$out" =~ "build done" "message should appear in the notification"
+  ((fails+=$?))
+
+  # Custom title
+  out=$(NOTIFY_PETER_DRY_RUN=1 notify-peter --title "validate" "shipped" 2>&1)
+  assert "$out" =~ "validate" "custom --title should appear"
+  ((fails+=$?))
+
+  # SMS mode targets Peter's number via Messages.app
+  out=$(NOTIFY_PETER_DRY_RUN=1 notify-peter --sms "call me" 2>&1)
+  status=$?
+  assert "$status" == "0" "sms mode should succeed"
+  ((fails+=$?))
+  assert "$out" =~ "2035704096" "sms mode should target Peter's number"
+  ((fails+=$?))
+  assert "$out" =~ "call me" "sms body should carry the message"
+  ((fails+=$?))
+
+  # Say mode speaks aloud
+  out=$(NOTIFY_PETER_DRY_RUN=1 notify-peter --say "tests passed" 2>&1)
+  assert "$out" =~ "^say: tests passed" "say mode should speak the message"
+  ((fails+=$?))
+
+  # No message -> usage, exit 64
+  out=$(NOTIFY_PETER_DRY_RUN=1 notify-peter 2>&1)
+  status=$?
+  assert "$status" == "64" "missing message should exit 64"
+  ((fails+=$?))
+  assert "$out" =~ "usage" "missing message should print usage"
+  ((fails+=$?))
+
+  return "$fails"
+}
+
+notify_peter_test

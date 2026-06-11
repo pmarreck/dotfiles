@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+
+# Get Peter's attention through the channel that fits how far away he is:
+#   notify-peter "msg"            macOS notification banner (at his Mac)
+#   notify-peter --say "msg"      speak aloud (in the room, not looking)
+#   notify-peter --sms "msg"      iMessage/SMS to his phone (away from Mac)
+# LLM agents: prefer the harness PushNotification tool for phone push when
+# Remote Control is connected; --sms is the fallback that always reaches.
+# First --sms use triggers a one-time TCC Automation dialog (terminal ->
+# Messages) that Peter must approve in person.
+# NOTIFY_PETER_DRY_RUN=1 prints actions instead of performing them (tests).
+notify-peter() {
+	local mode="notify" title="Einstein" msg=""
+	while [ $# -gt 0 ]; do
+		case "$1" in
+			-h|--help)
+				echo "usage: notify-peter [--title <t>] [--sms | --say] <message>"
+				echo "Default: macOS notification. --sms: iMessage to Peter's phone. --say: speak aloud."
+				return 0
+				;;
+			--sms) mode="sms"; shift ;;
+			--say) mode="say"; shift ;;
+			--title) title="$2"; shift 2 ;;
+			*) msg="$*"; break ;;
+		esac
+	done
+	if [ -z "$msg" ]; then
+		echo "usage: notify-peter [--title <t>] [--sms | --say] <message>" >&2
+		return 64
+	fi
+	local phone="+12035704096"
+	case "$mode" in
+		notify)
+			if [ -n "${NOTIFY_PETER_DRY_RUN:-}" ]; then
+				echo "osascript: display notification \"$msg\" with title \"$title\" sound name \"Glass\""
+			else
+				/usr/bin/osascript -e "display notification \"${msg//\"/\\\"}\" with title \"${title//\"/\\\"}\" sound name \"Glass\""
+			fi
+			;;
+		sms)
+			if [ -n "${NOTIFY_PETER_DRY_RUN:-}" ]; then
+				echo "messages: send \"$msg\" to $phone"
+			else
+				/usr/bin/osascript - "$phone" "$msg" <<-'EOS'
+					on run {targetPhone, theMessage}
+						tell application "Messages"
+							set targetService to 1st account whose service type = iMessage
+							set targetBuddy to participant targetPhone of targetService
+							send theMessage to targetBuddy
+						end tell
+					end run
+				EOS
+			fi
+			;;
+		say)
+			if [ -n "${NOTIFY_PETER_DRY_RUN:-}" ]; then
+				echo "say: $msg"
+			else
+				/usr/bin/say "$msg" &
+			fi
+			;;
+	esac
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		_test_file="$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+		if [ -f "$_test_file" ]; then . "$_test_file" > /dev/null; fi
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi
