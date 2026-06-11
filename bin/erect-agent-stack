@@ -1,0 +1,138 @@
+#!/usr/bin/env bash
+
+# Stand up (or join) a project's full agent stack in one shot:
+# tmux session named after the project dir, cwd'd into it, running an
+# unrestricted remoted Claude session of the same name. Idempotent:
+#   created          no session existed -> created + launched agent
+#   joined-running   session + agent already live -> touched nothing
+#   joined-launched  session existed agentless -> launched agent into it
+# Keystroke lore (hard-won 2026-06-11): the launch command goes to a SHELL,
+# so it gets a plain Enter; messages to a RUNNING Claude need the kitty
+# CSI u submit ($'\e[13u'). Never confuse the two.
+# Env: ERECT_TMUX_SOCKET (tests: tmux -L socket), ERECT_DRY_RUN (print
+# launch/ping instead of sending), ERECT_BOOT_TIMEOUT (seconds, default 45).
+
+_eas_tmux() {
+	if [ -n "${ERECT_TMUX_SOCKET:-}" ]; then tmux -L "$ERECT_TMUX_SOCKET" "$@"; else tmux "$@"; fi
+}
+
+_eas_running() {
+	# An agent is "running" if the active pane's process is claude/node, or
+	# the pane is showing Claude Code chrome.
+	local n="$1" cmd
+	cmd=$(_eas_tmux list-panes -t "$n" -F '#{pane_current_command}' 2>/dev/null | head -1)
+	case "$cmd" in claude|node) return 0 ;; esac
+	_eas_tmux capture-pane -pt "$n" 2>/dev/null | grep -qE 'esc to interrupt|bypass permissions'
+}
+
+_eas_bootwait() {
+	local n="$1" t="${ERECT_BOOT_TIMEOUT:-45}" i=0
+	while [ "$i" -lt "$t" ]; do
+		_eas_tmux capture-pane -pt "$n" 2>/dev/null | grep -qE '❯|esc to interrupt|bypass permissions' && return 0
+		sleep 1; i=$((i+1))
+	done
+	return 1
+}
+
+_eas_launch() {
+	local n="$1" fresh="$2"
+	local cmd="claude --rc --permission-mode bypassPermissions --name $n"
+	[ "$fresh" = "0" ] && cmd="$cmd --resume $n"
+	if [ -n "${ERECT_DRY_RUN:-}" ]; then
+		echo "launch: $cmd"
+		return 0
+	fi
+	_eas_tmux send-keys -t "$n" "$cmd" Enter
+	if ! _eas_bootwait "$n"; then
+		if [ "$fresh" = "0" ]; then
+			# resume may have had nothing to resume; fall back to a fresh start
+			_eas_tmux send-keys -t "$n" C-u
+			_eas_tmux send-keys -t "$n" "claude --rc --permission-mode bypassPermissions --name $n" Enter
+			_eas_bootwait "$n" && return 0
+		fi
+		echo "erect-agent-stack: agent did not boot in $n within ${ERECT_BOOT_TIMEOUT:-45}s" >&2
+		return 69
+	fi
+}
+
+_eas_ping() {
+	local n="$1" msg="$2"
+	if [ -n "${ERECT_DRY_RUN:-}" ]; then
+		echo "ping: $msg"
+		return 0
+	fi
+	_eas_tmux send-keys -t "$n" "$msg"
+	_eas_tmux send-keys -t "$n" $'\e[13u'
+}
+
+erect-agent-stack() {
+	local fresh=1 resume_default=0 ping="" attach=auto project=""
+	while [ $# -gt 0 ]; do
+		case "$1" in
+			-h|--help)
+				echo "usage: erect-agent-stack [--fresh] [--ping <msg>] [--no-attach] <project-name-or-path>"
+				echo "Creates/joins tmux session named after the project dir and starts (or resumes)"
+				echo "a remoted bypass-permissions Claude in it. Idempotent: created | joined-running |"
+				echo "joined-launched. Default dir root: ~/Documents-CloudManaged/<name>."
+				echo "--fresh: skip --resume. --ping: deliver a message once the agent is up (LLMsend rules)."
+				return 0
+				;;
+			--fresh) resume_default=1; shift ;;
+			--ping) ping="$2"; shift 2 ;;
+			--no-attach) attach=never; shift ;;
+			*) project="$1"; shift ;;
+		esac
+	done
+	if [ -z "$project" ]; then
+		echo "usage: erect-agent-stack [--fresh] [--ping <msg>] [--no-attach] <project-name-or-path>" >&2
+		return 64
+	fi
+	local dir
+	case "$project" in
+		*/*) dir="$project" ;;
+		*) dir="$HOME/Documents-CloudManaged/$project" ;;
+	esac
+	if [ ! -d "$dir" ]; then
+		echo "erect-agent-stack: no such project dir: $dir" >&2
+		return 66
+	fi
+	dir=$(cd "$dir" && pwd -P)
+	local name; name=$(basename "$dir")
+	local outcome rc=0
+	if _eas_tmux list-sessions -F '#S' 2>/dev/null | grep -qx "$name"; then
+		if _eas_running "$name"; then
+			outcome="joined-running"
+		else
+			outcome="joined-launched"
+			_eas_launch "$name" "$resume_default" || rc=$?
+		fi
+	else
+		_eas_tmux new-session -d -s "$name" -c "$dir"
+		outcome="created"
+		_eas_launch "$name" "$resume_default" || rc=$?
+	fi
+	[ "$rc" = "0" ] && [ -n "$ping" ] && _eas_ping "$name" "$ping"
+	echo "$outcome: $name @ $dir"
+	# Join the session for a human at a real terminal; never for pipelines/agents.
+	if [ "$rc" = "0" ] && [ "$attach" != "never" ] && [ -t 0 ] && [ -t 1 ]; then
+		if [ -n "${TMUX:-}" ]; then
+			_eas_tmux switch-client -t "$name"
+		else
+			_eas_tmux attach-session -t "$name"
+		fi
+	fi
+	return "$rc"
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		_test_file="$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+		if [ -f "$_test_file" ]; then . "$_test_file" > /dev/null; fi
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

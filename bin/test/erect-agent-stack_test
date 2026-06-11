@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+
+# Test the erect-agent-stack function
+erect_agent_stack_test() {
+  local fails=0 out status sock="erect_test_$$"
+  local tmproot; tmproot=$(mktemp -d --tmpdir erect_agent_stack_test.XXXXXX)
+  tmproot=$(cd "$tmproot" && pwd -P)
+  mkdir -p "$tmproot/projalpha"
+  _t() { tmux -L "$sock" "$@"; }
+  _t kill-server 2>/dev/null
+
+  # --help exits 0 with usage
+  out=$(erect-agent-stack --help); status=$?
+  assert "$status" == "0" "--help exits 0"
+  ((fails+=$?))
+  assert "$out" =~ "usage" "--help prints usage"
+  ((fails+=$?))
+
+  # no args -> usage error 64
+  ERECT_TMUX_SOCKET="$sock" erect-agent-stack >/dev/null 2>&1; status=$?
+  assert "$status" == "64" "no args exits 64"
+  ((fails+=$?))
+
+  # missing project dir -> 66 (EX_NOINPUT)
+  ERECT_TMUX_SOCKET="$sock" erect-agent-stack "$tmproot/nope" >/dev/null 2>&1; status=$?
+  assert "$status" == "66" "missing project dir exits 66"
+  ((fails+=$?))
+
+  # CREATE branch: no session yet -> creates detached session, dry-launches claude
+  out=$(ERECT_TMUX_SOCKET="$sock" ERECT_DRY_RUN=1 erect-agent-stack "$tmproot/projalpha" 2>&1); status=$?
+  assert "$status" == "0" "create branch exits 0"
+  ((fails+=$?))
+  assert "$out" =~ "created" "reports created outcome"
+  ((fails+=$?))
+  assert "$out" =~ "claude --rc --permission-mode bypassPermissions --name projalpha --resume projalpha" \
+    "dry-run shows launch command with resume-by-default"
+  ((fails+=$?))
+  assert "$(_t list-sessions -F '#S' 2>/dev/null | grep -cx projalpha)" == "1" "tmux session exists"
+  ((fails+=$?))
+  assert "$(_t display-message -pt projalpha '#{pane_current_path}')" == "$tmproot/projalpha" "session cwd = project dir"
+  ((fails+=$?))
+
+  # --fresh omits --resume
+  out=$(ERECT_TMUX_SOCKET="$sock" ERECT_DRY_RUN=1 erect-agent-stack --fresh "$tmproot/projalpha" 2>&1)
+  assert "$out" !=~ "--resume" "--fresh omits resume flag"
+  ((fails+=$?))
+
+  # JOINED-LAUNCHED branch: session exists, no agent marker -> no dup session
+  out=$(ERECT_TMUX_SOCKET="$sock" ERECT_DRY_RUN=1 erect-agent-stack "$tmproot/projalpha" 2>&1)
+  assert "$out" =~ "joined-launched" "existing agentless session reports joined-launched"
+  ((fails+=$?))
+  assert "$(_t list-sessions -F '#S' | grep -cx projalpha)" == "1" "no duplicate session created"
+  ((fails+=$?))
+
+  # JOINED-RUNNING branch: simulate a running Claude via its footer marker
+  _t send-keys -t projalpha "echo 'esc to interrupt'; tmux -L $sock wait-for -S marker_done" Enter
+  _t wait-for marker_done
+  out=$(ERECT_TMUX_SOCKET="$sock" ERECT_DRY_RUN=1 erect-agent-stack "$tmproot/projalpha" 2>&1)
+  assert "$out" =~ "joined-running" "session with agent marker reports joined-running"
+  ((fails+=$?))
+  assert "$out" !=~ "launch:" "joined-running must not launch anything"
+  ((fails+=$?))
+
+  # --ping delivered (dry) on a running agent
+  out=$(ERECT_TMUX_SOCKET="$sock" ERECT_DRY_RUN=1 erect-agent-stack --ping "hello agent" "$tmproot/projalpha" 2>&1)
+  assert "$out" =~ "ping: hello agent" "dry-run reports the ping payload"
+  ((fails+=$?))
+
+  _t kill-server 2>/dev/null
+  rm -rf "$tmproot"
+  return "$fails"
+}
+
+erect_agent_stack_test
