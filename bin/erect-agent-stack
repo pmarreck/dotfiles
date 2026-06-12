@@ -10,7 +10,7 @@
 # so it gets a plain Enter; messages to a RUNNING Claude need the kitty
 # CSI u submit ($'\e[13u'). Never confuse the two.
 # Env: ERECT_TMUX_SOCKET (tests: tmux -L socket), ERECT_DRY_RUN (print
-# launch/ping instead of sending), ERECT_BOOT_TIMEOUT (seconds, default 45).
+# launch/ping instead of sending), ERECT_BOOT_TIMEOUT (seconds, default 120).
 
 _eas_tmux() {
 	if [ -n "${ERECT_TMUX_SOCKET:-}" ]; then tmux -L "$ERECT_TMUX_SOCKET" "$@"; else tmux "$@"; fi
@@ -26,7 +26,9 @@ _eas_running() {
 }
 
 _eas_bootwait() {
-	local n="$1" t="${ERECT_BOOT_TIMEOUT:-45}" i=0
+	# 120s default: direnv `use flake` projects evaluate nix before the shell
+	# accepts the queued launch line (observed live on entropy_shield, 2026-06-12).
+	local n="$1" t="${ERECT_BOOT_TIMEOUT:-120}" i=0
 	while [ "$i" -lt "$t" ]; do
 		_eas_tmux capture-pane -pt "$n" 2>/dev/null | grep -qE '❯|esc to interrupt|bypass permissions' && return 0
 		sleep 1; i=$((i+1))
@@ -50,7 +52,7 @@ _eas_launch() {
 			_eas_tmux send-keys -t "$n" "claude --rc --permission-mode bypassPermissions --name $n" Enter
 			_eas_bootwait "$n" && return 0
 		fi
-		echo "erect-agent-stack: agent did not boot in $n within ${ERECT_BOOT_TIMEOUT:-45}s" >&2
+		echo "erect-agent-stack: agent did not boot in $n within ${ERECT_BOOT_TIMEOUT:-120}s" >&2
 		return 69
 	fi
 }
