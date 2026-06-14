@@ -1,5 +1,35 @@
 # Jujutsu (`jj`) Quick Reference (For Users and Agents)
 
+> **Agents / anyone on a context budget: read at least the `<critical>` block below.**
+> It's the handful of git→jj differences that actually cause *lost work*. Reading only
+> this block (and skipping the rest until you need depth) is the right call when context
+> is tight — the full reference exists for when it isn't.
+
+<critical>
+
+## Critical: the git→jj differences that prevent lost work
+
+1. **`jj` only — NEVER raw `git`.** Mixing git and jj on one repo silently diverges state and drops commits (a `PreToolUse` hook blocks raw `git`). Reach GitHub *through* jj: `jj git push` / `jj git fetch` / `jj git clone`. (`gh` is fine — it isn't git.)
+2. **No staging area; `@` (the working copy) IS a commit.** Edits auto-snapshot into `@` — there is no `add`. Begin the next unit of work with `jj new`. (Detail: Mental-Model Shift #1.)
+3. **Bookmarks do NOT advance themselves.** When work is done, `jj bookmark set yolo -r @` **before** `jj git push`. Branch-based deploys (Garnix, Cloudflare Pages, `github:` flake inputs) read branch **names, not SHAs** — pushing with an unmoved bookmark publishes *stale* work. The main bookmark is **`yolo`** in every repo here (never assume `main`/`master`).
+4. **`jj git push` pushes bookmarks, not `@`.** A commit under no bookmark never leaves your machine.
+5. **Orphans are silent and eat work.** Explore off a base, then move on, and the old non-empty commit is stranded — on no bookmark, with no warning, surviving context compaction. Check **`jj log -r orphans`**; fold useful ones into a bookmark or `jj abandon` the dead (reversible). A SessionStart/PreCompact hook auto-warns, but check it yourself at the finish line.
+6. **Never re-edit a commit you've already pushed.** Finalize → push → `jj new` for the next change. Re-`describe`/editing an already-pushed `@` diverges the pushed commit.
+7. **Watchman can go stale** and silently miss a real on-disk edit (`jj status`/`diff` show nothing; "No snapshot needed"). Recover with **`jj --config fsmonitor.backend=none util snapshot`**.
+8. **Nothing is truly lost — recover with jj, not git.** `jj undo` reverts the last operation; `jj op log` + `jj op restore <id>` rewind the entire repo to any prior moment. Never reach for raw-git "recovery".
+9. **No destructive history rewrites or force-pushes** without a clear reason and Peter's OK. Commit messages carry **no** "Generated with Claude Code" / Co-Authored-By lines.
+
+**The safe land-and-push loop** (covers rules 2–4, 6):
+```
+jj describe -m "msg"        # name the working-copy commit @
+jj bookmark set yolo -r @   # advance the bookmark onto it (deploys read this name)
+jj new                      # open a fresh empty @ on top
+jj git push                 # pushes the yolo bookmark
+```
+Finish line: `jj log -r orphans` should be empty (rule 5), plus the `dirtree` stray-file pass.
+
+</critical>
+
 ## For Git Users: The Mental-Model Shifts
 
 The command-translation table below is necessary but not sufficient. A few git assumptions don't carry over — internalize these and the rest of `jj` stops looking weird.
