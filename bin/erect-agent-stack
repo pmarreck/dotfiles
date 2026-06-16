@@ -16,12 +16,41 @@ _eas_tmux() {
 	if [ -n "${ERECT_TMUX_SOCKET:-}" ]; then tmux -L "$ERECT_TMUX_SOCKET" "$@"; else tmux "$@"; fi
 }
 
+# _eas_backend <agent> <session-name>: resolve a backend into caller-visible
+# vars _b_bin / _b_gate / _b_fresh / _b_resume (bash dynamic scope). Returns 1
+# on an unknown agent. Danger flags verified from each CLI's own --help (2026-06-14):
+# codex --dangerously-bypass-approvals-and-sandbox, gemini --yolo. claude keeps the
+# original remoted bypass launch. Non-claude backends are gated on an API-key env var.
+_eas_backend() {
+	local agent="$1" n="$2"
+	case "$agent" in
+		claude)
+			_b_bin=claude; _b_gate=""   # default: no env gate (auth via config/login)
+			_b_fresh="claude --rc --permission-mode bypassPermissions --name $n"
+			_b_resume="$_b_fresh --resume $n" ;;
+		codex)
+			_b_bin=codex; _b_gate=OPENAI_API_KEY
+			_b_fresh="codex --dangerously-bypass-approvals-and-sandbox"
+			_b_resume="codex resume --last --dangerously-bypass-approvals-and-sandbox" ;;
+		gemini)
+			_b_bin=gemini; _b_gate=GEMINI_API_KEY
+			_b_fresh="gemini --yolo"
+			_b_resume="gemini --yolo --resume latest" ;;
+		grok)
+			# Grok Build CLI: flags best-effort until installed for live verification.
+			_b_bin=grok; _b_gate=GROK_API_KEY
+			_b_fresh="grok --yolo"
+			_b_resume="grok --yolo --resume" ;;
+		*) return 1 ;;
+	esac
+}
+
 _eas_running() {
 	# An agent is "running" if the active pane's process is claude/node, or
 	# the pane is showing Claude Code chrome.
 	local n="$1" cmd
 	cmd=$(_eas_tmux list-panes -t "$n" -F '#{pane_current_command}' 2>/dev/null | head -1)
-	case "$cmd" in claude|node) return 0 ;; esac
+	case "$cmd" in claude|node|codex|gemini|grok) return 0 ;; esac
 	_eas_tmux capture-pane -pt "$n" 2>/dev/null | grep -qE 'esc to interrupt|bypass permissions'
 }
 
@@ -38,8 +67,9 @@ _eas_bootwait() {
 
 _eas_launch() {
 	local n="$1" fresh="$2"
-	local cmd="claude --rc --permission-mode bypassPermissions --name $n"
-	[ "$fresh" = "0" ] && cmd="$cmd --resume $n"
+	local cmd="$_b_fresh"
+	[ "$fresh" = "0" ] && cmd="$_b_resume"
+	[ -n "${_b_checker:-}" ] && cmd="MFIC_ROLE=checker $cmd"
 	if [ -n "${ERECT_DRY_RUN:-}" ]; then
 		echo "launch: $cmd"
 		return 0
@@ -48,8 +78,10 @@ _eas_launch() {
 	if ! _eas_bootwait "$n"; then
 		if [ "$fresh" = "0" ]; then
 			# resume may have had nothing to resume; fall back to a fresh start
+			local fcmd="$_b_fresh"
+			[ -n "${_b_checker:-}" ] && fcmd="MFIC_ROLE=checker $fcmd"
 			_eas_tmux send-keys -t "$n" C-u
-			_eas_tmux send-keys -t "$n" "claude --rc --permission-mode bypassPermissions --name $n" Enter
+			_eas_tmux send-keys -t "$n" "$fcmd" Enter
 			_eas_bootwait "$n" && return 0
 		fi
 		echo "erect-agent-stack: agent did not boot in $n within ${ERECT_BOOT_TIMEOUT:-120}s" >&2
@@ -68,17 +100,22 @@ _eas_ping() {
 }
 
 erect-agent-stack() {
-	local fresh=1 resume_default=0 ping="" attach=auto project=""
+	local fresh=1 resume_default=0 ping="" attach=auto project="" agent="claude"
+	local _b_bin _b_gate _b_fresh _b_resume _b_checker=""
 	while [ $# -gt 0 ]; do
 		case "$1" in
 			-h|--help)
-				echo "usage: erect-agent-stack [--fresh] [--ping <msg>] [--no-attach] <project-name-or-path>"
+				echo "usage: erect-agent-stack [--agent claude|codex|gemini|grok] [--checker] [--fresh] [--ping <msg>] [--no-attach] <project-name-or-path>"
 				echo "Creates/joins tmux session named after the project dir and starts (or resumes)"
-				echo "a remoted bypass-permissions Claude in it. Idempotent: created | joined-running |"
+				echo "a remoted unrestricted agent in it. Idempotent: created | joined-running |"
 				echo "joined-launched. Default dir root: ~/Documents-CloudManaged/<name>."
+				echo "--agent: backend (default claude); non-claude gated on its API-key env var + bin on PATH."
+				echo "--checker: boot the agent in MFIC adversarial-checker role (MFIC_ROLE=checker)."
 				echo "--fresh: skip --resume. --ping: deliver a message once the agent is up (LLMsend rules)."
 				return 0
 				;;
+			--agent|-a) agent="$2"; shift 2 ;;
+			--checker) _b_checker=1; shift ;;
 			--fresh) resume_default=1; shift ;;
 			--ping) ping="$2"; shift 2 ;;
 			--no-attach) attach=never; shift ;;
@@ -86,7 +123,7 @@ erect-agent-stack() {
 		esac
 	done
 	if [ -z "$project" ]; then
-		echo "usage: erect-agent-stack [--fresh] [--ping <msg>] [--no-attach] <project-name-or-path>" >&2
+		echo "usage: erect-agent-stack [--agent claude|codex|gemini|grok] [--checker] [--fresh] [--ping <msg>] [--no-attach] <project-name-or-path>" >&2
 		return 64
 	fi
 	local dir
@@ -100,6 +137,23 @@ erect-agent-stack() {
 	fi
 	dir=$(cd "$dir" && pwd -P)
 	local name; name=$(basename "$dir")
+	# Resolve the backend (validates the agent name).
+	if ! _eas_backend "$agent" "$name"; then
+		echo "erect-agent-stack: unknown agent: $agent (claude|codex|gemini|grok)" >&2
+		return 64
+	fi
+	# Availability (real launches only; dry-run is a pure preview): the gate env
+	# must be set and the bin on PATH, else it is unavailable -> 78.
+	if [ -z "${ERECT_DRY_RUN:-}" ]; then
+		if [ -n "$_b_gate" ] && [ -z "${!_b_gate:-}" ]; then
+			echo "erect-agent-stack: agent '$agent' unavailable: \$$_b_gate is unset" >&2
+			return 78
+		fi
+		if ! command -v "$_b_bin" >/dev/null 2>&1; then
+			echo "erect-agent-stack: agent '$agent' unavailable: '$_b_bin' not on PATH" >&2
+			return 78
+		fi
+	fi
 	local outcome rc=0
 	if _eas_tmux list-sessions -F '#S' 2>/dev/null | grep -qx "$name"; then
 		if _eas_running "$name"; then

@@ -6,6 +6,7 @@ erect_agent_stack_test() {
   local tmproot; tmproot=$(mktemp -d --tmpdir erect_agent_stack_test.XXXXXX)
   tmproot=$(cd "$tmproot" && pwd -P)
   mkdir -p "$tmproot/projalpha"
+  mkdir -p "$tmproot/projbeta"
   _t() { tmux -L "$sock" "$@"; }
   _t kill-server 2>/dev/null
 
@@ -66,6 +67,39 @@ erect_agent_stack_test() {
   assert "$out" =~ "ping: hello agent" "dry-run reports the ping payload"
   ((fails+=$?))
 
+
+  # --- backend broadening (--agent / --checker / env-gating) ---
+  out=$(ERECT_TMUX_SOCKET="$sock" ERECT_DRY_RUN=1 erect-agent-stack --fresh --agent codex "$tmproot/projbeta" 2>&1)
+  assert "$out" =~ "launch: codex --dangerously-bypass-approvals-and-sandbox" "codex fresh uses danger flag"
+  ((fails+=$?))
+
+  out=$(ERECT_TMUX_SOCKET="$sock" ERECT_DRY_RUN=1 erect-agent-stack --agent codex "$tmproot/projbeta" 2>&1)
+  assert "$out" =~ "launch: codex resume --last --dangerously-bypass-approvals-and-sandbox" "codex resume uses resume subcommand"
+  ((fails+=$?))
+
+  out=$(ERECT_TMUX_SOCKET="$sock" ERECT_DRY_RUN=1 erect-agent-stack --fresh --agent gemini "$tmproot/projbeta" 2>&1)
+  assert "$out" =~ "launch: gemini --yolo" "gemini fresh uses --yolo"
+  ((fails+=$?))
+
+  out=$(ERECT_TMUX_SOCKET="$sock" ERECT_DRY_RUN=1 erect-agent-stack --fresh -a gemini "$tmproot/projbeta" 2>&1)
+  assert "$out" =~ "launch: gemini --yolo" "-a aliases --agent"
+  ((fails+=$?))
+
+  out=$(ERECT_TMUX_SOCKET="$sock" ERECT_DRY_RUN=1 erect-agent-stack --fresh "$tmproot/projbeta" 2>&1)
+  assert "$out" =~ "launch: claude --rc" "default agent stays claude"
+  ((fails+=$?))
+
+  ERECT_TMUX_SOCKET="$sock" erect-agent-stack --agent bogus "$tmproot/projbeta" >/dev/null 2>&1; status=$?
+  assert "$status" == "64" "unknown agent exits 64"
+  ((fails+=$?))
+
+  ERECT_TMUX_SOCKET="$sock" GEMINI_API_KEY= erect-agent-stack --agent gemini "$tmproot/projbeta" >/dev/null 2>&1; status=$?
+  assert "$status" == "78" "gated agent without its env exits 78"
+  ((fails+=$?))
+
+  out=$(ERECT_TMUX_SOCKET="$sock" ERECT_DRY_RUN=1 erect-agent-stack --fresh --checker "$tmproot/projbeta" 2>&1)
+  assert "$out" =~ "launch: MFIC_ROLE=checker claude" "--checker prepends MFIC_ROLE=checker"
+  ((fails+=$?))
   _t kill-server 2>/dev/null
   rm -rf "$tmproot"
   return "$fails"
