@@ -1,0 +1,158 @@
+#!/usr/bin/env luajit
+-- md-section — list a markdown file's headings, or print the section under one.
+--
+-- Structure is derived from the headings themselves (no separate TOC to keep in
+-- sync). Fenced code blocks are respected, so a `## foo` inside ``` is NOT treated
+-- as a heading. A section runs from its heading to the line before the next heading
+-- of the SAME or HIGHER level (so a `##` section includes its `###` children and
+-- stops at the next `##`/`#`). Heading match is exact (trimmed, case-insensitive);
+-- pipe through grep/rg for fuzzy/regex/glob — that's already covered by the shell.
+--
+-- Usage:
+--   md-section <file|-|@stdin>             list headings
+--   md-section <file|-|@stdin> "<heading>" print that section
+--   --json | -h/--help | --about
+
+local PROG, VERSION = "md-section", "0.1.0"
+
+local function die(code, msg)
+  if msg then io.stderr:write(PROG .. ": " .. msg .. "\n") end
+  os.exit(code)
+end
+
+local function read_all(path)
+  if path == "-" or path == "@stdin" then return io.read("*a") or "" end
+  local f, err = io.open(path, "r")
+  if not f then die(66, "cannot read file: " .. tostring(path) .. " (" .. tostring(err) .. ")") end
+  local s = f:read("*a"); f:close()
+  return s or ""
+end
+
+local function split_lines(text)
+  local lines = {}
+  for line in (text .. "\n"):gmatch("(.-)\n") do lines[#lines + 1] = line end
+  if #lines > 0 and lines[#lines] == "" and text:sub(-1) == "\n" then lines[#lines] = nil end
+  return lines
+end
+
+-- returns heads = {{level, text, line, end_line, line_count}...}, lines
+local function parse(text)
+  local lines = split_lines(text)
+  local heads = {}
+  local in_fence, fence_char = false, nil
+  for i, line in ipairs(lines) do
+    local fmark = line:match("^%s*(```+)") or line:match("^%s*(~~~+)")
+    if fmark then
+      local c = fmark:sub(1, 1)
+      if not in_fence then in_fence, fence_char = true, c
+      elseif c == fence_char then in_fence, fence_char = false, nil end
+    elseif not in_fence then
+      local hashes, rest = line:match("^(#+)%s+(.*)$")
+      if hashes and #hashes <= 6 then
+        local txt = rest:gsub("%s+#+%s*$", ""):gsub("^%s+", ""):gsub("%s+$", "")
+        heads[#heads + 1] = { level = #hashes, text = txt, line = i }
+      end
+    end
+  end
+  local n = #lines
+  for idx, h in ipairs(heads) do
+    local endl = n
+    for j = idx + 1, #heads do
+      if heads[j].level <= h.level then endl = heads[j].line - 1; break end
+    end
+    h.end_line, h.line_count = endl, endl - h.line + 1
+  end
+  return heads, lines
+end
+
+local function jesc(s)
+  return (s:gsub('[%z\1-\31\\"]', function(c)
+    local m = { ['"'] = '\\"', ['\\'] = '\\\\', ['\n'] = '\\n', ['\r'] = '\\r',
+                ['\t'] = '\\t', ['\b'] = '\\b', ['\f'] = '\\f' }
+    return m[c] or string.format('\\u%04x', c:byte())
+  end))
+end
+
+local function section_text(lines, h)
+  local out = {}
+  for i = h.line, h.end_line do out[#out + 1] = lines[i] end
+  return table.concat(out, "\n")
+end
+
+-- ---- argument parsing ----
+local json_out, pos, i = false, {}, 1
+while arg[i] do
+  local a = arg[i]
+  if a == "--json" then json_out = true
+  elseif a == "-h" or a == "--help" then
+    io.write([[
+usage: md-section <file|-|@stdin> [heading]
+  No heading  -> list all headings (level, start-line, length, text).
+  With heading -> print that section (heading line through the line before the
+                  next same-or-higher-level heading).
+  --json      machine-readable (list -> array of objects; extract -> object)
+  -h|--help   this help ; --about  one-line description
+
+Structure is derived from the headings (no separate TOC to maintain). Fenced code
+blocks are respected. Heading match is exact (trimmed, case-insensitive) — pipe to
+grep/rg for fuzzy/regex.
+]])
+    os.exit(0)
+  elseif a == "--about" then
+    io.write(PROG .. " " .. VERSION .. " — list/extract markdown sections by heading (LuaJIT)\n")
+    os.exit(0)
+  elseif a == "--" then
+    i = i + 1; while arg[i] do pos[#pos + 1] = arg[i]; i = i + 1 end; break
+  else pos[#pos + 1] = a end
+  i = i + 1
+end
+
+local file, heading = pos[1], pos[2]
+if not file then die(64, "usage: md-section <file|-|@stdin> [heading]   (-h for help)") end
+
+local text = read_all(file)
+local heads, lines = parse(text)
+
+if not heading then
+  -- LIST mode
+  if json_out then
+    local parts = {}
+    for _, h in ipairs(heads) do
+      parts[#parts + 1] = string.format(
+        '{"level":%d,"text":"%s","start_line":%d,"end_line":%d,"line_count":%d}',
+        h.level, jesc(h.text), h.line, h.end_line, h.line_count)
+    end
+    io.write("[" .. table.concat(parts, ",") .. "]\n")
+  else
+    for _, h in ipairs(heads) do
+      io.write(string.format("%-2d %5d:%-4d %s%s\n",
+        h.level, h.line, h.line_count, string.rep("  ", h.level - 1), h.text))
+    end
+  end
+  os.exit(0)
+end
+
+-- EXTRACT mode (exact, trimmed, case-insensitive)
+local want = heading:gsub("^%s+", ""):gsub("%s+$", ""):lower()
+local matches = {}
+for _, h in ipairs(heads) do
+  if h.text:lower() == want then matches[#matches + 1] = h end
+end
+if #matches == 0 then
+  die(3, "no heading matching: " .. heading)
+elseif #matches > 1 then
+  local locs = {}
+  for _, h in ipairs(matches) do locs[#locs + 1] = "line " .. h.line .. " (h" .. h.level .. ")" end
+  die(4, "ambiguous heading '" .. heading .. "' matches " .. #matches ..
+         " sections: " .. table.concat(locs, ", "))
+end
+
+local h = matches[1]
+if json_out then
+  io.write(string.format(
+    '{"heading":"%s","level":%d,"start_line":%d,"end_line":%d,"line_count":%d,"content":"%s"}\n',
+    jesc(h.text), h.level, h.line, h.end_line, h.line_count, jesc(section_text(lines, h))))
+else
+  io.write(section_text(lines, h) .. "\n")
+end
+os.exit(0)

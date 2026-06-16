@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+# Test md-section: list markdown headings, or extract the section under one.
+# Structure is derived from the headings themselves (no separate TOC). Code
+# fences are respected; the section boundary is the next same-or-higher heading.
+md_section_test() {
+  local fails=0 out status
+  local BIN="$HOME/dotfiles/bin/md-section"
+  local fx; fx="$(mktemp "${TMPDIR:-/tmp}/md-section-fixture.XXXXXX")"
+  cat > "$fx" <<'MD'
+# Doc Title
+
+intro
+
+## Alpha
+alpha body
+
+### Alpha Sub
+sub body
+
+## Beta
+beta body
+
+## Fenced
+before fence
+
+```bash
+## not a real heading
+echo x
+```
+
+after fence
+
+## Dup
+first dup
+
+## Dup
+second dup
+MD
+
+  # --help exits 0 with usage
+  out=$("$BIN" --help 2>&1); status=$?
+  assert "$status" == "0" "--help exits 0"; ((fails+=$?))
+  assert "$out" =~ "usage" "--help prints usage"; ((fails+=$?))
+
+  # LIST mode: lists real headings, EXCLUDES the fenced fake heading
+  out=$("$BIN" "$fx" 2>&1); status=$?
+  assert "$status" == "0" "list exits 0"; ((fails+=$?))
+  assert "$out" =~ "Alpha Sub" "list includes nested heading"; ((fails+=$?))
+  assert "$out" =~ "Fenced" "list includes Fenced"; ((fails+=$?))
+  assert "$out" !=~ "not a real heading" "list excludes fenced fake heading"; ((fails+=$?))
+
+  # EXTRACT Beta: has body, stops before next ##
+  out=$("$BIN" "$fx" Beta 2>&1); status=$?
+  assert "$status" == "0" "extract Beta exits 0"; ((fails+=$?))
+  assert "$out" =~ "beta body" "extract Beta has body"; ((fails+=$?))
+  assert "$out" !=~ "Fenced" "extract Beta stops before next section"; ((fails+=$?))
+
+  # LEVEL BOUNDARY: Alpha includes its ### child, stops before ## Beta
+  out=$("$BIN" "$fx" Alpha 2>&1); status=$?
+  assert "$out" =~ "Alpha Sub" "extract Alpha includes ### child"; ((fails+=$?))
+  assert "$out" =~ "sub body" "extract Alpha includes child body"; ((fails+=$?))
+  assert "$out" !=~ "beta body" "extract Alpha stops before ## Beta"; ((fails+=$?))
+
+  # FENCE: Fenced section INCLUDES fenced content + post-fence text, stops before ## Dup
+  out=$("$BIN" "$fx" Fenced 2>&1); status=$?
+  assert "$out" =~ "not a real heading" "Fenced section includes fenced content"; ((fails+=$?))
+  assert "$out" =~ "after fence" "Fenced section includes post-fence text"; ((fails+=$?))
+  assert "$out" !=~ "first dup" "Fenced section stops before ## Dup"; ((fails+=$?))
+
+  # AMBIGUITY: Dup matches 2 -> exit 4 + says ambiguous
+  out=$("$BIN" "$fx" Dup 2>&1); status=$?
+  assert "$status" == "4" "ambiguous heading exits 4"; ((fails+=$?))
+  assert "$out" =~ "ambiguous" "ambiguous error names it"; ((fails+=$?))
+
+  # NOT FOUND -> exit 3
+  out=$("$BIN" "$fx" Nonexistent 2>&1); status=$?
+  assert "$status" == "3" "missing heading exits 3"; ((fails+=$?))
+
+  # --json extract has metadata + content
+  out=$("$BIN" --json "$fx" Beta 2>&1); status=$?
+  assert "$status" == "0" "json extract exits 0"; ((fails+=$?))
+  assert "$out" =~ "start_line" "json has start_line"; ((fails+=$?))
+  assert "$out" =~ "beta body" "json has content"; ((fails+=$?))
+
+  # stdin via "-"
+  out=$(cat "$fx" | "$BIN" - Beta 2>&1); status=$?
+  assert "$status" == "0" "stdin extract exits 0"; ((fails+=$?))
+  assert "$out" =~ "beta body" "stdin extract has body"; ((fails+=$?))
+
+  rm -f "$fx"
+  return "$fails"
+}
+md_section_test

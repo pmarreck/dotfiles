@@ -23,3 +23,7 @@ hide=[
 	Library
 	of_historical_note
 ]
+
+annotate=[
+	bin/md-section = list markdown headings / extract the section under one (fence-aware, level-aware, derives TOC from headings; LuaJIT)
+]
