@@ -5,6 +5,10 @@ check_system_mutations_test() {
   local fails=0 tmpdir out status
   tmpdir=$(mktemp -d --tmpdir check_system_mutations_test.XXXXXX)
 
+  # The mutation-checking logic is nix-darwin-only, so pin the OS to Darwin for
+  # the checks below; they must pass identically on the Linux dev/CI box.
+  export CHECK_SYSTEM_MUTATIONS_OS=Darwin
+
   # Fake root with every mutation present (and a CURRENT llm-admin, i.e. one
   # containing the newest subcommand marker) -> silent success
   mkdir -p "$tmpdir/full/usr/local/sbin" "$tmpdir/full/etc/sudoers.d" "$tmpdir/full/etc/pam.d"
@@ -56,6 +60,17 @@ check_system_mutations_test() {
   assert "$out" =~ "darwin-rebuild switch" "outdated warning should name the fix"
   ((fails+=$?))
 
+  # Off-Darwin: no-op regardless of root state. Even an empty root (which would
+  # report 3 missing on Darwin) must stay silent and exit 0 on Linux/NixOS,
+  # since these flake artifacts don't exist there by design.
+  out=$(CHECK_SYSTEM_MUTATIONS_OS=Linux CHECK_SYSTEM_MUTATIONS_ROOT="$tmpdir/empty" check-system-mutations 2>&1)
+  status=$?
+  assert "$status" == "0" "non-Darwin host should be a no-op (exit 0)"
+  ((fails+=$?))
+  assert "$out" == "" "non-Darwin host should be silent"
+  ((fails+=$?))
+
+  unset CHECK_SYSTEM_MUTATIONS_OS
   rm -rf "$tmpdir"
   return "$fails"
 }

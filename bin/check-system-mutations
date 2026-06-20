@@ -16,6 +16,15 @@ check-system-mutations() {
 			return 0
 			;;
 	esac
+	# nix-darwin-only sentinel: the artifacts it checks are declared in the
+	# macOS flake (~/.config/nix) and don't exist on Linux/NixOS by design.
+	# Stay silent and exit 0 off-Darwin so shared dotfiles don't warn on the
+	# Linux box where ~/.config/nix is merely checked out. Tests drive both
+	# branches deterministically via CHECK_SYSTEM_MUTATIONS_OS.
+	local os="${CHECK_SYSTEM_MUTATIONS_OS:-$(uname)}"
+	if [ "$os" != "Darwin" ]; then
+		return 0
+	fi
 	local root="${CHECK_SYSTEM_MUTATIONS_ROOT:-}"
 	local missing=0
 	if [ ! -x "$root/usr/local/sbin/llm-admin" ]; then
