@@ -57,7 +57,7 @@ case "${1:-status}" in
 		;;
 	update)
 		echo "Updating mlx-vlm..."
-		cd "$HOME/Documents-CloudManaged/gemma4-heretical" || exit 1
+		cd "$HOME/Code/gemma4-heretical" || exit 1
 		nix develop -c bash -c 'source .venv/bin/activate && pip install -U mlx-vlm 2>&1' | tail -5
 		echo "Restarting server..."
 		launchctl stop "$LABEL" 2>/dev/null

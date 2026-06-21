@@ -112,7 +112,7 @@ Since all `bin/` scripts are on PATH, these utilities are available:
 
 - **`repeat`**: Repeat a command N times (e.g., `repeat 5 echo "hello"`)
 - **`assert`**: Assert conditions in scripts
-- **Various counters**: cross-process atomic counters (`counter`/`fs-counter`/`posix-counter`/`sysv-counter`) were promoted to github.com/pmarreck/os_counters (`~/Documents-CloudManaged/os_counters`); still on PATH from there via `$DOCUMENTS/*/bin`
+- **Various counters**: cross-process atomic counters (`counter`/`fs-counter`/`posix-counter`/`sysv-counter`) were promoted to github.com/pmarreck/os_counters (`~/Code/os_counters`); still on PATH from there via `$CODE/*/bin`
 
 #### Command Inspection
 
@@ -151,8 +151,8 @@ Since all `bin/` scripts are on PATH, these utilities are available:
 #### Random Number Generation
 
 The `random` / `nrandom` / `drandom` generators were promoted to their own repo
-(github.com/pmarreck/random, checked out at ~/Documents-CloudManaged/random) and
-remain on PATH from there via .pathconfig's $DOCUMENTS/*/bin auto-discovery.
+(github.com/pmarreck/random, checked out at ~/Code/random) and
+remain on PATH from there via .pathconfig's $CODE/*/bin auto-discovery.
 `nrandom` / `drandom` are symlinks that select normalized / deterministic mode.
 
 ### Advanced Development Utilities

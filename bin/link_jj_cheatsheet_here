@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
-if [ -z "${DOCUMENTS:-}" ]; then
-	echo "link_AGENTS_here: DOCUMENTS is not set or is empty" >&2
+if [ -z "${CODE:-}" ]; then
+	echo "link_jj_cheatsheet_here: CODE is not set or is empty" >&2
 	exit 1
 fi
 

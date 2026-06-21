@@ -26,13 +26,12 @@ export ORIG_PATH
 # Source path helpers (prepend_path, exclude_path)
 . "$HOME/dotfiles/bin/src/prepend_path.bash"
 
-# DOCUMENTS varies by platform: on macOS, projects live in Documents-CloudManaged due to
-# iCloud backup race conditions. On Linux, plain Documents.
-if [[ "$OSTYPE" == "darwin"* ]]; then
-	DOCUMENTS="$HOME/Documents-CloudManaged"
-else
-	DOCUMENTS="$HOME/Documents"
-fi
+# CODE is the new canonical home for all git/jj repos across platforms
+CODE="$HOME/Code"
+export CODE
+
+# The actual OS's Documents folder (no longer used for coding projects)
+DOCUMENTS="$HOME/Documents"
 export DOCUMENTS
 
 # Ensure a modern bash (from Nix) is reachable on PATH so #!/usr/bin/env bash
@@ -97,14 +96,14 @@ PATH_ADDITIONS+=(
 	"$HOME/bin"
 	"$HOME/.antigravity/antigravity/bin"
 	# Non-Zig personal projects
-	"$DOCUMENTS/ixnay/bin"
-	"$DOCUMENTS/jumpscript/bin"
-	"$DOCUMENTS/yt-transcriber/bin"
-	"$DOCUMENTS/printable_binary/bin"
-	"$DOCUMENTS/rm_safe/bin"
+	"$CODE/ixnay/bin"
+	"$CODE/jumpscript/bin"
+	"$CODE/yt-transcriber/bin"
+	"$CODE/printable_binary/bin"
+	"$CODE/rm_safe/bin"
 )
 
-# Auto-discover personal project bin dirs under $DOCUMENTS.
+# Auto-discover personal project bin dirs under $CODE.
 # Source bin/ is globbed LAST so it ends up CLOSEST to the front of PATH (last prepend
 # wins) — a project's checked-in/dev bin/ takes precedence over its built result/bin or
 # zig-out/bin. This keeps the edit-run loop live for interpreted tools (random, uuidv7,
@@ -116,7 +115,7 @@ PATH_ADDITIONS+=(
 _saved_f=$-
 set +f
 shopt -s nullglob
-for _dir in "$DOCUMENTS"/*/result/bin "$DOCUMENTS"/*/zig-out/bin "$DOCUMENTS"/*/bin; do
+for _dir in "$CODE"/*/result/bin "$CODE"/*/zig-out/bin "$CODE"/*/bin; do
 	PATH_ADDITIONS+=("$_dir")
 done
 shopt -u nullglob

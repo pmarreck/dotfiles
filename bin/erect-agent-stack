@@ -108,7 +108,7 @@ erect-agent-stack() {
 				echo "usage: erect-agent-stack [--agent claude|codex|gemini|grok] [--checker] [--fresh] [--ping <msg>] [--no-attach] <project-name-or-path>"
 				echo "Creates/joins tmux session named after the project dir and starts (or resumes)"
 				echo "a remoted unrestricted agent in it. Idempotent: created | joined-running |"
-				echo "joined-launched. Default dir root: ~/Documents-CloudManaged/<name>."
+				echo "joined-launched. Default dir root: ~/Code/<name>."
 				echo "--agent: backend (default claude); non-claude gated on its API-key env var + bin on PATH."
 				echo "--checker: boot the agent in MFIC adversarial-checker role (MFIC_ROLE=checker)."
 				echo "--fresh: skip --resume. --ping: deliver a message once the agent is up (LLMsend rules)."
@@ -129,7 +129,7 @@ erect-agent-stack() {
 	local dir
 	case "$project" in
 		*/*) dir="$project" ;;
-		*) dir="$HOME/Documents-CloudManaged/$project" ;;
+		*) dir="$HOME/Code/$project" ;;
 	esac
 	if [ ! -d "$dir" ]; then
 		echo "erect-agent-stack: no such project dir: $dir" >&2
