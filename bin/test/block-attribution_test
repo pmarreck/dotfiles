@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+# block-attribution_test — verify the global PreToolUse hook rejects
+# commit-style commands whose message contains "Co-Authored-By" AND "Claude"
+# on the same line (case-insensitive). The hook lives outside this repo
+# (in ~/.claude/hooks/) because it's session-global infra, not project-
+# specific; we reference it here by absolute path so `./test` can validate
+# the system invariant.
+#
+# Test methodology: invoke the hook directly with a synthetic Claude Code
+# tool-call payload (JSON with .tool_input.command), check exit code.
+# Non-zero exit = blocked; zero exit = allowed.
+
+set -u
+
+HOOK="$HOME/.claude/hooks/block-attribution/block-attribution.sh"
+
+tests=0
+fails=0
+
+# Single-shot: pipe a synthetic payload to the hook and return its rc.
+# We do NOT execute the command text — we just hand it to the hook as data.
+run_hook() {
+	local cmd="$1"
+	printf '%s' "$cmd" | jq -Rs '{"tool_input": {"command": .}}' | "$HOOK" >/dev/null 2>&1
+}
+
+assert_blocked() {
+	local cmd="$1" msg="$2"
+	((tests++))
+	if run_hook "$cmd"; then
+		echo "✗ $msg (expected BLOCK, got ALLOW)" >&2
+		((fails++)) || :
+	else
+		echo "✓ $msg (blocked)"
+	fi
+}
+
+assert_allowed() {
+	local cmd="$1" msg="$2"
+	((tests++))
+	if run_hook "$cmd"; then
+		echo "✓ $msg (allowed)"
+	else
+		echo "✗ $msg (expected ALLOW, got BLOCK)" >&2
+		((fails++)) || :
+	fi
+}
+
+# Hook must exist before we can test it.
+if [ ! -x "$HOOK" ]; then
+	echo "✗ hook not found or not executable: $HOOK" >&2
+	echo "1 of 1 block-attribution tests failed" >&2
+	exit 1
+fi
+
+# ─── BLOCKED: standard trailer-on-one-line cases ─────────────────────────
+echo "==> blocked: trailer with Claude on same line"
+
+assert_blocked \
+	'jj commit -m "fix: thing
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"' \
+	'jj commit with Co-Authored-By: Claude trailer'
+
+assert_blocked \
+	'git commit -m "msg" -m "Co-Authored-By: Claude"' \
+	'git commit with bare Co-Authored-By: Claude'
+
+assert_blocked \
+	'jj commit -m "co-authored-by: claude lives in lowercase too"' \
+	'lowercase variant (case insensitive)'
+
+assert_blocked \
+	'gh pr create --body "Co-Authored-By: Claude noreply@anthropic.com"' \
+	'gh pr create with the trailer in body'
+
+assert_blocked \
+	'jj describe -m "Co-Authored-By: Claude Sonnet 4.6"' \
+	'jj describe (not just commit)'
+
+# Heredoc with the trailer inside the body
+assert_blocked \
+	"jj commit -m \"\$(cat <<'EOF'
+fix(thing): blah
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+EOF
+)\"" \
+	'heredoc-style commit message containing the trailer line'
+
+# ─── ALLOWED: similar-looking-but-clean ──────────────────────────────────
+echo "==> allowed: clean or partially-matching commands"
+
+assert_allowed \
+	'jj commit -m "fix(claude-mem): some fix"' \
+	'mentions claude-mem but no Co-Authored-By trailer'
+
+assert_allowed \
+	'git commit -m "Co-Authored-By: Jane Doe <jane@example.com>"' \
+	'Co-Authored-By for a human (no Claude on the line)'
+
+assert_allowed \
+	'jj commit -m "Use the Claude API for translation"' \
+	'commit prose mentions Claude (no Co-Authored-By)'
+
+# Two markers on DIFFERENT lines — should pass per Peter spec "same line"
+assert_allowed \
+	'jj commit -m "fix: thing
+Co-Authored-By: Jane <jane@example.com>
+Worked with Claude on this"' \
+	'Co-Authored-By and Claude on DIFFERENT lines'
+
+assert_allowed \
+	'echo hello' \
+	'unrelated command'
+
+assert_allowed \
+	'ls -la' \
+	'totally unrelated command'
+
+# ─── Summary ─────────────────────────────────────────────────────────────
+echo
+if [ "$fails" -eq 0 ]; then
+	echo "All $tests block-attribution tests passed"
+else
+	echo "$fails of $tests block-attribution tests failed" >&2
+fi
+exit "$fails"
