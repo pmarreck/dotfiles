@@ -7,44 +7,91 @@
 #   --test                 Run every "fun thing" in sequence (testing).
 #   --pick-one             Pick a random fun thing and execute it to stdout.
 #                          (Identical to default but explicit; used by cache regen.)
+#   --pick=<name>          Run a SPECIFIC named tool, bypassing random selection
+#                          and the IMAGE_CAPABLE pool gate. Used by tests and by
+#                          --regenerate-cache (internally) to keep the bucket
+#                          decision in this process, not inside the expect spawn.
 #   --regenerate-cache     Run --pick-one inside expect's PTY (so ANSI is preserved
 #                          even though we're not on a real TTY) and atomically
-#                          write the captured bytes to the cache file. 5-second
+#                          write the captured bytes to the cache bucket(s). 5-second
 #                          timeout via expect's `set timeout 5`. Errors logged to
 #                          ${XDG_CACHE_HOME:-$HOME/.cache}/dotfiles/fun_intro/error.log.
 #                          Falls back to direct invocation + FORCE_COLOR if expect
-#                          isn't on PATH.
-#   --cache-path           Print the cache file path and exit (for shell wiring).
+#                          isn't on PATH. May be combined with --pick=<name> to
+#                          skip the random roll (used by tests for determinism).
+#   --cache-path           Print the cache file path the CURRENT shell should read,
+#                          chosen by IMAGE_CAPABLE (default = image_incapable).
+#
+# Cache buckets (capability-keyed; the cure for kitty-escapes-replayed-into-Apple-Terminal):
+#   cached.image_capable    — may contain kitty/sixel escape bytes
+#   cached.image_incapable  — text-only; safe for any terminal
+#   Text picks write to BOTH (the second file is a hardlink → zero data IO).
+#   Image picks write ONLY image_capable; the atomic rename breaks any prior
+#   hardlink, leaving image_incapable pointing at the last text-pick bytes.
+#   .profile reads the bucket matching its terminal's capability.
 
 _fun_intro_cache_dir() {
 	printf '%s/dotfiles/fun_intro\n' "${XDG_CACHE_HOME:-$HOME/.cache}"
 }
+_fun_intro_cache_file_image_capable() {
+	printf '%s/cached.image_capable\n' "$(_fun_intro_cache_dir)"
+}
+_fun_intro_cache_file_image_incapable() {
+	printf '%s/cached.image_incapable\n' "$(_fun_intro_cache_dir)"
+}
+# Picks the cache file the current shell should read. Fail-safe default: never
+# replay graphics escapes into a terminal that hasn't declared it can render them.
 _fun_intro_cache_file() {
-	printf '%s/cached\n' "$(_fun_intro_cache_dir)"
+	if ${IMAGE_CAPABLE:-false}; then
+		_fun_intro_cache_file_image_capable
+	else
+		_fun_intro_cache_file_image_incapable
+	fi
 }
 _fun_intro_error_log() {
 	printf '%s/error.log\n' "$(_fun_intro_cache_dir)"
 }
 
+# Pool definitions — single source of truth for is-image classification.
+_fun_intro_text_only_list() {
+	printf '%s' "fortune warhammer_quote bashorg_quote chuck mandelbash asciidragon just_one_taoup times_older_than_samson"
+}
+_fun_intro_image_only_list() {
+	printf '%s' "inthebeginning"
+}
+# Returns 0 if $1 is in the image-only pool, 1 otherwise.
+_fun_intro_is_image_pick() {
+	local name="$1" item
+	for item in $(_fun_intro_image_only_list); do
+		[ "$item" = "$name" ] && return 0
+	done
+	return 1
+}
+
 fun_intro() {
 	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 
-	local mode="default"
-	case "${1:-}" in
-		--test)              mode="test" ;;
-		--pick-one)          mode="pick-one" ;;
-		--regenerate-cache)  mode="regenerate-cache" ;;
-		--cache-path)        _fun_intro_cache_file; return 0 ;;
-		"")                  mode="default" ;;
-		*)                   echo "fun_intro: unknown arg: $1" >&2; return 2 ;;
-	esac
+	local mode="default" _forced_pick=""
+	while [ $# -gt 0 ]; do
+		case "$1" in
+			--test)              mode="test" ;;
+			--pick-one)          mode="pick-one" ;;
+			--regenerate-cache)  mode="regenerate-cache" ;;
+			--cache-path)        _fun_intro_cache_file; return 0 ;;
+			--pick=*)            _forced_pick="${1#--pick=}" ;;
+			*)                   echo "fun_intro: unknown arg: $1" >&2; return 2 ;;
+		esac
+		shift
+	done
+	# --pick=<name> without an explicit mode means "just run that one tool".
+	if [ -n "$_forced_pick" ] && [ "$mode" = "default" ]; then
+		mode="pick-named"
+	fi
 
-	# Decoration scripts. Order doesn't matter; one is picked at random.
-	# image_capable_only items use display_image (which prefers kitty, falls
-	# back to sixel) — so they need IMAGE_CAPABLE, not just SIXEL_CAPABLE.
-	local text_only="fortune warhammer_quote bashorg_quote chuck mandelbash asciidragon just_one_taoup times_older_than_samson"
-	local image_capable_only="inthebeginning"
-	local _fun_things
+	# Decoration pools. Image picks render via display_image (kitty/sixel).
+	local text_only image_capable_only _fun_things
+	text_only=$(_fun_intro_text_only_list)
+	image_capable_only=$(_fun_intro_image_only_list)
 	if ${IMAGE_CAPABLE:-false}; then
 		_fun_things="$text_only $image_capable_only"
 	else
@@ -54,6 +101,7 @@ fun_intro() {
 	sixel_less="$text_only"
 	sixel_ful="$image_capable_only"
 
+	# --- Run all (testing) ---
 	if [ "$mode" = "test" ]; then
 		local retcode _selected_fun_thing
 		for _selected_fun_thing in $_fun_things; do
@@ -72,19 +120,47 @@ fun_intro() {
 		return
 	fi
 
+	# --- Run one specific named tool (no random selection, no pool gating) ---
+	if [ "$mode" = "pick-named" ]; then
+		if [ -z "$_forced_pick" ]; then
+			echo "fun_intro: --pick=<name> requires a name" >&2
+			return 2
+		fi
+		if command -v "$_forced_pick" >/dev/null 2>&1; then
+			eval "$_forced_pick"
+		else
+			echo "fun_intro --pick=$_forced_pick: command not found" >&2
+			return 127
+		fi
+		return $?
+	fi
+
+	# --- Regenerate cache (background-forked from .profile) ---
 	if [ "$mode" = "regenerate-cache" ]; then
-		# Run --pick-one inside expect so the spawned command sees a PTY and
-		# emits ANSI even though we're (likely) a detached bg fork without a
-		# real controlling terminal. Atomic write via .new + mv.
-		local cache_dir cache_file err_log tmp_file rc
+		local cache_dir cache_image cache_incap err_log tmp_image tmp_incap rc
+		local _selected_fun_thing is_image="false" pick_arg
 		cache_dir=$(_fun_intro_cache_dir)
-		cache_file=$(_fun_intro_cache_file)
+		cache_image=$(_fun_intro_cache_file_image_capable)
+		cache_incap=$(_fun_intro_cache_file_image_incapable)
 		err_log=$(_fun_intro_error_log)
 		mkdir -p "$cache_dir" || return 1
-		tmp_file="${cache_file}.new.$$"
+
+		# Pick HERE (not inside expect) so we know which bucket(s) to write.
+		# --pick=<name> override skips the random roll (test determinism).
+		if [ -n "$_forced_pick" ]; then
+			_selected_fun_thing="$_forced_pick"
+		else
+			_selected_fun_thing=$(printf '%s\n' $_fun_things | shuf -n 1)
+		fi
+		if _fun_intro_is_image_pick "$_selected_fun_thing"; then
+			is_image="true"
+		fi
+		pick_arg="--pick=$_selected_fun_thing"
+
+		tmp_image="${cache_image}.new.$$"
 
 		if command -v expect >/dev/null 2>&1; then
-			# expect: spawn fun_intro --pick-one in PTY, 5s timeout, capture
+			# expect: spawn fun_intro --pick=<name> in PTY, 5s timeout, capture
 			# all output, write to tmp file, then atomic rename.
 			#
 			# Two non-obvious choices here, both load-bearing:
@@ -104,7 +180,7 @@ fun_intro() {
 			#      as raw text rather than an image.
 			expect -c "
 				set timeout 5
-				spawn -noecho sh -c \"stty -opost; fun_intro --pick-one\"
+				spawn -noecho sh -c \"stty -opost; fun_intro $pick_arg\"
 				expect {
 					timeout {
 						puts stderr \"fun_intro --regenerate-cache: timed out after 5s\"
@@ -112,27 +188,42 @@ fun_intro() {
 					}
 					eof
 				}
-			" >"$tmp_file" 2>>"$err_log"
+			" >"$tmp_image" 2>>"$err_log"
 			rc=$?
 		else
 			# Fallback: no expect. Force-color env vars; emits plain text for
 			# scripts that strictly require a TTY (unavoidable without PTY).
 			echo "$(date '+%Y-%m-%dT%H:%M:%S') fun_intro --regenerate-cache: expect not on PATH, falling back to direct (color may be lost)" >>"$err_log"
 			FORCE_COLOR=1 CLICOLOR_FORCE=1 TERM="${TERM:-xterm-256color}" \
-				fun_intro --pick-one >"$tmp_file" 2>>"$err_log"
+				fun_intro "$pick_arg" >"$tmp_image" 2>>"$err_log"
 			rc=$?
 		fi
 
-		if [ "$rc" -eq 0 ] && [ -s "$tmp_file" ]; then
-			mv "$tmp_file" "$cache_file"
+		if [ "$rc" -eq 0 ] && [ -s "$tmp_image" ]; then
+			if [ "$is_image" = "true" ]; then
+				# Image pick: write only image_capable. The atomic rename breaks
+				# any prior hardlink to image_incapable, leaving it pointing at
+				# whatever text content it had from the last text pick.
+				mv "$tmp_image" "$cache_image"
+			else
+				# Text pick: write image_capable then HARDLINK to image_incapable
+				# (zero bytes of IO for the second file). Atomic-rename both into
+				# place; both paths end up sharing the new inode.
+				# ln failure surfaces loudly — no silent cp fallback.
+				tmp_incap="${cache_incap}.new.$$"
+				/bin/rm -f "$tmp_incap"
+				ln "$tmp_image" "$tmp_incap"
+				mv "$tmp_image" "$cache_image"
+				mv "$tmp_incap" "$cache_incap"
+			fi
 		else
-			/bin/rm -f "$tmp_file"
+			/bin/rm -f "$tmp_image"
 			echo "$(date '+%Y-%m-%dT%H:%M:%S') fun_intro --regenerate-cache: rc=$rc, no cache written" >>"$err_log"
 		fi
 		return "$rc"
 	fi
 
-	# Default and --pick-one share the same single-pick behavior.
+	# --- Default and --pick-one: single random pick, run it ---
 	local _selected_fun_thing
 	_selected_fun_thing=$(echo "$_fun_things" | tr ' ' '\n' | shuf -n 1)
 	if [ -n "$DEBUG_SHELLCONFIG" ]; then

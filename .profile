@@ -221,7 +221,15 @@ if ${INTERACTIVE_SHELL:-false} && ${LOGIN_SHELL:-false} && [ -z "$SHELL_STARTUP_
 	# after 5s (expect's `set timeout 5`), and logs to error.log on failure.
 	# Cold start (no cache yet): fall through to a normal synchronous fun_intro
 	# so the user sees something this time too, AND prime the cache for next.
-	_fi_cache="${XDG_CACHE_HOME:-$HOME/.cache}/dotfiles/fun_intro/cached"
+	# Cache is split into two capability buckets — image_capable (may contain
+	# kitty/sixel escapes) and image_incapable (text-only). Read the bucket
+	# matching THIS terminal so we never replay graphics into a terminal that
+	# can't render them.
+	if ${IMAGE_CAPABLE:-false}; then
+		_fi_cache="${XDG_CACHE_HOME:-$HOME/.cache}/dotfiles/fun_intro/cached.image_capable"
+	else
+		_fi_cache="${XDG_CACHE_HOME:-$HOME/.cache}/dotfiles/fun_intro/cached.image_incapable"
+	fi
 	if [ -s "$_fi_cache" ]; then
 		cat "$_fi_cache"
 	else

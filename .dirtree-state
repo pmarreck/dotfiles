@@ -26,4 +26,5 @@ hide=[
 
 annotate=[
 	bin/md-section = list markdown headings / extract the section under one (fence-aware, level-aware, derives TOC from headings; LuaJIT)
+	bin/test/fun_intro_test = tests for capability-bucketed fun_intro cache (image_capable/image_incapable, hardlink invariant)
 ]
