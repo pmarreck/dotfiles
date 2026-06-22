@@ -143,15 +143,31 @@ unset VISUAL EDITOR
 		unset VISUAL # note: this indicates to other tooling later on that we are not in a GUI context
 	else
 		needs micro "please install the micro editor; defaulting to nano for EDITOR" && export EDITOR='micro' || export EDITOR='nano'
-		if needs zeditor; then
-			export VISUAL='zeditor' # NixOS: the real Zed editor binary is `zeditor`; bare `zed` is the ZFS Event Daemon
-		elif needs zed "please install the Zed text editor"; then
-			export VISUAL='zed' # macOS: the Zed CLI is `zed`
-		elif needs code "please install the VSCode editor and commandline access for it"; then
-			export VISUAL='code'
+		# Detect the Zed editor while avoiding the ZFS Event Daemon (also named
+		# `zed`, present on NixOS-with-zfs and on Linux/macOS systems where ZFS
+		# userspace is installed via brew, nix-darwin, etc.). The discriminator
+		# that's universal across both OSes and all install vectors: ZFS zed is
+		# a daemon and installs to `sbin/`; the Zed editor is a user binary in
+		# `bin/`. Resolve symlinks (Nix profile → store path, brew opt → cellar)
+		# before pattern-matching so we catch nix-darwin's zfs install too.
+		_zed_is_editor() {
+			local p
+			p=$(command -v zed 2>/dev/null) || return 1
+			p=$(readlink -f "$p" 2>/dev/null || realpath "$p" 2>/dev/null || printf '%s' "$p")
+			case "$p" in
+				*/sbin/zed) return 1 ;;
+			esac
+			return 0
+		}
+		if command -v zeditor >/dev/null 2>&1; then
+			export VISUAL='zeditor' # NixOS: editor is `zeditor`; bare `zed` is the ZFS daemon
+		elif _zed_is_editor; then
+			export VISUAL='zed'     # macOS / non-Nix Linux: editor is `zed` (and not the ZFS daemon)
 		else
+			echo "Zed editor (zeditor/zed) not found — using \$EDITOR ($EDITOR) when a GUI editor is requested" >&2
 			export VISUAL="$EDITOR"
 		fi
+		unset -f _zed_is_editor
 	fi
 
 # Compilation flags
