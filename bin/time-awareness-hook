@@ -1,0 +1,162 @@
+#!/usr/bin/env bash
+# time-awareness-hook — emit a rate-limited human timestamp so Claude Code stays
+# aware of wall-clock time and its passage (it has no clock; it only knows what
+# lands in context). Wired into ~/.claude/settings.json as a UserPromptSubmit
+# and/or PostToolUse hook; the emitted JSON's additionalContext is injected into
+# the model's context.
+#
+# Cadence (mimics how a human glances at a clock): emit the LONG form (weekday +
+# full date + time) the first time per wall-clock hour, the SHORT form (just the
+# time) when MORE than 5 minutes have passed since the last short, and nothing
+# otherwise. A LONG emit also resets the short timer so you never get a long
+# immediately echoed by a short.
+#
+# Architecture is hexagonal: a PURE decision core (`--decide`, no I/O) decides
+# none|short|long from (now_epoch, now_hourkey, last_hourkey, last_short_epoch);
+# the adapter supplies those from the clock + a per-session state file and emits.
+# Test seams (env): TIMESTAMP_HOOK_NOW (epoch override), TIMESTAMP_HOOK_STATE_DIR,
+# TIMESTAMP_HOOK_SESSION. State lives under XDG_STATE_HOME, one file per session.
+#
+# ── SETUP (for agents/humans wiring this up) ────────────────────────────────
+# Add to ~/.claude/settings.json (user-global, recommended) or a project's
+# .claude/settings.json. MERGE into any existing "hooks" object — do NOT clobber
+# sibling hooks. Requires a Claude Code that honors hookSpecificOutput.additionalContext
+# for these events (verified working on CC 2.1.177):
+#
+#   "hooks": {
+#     "UserPromptSubmit": [
+#       { "hooks": [ { "type": "command", "command": "$HOME/bin/time-awareness-hook" } ] }
+#     ],
+#     "PostToolUse": [
+#       { "hooks": [ { "type": "command", "command": "$HOME/bin/time-awareness-hook" } ] }
+#     ]
+#   }
+#
+# • UserPromptSubmit fires once per user turn (tracks the human's cadence).
+# • PostToolUse fires after each tool call (tracks time during long autonomous runs).
+#   It's internally rate-limited, so most PostToolUse calls emit nothing — cheap to
+#   leave on ALL tools. Omitting "matcher" matches every tool; add "matcher":"Bash"
+#   (etc.) to scope it. Effect is immediate; no session restart needed.
+# • Use the $HOME/bin path (a symlink to dotfiles/bin) for cross-machine portability;
+#   bare "time-awareness-hook" also works if ~/bin is on the hook shell's PATH.
+# • Verify by hand:
+#     printf '{"hook_event_name":"PostToolUse","session_id":"x"}' | ./time-awareness-hook
+#   → a JSON line with .hookSpecificOutput.additionalContext, or nothing if rate-limited.
+# ────────────────────────────────────────────────────────────────────────────
+set -u
+
+SHORT_INTERVAL=300   # seconds; "more than 5 minutes" => strict > this
+
+# --- pure core -------------------------------------------------------------
+# decide NOW_EPOCH NOW_HOURKEY LAST_HOURKEY LAST_SHORT_EPOCH
+# prints: "<emit> <new_hourkey> <new_short_epoch>"  (emit in none|short|long)
+_decide() {
+	local now_epoch="$1" now_hourkey="$2" last_hourkey="$3" last_short="${4:-0}"
+	if [ "$now_hourkey" != "$last_hourkey" ]; then
+		printf 'long %s %s\n' "$now_hourkey" "$now_epoch"          # new hour (incl. first run)
+	elif [ $(( now_epoch - last_short )) -gt "$SHORT_INTERVAL" ]; then
+		printf 'short %s %s\n' "$last_hourkey" "$now_epoch"        # >5 min since last short
+	else
+		printf 'none %s %s\n' "$last_hourkey" "$last_short"        # too soon; state unchanged
+	fi
+}
+
+# --- adapter helpers -------------------------------------------------------
+# portable epoch -> formatted string (GNU date first, BSD date fallback)
+_fmt() { date -d "@$1" +"$2" 2>/dev/null || date -r "$1" +"$2"; }
+
+# pull a top-level string field out of the hook's stdin JSON
+_json_get() {
+	local json="$1" key="$2"
+	if command -v jq >/dev/null 2>&1; then
+		printf '%s' "$json" | jq -r --arg k "$key" '.[$k] // empty' 2>/dev/null
+	else
+		printf '%s' "$json" | grep -oE "\"$key\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" \
+			| head -1 | sed -E "s/.*:[[:space:]]*\"([^\"]*)\"/\1/"
+	fi
+}
+
+_safe() { printf '%s' "$1" | tr -c 'A-Za-z0-9_.-' '_'; }
+
+_usage() {
+	cat <<'EOF'
+time-awareness-hook — rate-limited timestamp injection for Claude Code
+
+USAGE
+  time-awareness-hook                 # hook mode: reads hook JSON on stdin, emits
+                                      # additionalContext JSON (or nothing) on stdout
+  time-awareness-hook --decide NOW HOURKEY LAST_HOURKEY LAST_SHORT
+                                      # pure core: prints "<none|short|long> <hourkey> <short_epoch>"
+  time-awareness-hook -h | --help
+  time-awareness-hook --about
+  time-awareness-hook --test          # run test suite (stdout muted; exit = #fails)
+
+CADENCE
+  long  : first emit of each wall-clock hour (weekday, full date, time)
+  short : when > 5 min since the last short (just the time)
+  none  : otherwise (silent)
+  A long emit resets the short timer.
+
+ENV (test seams)
+  TIMESTAMP_HOOK_NOW         epoch-seconds override for "now"
+  TIMESTAMP_HOOK_STATE_DIR   state directory (default: $XDG_STATE_HOME/claude-time-awareness)
+  TIMESTAMP_HOOK_SESSION     session id fallback when stdin lacks one
+EOF
+}
+
+# --- hook mode -------------------------------------------------------------
+_hook_main() {
+	# never block waiting on a tty when run by hand with no stdin
+	local input=""
+	if [ ! -t 0 ]; then input="$(cat)"; fi
+
+	local session event
+	session="$(_json_get "$input" session_id)"
+	event="$(_json_get "$input" hook_event_name)"
+	[ -n "$session" ] || session="${TIMESTAMP_HOOK_SESSION:-default}"
+	[ -n "$event" ] || event="UserPromptSubmit"
+
+	local now state_dir state_file
+	now="${TIMESTAMP_HOOK_NOW:-$(date +%s)}"
+	state_dir="${TIMESTAMP_HOOK_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/claude-time-awareness}"
+	mkdir -p "$state_dir" 2>/dev/null || true
+	state_file="$state_dir/state-$(_safe "$session")"
+
+	local now_hourkey last_hourkey="" last_short="0"
+	now_hourkey="$(_fmt "$now" '%Y%m%d%H')"
+	if [ -f "$state_file" ]; then
+		{ read -r last_hourkey; read -r last_short; } < "$state_file" 2>/dev/null || true
+		[ -n "$last_short" ] || last_short="0"
+	fi
+
+	local emit new_hourkey new_short
+	read -r emit new_hourkey new_short < <(_decide "$now" "$now_hourkey" "$last_hourkey" "$last_short")
+
+	[ "$emit" = "none" ] && return 0
+
+	# persist new state atomically (only on an actual emit)
+	local tmp="$state_file.tmp.$$"
+	printf '%s\n%s\n' "$new_hourkey" "$new_short" > "$tmp" 2>/dev/null && mv -f "$tmp" "$state_file" 2>/dev/null
+
+	# hourly housekeeping: drop state files older than a day (cheap, runs ~once/hour)
+	[ "$emit" = "long" ] && find "$state_dir" -maxdepth 1 -type f -name 'state-*' -mtime +0 -delete 2>/dev/null
+
+	local stamp
+	case "$emit" in
+		long)  stamp="$(_fmt "$now" '⏱ %A, %B %d, %Y %I:%M %p %Z')" ;;
+		short) stamp="$(_fmt "$now" '⏱ %I:%M %p %Z')" ;;
+	esac
+	printf '{"hookSpecificOutput":{"hookEventName":"%s","additionalContext":"%s"}}\n' "$event" "$stamp"
+}
+
+# --- dispatch --------------------------------------------------------------
+case "${1:-}" in
+	-h|--help)   _usage; exit 0 ;;
+	--about)     echo "time-awareness-hook: rate-limited timestamp injection for Claude Code ($(uname -s) $(uname -m))"; exit 0 ;;
+	--decide)    shift; _decide "$@"; exit 0 ;;
+	--test)
+		_tf="$HOME/dotfiles/bin/test/time-awareness-hook_test"
+		if [ -f "$_tf" ]; then exec bash "$_tf" >/dev/null; fi
+		echo "no test file at $_tf" >&2; exit 0 ;;
+	*)           _hook_main; exit 0 ;;
+esac

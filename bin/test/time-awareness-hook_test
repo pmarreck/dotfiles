@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+# Tests for time-awareness-hook: rate-limited timestamp injection for Claude time cognizance.
+#
+# Architecture under test is hexagonal: a PURE decision core (`--decide`) that takes
+# (now_epoch, now_hourkey, last_hourkey, last_short_epoch) and emits one of none|short|long
+# plus the new state — no clock, no state file, no stdin. The hook adapter (default mode)
+# reads stdin JSON + clock + state and calls that same core. We test the pure core directly
+# (deterministic, no I/O) and exercise the adapter with an injected clock + temp state dir.
+#
+# Conventions: progress -> stdout, failures -> stderr, exit code == number of failures.
+# NEVER use set -e here (error paths are under test); set -u only.
+set -u
+
+HOOK="$HOME/dotfiles/bin/time-awareness-hook"
+tests=0
+fails=0
+
+expect_eq() { # actual expected msg
+	((tests++))
+	if [ "$1" = "$2" ]; then
+		echo "✓ $3"
+	else
+		echo "✗ $3" >&2
+		echo "    expected: [$2]" >&2
+		echo "    actual:   [$1]" >&2
+		((fails++))
+	fi
+}
+expect_contains() { # haystack needle msg
+	((tests++))
+	if printf '%s' "$1" | grep -q -- "$2"; then echo "✓ $3"
+	else echo "✗ $3" >&2; echo "    [$1] lacks [$2]" >&2; ((fails++)); fi
+}
+expect_not_contains() { # haystack needle msg
+	((tests++))
+	if printf '%s' "$1" | grep -q -- "$2"; then echo "✗ $3" >&2; echo "    [$1] unexpectedly has [$2]" >&2; ((fails++))
+	else echo "✓ $3"; fi
+}
+
+# portable epoch->format (GNU first, BSD fallback) so expectations match the hook
+fmt() { date -d "@$1" +"$2" 2>/dev/null || date -r "$1" +"$2"; }
+
+# ---- PURE CORE: time-awareness-hook --decide now_epoch now_hourkey last_hourkey last_short ----
+emit()  { "$HOOK" --decide "$@" | cut -d' ' -f1; }
+state() { "$HOOK" --decide "$@" | cut -d' ' -f2-; }
+
+echo "# pure decision core"
+# 1. first run (empty prior hour) -> long, short reset to now
+expect_eq "$(emit 1000000000 2026062221 '' 0)" "long"                       "first run -> long"
+expect_eq "$(state 1000000000 2026062221 '' 0)" "2026062221 1000000000"     "first run state = nowhour + now"
+# 2. same hour, 100s since short -> none
+expect_eq "$(emit 1000000100 2026062221 2026062221 1000000000)" "none"      "same hour <5min -> none"
+# 3. same hour, exactly 300s -> none (rule is 'MORE than 5 min', strict >)
+expect_eq "$(emit 1000000300 2026062221 2026062221 1000000000)" "none"      "exactly 5min -> none (strict)"
+# 4. same hour, 301s -> short, updates short epoch, keeps hour
+expect_eq "$(emit 1000000301 2026062221 2026062221 1000000000)" "short"     "just over 5min -> short"
+expect_eq "$(state 1000000301 2026062221 2026062221 1000000000)" "2026062221 1000000301" "short keeps hour, bumps short epoch"
+# 5. hour changed but short was 10s ago -> long overrides + resets short timer
+expect_eq "$(emit 1000000010 2026062222 2026062221 1000000000)" "long"      "hour change overrides recent short"
+expect_eq "$(state 1000000010 2026062222 2026062221 1000000000)" "2026062222 1000000010" "long resets short epoch to now"
+
+# ---- ADAPTER: full stdin/state path with injected clock + isolated state dir ----
+echo "# hook adapter (injected clock + temp state)"
+# --tmpdir places this in $TMPDIR (RAM); per project convention it self-cleans,
+# and avoiding an explicit rm dodges the rm-safe wrapper's noise on teardown.
+TMP="$(mktemp -d --tmpdir time-awareness-hook.XXXXXX)"
+run() { # now_epoch session
+	printf '{"hook_event_name":"PostToolUse","session_id":"%s"}' "$2" \
+		| TIMESTAMP_HOOK_NOW="$1" TIMESTAMP_HOOK_STATE_DIR="$TMP" "$HOOK"
+}
+WD="$(fmt 1000000000 %A)"   # weekday name only appears in the LONG format
+
+# 6. fresh session -> long emit (JSON additionalContext, weekday present) + state file created
+o6="$(run 1000000000 sessA)"
+expect_contains     "$o6" "additionalContext" "fresh session emits additionalContext JSON"
+expect_contains     "$o6" "$WD"               "fresh session emit is LONG (weekday present)"
+expect_eq "$([ -f "$TMP/state-sessA" ] && echo yes)" "yes" "state file created for session"
+# 7. same session 2 min later, same hour -> none (silent)
+expect_eq "$(run 1000000120 sessA)" "" "2 min later same hour -> no output"
+# 8. same session ~6.5 min later -> short (time present, weekday absent)
+o8="$(run 1000000400 sessA)"
+expect_contains     "$o8" "additionalContext" "6+ min later emits"
+expect_not_contains "$o8" "$WD"               "6+ min emit is SHORT (no weekday)"
+# 9. session isolation: a different session id is fresh -> long, separate state file
+o9="$(run 1000000400 sessB)"
+expect_contains     "$o9" "$WD"               "different session is independent -> LONG"
+expect_eq "$([ -f "$TMP/state-sessB" ] && echo yes)" "yes" "separate state file per session"
+
+# ---- summary ----
+if [ "$fails" -gt 0 ]; then
+	echo "$fails of $tests tests FAILED" >&2
+else
+	echo "all $tests tests passed"
+fi
+exit "$fails"
