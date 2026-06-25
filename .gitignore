@@ -21,3 +21,6 @@ bin/*launcher
 .resume*
 docs/superpowers
 inbox
+
+# session handoff docs (skill: handoff)
+HANDOFF*
