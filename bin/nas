@@ -124,6 +124,44 @@ _nas_run() {
 	fi
 }
 
+# Is the userspace NFS mount helper (mount.nfs, from nfs-utils / nfs-common)
+# available? Linux's `mount -t nfs` REQUIRES it: without the helper, util-linux
+# falls back to the in-kernel fsconfig() mount API, which never resolves the
+# host:path source into an addr= option and dies with the opaque
+# "NFS: mount program didn't pass remote address". macOS has NFS built in, so
+# this check only gates the Linux/NixOS paths. NAS_MOUNT_NFS_OVERRIDE (1|0)
+# lets tests force either answer without touching the real system.
+_nas_have_mount_nfs() {
+	if [ -n "${NAS_MOUNT_NFS_OVERRIDE:-}" ]; then
+		[ "$NAS_MOUNT_NFS_OVERRIDE" = "1" ]
+		return
+	fi
+	command -v mount.nfs >/dev/null 2>&1
+}
+
+# Actionable remediation when mount.nfs is missing. Surfaces the cryptic kernel
+# error up front (so a web search for it lands here) and gives the platform's
+# fix. arg0: platform (nixos => declarative knob; anything else => distro pkg).
+_nas_missing_helper_msg() {
+	local platform="$1"
+	printf 'nas: the NFS mount helper (mount.nfs, from nfs-utils) is not installed.\n'
+	printf '     Without it, `mount -t nfs` cannot resolve the server and fails with:\n'
+	printf '       "NFS: mount program did not pass remote address"\n'
+	case "$platform" in
+		nixos)
+			printf '     Fix on NixOS — add to configuration.nix, then rebuild:\n'
+			printf '       boot.supportedFilesystems = [ "nfs" ];\n'
+			printf '     then: sudo nixos-rebuild switch   (or your reify alias)\n'
+			;;
+		*)
+			printf '     Fix on Linux — install the nfs client package:\n'
+			printf '       Debian/Ubuntu: sudo apt install nfs-common\n'
+			printf '       Fedora/RHEL:   sudo dnf install nfs-utils\n'
+			printf '       Arch:          sudo pacman -S nfs-utils\n'
+			;;
+	esac
+}
+
 # ── platform-specific actions ───────────────────────────────────────────────
 
 _nas_do_darwin() {
@@ -199,7 +237,12 @@ _nas_do_linux() {
 		fi
 		return 0
 	fi
-	# Default: imperative + open
+	# Default: imperative + open. Preflight the mount helper so we abort with a
+	# clear fix instead of the kernel's opaque "didn't pass remote address".
+	if [ "$dry" != "1" ] && ! _nas_have_mount_nfs; then
+		_nas_missing_helper_msg linux >&2
+		return 1
+	fi
 	_nas_run "$dry" sudo mkdir -p "$NAS_LINUX_MOUNT"
 	_nas_run "$dry" sudo mount -t nfs -o "$NFS_OPTS_LINUX" "$NAS_HOST:$NAS_NFS_PATH" "$NAS_LINUX_MOUNT"
 	if command -v xdg-open >/dev/null 2>&1; then
@@ -220,7 +263,12 @@ _nas_do_nixos() {
 		printf 'and rebuild (sudo nixos-rebuild switch).\n' >&2
 		return 0
 	fi
-	# Imperative mount works fine on NixOS even without persistent config.
+	# Imperative mount works fine on NixOS even without persistent config —
+	# provided nfs-utils is present (boot.supportedFilesystems = [ "nfs" ]).
+	if [ "$dry" != "1" ] && ! _nas_have_mount_nfs; then
+		_nas_missing_helper_msg nixos >&2
+		return 1
+	fi
 	_nas_run "$dry" sudo mkdir -p "$NAS_LINUX_MOUNT"
 	_nas_run "$dry" sudo mount -t nfs -o "$NFS_OPTS_LINUX" "$NAS_HOST:$NAS_NFS_PATH" "$NAS_LINUX_MOUNT"
 	if command -v xdg-open >/dev/null 2>&1; then

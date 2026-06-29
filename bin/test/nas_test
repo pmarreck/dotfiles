@@ -98,7 +98,7 @@ tmp_marker=$(mktemp)
 NAS_NIXOS_MARKER="$tmp_marker" _nas_is_nixos && pass_marker=0 || pass_marker=$?
 assert_rc "$pass_marker" "0" "_nas_is_nixos returns 0 when marker exists"
 
-/bin/rm -f "$tmp_marker"
+command rm -f "$tmp_marker"   # `command` bypasses any rm-safe shim; /bin/rm is absent on NixOS
 NAS_NIXOS_MARKER="$tmp_marker" _nas_is_nixos && nope_marker=0 || nope_marker=$?
 assert_rc "$nope_marker" "1" "_nas_is_nixos returns 1 when marker absent"
 
@@ -142,6 +142,44 @@ assert_contains "$snip" "$NAS_LINUX_MOUNT"          "nixos snippet uses Linux mo
 assert_contains "$snip" "$NAS_HOST:$NAS_NFS_PATH"   "nixos snippet has device = host:path"
 assert_contains "$snip" "fsType = \"nfs\""          "nixos snippet sets fsType nfs"
 assert_contains "$snip" "x-systemd.automount"       "nixos snippet uses on-demand automount option"
+
+# ─── _nas_have_mount_nfs: helper-presence classifier ─────────────────────────
+echo "==> _nas_have_mount_nfs"
+NAS_MOUNT_NFS_OVERRIDE=1 _nas_have_mount_nfs && have1=0 || have1=$?
+assert_rc "$have1" "0" "_nas_have_mount_nfs returns 0 when override=1 (helper present)"
+NAS_MOUNT_NFS_OVERRIDE=0 _nas_have_mount_nfs && have0=0 || have0=$?
+assert_rc "$have0" "1" "_nas_have_mount_nfs returns 1 when override=0 (helper missing)"
+
+# ─── _nas_missing_helper_msg: actionable remediation ─────────────────────────
+echo "==> _nas_missing_helper_msg"
+nmsg=$(_nas_missing_helper_msg nixos)
+assert_contains "$nmsg" "mount.nfs"                  "missing-helper msg names the mount.nfs helper"
+assert_contains "$nmsg" "remote address"             "missing-helper msg quotes the cryptic kernel error"
+assert_contains "$nmsg" "boot.supportedFilesystems"  "nixos remediation gives the configuration.nix knob"
+lmsg=$(_nas_missing_helper_msg linux)
+assert_contains "$lmsg" "nfs-common"                 "linux remediation names the distro package (nfs-common)"
+assert_not_contains "$lmsg" "boot.supportedFilesystems" "linux remediation does NOT give the NixOS-only knob"
+
+# ─── preflight: imperative mount aborts legibly when helper missing ──────────
+echo "==> preflight (helper missing) aborts legibly, no sudo"
+out=$(NAS_PLATFORM_OVERRIDE=nixos NAS_MOUNT_NFS_OVERRIDE=0 "$NAS_SCRIPT" 2>&1)
+rc=$?
+assert_rc "$rc" "1" "nixos imperative mount exits 1 when mount.nfs missing"
+assert_contains "$out" "remote address"  "nixos abort explains the kernel error preemptively"
+assert_contains "$out" "boot.supportedFilesystems" "nixos abort gives the fix"
+assert_not_contains "$out" "sudo mount"  "nixos abort happens BEFORE attempting the real mount"
+
+out=$(NAS_PLATFORM_OVERRIDE=linux NAS_MOUNT_NFS_OVERRIDE=0 "$NAS_SCRIPT" 2>&1)
+rc=$?
+assert_rc "$rc" "1" "linux imperative mount exits 1 when mount.nfs missing"
+assert_contains "$out" "nfs-common"      "linux abort names the package to install"
+assert_not_contains "$out" "sudo mount"  "linux abort happens BEFORE attempting the real mount"
+
+# Helper present (override=1) + dry-run: preflight is satisfied, proceeds to DRY mount.
+out=$(NAS_PLATFORM_OVERRIDE=nixos NAS_MOUNT_NFS_OVERRIDE=1 "$NAS_SCRIPT" --dry-run 2>&1)
+rc=$?
+assert_rc "$rc" "0" "nixos --dry-run with helper present exits 0"
+assert_contains "$out" "sudo mount -t nfs" "nixos --dry-run still plans the mount when helper present"
 
 # ─── --help works ────────────────────────────────────────────────────────────
 echo "==> --help"
