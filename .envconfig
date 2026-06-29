@@ -57,6 +57,18 @@ export PGHOST=localhost
 export LANG=en_US.UTF-8
 export LANGUAGE=en_US
 export LC_CTYPE="en_US.UTF-8"
+# Perl UTF-8 defaults — stops Perl from defaulting to Latin-1 / byte
+# semantics when invoked by tools/agents that don't set encoding themselves
+# (mojibake-in-HTML incident, June 2026). SDA = Standard streams + Default
+# open() + @ARGV all UTF-8. -Mutf8 auto-loads the utf8 pragma so source
+# strings are treated as UTF-8.
+export PERL_UNICODE="${PERL_UNICODE:-SDA}"
+# Append -Mutf8 to PERL5OPT, preserving anything already set (direnv, project
+# wrappers, etc.) and skipping if -Mutf8 is already present (idempotent on re-source).
+case "${PERL5OPT:-}" in
+	*-Mutf8*) ;;
+	*) export PERL5OPT="${PERL5OPT:+$PERL5OPT }-Mutf8" ;;
+esac
 
 # Fixed PAC_USE_AUR logic - was using $(...) which always returns 0
 # Rehydrate GREP_QUIET (exported as a string; arrays can't cross the exec boundary)
