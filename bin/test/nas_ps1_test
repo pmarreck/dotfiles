@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+# nas_ps1_test — static-content validation for bin/nas.ps1.
+#
+# Limitation: this dev host (and most non-Windows machines) does NOT have
+# pwsh installed, so we can't actually parse the script with PowerShell's
+# tokenizer to prove it's syntactically valid. If pwsh IS available, we
+# additionally run a no-op parse via -NoProfile -Command. Otherwise we
+# fall back to grep-based content checks: presence of param blocks,
+# required parameters, both protocol branches, and the help/example
+# sections. That at least catches "the file got truncated" and
+# "someone deleted the NFS branch" regressions.
+
+set -u
+
+PS1="$HOME/dotfiles/bin/nas.ps1"
+
+tests=0
+fails=0
+
+assert_match() {
+	local needle="$1" msg="$2"
+	((tests++))
+	if grep -qE "$needle" "$PS1"; then
+		echo "✓ $msg"
+	else
+		echo "✗ $msg (pattern not found: $needle)" >&2
+		((fails++)) || :
+	fi
+}
+
+assert_not_match() {
+	local needle="$1" msg="$2"
+	((tests++))
+	if grep -qE "$needle" "$PS1"; then
+		echo "✗ $msg (pattern unexpectedly present: $needle)" >&2
+		((fails++)) || :
+	else
+		echo "✓ $msg"
+	fi
+}
+
+# ─── file existence + sanity ─────────────────────────────────────────────────
+if [ ! -f "$PS1" ]; then
+	echo "✗ nas.ps1 missing: $PS1" >&2
+	exit 1
+fi
+
+size=$(wc -c < "$PS1")
+((tests++))
+if [ "$size" -lt 1000 ]; then
+	echo "✗ nas.ps1 suspiciously small ($size bytes)" >&2
+	((fails++)) || :
+else
+	echo "✓ nas.ps1 has reasonable size ($size bytes)"
+fi
+
+# ─── PowerShell help block + param signature ─────────────────────────────────
+echo "==> structure: comment-based help + param block"
+assert_match '^<#' 'has PowerShell comment-based help opener (<#)'
+assert_match '\.SYNOPSIS' 'has .SYNOPSIS section'
+assert_match '\.DESCRIPTION' 'has .DESCRIPTION section'
+assert_match '\.PARAMETER Protocol' '.PARAMETER Protocol documented'
+assert_match '\.PARAMETER DriveLetter' '.PARAMETER DriveLetter documented'
+assert_match '\.PARAMETER Persist' '.PARAMETER Persist documented'
+assert_match '\.EXAMPLE' 'has at least one .EXAMPLE'
+assert_match '^\[CmdletBinding\(\)\]' 'uses [CmdletBinding()] attribute'
+assert_match '^param\(' 'has param() block'
+
+# ─── required parameters ─────────────────────────────────────────────────────
+echo "==> required parameter coverage"
+assert_match 'ValidateSet.+SMB.+NFS|ValidateSet.+NFS.+SMB' 'Protocol ValidateSet restricts to SMB/NFS'
+assert_match "\\\$Protocol\\s*=\\s*['\"]SMB['\"]"    'Protocol defaults to SMB'
+assert_match "\\\$DriveLetter\\s*=\\s*['\"]Z['\"]"   'DriveLetter defaults to Z'
+assert_match "\\\$NasHost\\s*=\\s*['\"]192\\.168"   'NasHost defaults to NAS IP (192.168.x.x)'
+assert_match "\\\$SmbShare\\s*=\\s*['\"]Fileserver['\"]" 'SmbShare defaults to Fileserver'
+assert_match '\[switch\]\$Persist' 'Persist is a [switch]'
+assert_match '\[switch\]\$DryRun'  'DryRun is a [switch]'
+assert_match '\[switch\]\$Help'    'Help is a [switch]'
+
+# ─── both protocol branches present ──────────────────────────────────────────
+echo "==> protocol branches"
+assert_match "['\"]SMB['\"]\\s*\\{"  "SMB branch present in switch"
+assert_match "['\"]NFS['\"]\\s*\\{"  "NFS branch present in switch"
+assert_match 'New-SmbMapping'        'SMB branch uses New-SmbMapping (modern API)'
+assert_match 'mount\.exe'            'NFS branch invokes mount.exe'
+assert_match 'ServicesForNFS-ClientOnly' 'NFS branch tells user how to enable Client for NFS'
+
+# ─── safety + correctness traits ─────────────────────────────────────────────
+echo "==> safety + correctness"
+assert_match 'Test-DriveInUse' 'has Test-DriveInUse helper (refuses to clobber existing mappings)'
+assert_match 'Get-SmbMapping'  'consults Get-SmbMapping when checking drive in use'
+assert_match 'DryRun'          'DryRun is wired through Invoke-OrDryRun (no privileged ops on dry run)'
+assert_match 'ErrorActionPreference\s*=\s*.Stop.'    'ErrorActionPreference is Stop (loud failures)'
+
+# ─── Explorer-opening default + opt-out ──────────────────────────────────────
+echo "==> Explorer integration"
+assert_match 'Start-Process explorer\.exe' 'opens Explorer at the drive on success'
+assert_match '\$NoOpen'                    'has -NoOpen opt-out for headless use'
+
+# ─── no Python, no obvious mojibake ──────────────────────────────────────────
+echo "==> hygiene"
+assert_not_match 'python' 'no Python invocations'
+# Reject literal mojibake sequences (cp1252 misinterpretation of UTF-8 bytes).
+# These specific patterns appear when UTF-8 is wrongly decoded as cp1252:
+#   â€™ (U+E2 U+80 U+99) is the cp1252 mojibake for U+2019 ('right single quote').
+assert_not_match $'\xc3\xa2\xe2\x82\xac' 'no UTF-8-as-cp1252 mojibake in source'
+
+# ─── optional: real parse via pwsh if available ──────────────────────────────
+echo "==> optional pwsh parse check"
+if command -v pwsh >/dev/null 2>&1; then
+	if pwsh -NoProfile -NonInteractive -Command "
+		try {
+			[void](\$null = [System.Management.Automation.Language.Parser]::ParseFile('$PS1', [ref]\$null, [ref]\$null))
+			exit 0
+		} catch { Write-Error \$_; exit 1 }
+	" 2>/dev/null; then
+		((tests++)); echo "✓ pwsh parser accepts the script"
+	else
+		((tests++)); ((fails++)) || :; echo "✗ pwsh parser rejected the script" >&2
+	fi
+else
+	echo "(pwsh not installed; skipped real parse check)" >&2
+fi
+
+# ─── Summary ─────────────────────────────────────────────────────────────────
+echo
+if [ "$fails" -eq 0 ]; then
+	echo "All $tests nas.ps1 static-content tests passed"
+else
+	echo "$fails of $tests nas.ps1 static-content tests failed" >&2
+fi
+exit "$fails"

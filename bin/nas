@@ -1,25 +1,275 @@
 #!/usr/bin/env bash
+# nas — cross-platform NAS mount helper (macOS, Linux, NixOS).
+#
+# Default action: imperative mount + open in the system file manager.
+# With --persist: install OS-appropriate persistent config (idempotent).
+# With --unpersist: remove that persistent config.
+#
+# Persistence per platform:
+#   macOS:  appends to /etc/auto_nfs + /etc/auto_master, runs `automount -cv`
+#   Linux:  appends an /etc/fstab entry with `noauto,x-systemd.automount`
+#           (on-demand mount; survives reboot without blocking boot)
+#   NixOS:  CANNOT edit /etc/fstab (NixOS generates it from configuration.nix).
+#           Prints a copy-pasteable `fileSystems."…"` block instead.
+#
+# Windows: see `nas.ps1` alongside this script.
+#
+# All helpers below are testable in isolation by sourcing this file —
+# the `if [ "${BASH_SOURCE[0]}" = "$0" ]` guard at the bottom prevents
+# `main` from running on `source bin/nas`.
 
-# if we are on macOS...
-if [[ "$(uname)" == "Darwin" ]]; then
-	# Create the mount point
-	sudo mkdir -p /Volumes/Fileserver
+set -u
 
-	# Add NFS config to auto_master
-	echo '/Volumes/Fileserver -fstype=nfs,resvport,rw,nfc,rsize=65536,wsize=65536,timeo=100,retrans=3 192.168.7.234:/mnt/Coruscatology/Fileserver' | sudo tee /etc/auto_nfs
+# ── defaults (overridable via environment) ──────────────────────────────────
+NAS_HOST="${NAS_HOST:-192.168.7.234}"
+NAS_NFS_PATH="${NAS_NFS_PATH:-/mnt/Coruscatology/Fileserver}"
+NAS_MAC_MOUNT="${NAS_MAC_MOUNT:-/Volumes/Fileserver}"
+NAS_LINUX_MOUNT="${NAS_LINUX_MOUNT:-/mnt/Fileserver}"
+NFS_OPTS_LINUX="${NFS_OPTS_LINUX:-rsize=65536,wsize=65536,timeo=100,retrans=3}"
+NFS_OPTS_MAC="${NFS_OPTS_MAC:-resvport,rw,nfc,rsize=65536,wsize=65536,timeo=100,retrans=3}"
 
-	# Tell auto_master about it
-	sudo grep -q auto_nfs /etc/auto_master || echo '/-                      auto_nfs' | sudo tee -a /etc/auto_master
+# ── pure helpers (testable; no I/O, no sudo) ────────────────────────────────
 
-	# Activate without reboot
-	sudo automount -cv
+# /etc/NIXOS exists on every NixOS install. Marker path is env-overridable
+# so tests can flip the answer deterministically without root.
+_nas_is_nixos() {
+	local marker="${NAS_NIXOS_MARKER:-/etc/NIXOS}"
+	[ -e "$marker" ]
+}
 
-	open /Volumes/Fileserver
-# if we are on linux...
-elif [[ "$(uname)" == "Linux" ]]; then
-	sudo mount -t nfs -o rsize=65536,wsize=65536,timeo=100,retrans=3 192.168.7.234:/mnt/Coruscatology/Fileserver /mnt/Fileserver
-# otherwise error
-else
-	echo "Unsupported OS: $(uname)"
-	exit 1
+# Resolve current platform: darwin | linux | nixos | unknown.
+# NAS_PLATFORM_OVERRIDE lets tests exercise all branches on any host.
+_nas_platform() {
+	if [ -n "${NAS_PLATFORM_OVERRIDE:-}" ]; then
+		printf '%s\n' "$NAS_PLATFORM_OVERRIDE"
+		return 0
+	fi
+	case "$(uname)" in
+		Darwin) printf 'darwin\n' ;;
+		Linux)
+			if _nas_is_nixos; then printf 'nixos\n'
+			else printf 'linux\n'
+			fi
+			;;
+		*) printf 'unknown\n' ;;
+	esac
+}
+
+# /etc/fstab line (Linux, non-NixOS).
+_nas_fstab_line() {
+	printf '%s:%s %s nfs noauto,x-systemd.automount,_netdev,%s 0 0\n' \
+		"$NAS_HOST" "$NAS_NFS_PATH" "$NAS_LINUX_MOUNT" "$NFS_OPTS_LINUX"
+}
+
+# /etc/auto_nfs map entry (macOS).
+_nas_auto_nfs_line() {
+	printf '%s -fstype=nfs,%s %s:%s\n' \
+		"$NAS_MAC_MOUNT" "$NFS_OPTS_MAC" "$NAS_HOST" "$NAS_NFS_PATH"
+}
+
+# /etc/auto_master inclusion line (macOS).
+_nas_auto_master_line() {
+	printf '/-                      auto_nfs\n'
+}
+
+# configuration.nix snippet (NixOS).
+_nas_nixos_snippet() {
+	cat <<EOF
+# add to your configuration.nix and rebuild (sudo nixos-rebuild switch):
+fileSystems."$NAS_LINUX_MOUNT" = {
+  device = "$NAS_HOST:$NAS_NFS_PATH";
+  fsType = "nfs";
+  options = [ "noauto" "x-systemd.automount" "_netdev" "$NFS_OPTS_LINUX" ];
+};
+EOF
+}
+
+_nas_usage() {
+	cat <<EOF
+Usage: nas [--persist|--unpersist] [--dry-run] [-h|--help]
+
+Mounts the home NAS across macOS, Linux, and NixOS.
+
+Default behavior: imperative mount + open in file manager.
+
+  --persist     install OS-appropriate persistent config (idempotent)
+                  macOS:  /etc/auto_nfs + /etc/auto_master automount
+                  Linux:  /etc/fstab entry (x-systemd.automount, on-demand)
+                  NixOS:  prints a fileSystems block for configuration.nix
+                          (cannot edit /etc/fstab on NixOS — manual step)
+  --unpersist   remove the persistent config (no-op on NixOS — manual)
+  --dry-run     print what would happen; perform no privileged ops
+  -h, --help    show this help and exit
+
+Environment overrides:
+  NAS_HOST           default: $NAS_HOST
+  NAS_NFS_PATH       default: $NAS_NFS_PATH
+  NAS_MAC_MOUNT      default: $NAS_MAC_MOUNT
+  NAS_LINUX_MOUNT    default: $NAS_LINUX_MOUNT
+  NAS_PLATFORM_OVERRIDE   force platform (darwin|linux|nixos) — for testing
+  NAS_NIXOS_MARKER        path to NixOS marker file (default /etc/NIXOS)
+
+For Windows, see nas.ps1 alongside this script.
+EOF
+}
+
+# Tiny dispatcher: print on dry-run, execute otherwise.
+# arg0: dry flag (0|1); rest: command + args.
+_nas_run() {
+	local dry="$1"; shift
+	if [ "$dry" = "1" ]; then
+		printf 'DRY: %s\n' "$*"
+	else
+		"$@"
+	fi
+}
+
+# ── platform-specific actions ───────────────────────────────────────────────
+
+_nas_do_darwin() {
+	local persist="$1" unpersist="$2" dry="$3"
+	if [ "$persist" = "1" ]; then
+		local nfs_line auto_line
+		nfs_line=$(_nas_auto_nfs_line)
+		auto_line=$(_nas_auto_master_line)
+		if [ "$dry" = "1" ]; then
+			printf 'DRY: sudo mkdir -p %s\n' "$NAS_MAC_MOUNT"
+			printf 'DRY: ensure /etc/auto_nfs contains: %s' "$nfs_line"
+			printf 'DRY: ensure /etc/auto_master contains: %s' "$auto_line"
+			printf 'DRY: sudo automount -cv\n'
+		else
+			sudo mkdir -p "$NAS_MAC_MOUNT"
+			# Append line ONLY if not already present (idempotent; no clobber).
+			if ! sudo grep -qxF "${nfs_line%$'\n'}" /etc/auto_nfs 2>/dev/null; then
+				printf '%s' "$nfs_line" | sudo tee -a /etc/auto_nfs >/dev/null
+			fi
+			if ! sudo grep -q '^/-[[:space:]]\+auto_nfs' /etc/auto_master 2>/dev/null; then
+				printf '%s' "$auto_line" | sudo tee -a /etc/auto_master >/dev/null
+			fi
+			sudo automount -cv >&2
+		fi
+		return 0
+	fi
+	if [ "$unpersist" = "1" ]; then
+		if [ "$dry" = "1" ]; then
+			printf 'DRY: remove our line from /etc/auto_nfs (auto_master entry left in place)\n'
+			printf 'DRY: sudo automount -cv\n'
+		else
+			# Match our exact mountpoint anchor to avoid blasting unrelated lines.
+			local anchor; anchor=$(printf '%s' "$NAS_MAC_MOUNT" | sed 's/[][\/.^$*]/\\&/g')
+			sudo sed -i.bak -e "/^${anchor}[[:space:]]/d" /etc/auto_nfs 2>/dev/null || :
+			sudo automount -cv >&2
+		fi
+		return 0
+	fi
+	# Default: imperative + open
+	_nas_run "$dry" sudo mkdir -p "$NAS_MAC_MOUNT"
+	_nas_run "$dry" sudo mount -t nfs -o "$NFS_OPTS_MAC" "$NAS_HOST:$NAS_NFS_PATH" "$NAS_MAC_MOUNT"
+	_nas_run "$dry" open "$NAS_MAC_MOUNT"
+}
+
+_nas_do_linux() {
+	local persist="$1" unpersist="$2" dry="$3"
+	local line; line=$(_nas_fstab_line)
+	if [ "$persist" = "1" ]; then
+		if [ "$dry" = "1" ]; then
+			printf 'DRY: sudo mkdir -p %s\n' "$NAS_LINUX_MOUNT"
+			printf 'DRY: ensure /etc/fstab contains: %s' "$line"
+			printf 'DRY: sudo systemctl daemon-reload\n'
+			printf 'DRY: sudo mount %s (via systemd.automount trigger)\n' "$NAS_LINUX_MOUNT"
+		else
+			sudo mkdir -p "$NAS_LINUX_MOUNT"
+			if ! sudo grep -qxF "${line%$'\n'}" /etc/fstab 2>/dev/null; then
+				printf '%s' "$line" | sudo tee -a /etc/fstab >/dev/null
+			fi
+			sudo systemctl daemon-reload
+			# Trigger the automount unit so the mountpoint becomes live.
+			sudo mount -a 2>&1 | grep -v 'x-systemd.automount' >&2 || :
+		fi
+		return 0
+	fi
+	if [ "$unpersist" = "1" ]; then
+		if [ "$dry" = "1" ]; then
+			printf 'DRY: remove our /etc/fstab line for %s\n' "$NAS_LINUX_MOUNT"
+			printf 'DRY: sudo systemctl daemon-reload\n'
+		else
+			local anchor; anchor=$(printf '%s' "$NAS_LINUX_MOUNT" | sed 's/[][\/.^$*]/\\&/g')
+			sudo sed -i.bak -e "/[[:space:]]${anchor}[[:space:]]\+nfs[[:space:]]/d" /etc/fstab
+			sudo systemctl daemon-reload
+		fi
+		return 0
+	fi
+	# Default: imperative + open
+	_nas_run "$dry" sudo mkdir -p "$NAS_LINUX_MOUNT"
+	_nas_run "$dry" sudo mount -t nfs -o "$NFS_OPTS_LINUX" "$NAS_HOST:$NAS_NFS_PATH" "$NAS_LINUX_MOUNT"
+	if command -v xdg-open >/dev/null 2>&1; then
+		_nas_run "$dry" xdg-open "$NAS_LINUX_MOUNT"
+	fi
+}
+
+_nas_do_nixos() {
+	local persist="$1" unpersist="$2" dry="$3"
+	if [ "$persist" = "1" ]; then
+		printf 'On NixOS, /etc/fstab is generated from configuration.nix.\n' >&2
+		printf 'Add this block (and rebuild with: sudo nixos-rebuild switch):\n\n' >&2
+		_nas_nixos_snippet
+		return 0
+	fi
+	if [ "$unpersist" = "1" ]; then
+		printf 'On NixOS, remove the corresponding fileSystems block from configuration.nix\n' >&2
+		printf 'and rebuild (sudo nixos-rebuild switch).\n' >&2
+		return 0
+	fi
+	# Imperative mount works fine on NixOS even without persistent config.
+	_nas_run "$dry" sudo mkdir -p "$NAS_LINUX_MOUNT"
+	_nas_run "$dry" sudo mount -t nfs -o "$NFS_OPTS_LINUX" "$NAS_HOST:$NAS_NFS_PATH" "$NAS_LINUX_MOUNT"
+	if command -v xdg-open >/dev/null 2>&1; then
+		_nas_run "$dry" xdg-open "$NAS_LINUX_MOUNT"
+	fi
+}
+
+# ── entry point ─────────────────────────────────────────────────────────────
+
+main() {
+	local persist=0 unpersist=0 dry=0
+	while [ $# -gt 0 ]; do
+		case "$1" in
+			--persist)   persist=1 ;;
+			--unpersist) unpersist=1 ;;
+			--dry-run)   dry=1 ;;
+			-h|--help)   _nas_usage; exit 0 ;;
+			--)          shift; break ;;
+			-*)
+				printf 'nas: unknown option: %s\n' "$1" >&2
+				_nas_usage >&2
+				exit 2
+				;;
+			*)
+				printf 'nas: unexpected argument: %s\n' "$1" >&2
+				exit 2
+				;;
+		esac
+		shift
+	done
+	if [ "$persist" -eq 1 ] && [ "$unpersist" -eq 1 ]; then
+		printf 'nas: --persist and --unpersist are mutually exclusive\n' >&2
+		exit 2
+	fi
+
+	local platform; platform=$(_nas_platform)
+	case "$platform" in
+		darwin) _nas_do_darwin "$persist" "$unpersist" "$dry" ;;
+		nixos)  _nas_do_nixos  "$persist" "$unpersist" "$dry" ;;
+		linux)  _nas_do_linux  "$persist" "$unpersist" "$dry" ;;
+		*)
+			printf 'nas: unsupported OS (uname=%s)\n' "$(uname)" >&2
+			exit 1
+			;;
+	esac
+}
+
+# Source guard: only run main when executed directly, not when sourced.
+# Lets the test suite source us purely for helper access.
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+	main "$@"
 fi

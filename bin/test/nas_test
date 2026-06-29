@@ -1,0 +1,246 @@
+#!/usr/bin/env bash
+# nas_test — TDD coverage for the cross-platform `nas` mount helper.
+#
+# Strategy: SOURCE bin/nas (the script has a `[[ ${BASH_SOURCE[0]} == $0 ]]`
+# guard, so sourcing does NOT run main). Then test the pure helpers
+# (_nas_fstab_line, _nas_nixos_snippet, _nas_auto_nfs_line, _nas_platform,
+# _nas_is_nixos) directly, and exercise main() via --dry-run with
+# NAS_PLATFORM_OVERRIDE so we can test all three OS branches on any host.
+#
+# No sudo is ever invoked — dry-run mode prints "DRY: ..." prefixed lines
+# instead of executing the privileged commands.
+
+set -u
+
+export PATH="$HOME/dotfiles/bin:$PATH"
+NAS_SCRIPT="$HOME/dotfiles/bin/nas"
+
+tests=0
+fails=0
+
+assert_eq() {
+	local actual="$1" expected="$2" msg="$3"
+	((tests++))
+	if [ "$actual" = "$expected" ]; then
+		echo "✓ $msg"
+	else
+		{
+			echo "✗ $msg"
+			echo "  expected: $expected"
+			echo "  actual:   $actual"
+		} >&2
+		((fails++)) || :
+	fi
+}
+
+assert_contains() {
+	local haystack="$1" needle="$2" msg="$3"
+	((tests++))
+	case "$haystack" in
+		*"$needle"*) echo "✓ $msg" ;;
+		*)
+			{
+				echo "✗ $msg"
+				echo "  needle:   $needle"
+				echo "  haystack: $haystack"
+			} >&2
+			((fails++)) || :
+			;;
+	esac
+}
+
+assert_not_contains() {
+	local haystack="$1" needle="$2" msg="$3"
+	((tests++))
+	case "$haystack" in
+		*"$needle"*)
+			{
+				echo "✗ $msg"
+				echo "  needle (should NOT be present): $needle"
+			} >&2
+			((fails++)) || :
+			;;
+		*) echo "✓ $msg" ;;
+	esac
+}
+
+assert_rc() {
+	local actual="$1" expected="$2" msg="$3"
+	((tests++))
+	if [ "$actual" = "$expected" ]; then
+		echo "✓ $msg"
+	else
+		echo "✗ $msg (expected rc=$expected, got rc=$actual)" >&2
+		((fails++)) || :
+	fi
+}
+
+# Sanity: script exists & is executable.
+if [ ! -x "$NAS_SCRIPT" ]; then
+	echo "✗ nas script not executable: $NAS_SCRIPT" >&2
+	exit 1
+fi
+
+# Source for pure-helper access.
+# shellcheck source=/dev/null
+. "$NAS_SCRIPT"
+
+# ─── constants are defined & overridable ─────────────────────────────────────
+echo "==> defaults & env-overridability"
+assert_contains "${NAS_HOST:-}"        "."         "NAS_HOST is set"
+assert_contains "${NAS_NFS_PATH:-}"    "/"         "NAS_NFS_PATH is set"
+assert_contains "${NAS_MAC_MOUNT:-}"   "/Volumes"  "NAS_MAC_MOUNT defaults under /Volumes"
+assert_contains "${NAS_LINUX_MOUNT:-}" "/"         "NAS_LINUX_MOUNT is set"
+
+# ─── _nas_is_nixos: env-overridable marker path ──────────────────────────────
+echo "==> _nas_is_nixos"
+tmp_marker=$(mktemp)
+NAS_NIXOS_MARKER="$tmp_marker" _nas_is_nixos && pass_marker=0 || pass_marker=$?
+assert_rc "$pass_marker" "0" "_nas_is_nixos returns 0 when marker exists"
+
+/bin/rm -f "$tmp_marker"
+NAS_NIXOS_MARKER="$tmp_marker" _nas_is_nixos && nope_marker=0 || nope_marker=$?
+assert_rc "$nope_marker" "1" "_nas_is_nixos returns 1 when marker absent"
+
+# ─── _nas_platform: env override works ───────────────────────────────────────
+echo "==> _nas_platform"
+out=$(NAS_PLATFORM_OVERRIDE=darwin _nas_platform)
+assert_eq "$out" "darwin" "_nas_platform honors NAS_PLATFORM_OVERRIDE=darwin"
+
+out=$(NAS_PLATFORM_OVERRIDE=linux _nas_platform)
+assert_eq "$out" "linux" "_nas_platform honors NAS_PLATFORM_OVERRIDE=linux"
+
+out=$(NAS_PLATFORM_OVERRIDE=nixos _nas_platform)
+assert_eq "$out" "nixos" "_nas_platform honors NAS_PLATFORM_OVERRIDE=nixos"
+
+# ─── _nas_fstab_line: pure formatter ─────────────────────────────────────────
+echo "==> _nas_fstab_line"
+line=$(_nas_fstab_line)
+assert_contains "$line" "$NAS_HOST:$NAS_NFS_PATH" "fstab line has host:path device"
+assert_contains "$line" "$NAS_LINUX_MOUNT"        "fstab line has Linux mount target"
+assert_contains "$line" "nfs"                     "fstab line has nfs fstype"
+assert_contains "$line" "x-systemd.automount"     "fstab line uses on-demand systemd automount"
+assert_contains "$line" "noauto"                  "fstab line marks noauto (don't block boot)"
+
+# Override host via env — line should reflect it.
+custom=$(NAS_HOST=10.0.0.1 NAS_NFS_PATH=/foo NAS_LINUX_MOUNT=/mnt/x bash -c '. "$1"; _nas_fstab_line' _ "$NAS_SCRIPT")
+assert_contains "$custom" "10.0.0.1:/foo /mnt/x" "fstab line composes from env-overrides"
+
+# ─── _nas_auto_nfs_line: macOS automount NFS map ─────────────────────────────
+echo "==> _nas_auto_nfs_line"
+mline=$(_nas_auto_nfs_line)
+assert_contains "$mline" "$NAS_MAC_MOUNT"           "auto_nfs line has mac mount"
+assert_contains "$mline" "$NAS_HOST:$NAS_NFS_PATH"  "auto_nfs line has remote"
+assert_contains "$mline" "fstype=nfs"               "auto_nfs line has fstype=nfs"
+assert_contains "$mline" "resvport"                 "auto_nfs line has resvport (privileged port)"
+
+# ─── _nas_nixos_snippet: configuration.nix block ─────────────────────────────
+echo "==> _nas_nixos_snippet"
+snip=$(_nas_nixos_snippet)
+assert_contains "$snip" "fileSystems"               "nixos snippet uses fileSystems attribute"
+assert_contains "$snip" "$NAS_LINUX_MOUNT"          "nixos snippet uses Linux mountpoint as attr name"
+assert_contains "$snip" "$NAS_HOST:$NAS_NFS_PATH"   "nixos snippet has device = host:path"
+assert_contains "$snip" "fsType = \"nfs\""          "nixos snippet sets fsType nfs"
+assert_contains "$snip" "x-systemd.automount"       "nixos snippet uses on-demand automount option"
+
+# ─── --help works ────────────────────────────────────────────────────────────
+echo "==> --help"
+help_out=$("$NAS_SCRIPT" --help 2>&1)
+help_rc=$?
+assert_rc "$help_rc" "0" "--help exits 0"
+assert_contains "$help_out" "--persist"   "--help mentions --persist"
+assert_contains "$help_out" "--unpersist" "--help mentions --unpersist"
+assert_contains "$help_out" "--dry-run"   "--help mentions --dry-run"
+assert_contains "$help_out" "NixOS"       "--help mentions NixOS handling"
+
+help_out=$("$NAS_SCRIPT" -h 2>&1)
+help_rc=$?
+assert_rc "$help_rc" "0" "-h short form exits 0"
+
+# ─── unknown flag rejected ───────────────────────────────────────────────────
+echo "==> bad input rejected"
+out=$("$NAS_SCRIPT" --bogus-flag 2>&1)
+rc=$?
+assert_rc "$rc" "2" "unknown flag exits 2"
+assert_contains "$out" "unknown option" "unknown flag mentions unknown option"
+
+out=$("$NAS_SCRIPT" --persist --unpersist 2>&1)
+rc=$?
+assert_rc "$rc" "2" "--persist + --unpersist exits 2 (mutually exclusive)"
+assert_contains "$out" "mutually exclusive" "mutex error explains why"
+
+# ─── dry-run: imperative on each platform ────────────────────────────────────
+echo "==> --dry-run imperative on each platform"
+
+out=$(NAS_PLATFORM_OVERRIDE=darwin "$NAS_SCRIPT" --dry-run 2>&1)
+rc=$?
+assert_rc "$rc" "0" "darwin --dry-run exits 0"
+assert_contains "$out" "DRY:"                                "darwin --dry-run prints DRY: lines"
+assert_contains "$out" "sudo mount -t nfs"                   "darwin --dry-run would run sudo mount -t nfs"
+assert_contains "$out" "$NAS_HOST:$NAS_NFS_PATH"             "darwin --dry-run references remote"
+assert_contains "$out" "$NAS_MAC_MOUNT"                      "darwin --dry-run references mountpoint"
+assert_contains "$out" "open $NAS_MAC_MOUNT"                 "darwin --dry-run would open Finder"
+assert_not_contains "$out" "/etc/auto_master"                "darwin --dry-run (no --persist) does NOT touch auto_master"
+
+out=$(NAS_PLATFORM_OVERRIDE=linux "$NAS_SCRIPT" --dry-run 2>&1)
+rc=$?
+assert_rc "$rc" "0" "linux --dry-run exits 0"
+assert_contains "$out" "sudo mount -t nfs"  "linux --dry-run would run sudo mount -t nfs"
+assert_contains "$out" "$NAS_LINUX_MOUNT"   "linux --dry-run references linux mountpoint"
+assert_not_contains "$out" "/etc/fstab"     "linux --dry-run (no --persist) does NOT touch fstab"
+
+out=$(NAS_PLATFORM_OVERRIDE=nixos "$NAS_SCRIPT" --dry-run 2>&1)
+rc=$?
+assert_rc "$rc" "0" "nixos --dry-run exits 0"
+assert_contains "$out" "sudo mount -t nfs" "nixos --dry-run would run sudo mount -t nfs (imperative still works)"
+assert_not_contains "$out" "fileSystems"   "nixos --dry-run (no --persist) does NOT emit nix snippet"
+
+# ─── dry-run: --persist on each platform ─────────────────────────────────────
+echo "==> --dry-run --persist on each platform"
+
+out=$(NAS_PLATFORM_OVERRIDE=darwin "$NAS_SCRIPT" --persist --dry-run 2>&1)
+rc=$?
+assert_rc "$rc" "0" "darwin --persist --dry-run exits 0"
+assert_contains "$out" "/etc/auto_nfs"    "darwin --persist would touch /etc/auto_nfs"
+assert_contains "$out" "/etc/auto_master" "darwin --persist would touch /etc/auto_master"
+assert_contains "$out" "automount"        "darwin --persist would run automount"
+
+out=$(NAS_PLATFORM_OVERRIDE=linux "$NAS_SCRIPT" --persist --dry-run 2>&1)
+rc=$?
+assert_rc "$rc" "0" "linux --persist --dry-run exits 0"
+assert_contains "$out" "/etc/fstab"            "linux --persist would touch /etc/fstab"
+assert_contains "$out" "x-systemd.automount"   "linux --persist line uses on-demand automount"
+
+out=$(NAS_PLATFORM_OVERRIDE=nixos "$NAS_SCRIPT" --persist 2>&1)
+rc=$?
+assert_rc "$rc" "0" "nixos --persist exits 0 (advisory, no mutation)"
+assert_contains "$out" "fileSystems"            "nixos --persist prints nix snippet"
+assert_contains "$out" "configuration.nix"      "nixos --persist mentions configuration.nix"
+assert_not_contains "$out" "sudo tee"           "nixos --persist does NOT attempt fstab mutation"
+
+# ─── dry-run: --unpersist on each platform ───────────────────────────────────
+echo "==> --dry-run --unpersist on each platform"
+
+out=$(NAS_PLATFORM_OVERRIDE=darwin "$NAS_SCRIPT" --unpersist --dry-run 2>&1)
+rc=$?
+assert_rc "$rc" "0" "darwin --unpersist --dry-run exits 0"
+assert_contains "$out" "auto_nfs"       "darwin --unpersist mentions auto_nfs cleanup"
+
+out=$(NAS_PLATFORM_OVERRIDE=linux "$NAS_SCRIPT" --unpersist --dry-run 2>&1)
+rc=$?
+assert_rc "$rc" "0" "linux --unpersist --dry-run exits 0"
+assert_contains "$out" "fstab"          "linux --unpersist mentions fstab cleanup"
+
+out=$(NAS_PLATFORM_OVERRIDE=nixos "$NAS_SCRIPT" --unpersist 2>&1)
+rc=$?
+assert_rc "$rc" "0" "nixos --unpersist exits 0 (advisory)"
+assert_contains "$out" "configuration.nix" "nixos --unpersist points back to configuration.nix"
+
+# ─── Summary ─────────────────────────────────────────────────────────────────
+echo
+if [ "$fails" -eq 0 ]; then
+	echo "All $tests nas tests passed"
+else
+	echo "$fails of $tests nas tests failed" >&2
+fi
+exit "$fails"
