@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# exclude — keep only stdin lines that DO NOT match a ripgrep regex.
+# Inverse of `include`. Thin wrapper around `rg --invert-match` whose only
+# value-add is the mnemonic name + a stable CLI surface (--help, no-arg guard).
+
+set -u
+
+case "${1:-}" in
+	-h|--help)
+		cat <<'EOF'
+Usage: exclude PATTERN [rg-flags...]
+       <stdin> | exclude PATTERN
+
+Filter OUT stdin lines matching the ripgrep regex PATTERN. Writes only
+lines that DO NOT match. Inverse of `include`.
+
+Example:
+    cat somefile.txt | exclude '^Property of'
+
+Additional ripgrep flags pass through (e.g. -i for case-insensitive,
+-F for fixed-string match). Exit codes follow ripgrep: 0 if any line
+passed through, 1 if all input was excluded (or no input), 2 on
+usage/regex error.
+EOF
+		exit 0
+		;;
+	"")
+		echo "exclude: missing PATTERN (try --help)" >&2
+		exit 2
+		;;
+esac
+
+exec rg --invert-match "$@"

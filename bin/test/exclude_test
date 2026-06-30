@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# exclude_test — verify line-level inverse filtering via ripgrep.
+# Globally-installed `assert` and `exclude` are reached via PATH.
+
+set -u
+
+tests=0
+fails=0
+
+check_eq() {
+	local actual="$1" expected="$2" msg="$3"
+	((tests++))
+	assert "$actual" == "$expected" "$msg"
+	((fails+=$?)) || :
+}
+
+# Basic: remove a single line from a 3-line input
+actual=$(printf 'alpha\nbeta\ngamma\n' | exclude '^beta')
+check_eq "$actual" $'alpha\ngamma' "exclude removes lines matching ^beta"
+
+# Peter's motivating example
+actual=$(printf 'Property of A\nOther line\nProperty of B\n' | exclude '^Property of')
+check_eq "$actual" "Other line" "exclude removes every 'Property of' line"
+
+# No pattern matches → every line passes through
+actual=$(printf 'one\ntwo\n' | exclude '^XXX' 2>/dev/null)
+check_eq "$actual" $'one\ntwo' "exclude with no matches passes everything through"
+
+# ripgrep regex syntax: character classes
+actual=$(printf 'abc\n123\nxyz\n' | exclude '[0-9]')
+check_eq "$actual" $'abc\nxyz' "exclude supports character classes"
+
+# Empty input → empty output (rg may exit 1; we just check content)
+actual=$(printf '' | exclude '^anything' 2>/dev/null || :)
+check_eq "$actual" "" "exclude on empty input emits nothing"
+
+# --help works and is informative
+help_out=$(exclude --help 2>&1)
+help_rc=$?
+((tests++)); assert "$help_rc" == "0" "--help exits 0"; ((fails+=$?)) || :
+((tests++)); assert "$help_out" =~ "exclude" "--help mentions 'exclude'"; ((fails+=$?)) || :
+((tests++)); assert "$help_out" =~ "PATTERN|pattern" "--help mentions PATTERN"; ((fails+=$?)) || :
+
+# Regression-guard: --help must not leak shell errors (back-of-the-cabinet)
+((tests++)); assert "$help_out" !~ "command not found" "--help does not leak 'command not found'"; ((fails+=$?)) || :
+((tests++)); assert "$help_out" !~ "sudo:" "--help does not leak sudo errors"; ((fails+=$?)) || :
+
+# Missing-pattern guard: bare `exclude` with no args should error, not block on stdin forever
+# (we feed empty stdin so the test can't hang either way)
+err_out=$(printf '' | exclude 2>&1)
+err_rc=$?
+((tests++)); assert "$err_rc" != "0" "no-arg invocation exits non-zero"; ((fails+=$?)) || :
+((tests++)); assert "$err_out" =~ "PATTERN|pattern|usage|Usage" "no-arg error mentions PATTERN/usage"; ((fails+=$?)) || :
+
+if [ "$fails" -eq 0 ]; then
+	echo "All $tests exclude tests passed"
+else
+	echo "$fails of $tests exclude tests failed" >&2
+fi
+exit "$fails"

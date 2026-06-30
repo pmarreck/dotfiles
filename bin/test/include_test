@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# include_test — verify line-level matching filter via ripgrep.
+# Globally-installed `assert`, `include`, and `exclude` are reached via PATH.
+
+set -u
+
+tests=0
+fails=0
+
+check_eq() {
+	local actual="$1" expected="$2" msg="$3"
+	((tests++))
+	assert "$actual" == "$expected" "$msg"
+	((fails+=$?)) || :
+}
+
+# Basic: keep only the matching line
+actual=$(printf 'alpha\nbeta\ngamma\n' | include '^beta')
+check_eq "$actual" "beta" "include keeps lines matching ^beta"
+
+# Symmetric to the motivating exclude example
+actual=$(printf 'Property of A\nOther line\nProperty of B\n' | include '^Property of')
+check_eq "$actual" $'Property of A\nProperty of B' "include keeps every 'Property of' line"
+
+# ripgrep regex syntax: character classes
+actual=$(printf 'abc\n123\nxyz\n' | include '[0-9]')
+check_eq "$actual" "123" "include supports character classes"
+
+# Empty input → empty output
+actual=$(printf '' | include '^anything' 2>/dev/null || :)
+check_eq "$actual" "" "include on empty input emits nothing"
+
+# No matches → empty output (rg exits 1 — we just check content)
+actual=$(printf 'one\ntwo\n' | include '^XXX' 2>/dev/null || :)
+check_eq "$actual" "" "include with no matches emits nothing"
+
+# include and exclude are inverses on the same input
+input=$'red\ngreen\nblue\ngold'
+inc=$(printf '%s' "$input" | include 'e')
+exc=$(printf '%s' "$input" | exclude 'e' || :)
+check_eq "$inc" $'red\ngreen\nblue' "include 'e' keeps lines containing e"
+check_eq "$exc" "gold" "exclude 'e' drops lines containing e (inverse)"
+
+# --help works
+help_out=$(include --help 2>&1)
+help_rc=$?
+((tests++)); assert "$help_rc" == "0" "--help exits 0"; ((fails+=$?)) || :
+((tests++)); assert "$help_out" =~ "include" "--help mentions 'include'"; ((fails+=$?)) || :
+((tests++)); assert "$help_out" =~ "PATTERN|pattern" "--help mentions PATTERN"; ((fails+=$?)) || :
+
+# Regression-guard
+((tests++)); assert "$help_out" !~ "command not found" "--help does not leak 'command not found'"; ((fails+=$?)) || :
+((tests++)); assert "$help_out" !~ "sudo:" "--help does not leak sudo errors"; ((fails+=$?)) || :
+
+# Missing-pattern guard
+err_out=$(printf '' | include 2>&1)
+err_rc=$?
+((tests++)); assert "$err_rc" != "0" "no-arg invocation exits non-zero"; ((fails+=$?)) || :
+((tests++)); assert "$err_out" =~ "PATTERN|pattern|usage|Usage" "no-arg error mentions PATTERN/usage"; ((fails+=$?)) || :
+
+if [ "$fails" -eq 0 ]; then
+	echo "All $tests include tests passed"
+else
+	echo "$fails of $tests include tests failed" >&2
+fi
+exit "$fails"

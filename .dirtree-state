@@ -25,12 +25,16 @@ hide=[
 ]
 
 annotate=[
+	bin/exclude = filter OUT stdin lines matching a ripgrep regex (rg --invert-match wrapper, inverse of include)
+	bin/include = keep only stdin lines matching a ripgrep regex (rg wrapper, inverse of exclude)
 	bin/jj-reattach-head = attach git HEAD to the bookmark on jj's @- (cures post-jj-commit detached HEAD)
 	bin/md-section = list markdown headings / extract the section under one (fence-aware, level-aware, derives TOC from headings; LuaJIT)
 	bin/nas = cross-platform NAS mount helper (macOS/Linux/NixOS); imperative-default + --persist/--unpersist/--dry-run; idempotent automount config
 	bin/nas.ps1 = Windows PowerShell counterpart to bin/nas; SMB (default) or NFS via -Protocol; -DriveLetter -Persist -DryRun -NoOpen -Help
 	bin/test/block-attribution_test = tests the global PreToolUse hook that blocks AI authorship trailers (hook at ~/.claude/hooks/block-attribution/)
+	bin/test/exclude_test = test suite for bin/exclude (semantics + --help regression guards)
 	bin/test/fun_intro_test = tests for capability-bucketed fun_intro cache (image_capable/image_incapable, hardlink invariant)
+	bin/test/include_test = test suite for bin/include (semantics + --help regression guards)
 	bin/test/jj-reattach-head_test = tests for jj-reattach-head (single/multi/no-bookmark cases, explicit-arg override, idempotency)
 	bin/test/nas_ps1_test = static-content validation for bin/nas.ps1 (no pwsh required locally); checks param block, both protocol branches, safety helpers, mojibake hygiene; opportunistic pwsh parse if available
 	bin/test/nas_test = TDD coverage for bin/nas: pure helpers (_nas_fstab_line, _nas_nixos_snippet, _nas_auto_nfs_line), platform override, --help, --dry-run for all three OS branches

@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# include — keep only stdin lines that DO match a ripgrep regex.
+# Inverse of `exclude`. Thin wrapper around `rg` whose value-add is symmetric
+# naming with `exclude` plus a stable CLI surface (--help, no-arg guard).
+
+set -u
+
+case "${1:-}" in
+	-h|--help)
+		cat <<'EOF'
+Usage: include PATTERN [rg-flags...]
+       <stdin> | include PATTERN
+
+Keep only stdin lines matching the ripgrep regex PATTERN. Writes only
+lines that DO match. Inverse of `exclude`.
+
+Example:
+    cat somefile.txt | include '^ERROR'
+
+Additional ripgrep flags pass through (e.g. -i for case-insensitive,
+-F for fixed-string match). Exit codes follow ripgrep: 0 on any match,
+1 on no match (or no input), 2 on usage/regex error.
+EOF
+		exit 0
+		;;
+	"")
+		echo "include: missing PATTERN (try --help)" >&2
+		exit 2
+		;;
+esac
+
+exec rg "$@"
