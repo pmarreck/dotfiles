@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+
+rule30() {
+	local width="${WIDTH:-$(tput cols 2>/dev/null || echo 80)}"
+	local lines="${LINES:-10000}"
+
+	local row
+	row=$(printf "%-$((width / 2))s" " ")
+	row="${row}█${row}"
+	row=${row::width}
+
+	local step
+	step() {
+		local prev="$1" cur="$2" next="$3"
+		if [[ ( $prev == "█" && $cur == "█" && $next == "█" ) ||
+		      ( $prev == "█" && $cur == "█" && $next == " " ) ||
+		      ( $prev == "█" && $cur == " " && $next == "█" ) ||
+		      ( $prev == " " && $cur == " " && $next == " " ) ]]; then
+			echo " "
+		else
+			echo "█"
+		fi
+	}
+
+	echo "$row"
+	for _ in $(seq $((lines - 1))); do
+		local new_row=""
+		for ((i = 0; i < width; i++)); do
+			local prev=${row:$(( (i - 1 + width) % width )):1}
+			local cur=${row:$i:1}
+			local next=${row:$(( (i + 1) % width )):1}
+			new_row+=$(step "$prev" "$cur" "$next")
+		done
+		row="$new_row"
+		echo "$row"
+	done
+}
+
+# Support for --help and --test flags
+case "$1" in
+	-h|--help)
+		echo "rule30 - terminal cellular-automaton visualizer (Wolfram's Rule 30)"
+		echo ""
+		echo "Usage: rule30"
+		echo ""
+		echo "Fills the terminal with Rule 30, starting from a single block in the"
+		echo "middle of the top row. Runs until interrupted (Ctrl-C) by default."
+		echo ""
+		echo "Environment:"
+		echo "  WIDTH    Row width in characters (default: \$(tput cols))"
+		echo "  LINES    Number of rows to print (default: 10000)"
+		echo ""
+		echo "Options:"
+		echo "  -h, --help    Show this help message"
+		echo "  -a, --about   Show brief description"
+		echo "  --test        Run tests"
+		;;
+	-a|--about)
+		echo "Terminal cellular-automaton visualizer (Wolfram's Rule 30)"
+		;;
+	--test)
+		if [[ -f "$HOME/dotfiles/bin/test/rule30_test" ]]; then
+			"$HOME/dotfiles/bin/test/rule30_test" >/dev/null
+		else
+			echo "Test file not found" >&2
+			exit 1
+		fi
+		;;
+	*)
+		rule30
+		;;
+esac

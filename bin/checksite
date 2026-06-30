@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+
+# Pure-ish predicate, isolated from the polling loop so it can be exercised
+# directly by tests via --once --input - (no network, no sleep).
+checksite_match() {
+	local pattern=$1 read_stdin=$2 url=$3
+	local body
+	if [[ "$read_stdin" == "true" ]]; then
+		body=$(cat)
+	else
+		body=$(curl -fsS "$url" 2>/dev/null) || body=""
+	fi
+	! grep -qE "$pattern" <<< "$body"
+}
+
+checksite() {
+	local url="" pattern="" interval=5 once=false read_stdin=false
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+			--interval)
+				interval="$2"
+				shift 2
+				;;
+			--once)
+				once=true
+				shift
+				;;
+			--input)
+				[[ "$2" == "-" ]] && read_stdin=true
+				shift 2
+				;;
+			--)
+				shift
+				break
+				;;
+			-*)
+				echo "Unknown option: $1" >&2
+				return 2
+				;;
+			*)
+				if [[ -z "$url" ]]; then
+					url="$1"
+				elif [[ -z "$pattern" ]]; then
+					pattern="$1"
+				else
+					echo "Unexpected argument: $1" >&2
+					return 2
+				fi
+				shift
+				;;
+		esac
+	done
+
+	if [[ -z "$url" || -z "$pattern" ]]; then
+		echo "Usage: checksite [OPTIONS] URL PATTERN" >&2
+		return 2
+	fi
+
+	if $once; then
+		if checksite_match "$pattern" "$read_stdin" "$url"; then
+			echo "$url is up"
+			return 0
+		else
+			echo "$url is still down" >&2
+			return 1
+		fi
+	fi
+
+	while true; do
+		if checksite_match "$pattern" "$read_stdin" "$url"; then
+			echo "$url is now working."
+			tput bel 2>/dev/null || true
+			break
+		fi
+		sleep "$interval"
+	done
+}
+
+# Support for --help and --test flags
+case "$1" in
+	-h|--help)
+		echo "checksite - poll a URL until its response stops matching a \"down\" pattern"
+		echo ""
+		echo "Usage: checksite [OPTIONS] URL PATTERN"
+		echo ""
+		echo "Polls URL every INTERVAL seconds. PATTERN is a regex (grep -E) matched"
+		echo "against the response body; checksite keeps polling while PATTERN matches"
+		echo "(site still showing its down/error state) and alerts (audible bell) plus"
+		echo "exits once PATTERN no longer matches."
+		echo ""
+		echo "Options:"
+		echo "  --interval N   Seconds between checks (default: 5)"
+		echo "  --once         Check once and exit (0 = up, 1 = still down); no loop, no bell"
+		echo "  --input -      Read the response body from stdin instead of curling URL"
+		echo "                 (combine with --once for fully offline testing)"
+		echo "  -h, --help     Show this help message"
+		echo "  -a, --about    Show brief description"
+		echo "  --test         Run tests"
+		;;
+	-a|--about)
+		echo "Poll a URL until its response stops matching a \"down\" pattern, then alert"
+		;;
+	--test)
+		if [[ -f "$HOME/dotfiles/bin/test/checksite_test" ]]; then
+			"$HOME/dotfiles/bin/test/checksite_test" >/dev/null
+		else
+			echo "Test file not found" >&2
+			exit 1
+		fi
+		;;
+	*)
+		checksite "$@"
+		;;
+esac

@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+set -u
+
+PATH="$HOME/dotfiles/bin:$PATH"
+
+tests=0
+fails=0
+
+expect_eq() {
+	local desc=$1 expected=$2 actual=$3
+	((tests++))
+	if [[ "$actual" == "$expected" ]]; then
+		echo "✓ Test passed: $desc"
+	else
+		echo "✗ Test failed: $desc" >&2
+		echo "  Expected: $(printf '%q' "$expected")" >&2
+		echo "  Actual:   $(printf '%q' "$actual")" >&2
+		((fails++))
+	fi
+}
+
+expect_status() {
+	local desc=$1 expected=$2 actual=$3
+	((tests++))
+	if [[ "$actual" -eq "$expected" ]]; then
+		echo "✓ Test passed: $desc"
+	else
+		echo "✗ Test failed: $desc (expected exit $expected, got $actual)" >&2
+		((fails++))
+	fi
+}
+
+out=$(printf 'all systems nominal\n' | checksite --once --input - 'http://example.invalid' 'having some trouble')
+status=$?
+expect_status "site up (pattern absent) exits 0" 0 "$status"
+expect_eq "site up (pattern absent) reports up" "http://example.invalid is up" "$out"
+
+printf 'having some trouble right now\n' | checksite --once --input - 'http://example.invalid' 'having some trouble' >/dev/null 2>/dev/null
+expect_status "site still down (pattern present) exits 1" 1 "$?"
+
+err=$(printf 'having some trouble right now\n' | checksite --once --input - 'http://example.invalid' 'having some trouble' 2>&1 >/dev/null)
+expect_eq "site still down reports to stderr" "http://example.invalid is still down" "$err"
+
+checksite >/dev/null 2>/dev/null
+expect_status "missing URL/PATTERN exits 2 (usage error)" 2 "$?"
+
+checksite --bogus-flag 'http://example.invalid' 'pattern' >/dev/null 2>/dev/null
+expect_status "unknown option exits 2" 2 "$?"
+
+help_output=$(checksite --help)
+((tests++))
+if [[ "$help_output" == *"Usage:"* ]]; then
+	echo "✓ Test passed: --help shows usage"
+else
+	echo "✗ Test failed: --help did not show usage" >&2
+	((fails++))
+fi
+
+about_output=$(checksite --about)
+((tests++))
+if [[ -n "$about_output" ]]; then
+	echo "✓ Test passed: --about shows a description"
+else
+	echo "✗ Test failed: --about produced no output" >&2
+	((fails++))
+fi
+
+if [[ $fails -eq 0 ]]; then
+	echo "All $tests tests passed"
+else
+	echo "$fails of $tests tests failed" >&2
+fi
+
+exit "$fails"

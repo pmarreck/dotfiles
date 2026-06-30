@@ -1,0 +1,178 @@
+#!/usr/bin/env bash
+set -u
+
+PATH="$HOME/dotfiles/bin:$PATH"
+
+tests=0
+fails=0
+
+expect_eq() {
+	local desc=$1 expected=$2 actual=$3
+	((tests++))
+	if [[ "$actual" == "$expected" ]]; then
+		echo "✓ Test passed: $desc"
+	else
+		echo "✗ Test failed: $desc" >&2
+		echo "  Expected: $(printf '%q' "$expected")" >&2
+		echo "  Actual:   $(printf '%q' "$actual")" >&2
+		((fails++))
+	fi
+}
+
+expect_status() {
+	local desc=$1 expected=$2 actual=$3
+	((tests++))
+	if [[ "$actual" -eq "$expected" ]]; then
+		echo "✓ Test passed: $desc"
+	else
+		echo "✗ Test failed: $desc (expected exit $expected, got $actual)" >&2
+		((fails++))
+	fi
+}
+
+roundtrip_bytes() {
+	# args: description, byte count, alphabet flag (-A or -z)
+	local desc=$1 n=$2 flag=$3
+	local original original_sum decoded_sum
+	original=$(mktemp --tmpdir base85_test.XXXXXX)
+	head -c "$n" /dev/urandom > "$original"
+	original_sum=$(sha256sum < "$original" | awk '{print $1}')
+	decoded_sum=$(base85 "$flag" --encode < "$original" | base85 "$flag" --decode | sha256sum | awk '{print $1}')
+	expect_eq "roundtrip $n bytes ($desc)" "$original_sum" "$decoded_sum"
+	rm -f "$original"
+}
+
+# --- Adobe ASCII85 vectors, independently computed via bc (not by reading
+# --- base85's own source). Explicit -A throughout: several of these strings
+# --- (e.g. "9jqo^") are also valid Z85 text, so they'd silently decode
+# --- under the wrong alphabet without it.
+
+expect_eq "encode 4 zero bytes -> !!!!! (adobe)" "!!!!!" "$(printf '\x00\x00\x00\x00' | base85 -A --encode)"
+expect_eq "decode !!!!! -> 4 zero bytes (adobe)" "00000000" "$(printf '%s' '!!!!!' | base85 -A --decode | bin2hex)"
+
+expect_eq "encode 'Man ' -> 9jqo^ (adobe)" "9jqo^" "$(printf 'Man ' | base85 -A --encode)"
+expect_eq "decode 9jqo^ -> 'Man ' (adobe)" "Man " "$(printf '%s' '9jqo^' | base85 -A --decode)"
+
+expect_eq "encode 0xFFFFFFFF -> s8W-! (adobe)" "s8W-!" "$(printf '\xff\xff\xff\xff' | base85 -A --encode)"
+expect_eq "decode s8W-! -> 0xFFFFFFFF (adobe)" "ffffffff" "$(printf '%s' 's8W-!' | base85 -A --decode | bin2hex)"
+
+expect_eq "encode 'M' (1 byte, partial) -> 9\` (adobe)" "9\`" "$(printf 'M' | base85 -A --encode)"
+expect_eq "decode 9\` -> 'M' (adobe)" "M" "$(printf '%s' '9`' | base85 -A --decode)"
+
+expect_eq "encode 'Ma' (2 bytes, partial) -> 9jn (adobe)" "9jn" "$(printf 'Ma' | base85 -A --encode)"
+expect_eq "decode 9jn -> 'Ma' (adobe)" "Ma" "$(printf '%s' '9jn' | base85 -A --decode)"
+
+expect_eq "encode 'Man' (3 bytes, partial) -> 9jqo (adobe)" "9jqo" "$(printf 'Man' | base85 -A --encode)"
+expect_eq "decode 9jqo -> 'Man' (adobe)" "Man" "$(printf '%s' '9jqo' | base85 -A --decode)"
+
+expect_eq "encode empty -> empty (adobe)" "" "$(printf '' | base85 -A --encode)"
+expect_eq "decode empty -> empty (adobe)" "" "$(printf '' | base85 -A --decode)"
+
+# Adobe supports any length, including non-multiples of 4/5
+for n in 0 1 2 3 4 5 6 7 8 9 100 1009 4099; do
+	roundtrip_bytes "adobe" "$n" "-A"
+done
+
+# --- Z85 (ZeroMQ RFC 32) vectors. "HelloWorld" is the canonical test vector
+# --- from the spec; also independently verified here via bc against the
+# --- Z85 alphabet before ever trusting it in code.
+
+expect_eq "encode 0x864FD26FB559F75B -> HelloWorld (zeromq)" "HelloWorld" \
+	"$(printf '\x86\x4F\xD2\x6F\xB5\x59\xF7\x5B' | base85 -z --encode)"
+expect_eq "decode HelloWorld -> 0x864fd26fb559f75b (zeromq)" "864fd26fb559f75b" \
+	"$(printf '%s' 'HelloWorld' | base85 -z --decode | bin2hex)"
+
+expect_eq "encode empty -> empty (zeromq)" "" "$(printf '' | base85 -z --encode)"
+expect_eq "decode empty -> empty (zeromq)" "" "$(printf '' | base85 -z --decode)"
+
+# Z85 requires exact 4-byte (encode) / 5-char (decode) multiples; no partial groups
+for n in 0 4 8 40 4000 4100; do
+	roundtrip_bytes "zeromq" "$n" "-z"
+done
+
+printf '\x00\x01\x02' | base85 -z --encode > /dev/null 2>/dev/null
+expect_status "zeromq encode of non-multiple-of-4 length fails" 1 "$?"
+
+printf '%s' '123456' | base85 -z --decode > /dev/null 2>/dev/null
+expect_status "zeromq decode of non-multiple-of-5 length fails" 1 "$?"
+
+# --- Default alphabet: zeromq (per design -- no backslash/quote characters)
+
+expect_eq "default --encode matches explicit -z" \
+	"$(printf '\x00\x01\x02\x03' | base85 -z --encode)" \
+	"$(printf '\x00\x01\x02\x03' | base85 --encode)"
+
+# --- Auto-detection: mode (binary vs. text)
+
+auto_encoded=$(printf '\x00\x01\x02\x03' | base85)
+expect_eq "auto-detect encodes binary (has NUL)" "$(printf '\x00\x01\x02\x03' | base85 --encode)" "$auto_encoded"
+
+# --- Auto-detection: alphabet. "9\`" contains a backtick, which is valid in
+# --- Adobe (range '!'..'u') but not in Z85 -- unambiguous adobe marker.
+# --- "0000v" contains 'v', valid in Z85 (full a-z) but not in Adobe
+# --- (stops at 'u') -- unambiguous zeromq marker.
+
+expect_eq "auto-detect decodes adobe-only text (backtick marker)" "M" "$(printf '%s' '9`' | base85)"
+
+# Decoded bytes may contain embedded NULs, which a bash variable can't hold --
+# compare by hash (via a real pipe) rather than capturing raw output in $().
+zeromq_marker_auto=$(printf '%s' '0000v' | base85 | sha256sum | awk '{print $1}')
+zeromq_marker_forced=$(printf '%s' '0000v' | base85 -z --decode | sha256sum | awk '{print $1}')
+expect_eq "auto-detect decodes zeromq-only text (v marker) same as -z" "$zeromq_marker_forced" "$zeromq_marker_auto"
+
+# Fully ambiguous text (valid under both alphabets) defaults to zeromq
+ambiguous_auto=$(printf '%s' '9jqo^' | base85 | sha256sum | awk '{print $1}')
+ambiguous_forced=$(printf '%s' '9jqo^' | base85 -z --decode | sha256sum | awk '{print $1}')
+expect_eq "ambiguous text defaults to zeromq" "$ambiguous_forced" "$ambiguous_auto"
+
+# --- Explicit flags override auto-detection and each other (last wins)
+
+# "abcd" (4 bytes, zeromq-length-aligned) is itself valid base85 text under
+# either alphabet; --encode must still treat it as raw bytes to be encoded.
+forced_encode=$(printf '%s' 'abcd' | base85 --encode)
+((tests++))
+if [[ -n "$forced_encode" && "$forced_encode" != "abcd" ]]; then
+	echo "✓ Test passed: --encode forces encode mode even on base85-looking text"
+else
+	echo "✗ Test failed: --encode did not force encode mode" >&2
+	((fails++))
+fi
+
+last_flag_wins=$(printf '\x00\x00\x00\x00' | base85 -z -A --encode)
+expect_eq "-z -A together: last flag wins (adobe)" "!!!!!" "$last_flag_wins"
+
+# --- Invalid input handling
+
+printf '%s' 'not~valid~base85~~~' | base85 --decode > /dev/null 2>/dev/null
+expect_status "decode of invalid characters fails" 1 "$?"
+
+printf '%s' '!' | base85 --decode > /dev/null 2>/dev/null
+expect_status "decode of truncated (1-char) group fails" 1 "$?"
+
+# --- CLI surface
+
+help_output=$(base85 --help)
+((tests++))
+if [[ "$help_output" == *"Usage:"* ]]; then
+	echo "✓ Test passed: --help shows usage"
+else
+	echo "✗ Test failed: --help did not show usage" >&2
+	((fails++))
+fi
+
+about_output=$(base85 --about)
+((tests++))
+if [[ -n "$about_output" ]]; then
+	echo "✓ Test passed: --about shows a description"
+else
+	echo "✗ Test failed: --about produced no output" >&2
+	((fails++))
+fi
+
+if [[ $fails -eq 0 ]]; then
+	echo "All $tests tests passed"
+else
+	echo "$fails of $tests tests failed" >&2
+fi
+
+exit "$fails"

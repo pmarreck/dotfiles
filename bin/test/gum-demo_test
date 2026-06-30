@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+set -u
+
+PATH="$HOME/dotfiles/bin:$PATH"
+
+tests=0
+fails=0
+
+# gum-demo is an interactive walkthrough (gum input/choose/write block on a
+# terminal), so there's no behavior to assert beyond CLI scaffolding and the
+# one real dependency check: is `gum` actually available to run the demo?
+
+((tests++))
+help_output=$(gum-demo --help)
+if [[ "$help_output" == *"Usage:"* ]]; then
+	echo "✓ Test passed: --help shows usage"
+else
+	echo "✗ Test failed: --help did not show usage" >&2
+	((fails++))
+fi
+
+((tests++))
+about_output=$(gum-demo --about)
+if [[ -n "$about_output" ]]; then
+	echo "✓ Test passed: --about shows a description"
+else
+	echo "✗ Test failed: --about produced no output" >&2
+	((fails++))
+fi
+
+((tests++))
+if command -v gum >/dev/null 2>&1; then
+	echo "✓ Test passed: gum-demo --check-deps reports gum present"
+	gum-demo --check-deps >/dev/null 2>/dev/null
+	status=$?
+	if [[ "$status" -eq 0 ]]; then
+		echo "✓ Test passed: --check-deps exits 0 when gum is installed"
+		((tests++))
+	else
+		echo "✗ Test failed: --check-deps exited $status though gum is installed" >&2
+		((fails++))
+		((tests++))
+	fi
+else
+	echo "✓ Test passed: gum not installed here, skipping positive --check-deps assertion"
+fi
+
+if [[ $fails -eq 0 ]]; then
+	echo "All $tests tests passed"
+else
+	echo "$fails of $tests tests failed" >&2
+fi
+
+exit "$fails"

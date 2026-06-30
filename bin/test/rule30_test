@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+set -u
+
+PATH="$HOME/dotfiles/bin:$PATH"
+
+tests=0
+fails=0
+
+expect_eq() {
+	local desc=$1 expected=$2 actual=$3
+	((tests++))
+	if [[ "$actual" == "$expected" ]]; then
+		echo "✓ Test passed: $desc"
+	else
+		echo "✗ Test failed: $desc" >&2
+		echo "  Expected: $(printf '%q' "$expected")" >&2
+		echo "  Actual:   $(printf '%q' "$actual")" >&2
+		((fails++))
+	fi
+}
+
+output=$(WIDTH=7 LINES=3 rule30)
+
+((tests++))
+line_count=$(printf '%s\n' "$output" | wc -l)
+if [[ "$line_count" -eq 3 ]]; then
+	echo "✓ Test passed: WIDTH=7 LINES=3 produces exactly 3 lines"
+else
+	echo "✗ Test failed: expected 3 lines, got $line_count" >&2
+	((fails++))
+fi
+
+((tests++))
+bad_width_line=$(printf '%s\n' "$output" | awk '{ if (length($0) != 7) print NR }' | head -1)
+if [[ -z "$bad_width_line" ]]; then
+	echo "✓ Test passed: every line is exactly 7 characters wide"
+else
+	echo "✗ Test failed: line $bad_width_line is not 7 characters wide" >&2
+	((fails++))
+fi
+
+((tests++))
+stray_chars=$(printf '%s\n' "$output" | tr -d ' █\n')
+if [[ -z "$stray_chars" ]]; then
+	echo "✓ Test passed: output contains only space and █ characters"
+else
+	echo "✗ Test failed: found stray characters: $(printf '%q' "$stray_chars")" >&2
+	((fails++))
+fi
+
+repeat_output=$(WIDTH=7 LINES=3 rule30)
+expect_eq "deterministic: same WIDTH/LINES produce identical output" "$output" "$repeat_output"
+
+help_output=$(rule30 --help)
+((tests++))
+if [[ "$help_output" == *"Usage:"* ]]; then
+	echo "✓ Test passed: --help shows usage"
+else
+	echo "✗ Test failed: --help did not show usage" >&2
+	((fails++))
+fi
+
+about_output=$(rule30 --about)
+((tests++))
+if [[ -n "$about_output" ]]; then
+	echo "✓ Test passed: --about shows a description"
+else
+	echo "✗ Test failed: --about produced no output" >&2
+	((fails++))
+fi
+
+if [[ $fails -eq 0 ]]; then
+	echo "All $tests tests passed"
+else
+	echo "$fails of $tests tests failed" >&2
+fi
+
+exit "$fails"
