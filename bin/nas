@@ -86,7 +86,7 @@ EOF
 
 _nas_usage() {
 	cat <<EOF
-Usage: nas [--persist|--unpersist] [--dry-run] [-h|--help]
+Usage: nas [--persist|--unpersist] [--unmount] [--dry-run] [-h|--help]
 
 Mounts the home NAS across macOS, Linux, and NixOS.
 
@@ -97,7 +97,13 @@ Default behavior: imperative mount + open in file manager.
                   Linux:  /etc/fstab entry (x-systemd.automount, on-demand)
                   NixOS:  prints a fileSystems block for configuration.nix
                           (cannot edit /etc/fstab on NixOS — manual step)
-  --unpersist   remove the persistent config (no-op on NixOS — manual)
+  --unpersist   remove the persistent config (no-op on NixOS — manual).
+                  Does NOT unmount currently-mounted volumes. If the share
+                  is still mounted, prints a one-line advisory pointing at
+                  --unmount; compose --unpersist --unmount for full teardown.
+  --unmount     unmount the share (runs sudo umount). Mutex with --persist;
+                  with --unpersist (unpersist runs first to stop the
+                  automount trigger from racing the umount).
   --dry-run     print what would happen; perform no privileged ops
   -h, --help    show this help and exit
 
@@ -162,10 +168,44 @@ _nas_missing_helper_msg() {
 	esac
 }
 
+# Is `target` currently mounted? Returns 0 if yes, 1 if no.
+# Honors NAS_FORCE_MOUNTED env (1=yes, 0=no) for deterministic testing —
+# the env override lets dry-run tests exercise both branches without
+# actually mounting anything.
+_nas_is_mounted() {
+	local target="$1"
+	if [ -n "${NAS_FORCE_MOUNTED:-}" ]; then
+		[ "$NAS_FORCE_MOUNTED" = "1" ]
+		return $?
+	fi
+	mount 2>/dev/null | grep -qE "on ${target}( |\$|/)"
+}
+
+# Stderr advisory: --unpersist removed the trigger, but the volume itself
+# is still mounted. Surfaces --unmount as the follow-up.
+_nas_advise_still_mounted() {
+	local target="$1"
+	printf 'nas: %s remains mounted; run `nas --unmount` to release it.\n' "$target" >&2
+}
+
+# Perform the umount, treating "not mounted" as a friendly notice
+# (the desired end-state is already achieved).
+_nas_unmount_action() {
+	local dry="$1" target="$2"
+	if [ "$dry" = "1" ]; then
+		printf 'DRY: sudo umount %s (if currently mounted)\n' "$target"
+		return 0
+	fi
+	if _nas_is_mounted "$target"; then
+		sudo umount "$target"
+	else
+		printf 'nas: %s is not currently mounted; nothing to unmount.\n' "$target" >&2
+	fi
+}
 # ── platform-specific actions ───────────────────────────────────────────────
 
 _nas_do_darwin() {
-	local persist="$1" unpersist="$2" dry="$3"
+	local persist="$1" unpersist="$2" unmount="$3" dry="$4"
 	if [ "$persist" = "1" ]; then
 		local nfs_line auto_line
 		nfs_line=$(_nas_auto_nfs_line)
@@ -189,6 +229,7 @@ _nas_do_darwin() {
 		return 0
 	fi
 	if [ "$unpersist" = "1" ]; then
+		# Unpersist FIRST so the automount trigger is gone before any umount.
 		if [ "$dry" = "1" ]; then
 			printf 'DRY: remove our line from /etc/auto_nfs (auto_master entry left in place)\n'
 			printf 'DRY: sudo automount -cv\n'
@@ -198,6 +239,16 @@ _nas_do_darwin() {
 			sudo sed -i.bak -e "/^${anchor}[[:space:]]/d" /etc/auto_nfs 2>/dev/null || :
 			sudo automount -cv >&2
 		fi
+		# Now compose: --unmount tears down the live mount; otherwise advise.
+		if [ "$unmount" = "1" ]; then
+			_nas_unmount_action "$dry" "$NAS_MAC_MOUNT"
+		elif _nas_is_mounted "$NAS_MAC_MOUNT"; then
+			_nas_advise_still_mounted "$NAS_MAC_MOUNT"
+		fi
+		return 0
+	fi
+	if [ "$unmount" = "1" ]; then
+		_nas_unmount_action "$dry" "$NAS_MAC_MOUNT"
 		return 0
 	fi
 	# Default: imperative + open
@@ -207,7 +258,7 @@ _nas_do_darwin() {
 }
 
 _nas_do_linux() {
-	local persist="$1" unpersist="$2" dry="$3"
+	local persist="$1" unpersist="$2" unmount="$3" dry="$4"
 	local line; line=$(_nas_fstab_line)
 	if [ "$persist" = "1" ]; then
 		if [ "$dry" = "1" ]; then
@@ -227,6 +278,7 @@ _nas_do_linux() {
 		return 0
 	fi
 	if [ "$unpersist" = "1" ]; then
+		# Unpersist FIRST so the automount trigger is gone before any umount.
 		if [ "$dry" = "1" ]; then
 			printf 'DRY: remove our /etc/fstab line for %s\n' "$NAS_LINUX_MOUNT"
 			printf 'DRY: sudo systemctl daemon-reload\n'
@@ -235,6 +287,15 @@ _nas_do_linux() {
 			sudo sed -i.bak -e "/[[:space:]]${anchor}[[:space:]]\+nfs[[:space:]]/d" /etc/fstab
 			sudo systemctl daemon-reload
 		fi
+		if [ "$unmount" = "1" ]; then
+			_nas_unmount_action "$dry" "$NAS_LINUX_MOUNT"
+		elif _nas_is_mounted "$NAS_LINUX_MOUNT"; then
+			_nas_advise_still_mounted "$NAS_LINUX_MOUNT"
+		fi
+		return 0
+	fi
+	if [ "$unmount" = "1" ]; then
+		_nas_unmount_action "$dry" "$NAS_LINUX_MOUNT"
 		return 0
 	fi
 	# Default: imperative + open. Preflight the mount helper so we abort with a
@@ -251,7 +312,7 @@ _nas_do_linux() {
 }
 
 _nas_do_nixos() {
-	local persist="$1" unpersist="$2" dry="$3"
+	local persist="$1" unpersist="$2" unmount="$3" dry="$4"
 	if [ "$persist" = "1" ]; then
 		printf 'On NixOS, /etc/fstab is generated from configuration.nix.\n' >&2
 		printf 'Add this block (and rebuild with: sudo nixos-rebuild switch):\n\n' >&2
@@ -261,6 +322,15 @@ _nas_do_nixos() {
 	if [ "$unpersist" = "1" ]; then
 		printf 'On NixOS, remove the corresponding fileSystems block from configuration.nix\n' >&2
 		printf 'and rebuild (sudo nixos-rebuild switch).\n' >&2
+		if [ "$unmount" = "1" ]; then
+			_nas_unmount_action "$dry" "$NAS_LINUX_MOUNT"
+		elif _nas_is_mounted "$NAS_LINUX_MOUNT"; then
+			_nas_advise_still_mounted "$NAS_LINUX_MOUNT"
+		fi
+		return 0
+	fi
+	if [ "$unmount" = "1" ]; then
+		_nas_unmount_action "$dry" "$NAS_LINUX_MOUNT"
 		return 0
 	fi
 	# Imperative mount works fine on NixOS even without persistent config —
@@ -279,11 +349,12 @@ _nas_do_nixos() {
 # ── entry point ─────────────────────────────────────────────────────────────
 
 main() {
-	local persist=0 unpersist=0 dry=0
+	local persist=0 unpersist=0 unmount=0 dry=0
 	while [ $# -gt 0 ]; do
 		case "$1" in
 			--persist)   persist=1 ;;
 			--unpersist) unpersist=1 ;;
+			--unmount)   unmount=1 ;;
 			--dry-run)   dry=1 ;;
 			-h|--help)   _nas_usage; exit 0 ;;
 			--)          shift; break ;;
@@ -303,12 +374,16 @@ main() {
 		printf 'nas: --persist and --unpersist are mutually exclusive\n' >&2
 		exit 2
 	fi
+	if [ "$persist" -eq 1 ] && [ "$unmount" -eq 1 ]; then
+		printf 'nas: --persist and --unmount are mutually exclusive\n' >&2
+		exit 2
+	fi
 
 	local platform; platform=$(_nas_platform)
 	case "$platform" in
-		darwin) _nas_do_darwin "$persist" "$unpersist" "$dry" ;;
-		nixos)  _nas_do_nixos  "$persist" "$unpersist" "$dry" ;;
-		linux)  _nas_do_linux  "$persist" "$unpersist" "$dry" ;;
+		darwin) _nas_do_darwin "$persist" "$unpersist" "$unmount" "$dry" ;;
+		nixos)  _nas_do_nixos  "$persist" "$unpersist" "$unmount" "$dry" ;;
+		linux)  _nas_do_linux  "$persist" "$unpersist" "$unmount" "$dry" ;;
 		*)
 			printf 'nas: unsupported OS (uname=%s)\n' "$(uname)" >&2
 			exit 1

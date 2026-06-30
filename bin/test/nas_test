@@ -190,6 +190,10 @@ assert_contains "$help_out" "--persist"   "--help mentions --persist"
 assert_contains "$help_out" "--unpersist" "--help mentions --unpersist"
 assert_contains "$help_out" "--dry-run"   "--help mentions --dry-run"
 assert_contains "$help_out" "NixOS"       "--help mentions NixOS handling"
+# Heredoc-evaluation regression guard: backticks/$(...) in the usage block
+# would execute as command substitution and leak shell errors into help text.
+assert_not_contains "$help_out" "sudo:" "--help output is free of leaked sudo: errors (no heredoc command-substitution)"
+assert_not_contains "$help_out" "command not found" "--help output is free of leaked 'command not found' errors"
 
 help_out=$("$NAS_SCRIPT" -h 2>&1)
 help_rc=$?
@@ -273,6 +277,97 @@ out=$(NAS_PLATFORM_OVERRIDE=nixos "$NAS_SCRIPT" --unpersist 2>&1)
 rc=$?
 assert_rc "$rc" "0" "nixos --unpersist exits 0 (advisory)"
 assert_contains "$out" "configuration.nix" "nixos --unpersist points back to configuration.nix"
+
+# ─── --unmount: dry-run on each platform ─────────────────────────────────────
+echo "==> --unmount --dry-run on each platform"
+
+out=$(NAS_PLATFORM_OVERRIDE=darwin "$NAS_SCRIPT" --unmount --dry-run 2>&1)
+rc=$?
+assert_rc "$rc" "0" "darwin --unmount --dry-run exits 0"
+assert_contains "$out" "sudo umount $NAS_MAC_MOUNT" "darwin --unmount would run sudo umount on /Volumes/Fileserver"
+assert_not_contains "$out" "/etc/auto_nfs"          "darwin --unmount (no --unpersist) does NOT touch auto_nfs"
+
+out=$(NAS_PLATFORM_OVERRIDE=linux "$NAS_SCRIPT" --unmount --dry-run 2>&1)
+rc=$?
+assert_rc "$rc" "0" "linux --unmount --dry-run exits 0"
+assert_contains "$out" "sudo umount $NAS_LINUX_MOUNT" "linux --unmount would run sudo umount on /mnt/Fileserver"
+assert_not_contains "$out" "/etc/fstab"               "linux --unmount (no --unpersist) does NOT touch fstab"
+
+out=$(NAS_PLATFORM_OVERRIDE=nixos "$NAS_SCRIPT" --unmount --dry-run 2>&1)
+rc=$?
+assert_rc "$rc" "0" "nixos --unmount --dry-run exits 0"
+assert_contains "$out" "sudo umount $NAS_LINUX_MOUNT" "nixos --unmount would run sudo umount"
+
+# ─── --unmount: mutex with --persist; composes with --unpersist ──────────────
+echo "==> --unmount mutex/composition"
+
+out=$("$NAS_SCRIPT" --persist --unmount 2>&1)
+rc=$?
+assert_rc "$rc" "2" "--persist + --unmount rejected (mutex)"
+assert_contains "$out" "mutually exclusive" "mutex error explains why"
+
+out=$(NAS_PLATFORM_OVERRIDE=linux "$NAS_SCRIPT" --unpersist --unmount --dry-run 2>&1)
+rc=$?
+assert_rc "$rc" "0" "--unpersist --unmount composes cleanly"
+assert_contains "$out" "fstab"        "compound run does fstab cleanup"
+assert_contains "$out" "sudo umount"  "compound run does umount"
+
+# ─── --unpersist --unmount ordering: config removed BEFORE unmount ──────────
+# Rationale: while x-systemd.automount (Linux) or auto_master (macOS) still
+# references the mountpoint, ANY access re-triggers the mount. Removing the
+# trigger first prevents a race where something accesses /mnt/Fileserver
+# between umount and config cleanup.
+echo "==> --unpersist --unmount ordering"
+
+out=$(NAS_PLATFORM_OVERRIDE=linux "$NAS_SCRIPT" --unpersist --unmount --dry-run 2>&1)
+fstab_line=$(printf '%s\n' "$out" | grep -n 'fstab' | head -1 | cut -d: -f1)
+umount_line=$(printf '%s\n' "$out" | grep -n 'sudo umount' | head -1 | cut -d: -f1)
+((tests++))
+if [ -n "$fstab_line" ] && [ -n "$umount_line" ] && [ "$fstab_line" -lt "$umount_line" ]; then
+	echo "✓ linux: fstab cleanup precedes umount (fstab@$fstab_line, umount@$umount_line)"
+else
+	echo "✗ linux: expected fstab line before umount line; got fstab@$fstab_line, umount@$umount_line" >&2
+	((fails++)) || :
+fi
+
+out=$(NAS_PLATFORM_OVERRIDE=darwin "$NAS_SCRIPT" --unpersist --unmount --dry-run 2>&1)
+nfs_line=$(printf '%s\n' "$out" | grep -n 'auto_nfs' | head -1 | cut -d: -f1)
+umount_line=$(printf '%s\n' "$out" | grep -n 'sudo umount' | head -1 | cut -d: -f1)
+((tests++))
+if [ -n "$nfs_line" ] && [ -n "$umount_line" ] && [ "$nfs_line" -lt "$umount_line" ]; then
+	echo "✓ darwin: auto_nfs cleanup precedes umount (auto_nfs@$nfs_line, umount@$umount_line)"
+else
+	echo "✗ darwin: expected auto_nfs line before umount line; got auto_nfs@$nfs_line, umount@$umount_line" >&2
+	((fails++)) || :
+fi
+
+# ─── --unpersist advisory: tell user the volume is still mounted ─────────────
+# When the user runs --unpersist alone but the volume is currently mounted,
+# stderr should say "still mounted; run --unmount to release". The advisory
+# is gated on actual mount state (no false alarms). For testability,
+# NAS_FORCE_MOUNTED=1 forces the "yes mounted" branch; =0 forces "no".
+echo "==> --unpersist advisory about active mount + --unmount"
+
+out=$(NAS_FORCE_MOUNTED=1 NAS_PLATFORM_OVERRIDE=linux "$NAS_SCRIPT" --unpersist --dry-run 2>&1)
+assert_contains "$out" "--unmount" "linux: when mounted, --unpersist advises about --unmount"
+assert_contains "$out" "mounted"   "linux: advisory explicitly mentions the volume is still mounted"
+
+out=$(NAS_FORCE_MOUNTED=0 NAS_PLATFORM_OVERRIDE=linux "$NAS_SCRIPT" --unpersist --dry-run 2>&1)
+assert_not_contains "$out" "--unmount" "linux: when not mounted, --unpersist does NOT advise --unmount"
+
+out=$(NAS_FORCE_MOUNTED=1 NAS_PLATFORM_OVERRIDE=linux "$NAS_SCRIPT" --unpersist --unmount --dry-run 2>&1)
+assert_not_contains "$out" "remains mounted" "linux: combo --unpersist+--unmount suppresses the still-mounted advisory"
+
+out=$(NAS_FORCE_MOUNTED=1 NAS_PLATFORM_OVERRIDE=darwin "$NAS_SCRIPT" --unpersist --dry-run 2>&1)
+assert_contains "$out" "--unmount" "darwin: when mounted, --unpersist advises about --unmount"
+
+out=$(NAS_FORCE_MOUNTED=1 NAS_PLATFORM_OVERRIDE=nixos "$NAS_SCRIPT" --unpersist 2>&1)
+assert_contains "$out" "--unmount" "nixos: when mounted, --unpersist advisory also mentions --unmount"
+
+# ─── --help mentions --unmount ───────────────────────────────────────────────
+echo "==> --help covers --unmount"
+help_out=$("$NAS_SCRIPT" --help 2>&1)
+assert_contains "$help_out" "--unmount" "--help documents --unmount"
 
 # ─── Summary ─────────────────────────────────────────────────────────────────
 echo
