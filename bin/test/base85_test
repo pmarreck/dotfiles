@@ -31,13 +31,15 @@ expect_status() {
 }
 
 roundtrip_bytes() {
-	# args: description, byte count, alphabet flag (-A or -z)
+	# args: description, byte count, alphabet flag(s) -- may be multiple
+	# space-separated words (e.g. "-z --no-blip-pad"), so left unquoted
+	# below deliberately, for word-splitting into separate argv entries.
 	local desc=$1 n=$2 flag=$3
 	local original original_sum decoded_sum
 	original=$(mktemp --tmpdir base85_test.XXXXXX)
 	head -c "$n" /dev/urandom > "$original"
 	original_sum=$(sha256sum < "$original" | awk '{print $1}')
-	decoded_sum=$(base85 "$flag" --encode < "$original" | base85 "$flag" --decode | sha256sum | awk '{print $1}')
+	decoded_sum=$(base85 $flag --encode < "$original" | base85 $flag --decode | sha256sum | awk '{print $1}')
 	expect_eq "roundtrip $n bytes ($desc)" "$original_sum" "$decoded_sum"
 	rm -f "$original"
 }
@@ -85,16 +87,84 @@ expect_eq "decode HelloWorld -> 0x864fd26fb559f75b (zeromq)" "864fd26fb559f75b" 
 expect_eq "encode empty -> empty (zeromq)" "" "$(printf '' | base85 -z --encode)"
 expect_eq "decode empty -> empty (zeromq)" "" "$(printf '' | base85 -z --decode)"
 
-# Z85 requires exact 4-byte (encode) / 5-char (decode) multiples; no partial groups
-for n in 0 4 8 40 4000 4100; do
-	roundtrip_bytes "zeromq" "$n" "-z"
+# --- BLIP-pad: by default, Z85 now supports arbitrary-length input via a
+# --- self-describing wrapper (BLIP length header, see bin/base85) that pads
+# --- to a 4-byte boundary. --no-blip-pad restores strict RFC-32 behavior
+# --- (exact multiples only, byte-for-byte compatible with reference Z85).
+
+# Independently computed (via bc) worked example: blip-wrapping "Hi" (2
+# bytes: 0x48 0x69) -> MAGIC(0x81,0x00) ++ blip_len(2)=[0x02] ++ "Hi" ++
+# 3 zero pad bytes = 8 bytes -> Z85 "FDb:xx-Fbk"
+expect_eq "encode 'Hi' (2 bytes, blip-padded) -> FDb:xx-Fbk" "FDb:xx-Fbk" "$(printf 'Hi' | base85 -z --encode)"
+expect_eq "decode FDb:xx-Fbk -> 'Hi' (blip-padded)" "Hi" "$(printf '%s' 'FDb:xx-Fbk' | base85 -z --decode)"
+
+# Default zeromq now roundtrips arbitrary lengths (blip-pad auto-applied when needed)
+for n in 0 1 2 3 4 5 6 7 8 9 100 1009 4099; do
+	roundtrip_bytes "zeromq blip-padded" "$n" "-z"
 done
 
-printf '\x00\x01\x02' | base85 -z --encode > /dev/null 2>/dev/null
-expect_status "zeromq encode of non-multiple-of-4 length fails" 1 "$?"
+# Already-aligned data with no marker collision encodes with NO wrapper
+# overhead: byte-identical to strict/--no-blip-pad output.
+aligned_default=$(printf '\x00\x01\x02\x03' | base85 -z --encode)
+aligned_strict=$(printf '\x00\x01\x02\x03' | base85 -z --no-blip-pad --encode)
+expect_eq "aligned non-colliding data: default matches --no-blip-pad (no wrapper overhead)" "$aligned_strict" "$aligned_default"
 
-printf '%s' '123456' | base85 -z --decode > /dev/null 2>/dev/null
-expect_status "zeromq decode of non-multiple-of-5 length fails" 1 "$?"
+# Marker-collision: data that is ALREADY 4-byte aligned but happens to start
+# with the BLIP-pad magic marker (0x81 0x00) is force-wrapped anyway, so the
+# marker byte sequence can never ambiguously appear at the start of raw
+# (unwrapped) output. Proven two ways: (1) roundtrip still succeeds, and
+# (2) the output is longer than a naive unwrapped 4-byte encoding (5 chars),
+# proving wrapping actually happened.
+colliding_encoded=$(printf '\x81\x00\x01\x02' | base85 -z --encode)
+colliding_roundtrip=$(printf '\x81\x00\x01\x02' | base85 -z --encode | base85 -z --decode | sha256sum | awk '{print $1}')
+colliding_original=$(printf '\x81\x00\x01\x02' | sha256sum | awk '{print $1}')
+expect_eq "marker-collision data roundtrips correctly" "$colliding_original" "$colliding_roundtrip"
+((tests++))
+if [[ ${#colliding_encoded} -gt 5 ]]; then
+	echo "✓ Test passed: marker-collision data is force-wrapped (output longer than naive 5-char encoding)"
+else
+	echo "✗ Test failed: marker-collision data was not wrapped (encoded length ${#colliding_encoded}, expected >5)" >&2
+	((fails++))
+fi
+
+# --no-blip-pad restores strict behavior: exact multiples only, error otherwise
+for n in 0 4 8 40 4000 4100; do
+	roundtrip_bytes "zeromq strict (--no-blip-pad)" "$n" "-z --no-blip-pad"
+done
+
+printf '\x00\x01\x02' | base85 -z --no-blip-pad --encode > /dev/null 2>/dev/null
+expect_status "zeromq --no-blip-pad encode of non-multiple-of-4 length fails" 1 "$?"
+
+printf '%s' '123456' | base85 -z --no-blip-pad --decode > /dev/null 2>/dev/null
+expect_status "zeromq --no-blip-pad decode of non-multiple-of-5 length fails" 1 "$?"
+
+# --blip-pad forces wrapping even when not otherwise needed
+forced_wrap=$(printf 'abcd' | base85 -z --blip-pad --encode)
+((tests++))
+if [[ ${#forced_wrap} -gt 5 ]]; then
+	echo "✓ Test passed: --blip-pad forces wrapping on already-aligned data"
+else
+	echo "✗ Test failed: --blip-pad did not force wrapping (length ${#forced_wrap})" >&2
+	((fails++))
+fi
+forced_wrap_roundtrip=$(printf 'abcd' | base85 -z --blip-pad --encode | base85 -z --decode)
+expect_eq "--blip-pad forced-wrap roundtrips correctly" "abcd" "$forced_wrap_roundtrip"
+
+# --blip-pad on decode asserts the data IS wrapped; errors if not
+printf '%s' "$aligned_strict" | base85 -z --blip-pad --decode > /dev/null 2>/dev/null
+expect_status "--blip-pad decode errors when data is not actually wrapped" 1 "$?"
+
+# Corrupt/malformed blip-pad structure must fail loudly, never silently
+# misinterpret. Take the "Hi" wrapped bytes [0x81,0x00,0x02,0x48,0x69,0x00,
+# 0x00,0x00] and corrupt them, re-emitting via --no-blip-pad (raw passthrough,
+# still 4-byte aligned) so the corruption survives to the decode side.
+corrupt_len=$(printf '\x81\x00\x7f\x48\x69\x00\x00\x00' | base85 -z --no-blip-pad --encode)
+printf '%s' "$corrupt_len" | base85 -z --decode > /dev/null 2>/dev/null
+expect_status "decode of corrupt blip-pad header (length exceeds buffer) fails loudly" 1 "$?"
+
+corrupt_pad=$(printf '\x81\x00\x02\x48\x69\x00\x00\x01' | base85 -z --no-blip-pad --encode)
+printf '%s' "$corrupt_pad" | base85 -z --decode > /dev/null 2>/dev/null
+expect_status "decode of corrupt blip-pad trailing padding (non-zero byte) fails loudly" 1 "$?"
 
 # --- Default alphabet: zeromq (per design -- no backslash/quote characters)
 

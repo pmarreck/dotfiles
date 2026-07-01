@@ -16,25 +16,34 @@ text is decoded. With no alphabet flag, encoding defaults to Z85 (it has no
 backslash/quote characters, so it's friendlier to embed); decoding
 auto-detects which alphabet the text uses, defaulting to Z85 if ambiguous.
 
-Z85 requires input length to be an exact multiple of 4 bytes (5 characters
-on decode) -- this matches the reference ZeroMQ implementation, which has no
-partial-group padding scheme. Adobe ASCII85 supports any length.
+Z85 has no official padding scheme; reference implementations require an
+exact multiple of 4 bytes. By default this tool works around that with a
+BLIP-pad wrapper (see github.com/pmarreck/BLIP): a reserved BLIP sentinel
+marker + self-describing length header + zero padding to the next 4-byte
+boundary, applied only when needed (or when input would otherwise collide
+with the marker bytes -- see --blip-pad below). Already-aligned, non-
+colliding input still encodes with zero wrapper overhead. --no-blip-pad
+restores strict RFC-32 behavior (exact multiples only, byte-for-byte
+compatible with reference Z85 implementations). Adobe ASCII85 has its own
+native partial-group padding and ignores these flags.
 
 Options:
-  -e, --encode   Force encode mode (binary -> base85 text)
-  -d, --decode   Force decode mode (base85 text -> binary)
-  -z, --zeromq   Use the Z85 (ZeroMQ) alphabet
-  -A, --adobe    Use the Adobe ASCII85 alphabet
-  -a, --about    Show a short description of the tool
-  -h, --help     Show this help message
-      --test     Run bin/test/base85_test with stdout suppressed
+  -e, --encode        Force encode mode (binary -> base85 text)
+  -d, --decode        Force decode mode (base85 text -> binary)
+  -z, --zeromq        Use the Z85 (ZeroMQ) alphabet
+  -A, --adobe         Use the Adobe ASCII85 alphabet
+  -p, --blip-pad      Z85: always wrap (encode) / require wrapping (decode)
+  -P, --no-blip-pad   Z85: never wrap; strict multiple-of-4/5 behavior
+  -a, --about         Show a short description of the tool
+  -h, --help          Show this help message
+      --test          Run bin/test/base85_test with stdout suppressed
 ]]
 
 local MAX_U32 = 4294967295
 
 local WHITESPACE = { [32] = true, [9] = true, [10] = true, [13] = true }
 
-local function build_codec(alphabet, allow_partial, contiguous_offset)
+local function build_codec(alphabet, allow_partial, contiguous_offset, supports_blip_pad)
 	local char = {}
 	local digit = {}
 	for i = 1, #alphabet do
@@ -47,7 +56,13 @@ local function build_codec(alphabet, allow_partial, contiguous_offset)
 	-- Measured: table lookup vs. scalar add costs ~40% at the 10MB scale,
 	-- even though the table (85 entries) easily fits in L1 -- indirection
 	-- through a table isn't free, so skip it whenever arithmetic is exact.
-	return { char = char, digit = digit, allow_partial = allow_partial, contiguous_offset = contiguous_offset }
+	return {
+		char = char,
+		digit = digit,
+		allow_partial = allow_partial,
+		contiguous_offset = contiguous_offset,
+		supports_blip_pad = supports_blip_pad,
+	}
 end
 
 local ADOBE_ALPHABET
@@ -64,8 +79,10 @@ end
 -- Not a contiguous byte range, so it has no arithmetic fast path.
 local Z85_ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$#'
 
-local ADOBE = build_codec(ADOBE_ALPHABET, true, 33)
-local ZEROMQ = build_codec(Z85_ALPHABET, false, nil)
+-- Adobe already supports partial groups via its own native padding scheme,
+-- so it has no use for (and ignores) BLIP-pad. Only Z85 needs it.
+local ADOBE = build_codec(ADOBE_ALPHABET, true, 33, false)
+local ZEROMQ = build_codec(Z85_ALPHABET, false, nil, true)
 
 local function stderr(msg)
 	io.stderr:write(msg, '\n')
@@ -76,7 +93,104 @@ local function read_stdin()
 	return data or ''
 end
 
-local function encode(data, codec)
+-- BLIP-pad: works around Z85 having no official padding scheme (see
+-- github.com/pmarreck/BLIP for the full BLIP spec). BLIP_MAGIC is BLIP's
+-- reserved "application-defined sentinel" for value 0 (0x81 0x00) -- a
+-- byte pair that never occurs in a canonical BLIP length encoding of real
+-- data, used here as an unambiguous "this stream is blip-padded" marker.
+--
+-- Wire format when wrapped: MAGIC ++ blip_encode_len(#data) ++ data ++
+-- zero padding out to the next 4-byte boundary.
+--
+-- Encode wraps when padding is actually needed (length not a multiple of
+-- 4) OR when the raw data's own first two bytes happen to equal MAGIC --
+-- the latter forces a collision-free encoding: since any data that would
+-- naturally start with MAGIC always gets wrapped, "decoded stream starts
+-- with MAGIC" is a 100% deterministic signal of "this is a BLIP-pad
+-- wrapper", not a probabilistic guess. (An earlier, simpler design that
+-- read a bare BLIP length header with no marker was measured -- via a
+-- 2M-trial simulation -- to misfire on ~0.4-1.2% of unrelated small/medium
+-- payloads; the marker + force-wrap-on-collision approach eliminates that.)
+local BLIP_MAGIC = string.char(0x81, 0x00)
+
+local function blip_min_bytes(n)
+	if n == 0 then return 1 end
+	local bytes = 0
+	local v = n
+	while v > 0 do
+		bytes = bytes + 1
+		v = math.floor(v / 256)
+	end
+	return bytes
+end
+
+-- Encodes a non-negative length as a BLIP value: immediate mode (single
+-- byte) for n < 128, else one length-prefixed header byte + little-endian
+-- payload bytes. No continuation encoding -- unreachable for any realistic
+-- byte length (would require a length needing >=32 bytes to represent, i.e.
+-- input sizes beyond 2^248 bytes).
+local function blip_encode_len(n)
+	if n < 128 then
+		return string.char(n)
+	end
+	local l = blip_min_bytes(n)
+	local bytes = { 0x80 + l }
+	local v = n
+	for _ = 1, l do
+		bytes[#bytes + 1] = v % 256
+		v = math.floor(v / 256)
+	end
+	return string.char(unpack(bytes))
+end
+
+-- Decodes a BLIP value starting at 1-indexed `pos` in `buf`. Returns
+-- value, bytes_consumed, or nil if the buffer is too short to hold the
+-- declared payload. Errors on continuation/big-endian headers, which this
+-- tool's own encoder never emits (unreachable for real byte lengths) --
+-- seeing one means either corrupt input or a length_field this decoder
+-- doesn't support.
+local function blip_decode_len(buf, pos)
+	if pos > #buf then return nil end
+	local b0 = buf:byte(pos)
+	if b0 < 128 then
+		return b0, 1
+	end
+	if math.floor(b0 / 32) % 4 ~= 0 then
+		error('base85: blip-pad length header uses an unsupported encoding (continuation/big-endian)', 0)
+	end
+	local l = b0 % 32
+	if pos + l > #buf then
+		return nil
+	end
+	local v = 0
+	for i = l, 1, -1 do
+		v = v * 256 + buf:byte(pos + i)
+	end
+	return v, 1 + l
+end
+
+local function starts_with_magic(data)
+	return #data >= 2 and data:sub(1, 2) == BLIP_MAGIC
+end
+
+local function blip_wrap(data)
+	local body = BLIP_MAGIC .. blip_encode_len(#data) .. data
+	local pad = (4 - (#body % 4)) % 4
+	if pad > 0 then
+		body = body .. string.rep('\0', pad)
+	end
+	return body
+end
+
+local function encode(data, codec, blip_opt)
+	blip_opt = blip_opt or 'auto'
+	if codec.supports_blip_pad and blip_opt ~= 'off' then
+		local need_wrap = (blip_opt == 'force') or (#data % 4 ~= 0) or starts_with_magic(data)
+		if need_wrap then
+			data = blip_wrap(data)
+		end
+	end
+
 	local len = #data
 	local full = len - (len % 4)
 	local remain = len - full
@@ -165,7 +279,8 @@ local function unpack_group(d0, d1, d2, d3, d4)
 	return b0, b1, b2, b3
 end
 
-local function decode(text, codec)
+local function decode(text, codec, blip_opt)
+	blip_opt = blip_opt or 'auto'
 	-- gsub always copies the whole string even with zero matches; skip that
 	-- copy on the common case (no whitespace at all) via a cheap find first
 	local clean = text:find('[ \t\r\n]') and (text:gsub('[ \t\r\n]', '')) or text
@@ -222,7 +337,33 @@ local function decode(text, codec)
 		end
 	end
 	buf:commit(o)
-	return buf:get()
+	local raw = buf:get()
+
+	if codec.supports_blip_pad and blip_opt ~= 'off' then
+		local wrapped = starts_with_magic(raw)
+		if blip_opt == 'force' and not wrapped then
+			error('base85: --blip-pad expected a blip-padded stream but none was found', 0)
+		end
+		if wrapped then
+			local declared_len, consumed = blip_decode_len(raw, 3)
+			if not declared_len then
+				error('base85: corrupt blip-pad header (truncated length)', 0)
+			end
+			local data_start = 2 + consumed + 1
+			local data_end = data_start + declared_len - 1
+			if data_end > #raw then
+				error('base85: corrupt blip-pad header (length exceeds buffer)', 0)
+			end
+			for i = data_end + 1, #raw do
+				if raw:byte(i) ~= 0 then
+					error('base85: corrupt blip-pad trailing padding (non-zero byte)', 0)
+				end
+			end
+			raw = raw:sub(data_start, data_end)
+		end
+	end
+
+	return raw
 end
 
 -- Classifies stdin as 'binary', 'adobe', or 'zeromq'. When bytes are valid
@@ -268,6 +409,10 @@ local function parse_args(argv)
 			options.codec = 'zeromq'
 		elseif a == '-A' or a == '--adobe' then
 			options.codec = 'adobe'
+		elseif a == '-p' or a == '--blip-pad' then
+			options.blip_pad = 'force'
+		elseif a == '-P' or a == '--no-blip-pad' then
+			options.blip_pad = 'off'
 		else
 			stderr('Unknown option: ' .. a)
 			stderr(HELP)
@@ -320,7 +465,7 @@ local function main(argv)
 	end
 
 	local codec = codec_name == 'adobe' and ADOBE or ZEROMQ
-	local ok, result = pcall(mode == 'encode' and encode or decode, data, codec)
+	local ok, result = pcall(mode == 'encode' and encode or decode, data, codec, options.blip_pad)
 	if not ok then
 		stderr(result)
 		os.exit(1)

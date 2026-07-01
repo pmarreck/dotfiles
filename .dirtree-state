@@ -25,7 +25,7 @@ hide=[
 ]
 
 annotate=[
-	bin/base85 = LuaJIT base85 encode/decode (Z85/ZeroMQ default, Adobe ASCII85 via -A); stdin only, --encode/--decode/auto-detect alphabet+direction
+	bin/base85 = LuaJIT base85 encode/decode (Z85/ZeroMQ default, Adobe ASCII85 via -A); stdin only, --encode/--decode/auto-detect alphabet+direction; Z85 arbitrary-length via BLIP-pad wrapper (-p/-P to force/disable)
 	bin/checksite = Poll a URL until response stops matching a down-pattern, then alert (tput bel); --once/--input - for offline testing
 	bin/exclude = filter OUT stdin lines matching a ripgrep regex (rg --invert-match wrapper, inverse of include)
 	bin/gum-demo = Interactive walkthrough of the gum TUI tool's features
