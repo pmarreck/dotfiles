@@ -31,7 +31,7 @@ darktide-sync-mods() {
 	if [ ! -d "$WIN_MODS" ]; then
 		echo "❌ Windows mods dir not found: $WIN_MODS" >&2
 		echo "   Is the NTFS C: mounted read-only? Try:" >&2
-		echo "     sudo mount -t ntfs3 -o ro /dev/sda3 /mnt/win" >&2
+		echo "     sudo mount -t ntfs3 -o ro -U B21C1C151C1BD369 /mnt/win" >&2
 		return 1
 	fi
 	mkdir -p "$LIN_MODS"
