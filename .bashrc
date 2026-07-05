@@ -261,7 +261,6 @@ me() {
 needs eza "cargo install eza, or your package manager"
 needs tokei "cargo install --git https://github.com/XAMPPRocky/tokei.git tokei, or your package manager"
 needs micro "please install the micro terminal editor"
-needs code "please install VSCode"
 
 # for git paging:
 needs delta "cargo install git-delta"
