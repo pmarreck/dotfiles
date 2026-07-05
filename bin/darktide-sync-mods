@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+# darktide-sync-mods — one-way sync of Darktide mods from the Windows (NTFS) Steam
+# install to the native Linux Steam install. Windows -> Linux ONLY. Idempotent.
+set -u
+
+# WIN_MODS/LIN_MODS are overridable via env vars so tests can point this at
+# temp directories instead of real Steam paths (never exercise real rsync
+# against real game data from a test run).
+WIN_MODS="${DARKTIDE_WIN_MODS:-/mnt/win/Program Files (x86)/Steam/steamapps/common/Warhammer 40,000 DARKTIDE/mods}"
+LIN_MODS="${DARKTIDE_LIN_MODS:-$HOME/.local/share/Steam/steamapps/common/Warhammer 40,000 DARKTIDE/mods}"
+
+# Guard: dotfiles sync to macOS too, where /mnt/win, ntfs3, and the Linux Steam
+# layout don't exist. This script only makes sense on the 'nixos' gaming box.
+# os_name/host are injectable so tests can exercise both branches without
+# actually running on (or pretending to be) the nixos box.
+_darktide_host_ok() {
+	local os_name="${1:-$(uname -s)}" host="${2:-$(hostname -s 2>/dev/null || hostname)}"
+	[ "$os_name" = "Linux" ] && [ "$host" = "nixos" ]
+}
+
+darktide-sync-mods() {
+	if ! _darktide_host_ok; then
+		echo "❌ darktide-sync-mods only runs on the 'nixos' Linux box." >&2
+		echo "   (this host: $(uname -s)/$(hostname -s 2>/dev/null || hostname)) — refusing." >&2
+		return 1
+	fi
+
+	local delete=0
+	[ "${1:-}" = "--delete" ] && delete=1
+
+	if [ ! -d "$WIN_MODS" ]; then
+		echo "❌ Windows mods dir not found: $WIN_MODS" >&2
+		echo "   Is the NTFS C: mounted read-only? Try:" >&2
+		echo "     sudo mount -t ntfs3 -o ro /dev/sda3 /mnt/win" >&2
+		return 1
+	fi
+	mkdir -p "$LIN_MODS"
+
+	# NTFS carries no real unix perms/owners; do NOT copy the fake ones. Match
+	# on size + mtime with a 2s window (NTFS/FAT timestamp granularity), and
+	# force sane perms on the Linux side.
+	local rsync_opts=(-rt --modify-window=2 --no-perms --no-owner --no-group \
+	            --chmod=Du=rwx,Fu=rw --info=progress2 --human-readable)
+	[ "$delete" = 1 ] && rsync_opts+=(--delete)
+
+	echo "Syncing Darktide mods:  Windows → Linux"
+	echo "  src: $WIN_MODS"
+	echo "  dst: $LIN_MODS"
+	[ "$delete" = 1 ] && echo "  mode: MIRROR (--delete active)"
+	rsync "${rsync_opts[@]}" "$WIN_MODS/" "$LIN_MODS/"
+	local rc=$?
+
+	if [ "$rc" -eq 0 ]; then
+		echo "✅ Mod files synced."
+		echo "⚠️  Mods will NOT load until the game bundle on THIS (Linux) install is"
+		echo "    patched by the Darktide Mod Framework. Copying files ≠ enabling the"
+		echo "    loader — the patch is per-install. See the DMF patch note."
+	else
+		echo "❌ rsync failed (rc=$rc)" >&2
+	fi
+	return "$rc"
+}
+
+case "${1:-}" in
+	-h|--help)
+		echo "darktide-sync-mods - one-way sync of Darktide mods, Windows NTFS -> native Linux Steam"
+		echo ""
+		echo "Usage: darktide-sync-mods [--delete]"
+		echo ""
+		echo "Copies mod files from the Windows Steam install (mounted NTFS) to the"
+		echo "native Linux Steam install. Additive by default; --delete mirrors"
+		echo "(removes Linux-side mods no longer present on Windows). Only runs on"
+		echo "the 'nixos' host -- refuses elsewhere."
+		echo ""
+		echo "Options:"
+		echo "  --delete      Mirror: delete Linux-side mods absent on Windows"
+		echo "  -h, --help    Show this help message"
+		echo "  -a, --about   Show brief description"
+		echo "  --test        Run tests"
+		;;
+	-a|--about)
+		echo "One-way sync of Darktide mods from Windows NTFS Steam to native Linux Steam"
+		;;
+	--test)
+		if [[ -f "$HOME/dotfiles/bin/test/darktide-sync-mods_test" ]]; then
+			"$HOME/dotfiles/bin/test/darktide-sync-mods_test" >/dev/null
+		else
+			echo "Test file not found" >&2
+			exit 1
+		fi
+		;;
+	*)
+		darktide-sync-mods "$@"
+		;;
+esac

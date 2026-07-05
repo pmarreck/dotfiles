@@ -1,0 +1,156 @@
+#!/usr/bin/env bash
+set -u
+
+PATH="$HOME/dotfiles/bin:$PATH"
+
+tests=0
+fails=0
+
+expect_status() {
+	local desc=$1 expected=$2 actual=$3
+	((tests++))
+	if [[ "$actual" -eq "$expected" ]]; then
+		echo "✓ Test passed: $desc"
+	else
+		echo "✗ Test failed: $desc (expected exit $expected, got $actual)" >&2
+		((fails++))
+	fi
+}
+
+expect_contains() {
+	local desc=$1 needle=$2 haystack=$3
+	((tests++))
+	if [[ "$haystack" == *"$needle"* ]]; then
+		echo "✓ Test passed: $desc"
+	else
+		echo "✗ Test failed: $desc" >&2
+		echo "  Expected to find: $needle" >&2
+		echo "  In: $haystack" >&2
+		((fails++))
+	fi
+}
+
+expect_eq() {
+	local desc=$1 expected=$2 actual=$3
+	((tests++))
+	if [[ "$actual" == "$expected" ]]; then
+		echo "✓ Test passed: $desc"
+	else
+		echo "✗ Test failed: $desc" >&2
+		echo "  Expected: $(printf '%q' "$expected")" >&2
+		echo "  Actual:   $(printf '%q' "$actual")" >&2
+		((fails++))
+	fi
+}
+
+# darktide-sync-mods talks to a real NTFS mount + Steam layout that only
+# exists on the 'nixos' gaming box. Real Steam paths are never touched here:
+# DARKTIDE_WIN_MODS/DARKTIDE_LIN_MODS override the real paths (dependency
+# injection), and uname/hostname are shadowed via a PATH-prepended temp dir
+# (never sourcing the script itself, per repo convention -- it's always
+# invoked as a real subprocess through PATH).
+
+mock_host_dir() {
+	# args: os_name, host_name -- returns path to a temp dir with fake uname/hostname
+	local os_name=$1 host_name=$2
+	local mockdir
+	mockdir=$(mktemp -d --tmpdir darktide_mock.XXXXXX)
+	printf '#!/usr/bin/env bash\necho "%s"\n' "$os_name" > "$mockdir/uname"
+	printf '#!/usr/bin/env bash\necho "%s"\n' "$host_name" > "$mockdir/hostname"
+	chmod +x "$mockdir/uname" "$mockdir/hostname"
+	echo "$mockdir"
+}
+
+# --- Host guard: refuses everywhere except Linux + nixos. These are safe to
+# run on any machine (including the real nixos box) since the guard fires
+# before either mods directory is ever touched.
+
+for combo in "Linux otherhost" "Darwin nixos" "Darwin macbook"; do
+	os=${combo%% *}
+	host=${combo##* }
+	mockdir=$(mock_host_dir "$os" "$host")
+	output=$(PATH="$mockdir:$PATH" darktide-sync-mods 2>&1)
+	status=$?
+	expect_status "refuses on $os/$host" 1 "$status"
+	expect_contains "refuses on $os/$host mentions the host guard" "only runs on the 'nixos'" "$output"
+	rm -rf "$mockdir"
+done
+
+# --- Missing Windows mods dir: passes the host guard, fails cleanly after
+mockdir=$(mock_host_dir "Linux" "nixos")
+win_missing=$(mktemp -d --tmpdir darktide_win.XXXXXX)/does-not-exist
+lin_tmp=$(mktemp -d --tmpdir darktide_lin.XXXXXX)
+output=$(PATH="$mockdir:$PATH" DARKTIDE_WIN_MODS="$win_missing" DARKTIDE_LIN_MODS="$lin_tmp" darktide-sync-mods 2>&1)
+status=$?
+expect_status "passes host guard, fails on missing Windows mods dir" 1 "$status"
+expect_contains "reports the missing Windows mods dir path" "Windows mods dir not found" "$output"
+rm -rf "$mockdir" "$lin_tmp"
+
+# --- Real sync against temp directories (real rsync, no mocking of the sync
+# logic itself -- only the host guard and the mod directories are injected).
+
+if ! command -v rsync >/dev/null 2>&1; then
+	echo "✓ Test passed: rsync not installed here, skipping sync-behavior assertions"
+	((tests++))
+else
+	mockdir=$(mock_host_dir "Linux" "nixos")
+	win_tmp=$(mktemp -d --tmpdir darktide_win.XXXXXX)
+	lin_tmp=$(mktemp -d --tmpdir darktide_lin.XXXXXX)
+	echo "mod contents" > "$win_tmp/mymod.txt"
+
+	output=$(PATH="$mockdir:$PATH" DARKTIDE_WIN_MODS="$win_tmp" DARKTIDE_LIN_MODS="$lin_tmp" darktide-sync-mods 2>&1)
+	status=$?
+	expect_status "successful sync exits 0" 0 "$status"
+	expect_eq "mod file content copied to Linux side" "mod contents" "$(cat "$lin_tmp/mymod.txt" 2>/dev/null)"
+
+	# Idempotency: running again with no changes still succeeds and content is unchanged
+	output2=$(PATH="$mockdir:$PATH" DARKTIDE_WIN_MODS="$win_tmp" DARKTIDE_LIN_MODS="$lin_tmp" darktide-sync-mods 2>&1)
+	status2=$?
+	expect_status "re-running sync (no changes) still exits 0 (idempotent)" 0 "$status2"
+	expect_eq "mod file content unchanged after second sync" "mod contents" "$(cat "$lin_tmp/mymod.txt" 2>/dev/null)"
+
+	# Additive by default: a Linux-only extra file survives without --delete
+	echo "leftover" > "$lin_tmp/orphan.txt"
+	PATH="$mockdir:$PATH" DARKTIDE_WIN_MODS="$win_tmp" DARKTIDE_LIN_MODS="$lin_tmp" darktide-sync-mods >/dev/null 2>&1
+	((tests++))
+	if [[ -f "$lin_tmp/orphan.txt" ]]; then
+		echo "✓ Test passed: default (additive) mode preserves Linux-only files"
+	else
+		echo "✗ Test failed: default mode deleted a Linux-only file (should be additive)" >&2
+		((fails++))
+	fi
+
+	# --delete mirrors: the Linux-only extra file is removed
+	PATH="$mockdir:$PATH" DARKTIDE_WIN_MODS="$win_tmp" DARKTIDE_LIN_MODS="$lin_tmp" darktide-sync-mods --delete >/dev/null 2>&1
+	((tests++))
+	if [[ ! -f "$lin_tmp/orphan.txt" ]]; then
+		echo "✓ Test passed: --delete mirrors (removes Linux-only files)"
+	else
+		echo "✗ Test failed: --delete did not remove the Linux-only orphan file" >&2
+		((fails++))
+	fi
+
+	rm -rf "$mockdir" "$win_tmp" "$lin_tmp"
+fi
+
+# --- CLI surface
+
+help_output=$(darktide-sync-mods --help)
+expect_contains "--help shows usage" "Usage:" "$help_output"
+
+about_output=$(darktide-sync-mods --about)
+((tests++))
+if [[ -n "$about_output" ]]; then
+	echo "✓ Test passed: --about shows a description"
+else
+	echo "✗ Test failed: --about produced no output" >&2
+	((fails++))
+fi
+
+if [[ $fails -eq 0 ]]; then
+	echo "All $tests tests passed"
+else
+	echo "$fails of $tests tests failed" >&2
+fi
+
+exit "$fails"
