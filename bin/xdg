@@ -1,2 +1,2 @@
-#!/bin/sh
+#!/usr/bin/env sh
 env | rg ^XDG_ | rg -v "XDG_.*_DIRS" | sort

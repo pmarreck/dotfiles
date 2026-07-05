@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # TR-100 Machine Report
 # Copyright © 2024, U.S. Graphics, LLC. BSD-3-Clause License.
 

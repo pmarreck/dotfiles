@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env sh
 
 # Define the falsey function; keep it POSIX-compatible
 falsey() {

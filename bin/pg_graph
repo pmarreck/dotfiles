@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env sh
 # Copyright 2018 Łukasz Niemier
 
 # Permission to use, copy, modify, and/or distribute this software for any purpose
