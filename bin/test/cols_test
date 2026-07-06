@@ -1,0 +1,185 @@
+#!/usr/bin/env bash
+
+set -o pipefail
+
+fails=0
+tests=0
+
+export PATH="$HOME/bin:$PATH"
+
+pass() {
+	printf "PASS: %s\n" "$1"
+}
+
+fail() {
+	printf "FAIL: %s\n" "$1" >&2
+	shift
+	if [ $# -gt 0 ]; then
+		printf "  %s\n" "$*" >&2
+	fi
+	((fails++))
+}
+
+# Fixed sample resembling real column-oriented tool output (tailscale status et al.)
+sample=$'100.96.171.61   thelio-nixos         pmarreck@ linux   -\n100.124.125.15  peters-macbook-pro   pmarreck@ macOS   active'
+
+((tests++))
+output=$(printf 'a b c\nd e f\n' | cols 2 2>/dev/null)
+expected=$'b\ne'
+if [[ "$output" == "$expected" ]]; then
+	pass "single column"
+else
+	fail "single column" "Expected: $expected" "Actual:   $output"
+fi
+
+((tests++))
+output=$(printf 'a b c\nd e f\n' | cols 2-3 2>/dev/null)
+expected=$'b c\ne f'
+if [[ "$output" == "$expected" ]]; then
+	pass "closed range m-n"
+else
+	fail "closed range m-n" "Expected: $expected" "Actual:   $output"
+fi
+
+((tests++))
+output=$(printf 'a b c d\n' | cols 2- 2>/dev/null)
+expected='b c d'
+if [[ "$output" == "$expected" ]]; then
+	pass "open range m- (to end of line)"
+else
+	fail "open range m- (to end of line)" "Expected: $expected" "Actual:   $output"
+fi
+
+((tests++))
+output=$(printf 'a b c d e\n' | cols 1 3-4 2>/dev/null)
+expected='a c d'
+if [[ "$output" == "$expected" ]]; then
+	pass "multiple specs combine"
+else
+	fail "multiple specs combine" "Expected: $expected" "Actual:   $output"
+fi
+
+((tests++))
+output=$(printf 'a\t b   c\n' | cols 3 2>/dev/null)
+expected='c'
+if [[ "$output" == "$expected" ]]; then
+	pass "mixed tabs and space runs as one separator"
+else
+	fail "mixed tabs and space runs as one separator" "Expected: $expected" "Actual:   $output"
+fi
+
+((tests++))
+output=$(printf '   a b\n' | cols 1 2>/dev/null)
+expected='a'
+if [[ "$output" == "$expected" ]]; then
+	pass "leading whitespace ignored"
+else
+	fail "leading whitespace ignored" "Expected: $expected" "Actual:   $output"
+fi
+
+((tests++))
+output=$(cols 2 <<< "$sample" 2>/dev/null)
+expected=$'thelio-nixos\npeters-macbook-pro'
+if [[ "$output" == "$expected" ]]; then
+	pass "tailscale-status-shaped input, hostname column"
+else
+	fail "tailscale-status-shaped input, hostname column" "Expected: $expected" "Actual:   $output"
+fi
+
+((tests++))
+output=$(printf 'a b\n' | cols 5 2>/dev/null)
+expected=''
+if [[ "$output" == "$expected" ]]; then
+	pass "out-of-range column yields empty line (line correspondence kept)"
+else
+	fail "out-of-range column yields empty line (line correspondence kept)" "Expected: (empty)" "Actual: $output"
+fi
+
+((tests++))
+# Two input lines must always yield two output lines, even when one is empty
+count=$(printf 'a b c\nd\n' | cols 2 2>/dev/null | wc -l)
+if [[ "$count" == "2" ]]; then
+	pass "output line count matches input line count"
+else
+	fail "output line count matches input line count" "Expected 2 lines, got $count"
+fi
+
+((tests++))
+output=$(printf 'a b\n' | cols 2-5 2>/dev/null)
+expected='b'
+if [[ "$output" == "$expected" ]]; then
+	pass "range clamped to available fields"
+else
+	fail "range clamped to available fields" "Expected: $expected" "Actual:   $output"
+fi
+
+((tests++))
+stderr=$(printf 'a b c\n' | cols 2 2>&1 >/dev/null)
+if [[ -z "$stderr" ]]; then
+	pass "success path emits nothing on stderr"
+else
+	fail "success path emits nothing on stderr" "Got stderr: $stderr"
+fi
+
+((tests++))
+stderr=$(printf 'a b\n' | cols foo 2>&1 >/dev/null)
+rc=$?
+if [[ "$rc" -eq 2 && -n "$stderr" ]]; then
+	pass "non-numeric spec: exit 2 with stderr message"
+else
+	fail "non-numeric spec: exit 2 with stderr message" "rc=$rc stderr=$stderr"
+fi
+
+((tests++))
+stderr=$(printf 'a b\n' | cols 3-2 2>&1 >/dev/null)
+rc=$?
+if [[ "$rc" -eq 2 && -n "$stderr" ]]; then
+	pass "reversed range: exit 2 with stderr message"
+else
+	fail "reversed range: exit 2 with stderr message" "rc=$rc stderr=$stderr"
+fi
+
+((tests++))
+stderr=$(printf 'a b\n' | cols 0 2>&1 >/dev/null)
+rc=$?
+if [[ "$rc" -eq 2 && -n "$stderr" ]]; then
+	pass "column 0 rejected (columns are 1-indexed)"
+else
+	fail "column 0 rejected (columns are 1-indexed)" "rc=$rc stderr=$stderr"
+fi
+
+((tests++))
+stderr=$(printf 'a b\n' | cols 2>&1 >/dev/null)
+rc=$?
+if [[ "$rc" -eq 2 && -n "$stderr" ]]; then
+	pass "no args: exit 2 with usage on stderr"
+else
+	fail "no args: exit 2 with usage on stderr" "rc=$rc stderr=$stderr"
+fi
+
+((tests++))
+output=$(cols --help 2>/dev/null)
+rc=$?
+if [[ "$rc" -eq 0 && "$output" == *Usage* ]]; then
+	pass "--help exits 0 and shows usage"
+else
+	fail "--help exits 0 and shows usage" "rc=$rc"
+fi
+
+((tests++))
+output=$(cols --about 2>/dev/null)
+rc=$?
+lines=$(printf '%s\n' "$output" | wc -l)
+if [[ "$rc" -eq 0 && "$lines" -eq 1 && -n "$output" ]]; then
+	pass "--about is a single line"
+else
+	fail "--about is a single line" "rc=$rc lines=$lines output=$output"
+fi
+
+if [ "$fails" -eq 0 ]; then
+	printf "All %d tests passed\n" "$tests"
+else
+	printf "%d of %d tests failed\n" "$fails" "$tests" >&2
+fi
+
+exit "$fails"

@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+# cols — extract whitespace-separated columns from stdin by number, so you never
+# have to remember `awk '{print $2}'` again. (Not to be confused with `column`,
+# which FORMATS text into columns, or `col`, which filters nroff line feeds.)
+# Columns are 1-indexed; runs of spaces/tabs count as one separator; selected
+# fields are joined with a single space. A line missing all requested fields
+# still prints (empty), preserving input↔output line correspondence.
+set -u
+
+cols() {
+	if [ $# -eq 0 ]; then
+		echo "cols: no column spec given" >&2
+		echo "Usage: <command> | cols <n | m-n | m-> [more specs...]" >&2
+		return 2
+	fi
+
+	local spec lo hi
+	for spec in "$@"; do
+		if [[ "$spec" =~ ^([0-9]+)$ ]]; then
+			lo="${BASH_REMATCH[1]}" hi="${BASH_REMATCH[1]}"
+		elif [[ "$spec" =~ ^([0-9]+)-([0-9]*)$ ]]; then
+			lo="${BASH_REMATCH[1]}" hi="${BASH_REMATCH[2]}"
+		else
+			echo "cols: invalid column spec '$spec' (want n, m-n, or m-)" >&2
+			return 2
+		fi
+		if [ "$((10#$lo))" -eq 0 ] || { [ -n "$hi" ] && [ "$((10#$hi))" -eq 0 ]; }; then
+			echo "cols: columns are 1-indexed; 0 is not a column" >&2
+			return 2
+		fi
+		if [ -n "$hi" ] && [ "$((10#$lo))" -gt "$((10#$hi))" ]; then
+			echo "cols: reversed range '$spec' (start exceeds end)" >&2
+			return 2
+		fi
+	done
+
+	# Specs are pre-validated above, so awk only expands them. hi=0 is the
+	# sentinel for an open range ("to end of line", i.e. NF at runtime).
+	awk -v SPECS="$*" '
+		BEGIN {
+			n = split(SPECS, S, " ")
+			for (i = 1; i <= n; i++) {
+				if (S[i] ~ /-/) {
+					split(S[i], P, "-")
+					lo[i] = P[1] + 0
+					hi[i] = (P[2] == "") ? 0 : P[2] + 0
+				} else {
+					lo[i] = S[i] + 0
+					hi[i] = S[i] + 0
+				}
+			}
+		}
+		{
+			out = ""; sep = ""
+			for (i = 1; i <= n; i++) {
+				h = hi[i]
+				if (h == 0 || h > NF) h = NF
+				for (f = lo[i]; f <= h; f++) {
+					out = out sep $f
+					sep = " "
+				}
+			}
+			print out
+		}
+	'
+}
+
+case "${1:-}" in
+	-h|--help)
+		echo "cols - extract whitespace-separated columns from stdin by number"
+		echo ""
+		echo "Usage: <command> | cols <n | m-n | m-> [more specs...]"
+		echo ""
+		echo "Columns are 1-indexed. Runs of spaces/tabs count as one separator."
+		echo "Selected fields are joined with a single space. Lines missing the"
+		echo "requested columns print as empty lines (line correspondence kept)."
+		echo ""
+		echo "Specs:"
+		echo "  n             single column n"
+		echo "  m-n           columns m through n"
+		echo "  m-            column m through end of line"
+		echo "  (several specs may be combined, e.g. cols 1 3-4)"
+		echo ""
+		echo "Examples:"
+		echo "  tailscale status | cols 2        # hostnames"
+		echo "  ls -l | cols 5 9-                # size + filename (spaces intact)"
+		echo ""
+		echo "Options:"
+		echo "  -h, --help    Show this help message"
+		echo "  -a, --about   Show brief description"
+		echo "  --test        Run tests"
+		;;
+	-a|--about)
+		echo "Extract whitespace-separated columns from stdin by number (n, m-n, m-)"
+		;;
+	--test)
+		if [[ -f "$HOME/dotfiles/bin/test/cols_test" ]]; then
+			"$HOME/dotfiles/bin/test/cols_test" >/dev/null
+		else
+			echo "Test file not found" >&2
+			exit 1
+		fi
+		;;
+	*)
+		cols "$@"
+		;;
+esac
