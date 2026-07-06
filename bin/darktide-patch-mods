@@ -1,0 +1,157 @@
+#!/usr/bin/env bash
+# darktide-patch-mods — enable/disable the Darktide mod-loader bundle patch via
+# dtkit-patch (github.com/manshanko/dtkit-patch), auto-fetching its native Linux
+# binary on first use. This only flips the loader switch; the Darktide Mod
+# Loader files (mod_loader + patch_999) must already be in the game folder.
+set -u
+
+DARKTIDE_DTKIT_PATCH_VERSION="0.1.8"
+DARKTIDE_DTKIT_PATCH_TRIPLE="x86_64-unknown-linux-musl"
+
+# Guard: dotfiles sync to macOS too; this only makes sense on the 'nixos' gaming
+# box. os_name/host are injectable so tests can exercise both branches.
+_darktide_host_ok() {
+	local os_name="${1:-$(uname -s)}" host="${2:-$(hostname -s 2>/dev/null || hostname)}"
+	[ "$os_name" = "Linux" ] && [ "$host" = "nixos" ]
+}
+
+# Resolves the dtkit-patch binary, downloading+caching it on first use.
+# DTKIT_PATCH_BIN overrides entirely (tests / manual pin). Prints the resolved
+# path on stdout; all diagnostics go to stderr so callers can safely do
+# `bin=$(_darktide_dtkit_patch_bin)`.
+_darktide_dtkit_patch_bin() {
+	if [ -n "${DTKIT_PATCH_BIN:-}" ]; then
+		if [ -x "$DTKIT_PATCH_BIN" ]; then
+			printf '%s\n' "$DTKIT_PATCH_BIN"
+			return 0
+		fi
+		echo "darktide-patch-mods: DTKIT_PATCH_BIN=$DTKIT_PATCH_BIN is not executable" >&2
+		return 1
+	fi
+
+	local cache="${DARKTIDE_PATCH_CACHE:-$HOME/.cache/darktide-patch-mods}"
+	local bin="$cache/dtkit-patch-$DARKTIDE_DTKIT_PATCH_VERSION"
+
+	if [ -x "$bin" ]; then
+		printf '%s\n' "$bin"
+		return 0
+	fi
+
+	mkdir -p "$cache" || { echo "darktide-patch-mods: failed to create cache dir $cache" >&2; return 1; }
+
+	local url="https://github.com/manshanko/dtkit-patch/releases/download/${DARKTIDE_DTKIT_PATCH_VERSION}/dtkit-patch-${DARKTIDE_DTKIT_PATCH_VERSION}-${DARKTIDE_DTKIT_PATCH_TRIPLE}.tar.gz"
+	local tmp
+	tmp=$(mktemp -d --tmpdir dtkit_patch_dl.XXXXXX) || return 1
+
+	echo "darktide-patch-mods: fetching dtkit-patch $DARKTIDE_DTKIT_PATCH_VERSION..." >&2
+	if ! curl -sL --fail --max-time 30 -o "$tmp/dtkit-patch.tar.gz" "$url"; then
+		echo "darktide-patch-mods: failed to download dtkit-patch from $url" >&2
+		rm -rf "$tmp"
+		return 1
+	fi
+
+	if ! tar xzf "$tmp/dtkit-patch.tar.gz" -C "$tmp"; then
+		echo "darktide-patch-mods: failed to extract downloaded archive" >&2
+		rm -rf "$tmp"
+		return 1
+	fi
+
+	local extracted
+	extracted=$(find "$tmp" -type f -name dtkit-patch | head -1)
+	if [ -z "$extracted" ]; then
+		echo "darktide-patch-mods: downloaded archive did not contain a dtkit-patch binary" >&2
+		rm -rf "$tmp"
+		return 1
+	fi
+
+	cp "$extracted" "$bin" && chmod +x "$bin"
+	rm -rf "$tmp"
+
+	if [ -x "$bin" ]; then
+		printf '%s\n' "$bin"
+		return 0
+	fi
+	echo "darktide-patch-mods: failed to install dtkit-patch to $bin" >&2
+	return 1
+}
+
+darktide-patch-mods() {
+	if ! _darktide_host_ok; then
+		echo "❌ darktide-patch-mods only runs on the 'nixos' Linux box." >&2
+		echo "   (this host: $(uname -s)/$(hostname -s 2>/dev/null || hostname)) — refusing." >&2
+		return 1
+	fi
+
+	local action="${1:---patch}"
+	case "$action" in
+		--patch|--unpatch|--toggle) ;;
+		*)
+			echo "❌ Unknown action: $action (expected --patch, --unpatch, or --toggle)" >&2
+			return 1
+			;;
+	esac
+
+	local game_dir="${DARKTIDE_GAME_DIR:-$HOME/.local/share/Steam/steamapps/common/Warhammer 40,000 DARKTIDE}"
+	if [ ! -d "$game_dir" ]; then
+		echo "❌ Darktide install dir not found: $game_dir" >&2
+		return 1
+	fi
+
+	local bin
+	bin=$(_darktide_dtkit_patch_bin) || return 1
+
+	echo "Running dtkit-patch $action against:"
+	echo "  $game_dir"
+	"$bin" "$action" "$game_dir"
+	local rc=$?
+
+	if [ "$rc" -eq 0 ]; then
+		echo "✅ dtkit-patch $action succeeded."
+		if [ "$action" = "--patch" ]; then
+			echo "⚠️  This only patches the bundle entry point — the Darktide Mod Loader"
+			echo "    (mod_loader + patch_999) must already be placed in binaries/ and"
+			echo "    bundle/ for mods to actually load. Re-run after every game update"
+			echo "    or Steam file-integrity check; both strip this patch."
+		fi
+	else
+		echo "❌ dtkit-patch $action failed (rc=$rc)" >&2
+	fi
+	return "$rc"
+}
+
+case "${1:-}" in
+	-h|--help)
+		echo "darktide-patch-mods - enable/disable the Darktide mod-loader bundle patch (dtkit-patch)"
+		echo ""
+		echo "Usage: darktide-patch-mods [--patch|--unpatch|--toggle]"
+		echo ""
+		echo "Wraps dtkit-patch (github.com/manshanko/dtkit-patch), auto-downloading its"
+		echo "native Linux binary to ~/.cache/darktide-patch-mods on first use. Patches"
+		echo "bundle_database.data so Darktide loads the mod entry bundle -- this must be"
+		echo "re-run after every game update or Steam file-integrity check, since both"
+		echo "strip the patch. Requires the Darktide Mod Loader files to already be"
+		echo "installed in the game folder; this only flips the loader switch."
+		echo ""
+		echo "Options:"
+		echo "  --patch       Patch the bundle database (default)"
+		echo "  --unpatch     Remove the patch"
+		echo "  --toggle      Toggle patch/unpatch"
+		echo "  -h, --help    Show this help message"
+		echo "  -a, --about   Show brief description"
+		echo "  --test        Run tests"
+		;;
+	-a|--about)
+		echo "Enable/disable the Darktide mod-loader bundle patch via dtkit-patch"
+		;;
+	--test)
+		if [[ -f "$HOME/dotfiles/bin/test/darktide-patch-mods_test" ]]; then
+			"$HOME/dotfiles/bin/test/darktide-patch-mods_test" >/dev/null
+		else
+			echo "Test file not found" >&2
+			exit 1
+		fi
+		;;
+	*)
+		darktide-patch-mods "$@"
+		;;
+esac

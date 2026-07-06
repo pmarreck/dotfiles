@@ -1,0 +1,333 @@
+#!/usr/bin/env bash
+set -u
+
+PATH="$HOME/dotfiles/bin:$PATH"
+
+tests=0
+fails=0
+
+expect_status() {
+	local desc=$1 expected=$2 actual=$3
+	((tests++))
+	if [[ "$actual" -eq "$expected" ]]; then
+		echo "✓ Test passed: $desc"
+	else
+		echo "✗ Test failed: $desc (expected exit $expected, got $actual)" >&2
+		((fails++))
+	fi
+}
+
+expect_contains() {
+	local desc=$1 needle=$2 haystack=$3
+	((tests++))
+	if [[ "$haystack" == *"$needle"* ]]; then
+		echo "✓ Test passed: $desc"
+	else
+		echo "✗ Test failed: $desc" >&2
+		echo "  Expected to find: $needle" >&2
+		echo "  In: $haystack" >&2
+		((fails++))
+	fi
+}
+
+expect_not_contains() {
+	local desc=$1 needle=$2 haystack=$3
+	((tests++))
+	if [[ "$haystack" != *"$needle"* ]]; then
+		echo "✓ Test passed: $desc"
+	else
+		echo "✗ Test failed: $desc" >&2
+		echo "  Expected NOT to find: $needle" >&2
+		echo "  In: $haystack" >&2
+		((fails++))
+	fi
+}
+
+# darktide-patch-mods wraps the real, third-party dtkit-patch binary and can
+# auto-download it. Neither real network access nor a real Darktide install's
+# bundle_database.data is exercised here: DTKIT_PATCH_BIN / DARKTIDE_PATCH_CACHE
+# / DARKTIDE_GAME_DIR are all overridable (dependency injection), and `curl` is
+# shadowed via a PATH-prepended temp dir for the download-path tests -- never
+# sourcing the script itself, per repo convention.
+
+mock_host_dir() {
+	# args: os_name, host_name -- returns path to a temp dir with fake uname/hostname
+	local os_name=$1 host_name=$2
+	local mockdir
+	mockdir=$(mktemp -d --tmpdir darktide_mock.XXXXXX)
+	printf '#!/usr/bin/env bash\necho "%s"\n' "$os_name" > "$mockdir/uname"
+	printf '#!/usr/bin/env bash\necho "%s"\n' "$host_name" > "$mockdir/hostname"
+	chmod +x "$mockdir/uname" "$mockdir/hostname"
+	echo "$mockdir"
+}
+
+mock_dtkit_patch_bin() {
+	# returns path to a standalone fake dtkit-patch executable that logs its
+	# invocation to $DTKIT_PATCH_MOCK_LOG and exits $DTKIT_PATCH_MOCK_EXIT (default 0)
+	local mockdir
+	mockdir=$(mktemp -d --tmpdir dtkit_bin_mock.XXXXXX)
+	cat > "$mockdir/dtkit-patch" <<'EOF'
+#!/usr/bin/env bash
+echo "dtkit-patch-mock called: $*" >> "${DTKIT_PATCH_MOCK_LOG:-/dev/null}"
+exit "${DTKIT_PATCH_MOCK_EXIT:-0}"
+EOF
+	chmod +x "$mockdir/dtkit-patch"
+	echo "$mockdir/dtkit-patch"
+}
+
+build_dtkit_fixture_tarball() {
+	# args: out_tarball_path, with_binary(1|0, default 1)
+	# builds a tar.gz mimicking the real release layout: a nested dir containing
+	# an executable `dtkit-patch` (same mock behavior as mock_dtkit_patch_bin),
+	# or (with_binary=0) a tarball missing the binary entirely.
+	local out_tarball=$1 with_binary=${2:-1}
+	local build_dir
+	build_dir=$(mktemp -d --tmpdir dtkit_fixture_build.XXXXXX)
+	mkdir -p "$build_dir/dtkit-patch-0.1.8-x86_64-unknown-linux-musl"
+	if [[ "$with_binary" == "1" ]]; then
+		cat > "$build_dir/dtkit-patch-0.1.8-x86_64-unknown-linux-musl/dtkit-patch" <<'EOF'
+#!/usr/bin/env bash
+echo "dtkit-patch-mock called: $*" >> "${DTKIT_PATCH_MOCK_LOG:-/dev/null}"
+exit "${DTKIT_PATCH_MOCK_EXIT:-0}"
+EOF
+		chmod +x "$build_dir/dtkit-patch-0.1.8-x86_64-unknown-linux-musl/dtkit-patch"
+	else
+		echo "not a binary" > "$build_dir/dtkit-patch-0.1.8-x86_64-unknown-linux-musl/README.md"
+	fi
+	tar czf "$out_tarball" -C "$build_dir" "dtkit-patch-0.1.8-x86_64-unknown-linux-musl"
+	rm -rf "$build_dir"
+}
+
+mock_curl_dir() {
+	# args: mode(ok|fail), fixture_tarball_path, log_path
+	# returns path to a temp dir with a fake `curl` on PATH that copies the
+	# fixture to curl's -o destination (mode=ok) or fails (mode=fail)
+	local mode=$1 fixture=$2 logpath=$3
+	local mockdir
+	mockdir=$(mktemp -d --tmpdir curl_mock.XXXXXX)
+	cat > "$mockdir/curl" <<EOF
+#!/usr/bin/env bash
+echo "curl called: \$*" >> "$logpath"
+if [ "$mode" = "fail" ]; then
+	exit 22
+fi
+out=""
+prev=""
+for arg in "\$@"; do
+	if [ "\$prev" = "-o" ]; then out="\$arg"; fi
+	prev="\$arg"
+done
+cp "$fixture" "\$out"
+EOF
+	chmod +x "$mockdir/curl"
+	echo "$mockdir"
+}
+
+# --- Host guard: refuses everywhere except Linux + nixos.
+
+for combo in "Linux otherhost" "Darwin nixos" "Darwin macbook"; do
+	os=${combo%% *}
+	host=${combo##* }
+	mockdir=$(mock_host_dir "$os" "$host")
+	output=$(PATH="$mockdir:$PATH" darktide-patch-mods 2>&1)
+	status=$?
+	expect_status "refuses on $os/$host" 1 "$status"
+	expect_contains "refuses on $os/$host mentions the host guard" "only runs on the 'nixos'" "$output"
+	rm -rf "$mockdir"
+done
+
+# --- Unknown action rejected before touching the dtkit-patch binary at all
+
+hostmock=$(mock_host_dir "Linux" "nixos")
+game_tmp=$(mktemp -d --tmpdir darktide_game.XXXXXX)
+dtkit_log=$(mktemp -u --tmpdir dtkit_log.XXXXXX)
+dtkit_bin=$(mock_dtkit_patch_bin)
+output=$(PATH="$hostmock:$PATH" DARKTIDE_GAME_DIR="$game_tmp" DTKIT_PATCH_BIN="$dtkit_bin" \
+	DTKIT_PATCH_MOCK_LOG="$dtkit_log" darktide-patch-mods --bogus 2>&1)
+status=$?
+expect_status "unknown action exits 1" 1 "$status"
+expect_contains "unknown action names the bad action" "Unknown action" "$output"
+((tests++))
+if [[ ! -s "$dtkit_log" ]]; then
+	echo "✓ Test passed: unknown action never invokes dtkit-patch"
+else
+	echo "✗ Test failed: unknown action invoked dtkit-patch anyway" >&2
+	((fails++))
+fi
+rm -f "$dtkit_log"
+
+# --- Missing game dir: passes host + action validation, fails cleanly before touching dtkit-patch
+
+missing_game=$(mktemp -d --tmpdir darktide_game.XXXXXX)/does-not-exist
+output=$(PATH="$hostmock:$PATH" DARKTIDE_GAME_DIR="$missing_game" DTKIT_PATCH_BIN="$dtkit_bin" \
+	darktide-patch-mods 2>&1)
+status=$?
+expect_status "missing game dir exits 1" 1 "$status"
+expect_contains "missing game dir names the path" "Darktide install dir not found" "$output"
+
+# --- DTKIT_PATCH_BIN set but not executable
+
+output=$(PATH="$hostmock:$PATH" DARKTIDE_GAME_DIR="$game_tmp" DTKIT_PATCH_BIN="$game_tmp/nope" \
+	darktide-patch-mods 2>&1)
+status=$?
+expect_status "non-executable DTKIT_PATCH_BIN exits 1" 1 "$status"
+expect_contains "non-executable DTKIT_PATCH_BIN names the path" "not executable" "$output"
+
+# --- Successful default invocation: --patch, real game dir, mocked binary
+
+dtkit_log=$(mktemp -u --tmpdir dtkit_log.XXXXXX)
+output=$(PATH="$hostmock:$PATH" DARKTIDE_GAME_DIR="$game_tmp" DTKIT_PATCH_BIN="$dtkit_bin" \
+	DTKIT_PATCH_MOCK_LOG="$dtkit_log" darktide-patch-mods 2>&1)
+status=$?
+expect_status "default action exits 0" 0 "$status"
+expect_contains "default action invoked dtkit-patch with --patch" "dtkit-patch-mock called: --patch $game_tmp" "$(cat "$dtkit_log" 2>/dev/null)"
+expect_contains "success message shown" "succeeded" "$output"
+rm -f "$dtkit_log"
+
+# --- Action passthrough: --toggle and --unpatch reach the binary verbatim
+
+for action in --toggle --unpatch; do
+	dtkit_log=$(mktemp -u --tmpdir dtkit_log.XXXXXX)
+	output=$(PATH="$hostmock:$PATH" DARKTIDE_GAME_DIR="$game_tmp" DTKIT_PATCH_BIN="$dtkit_bin" \
+		DTKIT_PATCH_MOCK_LOG="$dtkit_log" darktide-patch-mods "$action" 2>&1)
+	status=$?
+	expect_status "$action exits 0" 0 "$status"
+	expect_contains "$action passed through verbatim" "dtkit-patch-mock called: $action $game_tmp" "$(cat "$dtkit_log" 2>/dev/null)"
+	rm -f "$dtkit_log"
+done
+
+# --- dtkit-patch failure is surfaced and its exit code propagated
+
+dtkit_log=$(mktemp -u --tmpdir dtkit_log.XXXXXX)
+output=$(PATH="$hostmock:$PATH" DARKTIDE_GAME_DIR="$game_tmp" DTKIT_PATCH_BIN="$dtkit_bin" \
+	DTKIT_PATCH_MOCK_LOG="$dtkit_log" DTKIT_PATCH_MOCK_EXIT=3 darktide-patch-mods 2>&1)
+status=$?
+expect_status "dtkit-patch failure propagates exit code" 3 "$status"
+expect_contains "dtkit-patch failure reported" "failed" "$output"
+rm -f "$dtkit_log"
+
+rm -rf "$dtkit_bin" "$(dirname "$dtkit_bin")" 2>/dev/null
+
+# --- Cache-hit path: pre-seeded cache is used without any download attempt
+
+cache_tmp=$(mktemp -d --tmpdir darktide_cache.XXXXXX)
+cat > "$cache_tmp/dtkit-patch-0.1.8" <<'EOF'
+#!/usr/bin/env bash
+echo "dtkit-patch-mock called: $*" >> "${DTKIT_PATCH_MOCK_LOG:-/dev/null}"
+exit "${DTKIT_PATCH_MOCK_EXIT:-0}"
+EOF
+chmod +x "$cache_tmp/dtkit-patch-0.1.8"
+curl_log=$(mktemp -u --tmpdir curl_log.XXXXXX)
+curlmock=$(mock_curl_dir "fail" "/dev/null" "$curl_log")
+dtkit_log=$(mktemp -u --tmpdir dtkit_log.XXXXXX)
+output=$(PATH="$hostmock:$curlmock:$PATH" DARKTIDE_GAME_DIR="$game_tmp" DARKTIDE_PATCH_CACHE="$cache_tmp" \
+	DTKIT_PATCH_MOCK_LOG="$dtkit_log" darktide-patch-mods 2>&1)
+status=$?
+expect_status "cache-hit path exits 0 even though curl would fail" 0 "$status"
+expect_contains "cache-hit path invoked the cached binary" "dtkit-patch-mock called: --patch $game_tmp" "$(cat "$dtkit_log" 2>/dev/null)"
+((tests++))
+if [[ ! -s "$curl_log" ]]; then
+	echo "✓ Test passed: cache-hit path never invokes curl"
+else
+	echo "✗ Test failed: cache-hit path invoked curl despite a cached binary" >&2
+	((fails++))
+fi
+rm -rf "$cache_tmp" "$curlmock"
+rm -f "$dtkit_log" "$curl_log"
+
+# --- Fresh download path: empty cache, curl mocked to deliver a real fixture
+
+fixture_tarball=$(mktemp --tmpdir dtkit_fixture.XXXXXX.tar.gz)
+build_dtkit_fixture_tarball "$fixture_tarball" 1
+cache_tmp=$(mktemp -d --tmpdir darktide_cache.XXXXXX)
+curl_log=$(mktemp -u --tmpdir curl_log.XXXXXX)
+curlmock=$(mock_curl_dir "ok" "$fixture_tarball" "$curl_log")
+dtkit_log=$(mktemp -u --tmpdir dtkit_log.XXXXXX)
+output=$(PATH="$hostmock:$curlmock:$PATH" DARKTIDE_GAME_DIR="$game_tmp" DARKTIDE_PATCH_CACHE="$cache_tmp" \
+	DTKIT_PATCH_MOCK_LOG="$dtkit_log" darktide-patch-mods 2>&1)
+status=$?
+expect_status "fresh download path exits 0" 0 "$status"
+expect_contains "fresh download path invoked the downloaded binary" "dtkit-patch-mock called: --patch $game_tmp" "$(cat "$dtkit_log" 2>/dev/null)"
+((tests++))
+if [[ -x "$cache_tmp/dtkit-patch-0.1.8" ]]; then
+	echo "✓ Test passed: downloaded binary cached at the expected path"
+else
+	echo "✗ Test failed: no executable found at $cache_tmp/dtkit-patch-0.1.8 after download" >&2
+	((fails++))
+fi
+
+# Second run, same cache, curl now would fail -- must reuse cache, not re-download
+rm -f "$curl_log" "$dtkit_log"
+dtkit_log=$(mktemp -u --tmpdir dtkit_log.XXXXXX)
+curlmock2=$(mock_curl_dir "fail" "/dev/null" "$curl_log")
+output2=$(PATH="$hostmock:$curlmock2:$PATH" DARKTIDE_GAME_DIR="$game_tmp" DARKTIDE_PATCH_CACHE="$cache_tmp" \
+	DTKIT_PATCH_MOCK_LOG="$dtkit_log" darktide-patch-mods 2>&1)
+status2=$?
+expect_status "second run reuses cache even though curl would now fail" 0 "$status2"
+((tests++))
+if [[ ! -s "$curl_log" ]]; then
+	echo "✓ Test passed: second run never re-invokes curl (cache reused)"
+else
+	echo "✗ Test failed: second run re-downloaded despite an existing cache" >&2
+	((fails++))
+fi
+rm -rf "$cache_tmp" "$curlmock" "$curlmock2"
+rm -f "$fixture_tarball" "$curl_log" "$dtkit_log"
+
+# --- Download failure: curl fails outright, clean error, cache left empty
+
+cache_tmp=$(mktemp -d --tmpdir darktide_cache.XXXXXX)
+curl_log=$(mktemp -u --tmpdir curl_log.XXXXXX)
+curlmock=$(mock_curl_dir "fail" "/dev/null" "$curl_log")
+output=$(PATH="$hostmock:$curlmock:$PATH" DARKTIDE_GAME_DIR="$game_tmp" DARKTIDE_PATCH_CACHE="$cache_tmp" \
+	darktide-patch-mods 2>&1)
+status=$?
+expect_status "download failure exits 1" 1 "$status"
+expect_contains "download failure names the problem" "failed to download" "$output"
+((tests++))
+if [[ -z "$(ls -A "$cache_tmp" 2>/dev/null)" ]]; then
+	echo "✓ Test passed: cache dir left empty after a failed download"
+else
+	echo "✗ Test failed: cache dir has leftover garbage after a failed download" >&2
+	((fails++))
+fi
+rm -rf "$cache_tmp" "$curlmock"
+rm -f "$curl_log"
+
+# --- Downloaded archive missing the binary entirely: clean error, not a crash
+
+bad_fixture_tarball=$(mktemp --tmpdir dtkit_fixture_bad.XXXXXX.tar.gz)
+build_dtkit_fixture_tarball "$bad_fixture_tarball" 0
+cache_tmp=$(mktemp -d --tmpdir darktide_cache.XXXXXX)
+curlmock=$(mock_curl_dir "ok" "$bad_fixture_tarball" /dev/null)
+output=$(PATH="$hostmock:$curlmock:$PATH" DARKTIDE_GAME_DIR="$game_tmp" DARKTIDE_PATCH_CACHE="$cache_tmp" \
+	darktide-patch-mods 2>&1)
+status=$?
+expect_status "archive missing the binary exits 1" 1 "$status"
+expect_contains "archive missing the binary names the problem" "did not contain a dtkit-patch binary" "$output"
+rm -rf "$cache_tmp" "$curlmock"
+rm -f "$bad_fixture_tarball"
+
+rm -rf "$hostmock" "$game_tmp"
+
+# --- CLI surface
+
+help_output=$(darktide-patch-mods --help)
+expect_contains "--help shows usage" "Usage:" "$help_output"
+
+about_output=$(darktide-patch-mods --about)
+((tests++))
+if [[ -n "$about_output" ]]; then
+	echo "✓ Test passed: --about shows a description"
+else
+	echo "✗ Test failed: --about produced no output" >&2
+	((fails++))
+fi
+
+if [[ $fails -eq 0 ]]; then
+	echo "All $tests tests passed"
+else
+	echo "$fails of $tests tests failed" >&2
+fi
+
+exit "$fails"
