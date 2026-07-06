@@ -91,9 +91,12 @@ darktide-patch-mods() {
 			;;
 	esac
 
-	local game_dir="${DARKTIDE_GAME_DIR:-$HOME/.local/share/Steam/steamapps/common/Warhammer 40,000 DARKTIDE}"
-	if [ ! -d "$game_dir" ]; then
-		echo "❌ Darktide install dir not found: $game_dir" >&2
+	# dtkit-patch wants the bundle/ subfolder itself (it reads bundle_database.data
+	# directly inside it) -- not the game root. Matches the community-documented
+	# `--toggle ../bundle` launch option (run from a tools/ sibling of bundle/).
+	local bundle_dir="${DARKTIDE_BUNDLE_DIR:-$HOME/.local/share/Steam/steamapps/common/Warhammer 40,000 DARKTIDE/bundle}"
+	if [ ! -d "$bundle_dir" ]; then
+		echo "❌ Darktide bundle dir not found: $bundle_dir" >&2
 		return 1
 	fi
 
@@ -101,8 +104,8 @@ darktide-patch-mods() {
 	bin=$(_darktide_dtkit_patch_bin) || return 1
 
 	echo "Running dtkit-patch $action against:"
-	echo "  $game_dir"
-	"$bin" "$action" "$game_dir"
+	echo "  $bundle_dir"
+	"$bin" "$action" "$bundle_dir"
 	local rc=$?
 
 	if [ "$rc" -eq 0 ]; then
