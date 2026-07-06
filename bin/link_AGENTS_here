@@ -1,8 +1,35 @@
 #!/usr/bin/env bash
+# link_AGENTS_here — symlink the canonical agent brief into the CWD as AGENTS.md.
+# Uses a RELATIVE link target (fleet policy: relative symlinks survive tree
+# moves/renames of $HOME or the workspace root). Idempotent; refuses to clobber
+# a real (non-symlink) AGENTS.md.
+set -u
+
+case "${1:-}" in
+	-h|--help)
+		echo "link_AGENTS_here - symlink the canonical agent brief into the current directory as AGENTS.md"
+		echo "Usage: cd <project> && link_AGENTS_here    (requires \$CODE to be set)"
+		exit 0 ;;
+	--test)
+		exec "$HOME/dotfiles/bin/test/link_AGENTS_here_test" >/dev/null ;;
+esac
 
 if [ -z "${CODE:-}" ]; then
 	echo "link_AGENTS_here: CODE is not set or is empty" >&2
 	exit 1
 fi
 
-ln -s "$CODE/Obsidian Vaults/Peter Marreck/AGENTS_concise.md.md" AGENTS.md
+target="$CODE/Obsidian Vaults/Peter Marreck/AGENTS_concise.md.md"
+link_name="AGENTS.md"
+
+if [ ! -e "$target" ]; then
+	echo "link_AGENTS_here: target not found: $target" >&2
+	exit 1
+fi
+if [ -e "$link_name" ] && [ ! -L "$link_name" ]; then
+	echo "link_AGENTS_here: $link_name exists and is not a symlink; refusing to clobber" >&2
+	exit 1
+fi
+
+rel="$(realpath --relative-to=. "$target" 2>/dev/null || grealpath --relative-to=. "$target")"
+ln -sfn "$rel" "$link_name"

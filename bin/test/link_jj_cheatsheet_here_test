@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+
+set -o pipefail
+
+fails=0
+tests=0
+
+export PATH="$HOME/bin:$PATH"
+
+pass() {
+	printf "PASS: %s\n" "$1"
+}
+
+fail() {
+	printf "FAIL: %s\n" "$1" >&2
+	shift
+	if [ $# -gt 0 ]; then
+		printf "  %s\n" "$*" >&2
+	fi
+	((fails++))
+}
+
+tmp=$(mktemp -d --tmpdir link_jj_cheatsheet_here_test.XXXXXX)
+trap 'cd /; rm -rf "$tmp"' EXIT
+
+# The script reads $HOME/dotfiles/docs/jj_reference/jj_cheatsheet.md, so give
+# it a fake HOME (script is already on PATH, so PATH lookup is unaffected)
+mkdir -p "$tmp/home/dotfiles/docs/jj_reference" "$tmp/home/Code/myproj"
+echo canonical > "$tmp/home/dotfiles/docs/jj_reference/jj_cheatsheet.md"
+cd "$tmp/home/Code/myproj" || exit 1
+
+((tests++))
+HOME="$tmp/home" link_jj_cheatsheet_here >/dev/null 2>&1
+if [ -L jj_cheatsheet.md ] && [ "$(cat jj_cheatsheet.md 2>/dev/null)" = "canonical" ]; then
+	pass "creates a symlink that resolves to the canonical cheatsheet"
+else
+	fail "creates a symlink that resolves to the canonical cheatsheet" "readlink: $(readlink jj_cheatsheet.md 2>&1)"
+fi
+
+((tests++))
+target=$(readlink jj_cheatsheet.md)
+if [[ "$target" != /* ]]; then
+	pass "link target is a RELATIVE path"
+else
+	fail "link target is a RELATIVE path" "Got absolute: $target"
+fi
+
+((tests++))
+HOME="$tmp/home" link_jj_cheatsheet_here >/dev/null 2>&1
+rc=$?
+if [ "$rc" -eq 0 ] && [ -L jj_cheatsheet.md ] && [ "$(cat jj_cheatsheet.md 2>/dev/null)" = "canonical" ]; then
+	pass "idempotent: rerun succeeds and link still resolves"
+else
+	fail "idempotent: rerun succeeds and link still resolves" "rc=$rc"
+fi
+
+((tests++))
+rm -f jj_cheatsheet.md
+echo "real content" > jj_cheatsheet.md
+HOME="$tmp/home" link_jj_cheatsheet_here >/dev/null 2>&1
+rc=$?
+if [ "$rc" -ne 0 ] && [ "$(cat jj_cheatsheet.md)" = "real content" ]; then
+	pass "refuses to clobber a real (non-symlink) file"
+else
+	fail "refuses to clobber a real (non-symlink) file" "rc=$rc content=$(cat jj_cheatsheet.md 2>/dev/null)"
+fi
+rm -f jj_cheatsheet.md
+
+((tests++))
+stderr=$(HOME="$tmp/nonexistent" link_jj_cheatsheet_here 2>&1 >/dev/null)
+rc=$?
+if [ "$rc" -ne 0 ] && [ -n "$stderr" ] && [ ! -e jj_cheatsheet.md ] && [ ! -L jj_cheatsheet.md ]; then
+	pass "missing target: errors, creates no broken link"
+else
+	fail "missing target: errors, creates no broken link" "rc=$rc stderr=$stderr"
+fi
+
+if [ "$fails" -eq 0 ]; then
+	printf "All %d tests passed\n" "$tests"
+else
+	printf "%d of %d tests failed\n" "$fails" "$tests" >&2
+fi
+
+exit "$fails"

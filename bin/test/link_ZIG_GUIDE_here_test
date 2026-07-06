@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+
+set -o pipefail
+
+fails=0
+tests=0
+
+export PATH="$HOME/bin:$PATH"
+
+pass() {
+	printf "PASS: %s\n" "$1"
+}
+
+fail() {
+	printf "FAIL: %s\n" "$1" >&2
+	shift
+	if [ $# -gt 0 ]; then
+		printf "  %s\n" "$*" >&2
+	fi
+	((fails++))
+}
+
+tmp=$(mktemp -d --tmpdir link_ZIG_GUIDE_here_test.XXXXXX)
+trap 'cd /; rm -rf "$tmp"' EXIT
+
+mkdir -p "$tmp/Code/Obsidian Vaults/Peter Marreck" "$tmp/Code/myproj"
+echo canonical > "$tmp/Code/Obsidian Vaults/Peter Marreck/ZIG_RECENT_API_CHANGES.md"
+cd "$tmp/Code/myproj" || exit 1
+
+((tests++))
+CODE="$tmp/Code" link_ZIG_GUIDE_here >/dev/null 2>&1
+if [ -L ZIG_RECENT_API_CHANGES.md ] && [ "$(cat ZIG_RECENT_API_CHANGES.md 2>/dev/null)" = "canonical" ]; then
+	pass "creates a symlink that resolves to the canonical guide"
+else
+	fail "creates a symlink that resolves to the canonical guide" "readlink: $(readlink ZIG_RECENT_API_CHANGES.md 2>&1)"
+fi
+
+((tests++))
+target=$(readlink ZIG_RECENT_API_CHANGES.md)
+if [[ "$target" != /* ]]; then
+	pass "link target is a RELATIVE path"
+else
+	fail "link target is a RELATIVE path" "Got absolute: $target"
+fi
+
+((tests++))
+CODE="$tmp/Code" link_ZIG_GUIDE_here >/dev/null 2>&1
+rc=$?
+if [ "$rc" -eq 0 ] && [ -L ZIG_RECENT_API_CHANGES.md ] && [ "$(cat ZIG_RECENT_API_CHANGES.md 2>/dev/null)" = "canonical" ]; then
+	pass "idempotent: rerun succeeds and link still resolves"
+else
+	fail "idempotent: rerun succeeds and link still resolves" "rc=$rc"
+fi
+
+((tests++))
+touch ZIG_RECENT_API_CHANGES_2025.md
+CODE="$tmp/Code" link_ZIG_GUIDE_here >/dev/null 2>&1
+if [ ! -e ZIG_RECENT_API_CHANGES_2025.md ]; then
+	pass "legacy 2025-named guide is cleaned up"
+else
+	fail "legacy 2025-named guide is cleaned up"
+fi
+
+((tests++))
+rm -f ZIG_RECENT_API_CHANGES.md
+echo "real content" > ZIG_RECENT_API_CHANGES.md
+CODE="$tmp/Code" link_ZIG_GUIDE_here >/dev/null 2>&1
+rc=$?
+if [ "$rc" -ne 0 ] && [ "$(cat ZIG_RECENT_API_CHANGES.md)" = "real content" ]; then
+	pass "refuses to clobber a real (non-symlink) file"
+else
+	fail "refuses to clobber a real (non-symlink) file" "rc=$rc content=$(cat ZIG_RECENT_API_CHANGES.md 2>/dev/null)"
+fi
+rm -f ZIG_RECENT_API_CHANGES.md
+
+((tests++))
+stderr=$(CODE="$tmp/nonexistent" link_ZIG_GUIDE_here 2>&1 >/dev/null)
+rc=$?
+if [ "$rc" -ne 0 ] && [ -n "$stderr" ] && [ ! -e ZIG_RECENT_API_CHANGES.md ] && [ ! -L ZIG_RECENT_API_CHANGES.md ]; then
+	pass "missing target: errors, creates no broken link"
+else
+	fail "missing target: errors, creates no broken link" "rc=$rc stderr=$stderr"
+fi
+
+if [ "$fails" -eq 0 ]; then
+	printf "All %d tests passed\n" "$tests"
+else
+	printf "%d of %d tests failed\n" "$fails" "$tests" >&2
+fi
+
+exit "$fails"

@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+
+set -o pipefail
+
+fails=0
+tests=0
+
+export PATH="$HOME/bin:$PATH"
+
+pass() {
+	printf "PASS: %s\n" "$1"
+}
+
+fail() {
+	printf "FAIL: %s\n" "$1" >&2
+	shift
+	if [ $# -gt 0 ]; then
+		printf "  %s\n" "$*" >&2
+	fi
+	((fails++))
+}
+
+tmp=$(mktemp -d --tmpdir link_AGENTS_here_test.XXXXXX)
+trap 'cd /; rm -rf "$tmp"' EXIT
+
+mkdir -p "$tmp/Code/Obsidian Vaults/Peter Marreck" "$tmp/Code/myproj"
+echo canonical > "$tmp/Code/Obsidian Vaults/Peter Marreck/AGENTS_concise.md.md"
+cd "$tmp/Code/myproj" || exit 1
+
+((tests++))
+CODE="$tmp/Code" link_AGENTS_here >/dev/null 2>&1
+if [ -L AGENTS.md ] && [ "$(cat AGENTS.md 2>/dev/null)" = "canonical" ]; then
+	pass "creates a symlink that resolves to the canonical brief"
+else
+	fail "creates a symlink that resolves to the canonical brief" "readlink: $(readlink AGENTS.md 2>&1)"
+fi
+
+((tests++))
+target=$(readlink AGENTS.md)
+if [[ "$target" != /* ]]; then
+	pass "link target is a RELATIVE path"
+else
+	fail "link target is a RELATIVE path" "Got absolute: $target"
+fi
+
+((tests++))
+CODE="$tmp/Code" link_AGENTS_here >/dev/null 2>&1
+rc=$?
+if [ "$rc" -eq 0 ] && [ -L AGENTS.md ] && [ "$(cat AGENTS.md 2>/dev/null)" = "canonical" ]; then
+	pass "idempotent: rerun succeeds and link still resolves"
+else
+	fail "idempotent: rerun succeeds and link still resolves" "rc=$rc"
+fi
+
+((tests++))
+rm -f AGENTS.md
+echo "real content" > AGENTS.md
+CODE="$tmp/Code" link_AGENTS_here >/dev/null 2>&1
+rc=$?
+if [ "$rc" -ne 0 ] && [ "$(cat AGENTS.md)" = "real content" ]; then
+	pass "refuses to clobber a real (non-symlink) file"
+else
+	fail "refuses to clobber a real (non-symlink) file" "rc=$rc content=$(cat AGENTS.md 2>/dev/null)"
+fi
+rm -f AGENTS.md
+
+((tests++))
+stderr=$(CODE="$tmp/nonexistent" link_AGENTS_here 2>&1 >/dev/null)
+rc=$?
+if [ "$rc" -ne 0 ] && [ -n "$stderr" ] && [ ! -e AGENTS.md ] && [ ! -L AGENTS.md ]; then
+	pass "missing target: errors, creates no broken link"
+else
+	fail "missing target: errors, creates no broken link" "rc=$rc stderr=$stderr"
+fi
+
+if [ "$fails" -eq 0 ]; then
+	printf "All %d tests passed\n" "$tests"
+else
+	printf "%d of %d tests failed\n" "$fails" "$tests" >&2
+fi
+
+exit "$fails"
