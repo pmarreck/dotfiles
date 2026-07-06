@@ -1,4 +1,6 @@
-!#/usr/bin/env bash
+#!/usr/bin/env bash
+# Thin PATH-visible wrapper: source the function definition, then invoke it
+# WITH the caller's args (the missing "$@" silently collapsed every call to the
+# default session).
 . ~/dotfiles/bin/src/session.bash
-session
-
+session "$@"

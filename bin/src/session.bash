@@ -1,8 +1,18 @@
 #!/usr/bin/env bash
 
-# tmux new-or-rejoin session wrapper
+# tmux new-or-rejoin session wrapper.
+# Works both outside tmux (attach or create-and-attach) and INSIDE tmux, where
+# you can't `attach` a nested session — you must `switch-client` instead (the
+# old `tmux new -A` silently failed to switch when already inside tmux).
+# The `=name` target forces an EXACT match (no accidental prefix-matching).
 session() {
-	tmux new -A -s "${1:-default}"
+	local name="${1:-default}"
+	if [ -n "${TMUX:-}" ]; then
+		tmux has-session -t "=$name" 2>/dev/null || tmux new-session -d -s "$name"
+		tmux switch-client -t "=$name"
+	else
+		tmux new-session -A -s "$name"
+	fi
 }
 
 if ${INTERACTIVE_SHELL:-false}; then

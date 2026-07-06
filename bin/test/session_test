@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# session_test — the `session` tmux wrapper must:
+#   (a) issue the RIGHT tmux command for where it runs: attach-or-create when
+#       outside tmux, but switch-client when already INSIDE tmux (you cannot
+#       `attach` a nested session — `tmux new -A` silently failed to switch),
+#   (b) forward "$@" through the bin/session executable to the function.
+# Regression guard: a dropped "$@" once collapsed every `session NAME` to the
+# default session (bin/session called `session`, not `session "$@"`).
+#
+# Sourced by dotfiles_test (pass = exit 0). Mocks the tmux boundary so the
+# assertions are pure and need no running tmux server.
+set -u
+
+_here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+fails=0
+check() { # check <label> <expected> <actual>
+	if [ "$2" = "$3" ]; then return 0; fi
+	printf '✗ %s\n   expected: %q\n   got:      %q\n' "$1" "$2" "$3"
+	fails=1
+}
+
+# Mock tmux: echo the invocation; has-session honors MOCK_HAS (0=exists).
+tmux() { if [ "$1" = has-session ]; then return "${MOCK_HAS:-0}"; fi; echo "tmux $*"; }
+export -f tmux # so the bin/session subprocess (last check) sees the mock too
+
+# Function under test.
+. "$_here/../src/session.bash"
+
+check "outside tmux → attach-or-create" \
+	"tmux new-session -A -s mini_blar" \
+	"$(unset TMUX; session mini_blar)"
+
+check "inside tmux, session exists → switch-client only" \
+	"tmux switch-client -t =mini_blar" \
+	"$(TMUX=fake MOCK_HAS=0 session mini_blar)"
+
+check "inside tmux, session absent → create detached then switch" \
+	"$(printf 'tmux new-session -d -s mini_blar\ntmux switch-client -t =mini_blar')" \
+	"$(TMUX=fake MOCK_HAS=1 session mini_blar)"
+
+check "no arg → default session (preserved)" \
+	"tmux new-session -A -s default" \
+	"$(unset TMUX; session)"
+
+# The executable must forward its arg (not collapse to default).
+check "bin/session forwards its arg through to the function" \
+	"tmux new-session -A -s mini_blar" \
+	"$(TMUX= "$_here/../session" mini_blar)"
+
+exit $fails
