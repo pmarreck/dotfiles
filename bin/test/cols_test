@@ -158,6 +158,127 @@ else
 fi
 
 ((tests++))
+output=$(printf 'a b c d e f g\n' | cols 2,4-6 2>/dev/null)
+expected='b d e f'
+if [[ "$output" == "$expected" ]]; then
+	pass "comma-delimited specs in one arg"
+else
+	fail "comma-delimited specs in one arg" "Expected: $expected" "Actual:   $output"
+fi
+
+((tests++))
+output=$(printf 'a b c d e\n' | cols 1 3,5 2>/dev/null)
+expected='a c e'
+if [[ "$output" == "$expected" ]]; then
+	pass "comma specs mix with space-separated args"
+else
+	fail "comma specs mix with space-separated args" "Expected: $expected" "Actual:   $output"
+fi
+
+((tests++))
+ok=1
+for bad in '2,' ',2' '2,,3'; do
+	printf 'a b\n' | cols "$bad" >/dev/null 2>&1
+	[[ $? -eq 2 ]] || { ok=0; break; }
+done
+if [[ "$ok" -eq 1 ]]; then
+	pass "malformed comma specs (2, / ,2 / 2,,3) all exit 2"
+else
+	fail "malformed comma specs (2, / ,2 / 2,,3) all exit 2" "spec '$bad' did not exit 2"
+fi
+
+((tests++))
+output=$(printf 'root:x:0:0:Sys Admin:/root:/bin/sh\n' | COLS_IFS=: cols 1,7 2>/dev/null)
+expected='root:/bin/sh'
+if [[ "$output" == "$expected" ]]; then
+	pass "IFS env sets separator; output rejoins with first IFS char"
+else
+	fail "IFS env sets separator; output rejoins with first IFS char" "Expected: $expected" "Actual:   $output"
+fi
+
+((tests++))
+output=$(printf 'a:b,c\n' | COLS_IFS=':,' cols 2 2>/dev/null)
+expected='b'
+if [[ "$output" == "$expected" ]]; then
+	pass "multi-char IFS: each char is a separator"
+else
+	fail "multi-char IFS: each char is a separator" "Expected: $expected" "Actual:   $output"
+fi
+
+((tests++))
+output=$(printf 'a,,c\n' | COLS_IFS=, cols 3 2>/dev/null)
+expected='c'
+if [[ "$output" == "$expected" ]]; then
+	pass "IFS mode: adjacent separators delimit empty fields (cut-like)"
+else
+	fail "IFS mode: adjacent separators delimit empty fields (cut-like)" "Expected: $expected" "Actual:   $output"
+fi
+
+((tests++))
+output=$(printf 'a,,c\n' | COLS_IFS=, cols 2 2>/dev/null)
+expected=''
+if [[ "$output" == "$expected" ]]; then
+	pass "IFS mode: empty field selectable as empty"
+else
+	fail "IFS mode: empty field selectable as empty" "Expected: (empty)" "Actual: $output"
+fi
+
+((tests++))
+output=$(printf 'a,b,c\n' | COLS_IFS=, cols 1,3 2>/dev/null)
+expected='a,c'
+if [[ "$output" == "$expected" ]]; then
+	pass "IFS env does not confuse comma spec parsing"
+else
+	fail "IFS env does not confuse comma spec parsing" "Expected: $expected" "Actual:   $output"
+fi
+
+((tests++))
+output=$(printf 'a.b.c\n' | COLS_IFS=. cols 2 2>/dev/null)
+expected='b'
+if [[ "$output" == "$expected" ]]; then
+	pass "regex metachar as IFS is taken literally"
+else
+	fail "regex metachar as IFS is taken literally" "Expected: $expected" "Actual:   $output"
+fi
+
+((tests++))
+output=$(printf 'a\tb\tc\n' | COLS_IFS=$'\t' cols 2 2>/dev/null)
+expected='b'
+if [[ "$output" == "$expected" ]]; then
+	pass "tab as IFS"
+else
+	fail "tab as IFS" "Expected: $expected" "Actual:   $output"
+fi
+
+((tests++))
+output=$(printf 'a b c\n' | COLS_IFS= cols 1 2>/dev/null)
+expected='a b c'
+if [[ "$output" == "$expected" ]]; then
+	pass "empty IFS: whole line is one field (shell semantics)"
+else
+	fail "empty IFS: whole line is one field (shell semantics)" "Expected: $expected" "Actual:   $output"
+fi
+
+((tests++))
+# bash sanitizes inherited IFS at startup (the ancient IFS-attack fix), so a
+# raw IFS prefix can never reach a bash script — default whitespace splitting
+# must still apply. This is WHY the override var is COLS_IFS, not IFS.
+output=$(printf 'a:b c\n' | IFS=: cols 2 2>/dev/null)
+expected='c'
+if [[ "$output" == "$expected" ]]; then
+	pass "raw IFS prefix has no effect (bash scrubs it; that's documented)"
+else
+	fail "raw IFS prefix has no effect (bash scrubs it; that's documented)" "Expected: $expected" "Actual:   $output"
+fi
+
+((tests++))
+if cols --help 2>/dev/null | grep -q 'COLS_IFS'; then
+	pass "--help documents the COLS_IFS separator override"
+else
+	fail "--help documents the COLS_IFS separator override"
+fi
+
+((tests++))
 output=$(cols --help 2>/dev/null)
 rc=$?
 if [[ "$rc" -eq 0 && "$output" == *Usage* ]]; then

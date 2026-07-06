@@ -2,41 +2,103 @@
 # cols — extract whitespace-separated columns from stdin by number, so you never
 # have to remember `awk '{print $2}'` again. (Not to be confused with `column`,
 # which FORMATS text into columns, or `col`, which filters nroff line feeds.)
-# Columns are 1-indexed; runs of spaces/tabs count as one separator; selected
-# fields are joined with a single space. A line missing all requested fields
-# still prints (empty), preserving input↔output line correspondence.
+# Columns are 1-indexed; specs are n, m-n, or m- and may be comma-combined
+# (`cols 2,4-6`). Default separator: runs of spaces/tabs. Override via the
+# COLS_IFS env var (`COLS_IFS=: cols 1,7 < /etc/passwd`) — then EACH character
+# of it is a separator, adjacent separators delimit empty fields (cut-like),
+# and output rejoins with its first char. A line missing all requested
+# fields still prints (empty), preserving input↔output line correspondence.
+#
+# Why not plain IFS? bash sanitizes an inherited IFS at startup (the 1980s
+# `IFS=/` PATH-hijack fix), so `IFS=: cols ...` can never deliver the value
+# to this script — its own interpreter scrubs it before line 1 runs.
 set -u
+
+# Distinguish COLS_IFS unset (default whitespace mode) from set-but-empty
+# (whole-line mode, mirroring shell IFS= semantics). Then pin our own IFS so
+# nothing inherited can skew this script's "$*" joins.
+COLS_IFS_SET=0
+[ -n "${COLS_IFS+x}" ] && COLS_IFS_SET=1
+COLS_IFS="${COLS_IFS-}"
+IFS=$' \t\n'
+
+# Build an awk bracket expression from multi-char IFS. Bracket metachars are
+# neutralized by POSITION, not escaping: ']' only literal first, '-' only
+# literal at an edge, '^' literal anywhere EXCEPT first.
+_cols_bracket_class() {
+	local chars="$1" cls="" ch i has_rb=0 has_dash=0 has_caret=0
+	for ((i = 0; i < ${#chars}; i++)); do
+		ch="${chars:$i:1}"
+		case "$ch" in
+			"]") has_rb=1 ;;
+			"-") has_dash=1 ;;
+			"^") has_caret=1 ;;
+			*) cls+="$ch" ;;
+		esac
+	done
+	[ "$has_caret" = 1 ] && cls+="^"
+	[ "$has_rb" = 1 ] && cls="]$cls"
+	if [ "$has_dash" = 1 ]; then
+		# dash is literal at either edge; use FIRST when '^' would otherwise
+		# start the class (a leading '^' means negation)
+		if [[ "${cls:0:1}" == "^" ]]; then cls="-$cls"; else cls+="-"; fi
+	fi
+	printf '%s' "[$cls]"
+}
 
 cols() {
 	if [ $# -eq 0 ]; then
 		echo "cols: no column spec given" >&2
-		echo "Usage: <command> | cols <n | m-n | m-> [more specs...]" >&2
+		echo "Usage: <command> | cols <n | m-n | m- | comma,list> [more specs...]" >&2
 		return 2
 	fi
 
-	local spec lo hi
+	# Validate then expand: each arg is one or more comma-joined atoms, each
+	# atom n, m-n, or m-. One regex enforces the comma structure so empties
+	# ('2,', ',2', '2,,3') can't sneak past the per-atom checks below.
+	local spec atom lo hi atoms=()
 	for spec in "$@"; do
-		if [[ "$spec" =~ ^([0-9]+)$ ]]; then
-			lo="${BASH_REMATCH[1]}" hi="${BASH_REMATCH[1]}"
-		elif [[ "$spec" =~ ^([0-9]+)-([0-9]*)$ ]]; then
-			lo="${BASH_REMATCH[1]}" hi="${BASH_REMATCH[2]}"
-		else
-			echo "cols: invalid column spec '$spec' (want n, m-n, or m-)" >&2
+		if [[ ! "$spec" =~ ^[0-9]+(-[0-9]*)?(,[0-9]+(-[0-9]*)?)*$ ]]; then
+			echo "cols: invalid column spec '$spec' (want n, m-n, or m-, comma-combinable)" >&2
 			return 2
 		fi
-		if [ "$((10#$lo))" -eq 0 ] || { [ -n "$hi" ] && [ "$((10#$hi))" -eq 0 ]; }; then
-			echo "cols: columns are 1-indexed; 0 is not a column" >&2
-			return 2
-		fi
-		if [ -n "$hi" ] && [ "$((10#$lo))" -gt "$((10#$hi))" ]; then
-			echo "cols: reversed range '$spec' (start exceeds end)" >&2
-			return 2
-		fi
+		local parts=()
+		IFS=',' read -ra parts <<< "$spec"
+		for atom in "${parts[@]}"; do
+			lo="${atom%%-*}"
+			if [[ "$atom" == *-* ]]; then hi="${atom#*-}"; else hi="$lo"; fi
+			if [ "$((10#$lo))" -eq 0 ] || { [ -n "$hi" ] && [ "$((10#$hi))" -eq 0 ]; }; then
+				echo "cols: columns are 1-indexed; 0 is not a column" >&2
+				return 2
+			fi
+			if [ -n "$hi" ] && [ "$((10#$lo))" -gt "$((10#$hi))" ]; then
+				echo "cols: reversed range '$atom' (start exceeds end)" >&2
+				return 2
+			fi
+			atoms+=("$atom")
+		done
 	done
 
-	# Specs are pre-validated above, so awk only expands them. hi=0 is the
+	# Separator: default = awk whitespace mode. COLS_IFS overrides:
+	# single char → literal FS; multi-char → bracket class (each char splits);
+	# empty ('COLS_IFS= cols ...') → whole line is one field, per shell IFS
+	# semantics (FS="\n" can never match inside a newline-delimited record).
+	local fs_opt=() joiner=" "
+	if [ "$COLS_IFS_SET" = 1 ]; then
+		if [ -z "$COLS_IFS" ]; then
+			fs_opt=(-F $'\n')
+		elif [ "${#COLS_IFS}" -eq 1 ]; then
+			fs_opt=(-F "$COLS_IFS")
+			joiner="$COLS_IFS"
+		else
+			fs_opt=(-F "$(_cols_bracket_class "$COLS_IFS")")
+			joiner="${COLS_IFS:0:1}"
+		fi
+	fi
+
+	# Atoms are pre-validated above, so awk only expands them. hi=0 is the
 	# sentinel for an open range ("to end of line", i.e. NF at runtime).
-	awk -v SPECS="$*" '
+	awk ${fs_opt[@]+"${fs_opt[@]}"} -v SPECS="${atoms[*]}" -v JOIN="$joiner" '
 		BEGIN {
 			n = split(SPECS, S, " ")
 			for (i = 1; i <= n; i++) {
@@ -57,7 +119,7 @@ cols() {
 				if (h == 0 || h > NF) h = NF
 				for (f = lo[i]; f <= h; f++) {
 					out = out sep $f
-					sep = " "
+					sep = JOIN
 				}
 			}
 			print out
@@ -67,23 +129,33 @@ cols() {
 
 case "${1:-}" in
 	-h|--help)
-		echo "cols - extract whitespace-separated columns from stdin by number"
+		echo "cols - extract separated columns from stdin by number"
 		echo ""
-		echo "Usage: <command> | cols <n | m-n | m-> [more specs...]"
+		echo "Usage: <command> | cols <n | m-n | m- | comma,list> [more specs...]"
 		echo ""
-		echo "Columns are 1-indexed. Runs of spaces/tabs count as one separator."
-		echo "Selected fields are joined with a single space. Lines missing the"
-		echo "requested columns print as empty lines (line correspondence kept)."
+		echo "Columns are 1-indexed. By default, runs of spaces/tabs count as one"
+		echo "separator. Selected fields are joined with a single space. Lines"
+		echo "missing the requested columns print as empty lines (line"
+		echo "correspondence kept)."
 		echo ""
-		echo "Specs:"
+		echo "Specs (combinable, space- or comma-separated):"
 		echo "  n             single column n"
 		echo "  m-n           columns m through n"
 		echo "  m-            column m through end of line"
-		echo "  (several specs may be combined, e.g. cols 1 3-4)"
+		echo "  x,y,z         comma-joined list of any of the above"
+		echo ""
+		echo "Separator override (COLS_IFS env var):"
+		echo "  Each character of COLS_IFS is a separator (adjacent separators"
+		echo "  delimit empty fields, like cut), and output rejoins with its"
+		echo "  first char. Empty COLS_IFS = no splitting (whole line = col 1)."
+		echo "  Why not plain IFS? bash scrubs an inherited IFS at startup (an"
+		echo "  ancient security fix), so it can never reach this script."
 		echo ""
 		echo "Examples:"
-		echo "  tailscale status | cols 2        # hostnames"
-		echo "  ls -l | cols 5 9-                # size + filename (spaces intact)"
+		echo "  tailscale status | cols 2              # hostnames"
+		echo "  ls -l | cols 5 9-                      # size + filename"
+		echo "  ls -l | cols 5,9-                      # same, comma-style"
+		echo "  COLS_IFS=: cols 1,7 < /etc/passwd      # user + shell, ':'-joined"
 		echo ""
 		echo "Options:"
 		echo "  -h, --help    Show this help message"
@@ -91,7 +163,7 @@ case "${1:-}" in
 		echo "  --test        Run tests"
 		;;
 	-a|--about)
-		echo "Extract whitespace-separated columns from stdin by number (n, m-n, m-)"
+		echo "Extract separated columns from stdin by number (n, m-n, m-, comma-combinable; separator via COLS_IFS)"
 		;;
 	--test)
 		if [[ -f "$HOME/dotfiles/bin/test/cols_test" ]]; then
