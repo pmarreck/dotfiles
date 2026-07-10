@@ -21,9 +21,9 @@ claude() {
 		$claude_path "$@"
 	else
 		warn "Running claude with unlimited privileges!"
-		# if there isn't a .jj directory, output an additional warning about setting up jujutsu
-		if [ ! -d .jj ]; then
-			warn "No .jj directory found. Please initialize a jujutsu repository before running claude with unlimited privileges to capture all changes automatically."
+		# if there is not a .git directory, output an additional warning about setting up git
+		if [ ! -d .git ]; then
+			warn "No .git directory found. Please initialize a git repository before running claude with unlimited privileges to capture all changes automatically."
 		fi
 
 		if [ "$should_resume" = true ]; then
