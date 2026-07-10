@@ -8,9 +8,9 @@ codex() {
 		$codex_path "$@"
 	else
 		warn "Running codex with unlimited privileges!"
-		# if there isn't a .jj directory, output an additional warning about setting up jujutsu
-		if [ ! -d .jj ]; then
-			warn "No .jj directory found. Please initialize a jujutsu repository before running codex with unlimited privileges to capture all changes automatically."
+		# if there is not a .git directory, output an additional warning about setting up git
+		if [ ! -d .git ]; then
+			warn "No .git directory found. Please initialize a git repository before running codex with unlimited privileges to capture all changes automatically."
 		fi
 		warn "$codex_path resume --dangerously-bypass-approvals-and-sandbox"
 		$codex_path resume --dangerously-bypass-approvals-and-sandbox
