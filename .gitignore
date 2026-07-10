@@ -16,7 +16,6 @@ bin/*launcher
 .vscode
 
 **/.claude/settings.local.json
-.jj/
 .codescan/
 .resume*
 docs/superpowers

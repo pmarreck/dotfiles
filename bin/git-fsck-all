@@ -6,17 +6,12 @@ EMPTY_TREE_SHA="4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 # ---- Classification ----
 
 # Categorize a single line of `git fsck` output.
-# Categories: jj_lock, ds_store, jj_refnewline, empty_tree, dup_entries,
-#             notice, other, real_error
+# Categories: ds_store, empty_tree, dup_entries, notice, other, real_error
 classify_fsck_line() {
 	local line="$1"
 	case "$line" in
-		# jj lock files (warning or error). Most specific; check first.
-		*"refs/jj/"*".lock: "*)            echo "jj_lock" ;;
 		# .DS_Store anywhere under refs/
 		*"refs/"*".DS_Store: "*)           echo "ds_store" ;;
-		# jj refMissingNewline (non-lock refs)
-		*"refs/jj/"*": refMissingNewline"*) echo "jj_refnewline" ;;
 		# empty tree missing (git always treats this as virtual-present)
 		"missing tree $EMPTY_TREE_SHA")    echo "empty_tree" ;;
 		# Tree with duplicate entries (may be case-only or true corruption)
@@ -96,10 +91,7 @@ SCAN_FAILED_OUTPUTS=()
 SCAN_DUP_CASE_REPO=()
 SCAN_DUP_CASE_TREE=()
 SCAN_DUP_CASE_GROUPS=()   # newline-separated groups; each group is TAB-separated names
-SCAN_JJ_NOISE_REPOS=()
-SCAN_JJ_NOISE_LINES=0
 SCAN_DS_STORE_FILES=()    # absolute file paths
-SCAN_JJ_LOCK_FILES=()     # absolute file paths
 SCAN_TOTAL_REPOS=0
 SCAN_PASSED=0
 SCAN_FAILED=0
@@ -110,10 +102,7 @@ reset_scan_state() {
 	SCAN_DUP_CASE_REPO=()
 	SCAN_DUP_CASE_TREE=()
 	SCAN_DUP_CASE_GROUPS=()
-	SCAN_JJ_NOISE_REPOS=()
-	SCAN_JJ_NOISE_LINES=0
 	SCAN_DS_STORE_FILES=()
-	SCAN_JJ_LOCK_FILES=()
 	SCAN_TOTAL_REPOS=0
 	SCAN_PASSED=0
 	SCAN_FAILED=0
@@ -143,27 +132,18 @@ discover_repos() {
 
 process_repo() {
 	local repo="$1"
-	local gitdir="$repo/.git"
 	local raw line cat ref_path tree_hash
 	raw=$(git -C "$repo" fsck --no-dangling --no-progress 2>&1)
 
-	local real_lines="" jj_noise_here=0 had_jj_noise=0
+	local real_lines=""
 
 	while IFS= read -r line; do
 		[ -z "$line" ] && continue
 		cat=$(classify_fsck_line "$line")
 		case "$cat" in
-			jj_refnewline)
-				had_jj_noise=1
-				((jj_noise_here++))
-				;;
-			jj_lock)
-				ref_path=$(extract_ref_path "$line")
-				[ -n "$ref_path" ] && SCAN_JJ_LOCK_FILES+=("$gitdir/$ref_path")
-				;;
 			ds_store)
 				ref_path=$(extract_ref_path "$line")
-				[ -n "$ref_path" ] && SCAN_DS_STORE_FILES+=("$gitdir/$ref_path")
+				[ -n "$ref_path" ] && SCAN_DS_STORE_FILES+=("$repo/.git/$ref_path")
 				;;
 			dup_entries)
 				tree_hash=$(extract_tree_hash "$line")
@@ -194,11 +174,6 @@ process_repo() {
 				;;
 		esac
 	done <<< "$raw"
-
-	if [ "$had_jj_noise" -eq 1 ]; then
-		SCAN_JJ_NOISE_REPOS+=("$repo")
-		SCAN_JJ_NOISE_LINES=$((SCAN_JJ_NOISE_LINES + jj_noise_here))
-	fi
 
 	if [ -n "$real_lines" ]; then
 		SCAN_FAILED_REPOS+=("$repo")
@@ -274,32 +249,13 @@ report() {
 		done
 	fi
 
-	# Stderr: ignored + fixable summaries
-	local stderr_started=0
-	if [ ${#SCAN_JJ_NOISE_REPOS[@]} -gt 0 ]; then
-		stderr_started=1
-		local uniq_repos
-		uniq_repos=$(printf '%s\n' "${SCAN_JJ_NOISE_REPOS[@]}" | sort -u | wc -l | tr -d ' ')
-		echo >&2
-		echo "Ignored (informational):" >&2
-		echo "  jj refMissingNewline warnings: $uniq_repos repos, $SCAN_JJ_NOISE_LINES lines total" >&2
-	fi
-
 	local ds_count=${#SCAN_DS_STORE_FILES[@]}
-	local jj_count=${#SCAN_JJ_LOCK_FILES[@]}
-	if [ "$ds_count" -gt 0 ] || [ "$jj_count" -gt 0 ]; then
-		[ "$stderr_started" -eq 0 ] && echo >&2
+	if [ "$ds_count" -gt 0 ]; then
+		echo >&2
 		echo "Fixable with \`git-fsck-all triage\`:" >&2
-		if [ "$ds_count" -gt 0 ]; then
-			local uniq_ds
-			uniq_ds=$(printf '%s\n' "${SCAN_DS_STORE_FILES[@]}" | sort -u | wc -l | tr -d ' ')
-			echo "  .DS_Store in refs/: $uniq_ds file(s)" >&2
-		fi
-		if [ "$jj_count" -gt 0 ]; then
-			local uniq_jj
-			uniq_jj=$(printf '%s\n' "${SCAN_JJ_LOCK_FILES[@]}" | sort -u | wc -l | tr -d ' ')
-			echo "  Stale jj keep/*.lock files: $uniq_jj file(s)" >&2
-		fi
+		local uniq_ds
+		uniq_ds=$(printf '%s\n' "${SCAN_DS_STORE_FILES[@]}" | sort -u | wc -l | tr -d ' ')
+		echo "  .DS_Store in refs/: $uniq_ds file(s)" >&2
 	fi
 }
 
@@ -307,14 +263,11 @@ report() {
 
 triage_execute() {
 	local count=0 f
-	local -a ds_uniq=() jj_uniq=()
+	local -a ds_uniq=()
 	if [ ${#SCAN_DS_STORE_FILES[@]} -gt 0 ]; then
 		while IFS= read -r f; do ds_uniq+=("$f"); done < <(printf '%s\n' "${SCAN_DS_STORE_FILES[@]}" | sort -u)
 	fi
-	if [ ${#SCAN_JJ_LOCK_FILES[@]} -gt 0 ]; then
-		while IFS= read -r f; do jj_uniq+=("$f"); done < <(printf '%s\n' "${SCAN_JJ_LOCK_FILES[@]}" | sort -u)
-	fi
-	for f in "${ds_uniq[@]}" "${jj_uniq[@]}"; do
+	for f in "${ds_uniq[@]}"; do
 		if [ -e "$f" ]; then
 			rm -f "$f" && ((count++))
 		fi
@@ -333,8 +286,7 @@ triage() {
 					Usage: git-fsck-all triage [--yes] [--dry-run] [START_DIR]
 
 					Scan git repositories under START_DIR (default: \$HOME) and remove
-					known-safe litter: .DS_Store files inside refs/, and stale
-					.jj/keep/*.lock files.
+					known-safe litter: .DS_Store files inside refs/.
 
 					Options:
 					  -y, --yes      Skip the confirmation prompt.
@@ -349,20 +301,17 @@ triage() {
 
 	scan "$start_dir" || return 1
 
-	local ds_uniq_n=0 jj_uniq_n=0
+	local ds_uniq_n=0
 	[ ${#SCAN_DS_STORE_FILES[@]} -gt 0 ] && \
 		ds_uniq_n=$(printf '%s\n' "${SCAN_DS_STORE_FILES[@]}" | sort -u | wc -l | tr -d ' ')
-	[ ${#SCAN_JJ_LOCK_FILES[@]} -gt 0 ] && \
-		jj_uniq_n=$(printf '%s\n' "${SCAN_JJ_LOCK_FILES[@]}" | sort -u | wc -l | tr -d ' ')
 
-	if [ "$ds_uniq_n" -eq 0 ] && [ "$jj_uniq_n" -eq 0 ]; then
+	if [ "$ds_uniq_n" -eq 0 ]; then
 		echo "Nothing to triage."
 		return 0
 	fi
 
 	echo "Triage plan:"
 	[ "$ds_uniq_n" -gt 0 ] && echo "  Delete $ds_uniq_n .DS_Store file(s) from refs/"
-	[ "$jj_uniq_n" -gt 0 ] && echo "  Delete $jj_uniq_n stale .jj/keep/*.lock file(s)"
 
 	if [ "$dry_run" -eq 1 ]; then
 		echo "Dry-run: no files deleted."
@@ -404,11 +353,9 @@ git-fsck-all() {
 				verdict and any real failures go to stdout.
 
 				Known-noise (not counted as failures):
-				  - jj refMissingNewline warnings under refs/jj/        (informational)
 				  - "missing tree" for the empty tree (always-virtual)  (silently ignored)
 				  - "HEAD points to an unborn branch" notices           (silently ignored)
 				  - .DS_Store inside refs/                              (use \`triage\` to remove)
-				  - Stale .jj/keep/*.lock files                         (use \`triage\` to remove)
 
 				Duplicate-entry trees: conflicting names are listed in the failure
 				output. Case-only duplicates (rare) are reported separately and

@@ -26,7 +26,7 @@ export ORIG_PATH
 # Source path helpers (prepend_path, exclude_path)
 . "$HOME/dotfiles/bin/src/prepend_path.bash"
 
-# CODE is the new canonical home for all git/jj repos across platforms
+# CODE is the canonical home for Git repositories across platforms
 CODE="$HOME/Code"
 export CODE
 
@@ -83,18 +83,6 @@ PATH_ADDITIONS=(
 	"$HOME/.local/share/pnpm/bin"
 )
 
-# Keep the Nix-provided modern Bash reachable after the declarative PATH rebuild.
-if [[ -d "/run/current-system/sw/bin" ]]; then
-	PATH_ADDITIONS+=("/run/current-system/sw/bin")
-fi
-
-# NixOS exposes raw system binaries here, including a deliberately non-setuid
-# sudo. Re-prepend its privileged wrapper after the raw profile so commands
-# requiring wrapper permissions keep their security boundary.
-if [[ -d "/run/wrappers/bin" ]]; then
-	PATH_ADDITIONS+=("/run/wrappers/bin")
-fi
-
 # macOS Nix: prefer Nix over system and Homebrew
 if [[ "$OSTYPE" == "darwin"* ]]; then
 	PATH_ADDITIONS+=(
@@ -147,9 +135,11 @@ PATH_EXCLUSIONS=(
 
 # Rebuild PATH from the pristine base plus additions. Idempotent by construction.
 PATH="$ORIG_PATH"
-# prepend_path itself needs awk; keep the bootstrap toolchain reachable while
-# applying the declarative additions rather than waiting for its later entry.
-if [[ -d "/run/current-system/sw/bin" ]]; then
+# On macOS, prepend_path itself needs awk; keep the Nix bootstrap toolchain
+# reachable while applying the declarative additions rather than waiting for its
+# later entry. NixOS owns this path's ordering because its sudo wrapper must
+# remain ahead of the raw, deliberately non-setuid system sudo.
+if [[ "$OSTYPE" == "darwin"* && -d "/run/current-system/sw/bin" ]]; then
 	PATH="/run/current-system/sw/bin:$PATH"
 fi
 IGNORE_PREPEND_PATH_WARNINGS=true

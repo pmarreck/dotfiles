@@ -28,23 +28,6 @@ make_dsstore_repo() {
 	touch "$dir/.git/refs/.DS_Store"
 }
 
-make_jj_noise_repo() {
-	local dir="$1" sha
-	make_repo "$dir"
-	sha=$(git -C "$dir" rev-parse HEAD)
-	mkdir -p "$dir/.git/refs/jj/keep"
-	# Write ref without trailing LF to trigger refMissingNewline
-	printf '%s' "$sha" > "$dir/.git/refs/jj/keep/$sha"
-}
-
-make_jj_lock_repo() {
-	local dir="$1" sha
-	make_repo "$dir"
-	sha=$(git -C "$dir" rev-parse HEAD)
-	mkdir -p "$dir/.git/refs/jj/keep"
-	printf '%s' "$sha" > "$dir/.git/refs/jj/keep/$sha.lock"
-}
-
 # Craft a repo whose HEAD points to a tree with two exact-duplicate entries.
 make_exact_dup_repo() {
 	local dir="$1" blob bin tree commit
@@ -72,10 +55,8 @@ corrupt_repo "$FIXT/bad"
 make_repo "$ALLGOOD/r1" >/dev/null 2>&1
 make_repo "$ALLGOOD/r2" >/dev/null 2>&1
 
-# Repo set that exercises filtering: .DS_Store, jj refnewline, jj lock
-make_dsstore_repo    "$FILTERED/ds"     >/dev/null 2>&1
-make_jj_noise_repo   "$FILTERED/jjnl"   >/dev/null 2>&1
-make_jj_lock_repo    "$FILTERED/jjlock" >/dev/null 2>&1
+# Repo set that exercises the remaining safe-litter filter.
+make_dsstore_repo "$FILTERED/ds" >/dev/null 2>&1
 
 make_exact_dup_repo "$DUPF/dup" >/dev/null 2>&1
 
@@ -171,9 +152,9 @@ else
 	((fails++))
 fi
 
-# Test 8: .DS_Store/jj-noise/jj-lock fixture exits 0 (all filtered)
+# Test 8: .DS_Store-only fixture exits 0 (safe litter is filtered)
 ((tests++))
-echo "Testing: filtered-only fixture exits 0 (jj noise + .DS_Store + jj lock)..."
+echo "Testing: .DS_Store-only fixture exits 0..."
 "$GFA" "$FILTERED" >/dev/null 2>/dev/null
 rc=$?
 if [[ $rc -eq 0 ]]; then
@@ -183,33 +164,19 @@ else
 	((fails++))
 fi
 
-# Test 9: filtered fixture reports jj refMissingNewline to stderr (ignored section)
+# Test 9: filtered fixture reports .DS_Store to stderr as fixable
 ((tests++))
-echo "Testing: jj refMissingNewline lands in ignored-section on stderr..."
+echo "Testing: .DS_Store lands in the fixable section on stderr..."
 stderr=$("$GFA" "$FILTERED" 2>&1 >/dev/null)
-if [[ "$stderr" == *"Ignored"* ]] && [[ "$stderr" == *"refMissingNewline"* ]]; then
-	echo "✓ Test passed: jj noise reported to stderr as ignored"
+if [[ "$stderr" == *"Fixable"* ]] && [[ "$stderr" == *".DS_Store"* ]]; then
+	echo "✓ Test passed: .DS_Store reported to stderr as fixable"
 else
-	echo "✗ Test failed: expected ignored-section with refMissingNewline" >&2
+	echo "✗ Test failed: expected fixable section with .DS_Store" >&2
 	echo "  Stderr: $stderr" >&2
 	((fails++))
 fi
 
-# Test 10: filtered fixture reports .DS_Store and jj-lock in fixable-section on stderr
-((tests++))
-echo "Testing: .DS_Store and jj-lock land in fixable-section on stderr..."
-stderr=$("$GFA" "$FILTERED" 2>&1 >/dev/null)
-if [[ "$stderr" == *"Fixable"* ]] && \
-   [[ "$stderr" == *".DS_Store"* ]] && \
-   [[ "$stderr" == *"keep/*.lock"* ]]; then
-	echo "✓ Test passed: both fixable categories reported"
-else
-	echo "✗ Test failed: expected fixable-section with .DS_Store and jj-lock" >&2
-	echo "  Stderr: $stderr" >&2
-	((fails++))
-fi
-
-# Test 11: triage --dry-run shows plan without deleting
+# Test 10: triage --dry-run shows plan without deleting
 ((tests++))
 echo "Testing: triage --dry-run lists plan but deletes nothing..."
 DRYRUN=$(mktemp -d --tmpdir gitfsckall_dryrun.XXXXXX)
@@ -225,26 +192,23 @@ else
 fi
 rm -rf "$DRYRUN"
 
-# Test 12: triage --yes removes .DS_Store and jj-lock files
+# Test 11: triage --yes removes .DS_Store files
 ((tests++))
 echo "Testing: triage --yes actually removes fixable files..."
 DOIT=$(mktemp -d --tmpdir gitfsckall_doit.XXXXXX)
-make_dsstore_repo "$DOIT/ds"     >/dev/null 2>&1
-make_jj_lock_repo "$DOIT/jjlock" >/dev/null 2>&1
+make_dsstore_repo "$DOIT/ds" >/dev/null 2>&1
 ds_file="$DOIT/ds/.git/refs/.DS_Store"
-lock_file=$(find "$DOIT/jjlock/.git/refs/jj/keep" -name '*.lock' | head -n1)
 "$GFA" triage --yes "$DOIT" >/dev/null 2>&1
-if [ ! -e "$ds_file" ] && [ ! -e "$lock_file" ]; then
+if [ ! -e "$ds_file" ]; then
 	echo "✓ Test passed: fixable files removed"
 else
 	echo "✗ Test failed: files still present after triage --yes" >&2
 	echo "  ds exists: $([ -e "$ds_file" ] && echo yes || echo no)" >&2
-	echo "  lock exists: $([ -e "$lock_file" ] && echo yes || echo no)" >&2
 	((fails++))
 fi
 rm -rf "$DOIT"
 
-# Test 13: triage in non-interactive mode without --yes aborts
+# Test 12: triage in non-interactive mode without --yes aborts
 ((tests++))
 echo "Testing: triage non-interactive without --yes aborts..."
 NOTTY=$(mktemp -d --tmpdir gitfsckall_notty.XXXXXX)
@@ -261,7 +225,7 @@ else
 fi
 rm -rf "$NOTTY"
 
-# Test 14: duplicate-entries: script surfaces conflicting filenames
+# Test 13: duplicate-entries: script surfaces conflicting filenames
 ((tests++))
 echo "Testing: duplicateEntries output lists conflicting filenames..."
 out=$("$GFA" "$DUPF" 2>/dev/null)

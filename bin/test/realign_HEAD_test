@@ -6,8 +6,8 @@ realign_HEAD_test() {
   tmpdir=$(mktemp -d --tmpdir realign_HEAD_test.XXXXXX)
   repo="$tmpdir/repo"
 
-  # Scratch repo: two commits on master, then simulate the jj colocated state:
-  # HEAD detached at the newer commit, master pointing one behind.
+  # Scratch repo: two commits on master, then simulate a detached HEAD at the
+  # newer commit while master points one commit behind.
   git init -q -b master "$repo"
   git -C "$repo" -c user.email=t@t -c user.name=t commit -q --allow-empty -m one
   git -C "$repo" -c user.email=t@t -c user.name=t commit -q --allow-empty -m two

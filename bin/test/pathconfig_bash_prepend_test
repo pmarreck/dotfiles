@@ -13,13 +13,15 @@ tests=0
 
 BOOTSTRAP_BASH="/run/current-system/sw/bin/bash"
 [ -x "$BOOTSTRAP_BASH" ] || BOOTSTRAP_BASH="$BASH"
+DARWIN_OSTYPE="darwin"
 
-# Test 1: Sourcing .pathconfig from a stripped PATH produces no bash-3.x errors.
+# Test 1: The macOS branch sources .pathconfig from a stripped PATH without
+# bash-3.x errors.
 # These are the canonical bash-3.2 failure modes: mapfile builtin doesn't exist,
 # globstar shopt doesn't exist, compgen may not be a builtin.
 ((tests++))
-echo "Testing: .pathconfig source produces no bash-3.x error output..."
-stderr_output=$(env -i HOME="$HOME" OSTYPE="$OSTYPE" PATH="/usr/bin:/bin" "$BOOTSTRAP_BASH" --noprofile --norc -c '
+echo "Testing: macOS .pathconfig source produces no bash-3.x error output..."
+stderr_output=$(env -i HOME="$HOME" OSTYPE="$DARWIN_OSTYPE" PATH="/usr/bin:/bin" "$BOOTSTRAP_BASH" --noprofile --norc -c '
 	. "$HOME/.pathconfig"
 ' 2>&1 >/dev/null)
 
@@ -32,11 +34,11 @@ else
 	echo "✓ Test passed: no bash-3.x errors during .pathconfig source"
 fi
 
-# Test 2: After sourcing .pathconfig, a subprocess #!/usr/bin/env bash resolves
-# to bash >= 4. (End-state check — should already pass, included for regression.)
+# Test 2: On macOS, after sourcing .pathconfig, a subprocess
+# #!/usr/bin/env bash resolves to bash >= 4.
 ((tests++))
-echo "Testing: subprocess #!/usr/bin/env bash gets modern bash after .pathconfig..."
-subprocess_version=$(env -i HOME="$HOME" OSTYPE="$OSTYPE" PATH="/usr/bin:/bin" "$BOOTSTRAP_BASH" --noprofile --norc -c '
+echo "Testing: macOS subprocess #!/usr/bin/env bash gets modern bash after .pathconfig..."
+subprocess_version=$(env -i HOME="$HOME" OSTYPE="$DARWIN_OSTYPE" PATH="/usr/bin:/bin" "$BOOTSTRAP_BASH" --noprofile --norc -c '
 	. "$HOME/.pathconfig" 2>/dev/null
 	/usr/bin/env bash -c "echo \$BASH_VERSION"
 ' 2>/dev/null)
@@ -48,11 +50,11 @@ else
 	((fails++))
 fi
 
-# Test 3: Idempotency — re-sourcing .pathconfig doesn't add duplicate entries
-# for the modern-bash dir we prepend.
+# Test 3: On macOS, idempotency — re-sourcing .pathconfig doesn't add duplicate
+# entries for the modern-Bash directory.
 ((tests++))
-echo "Testing: re-sourcing .pathconfig keeps PATH free of duplicates..."
-dup_count=$(env -i HOME="$HOME" OSTYPE="$OSTYPE" PATH="/usr/bin:/bin" "$BOOTSTRAP_BASH" --noprofile --norc -c '
+echo "Testing: macOS re-sourcing .pathconfig keeps PATH free of duplicates..."
+dup_count=$(env -i HOME="$HOME" OSTYPE="$DARWIN_OSTYPE" PATH="/usr/bin:/bin" "$BOOTSTRAP_BASH" --noprofile --norc -c '
 	. "$HOME/.pathconfig" 2>/dev/null
 	. "$HOME/.pathconfig" 2>/dev/null
 	. "$HOME/.pathconfig" 2>/dev/null
@@ -83,6 +85,23 @@ if [[ "$sudo_path" == "/run/wrappers/bin/sudo" ]]; then
 	echo "✓ Test passed: sudo resolves to the privileged wrapper"
 else
 	echo "✗ Test failed: sudo resolves to '$sudo_path' (expected /run/wrappers/bin/sudo)" >&2
+	((fails++))
+fi
+
+# Test 5: NixOS owns its system-path ordering.  If the system profile did not
+# supply the raw profile, .pathconfig must not inject it ahead of its wrappers.
+((tests++))
+echo "Testing: .pathconfig does not inject NixOS's raw system profile..."
+nixos_path=$(env -i HOME="$HOME" OSTYPE="linux-gnu" PATH="/run/wrappers/bin:/usr/bin:/bin" \
+	"$BOOTSTRAP_BASH" --noprofile --norc -c '
+		. "$HOME/.pathconfig" 2>/dev/null
+		printf "%s" "$PATH"
+	' 2>/dev/null)
+
+if [[ ":$nixos_path:" != *":/run/current-system/sw/bin:"* ]]; then
+	echo "✓ Test passed: NixOS raw system profile was not injected"
+else
+	echo "✗ Test failed: .pathconfig injected /run/current-system/sw/bin on NixOS" >&2
 	((fails++))
 fi
 

@@ -1,19 +1,16 @@
 #!/usr/bin/env bash
 
-# Reattach a detached git HEAD to <branchname>, pointing that branch at the
-# currently checked-out commit. The jj colocated workflow leaves git HEAD
-# detached at @- (and re-detaches it whenever the working copy moves), so this
-# is the recurring "make the git side look normal again" fixup, typically run
-# right after jj git push. Uses git branch -f + symbolic-ref rather than
-# checkout: the worktree and index are never touched, so uncommitted changes
-# are safe. Refuses to act if HEAD is attached to a different branch, and
-# refuses to create branches (typo guard).
+# Reattach a detached Git HEAD to <branchname>, pointing that branch at the
+# currently checked-out commit. Uses git branch -f + symbolic-ref rather than
+# checkout, so the worktree and index are never touched and uncommitted changes
+# are safe. Refuses to act if HEAD is attached to a different branch, and never
+# creates branches (a typo guard).
 realign_HEAD() {
 	local branch="${1:-}"
 	case "$branch" in
 		-h|--help)
 			echo "usage: realign_HEAD <branchname>  # reattach detached git HEAD to <branchname> at the current commit"
-			echo "The jj colocated workflow leaves git HEAD detached; run this after jj git push to make the git side normal."
+			echo "Use this to safely reattach a deliberately detached Git HEAD."
 			echo "Never touches worktree/index (branch -f + symbolic-ref). Refuses if HEAD is on another branch."
 			return 0
 			;;

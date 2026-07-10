@@ -57,16 +57,16 @@ fi
 echo "==> blocked: trailer with Claude on same line"
 
 assert_blocked \
-	'jj commit -m "fix: thing
+	'git commit -m "fix: thing
 Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"' \
-	'jj commit with Co-Authored-By: Claude trailer'
+	'git commit with Co-Authored-By: Claude trailer'
 
 assert_blocked \
 	'git commit -m "msg" -m "Co-Authored-By: Claude"' \
 	'git commit with bare Co-Authored-By: Claude'
 
 assert_blocked \
-	'jj commit -m "co-authored-by: claude lives in lowercase too"' \
+	'git commit -m "co-authored-by: claude lives in lowercase too"' \
 	'lowercase variant (case insensitive)'
 
 assert_blocked \
@@ -74,12 +74,12 @@ assert_blocked \
 	'gh pr create with the trailer in body'
 
 assert_blocked \
-	'jj describe -m "Co-Authored-By: Claude Sonnet 4.6"' \
-	'jj describe (not just commit)'
+	'git commit --amend -m "Co-Authored-By: Claude Sonnet 4.6"' \
+	'git commit --amend'
 
 # Heredoc with the trailer inside the body
 assert_blocked \
-	"jj commit -m \"\$(cat <<'EOF'
+	"git commit -m \"\$(cat <<'EOF'
 fix(thing): blah
 Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
 EOF
@@ -90,7 +90,7 @@ EOF
 echo "==> allowed: clean or partially-matching commands"
 
 assert_allowed \
-	'jj commit -m "fix(claude-mem): some fix"' \
+	'git commit -m "fix(claude-mem): some fix"' \
 	'mentions claude-mem but no Co-Authored-By trailer'
 
 assert_allowed \
@@ -98,12 +98,12 @@ assert_allowed \
 	'Co-Authored-By for a human (no Claude on the line)'
 
 assert_allowed \
-	'jj commit -m "Use the Claude API for translation"' \
+	'git commit -m "Use the Claude API for translation"' \
 	'commit prose mentions Claude (no Co-Authored-By)'
 
 # Two markers on DIFFERENT lines — should pass per Peter spec "same line"
 assert_allowed \
-	'jj commit -m "fix: thing
+	'git commit -m "fix: thing
 Co-Authored-By: Jane <jane@example.com>
 Worked with Claude on this"' \
 	'Co-Authored-By and Claude on DIFFERENT lines'
