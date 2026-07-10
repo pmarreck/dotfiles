@@ -83,6 +83,11 @@ PATH_ADDITIONS=(
 	"$HOME/.local/share/pnpm/bin"
 )
 
+# Keep the Nix-provided modern Bash reachable after the declarative PATH rebuild.
+if [[ -d "/run/current-system/sw/bin" ]]; then
+	PATH_ADDITIONS+=("/run/current-system/sw/bin")
+fi
+
 # macOS Nix: prefer Nix over system and Homebrew
 if [[ "$OSTYPE" == "darwin"* ]]; then
 	PATH_ADDITIONS+=(
@@ -135,6 +140,11 @@ PATH_EXCLUSIONS=(
 
 # Rebuild PATH from the pristine base plus additions. Idempotent by construction.
 PATH="$ORIG_PATH"
+# prepend_path itself needs awk; keep the bootstrap toolchain reachable while
+# applying the declarative additions rather than waiting for its later entry.
+if [[ -d "/run/current-system/sw/bin" ]]; then
+	PATH="/run/current-system/sw/bin:$PATH"
+fi
 IGNORE_PREPEND_PATH_WARNINGS=true
 export IGNORE_PREPEND_PATH_WARNINGS
 for _dir in "${PATH_ADDITIONS[@]}"; do

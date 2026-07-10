@@ -104,8 +104,12 @@ test_audio_convert() {
 	(( tests++ ))
 	local dep_stderr
 	local ac_path
+	local dep_support_dir
 	ac_path=$(command -v audio-convert)
-	dep_stderr=$(PATH="/usr/bin:/bin" "$ac_path" -f mp3 nofile.wav 2>&1 >/dev/null) || true
+	dep_support_dir=$(mktemp -d --tmpdir audio_convert_dep_test.XXXXXX)
+	ln -s "$(type -P basename)" "$dep_support_dir/basename"
+	dep_stderr=$(PATH="$dep_support_dir" "$BASH" "$ac_path" -f mp3 nofile.wav 2>&1 >/dev/null) || true
+	rm -rf "$dep_support_dir"
 	# /usr/bin:/bin is unlikely to have ffmpeg on macOS or Nix systems
 	if command -v ffmpeg >/dev/null 2>&1 && [[ ! -x /usr/bin/ffmpeg && ! -x /bin/ffmpeg ]]; then
 		if echo "$dep_stderr" | grep -qi "ffmpeg.*not found"; then
@@ -394,11 +398,11 @@ test_audio_convert() {
 		# Test: --force overwrites
 		(( tests++ ))
 		local before_mtime
-		before_mtime=$(stat -f "%m" "$guard_out" 2>/dev/null || stat -c "%Y" "$guard_out")
+		before_mtime=$("${STAT:-stat}" -c "%Y" "$guard_out")
 		sleep 1
 		flac --force --no-preserve-timestamps "$guard_in" 2>/dev/null
 		local after_mtime
-		after_mtime=$(stat -f "%m" "$guard_out" 2>/dev/null || stat -c "%Y" "$guard_out")
+		after_mtime=$("${STAT:-stat}" -c "%Y" "$guard_out")
 		if [[ "$before_mtime" != "$after_mtime" ]]; then
 			echo "✓ --force overwrites test passed"
 		else
@@ -645,8 +649,8 @@ test_audio_convert() {
 
 	# Tests: timestamp preservation
 	if [[ -n "$AUDIO_TEST_DIR" && -d "$AUDIO_TEST_DIR" ]]; then
-		# Portable mtime fetch (BSD/GNU)
-		stat_mtime_fn() { stat -f %m "$1" 2>/dev/null || stat -c %Y "$1"; }
+		# This environment deliberately provides GNU stat on every platform.
+		stat_mtime_fn() { "${STAT:-stat}" -c %Y "$1"; }
 
 		# Default preserves timestamps
 		(( tests++ ))

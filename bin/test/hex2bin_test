@@ -9,7 +9,7 @@ test_hex2bin() {
   assert "$(bin2hex "Peter" | hex2bin)" == "Peter" "hex2bin function should accept a pipe"
 
   # Test handling of newlines
-  assert "$(hex2bin "50657465720a0c")" == "Peter\n\f" "hex2bin function shouldn't eat hex-encoded end-of-line newlines"
+	assert "$(hex2bin "50657465720a0c")" == $'Peter\n\f' "hex2bin function shouldn't eat hex-encoded end-of-line newlines"
 }
 
 # Run the test if this script is executed directly

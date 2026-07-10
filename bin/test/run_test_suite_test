@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+
+test_run_test_suite() {
+	local fails=0
+	local tests=0
+	local actual
+	local output
+	local compatibility_runner
+	local runner
+	local tmpdir
+
+	runner="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)/run_test_suite"
+	compatibility_runner="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)/test_dotfiles"
+	tmpdir=$(mktemp -d --tmpdir run_test_suite_test.XXXXXX)
+	trap 'rm -rf "$tmpdir"' EXIT
+
+	mkdir -p "$tmpdir/mixed" "$tmpdir/passing" "$tmpdir/empty" "$tmpdir/nonexec" "$tmpdir/capped" "$tmpdir/home"
+	printf '%s\n' '#!/usr/bin/env bash' 'printf "fixture pass\\n"' 'exit 0' >"$tmpdir/mixed/a_pass_test"
+	printf '%s\n' '#!/usr/bin/env bash' 'printf "fixture failure two\\n" >&2' 'exit 2' >"$tmpdir/mixed/b_fail_test"
+	printf '%s\n' '#!/usr/bin/env bash' 'printf "fixture failure three\\n" >&2' 'exit 3' >"$tmpdir/mixed/c_fail_test"
+	printf '%s\n' '#!/usr/bin/env bash' 'exit 99' >"$tmpdir/mixed/not-a-test"
+	chmod +x "$tmpdir/mixed/a_pass_test" "$tmpdir/mixed/b_fail_test" "$tmpdir/mixed/c_fail_test" "$tmpdir/mixed/not-a-test"
+
+	printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$tmpdir/passing/pass_test"
+	chmod +x "$tmpdir/passing/pass_test"
+	printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$tmpdir/nonexec/cannot_run_test"
+	printf '%s\n' '#!/usr/bin/env bash' 'exit 100' >"$tmpdir/capped/a_hundred_test"
+	printf '%s\n' '#!/usr/bin/env bash' 'exit 200' >"$tmpdir/capped/two_hundred_test"
+	chmod +x "$tmpdir/capped/a_hundred_test" "$tmpdir/capped/two_hundred_test"
+
+	(( tests++ ))
+	output=$(HOME="$tmpdir/home" "$runner" --test-dir "$tmpdir/mixed" 2>&1)
+	actual=$?
+	if [[ "$actual" == 5 && "$output" == *'3 test files'* && "$output" == *'2 of 3 test files failed'* && "$output" != *'not-a-test'* ]]; then
+		printf '✓ run_test_suite discovers *_test files and sums failures\n'
+	else
+		printf '✗ run_test_suite should discover *_test files and return the summed status\nStatus: %s\nOutput: %q\n' "$actual" "$output" >&2
+		(( fails++ ))
+	fi
+
+	(( tests++ ))
+	output=$(HOME="$tmpdir/home" "$runner" --test-dir "$tmpdir/passing" 2>&1)
+	actual=$?
+	if [[ "$actual" == 0 && "$output" == *'All 1 test files passed'* ]]; then
+		printf '✓ run_test_suite reports an all-green suite\n'
+	else
+		printf '✗ run_test_suite should report an all-green suite\nStatus: %s\nOutput: %q\n' "$actual" "$output" >&2
+		(( fails++ ))
+	fi
+
+	(( tests++ ))
+	output=$(HOME="$tmpdir/home" "$runner" --test-dir "$tmpdir/empty" 2>&1)
+	actual=$?
+	if [[ "$actual" == 2 && "$output" == *'No test files found'* ]]; then
+		printf '✓ run_test_suite rejects an empty suite\n'
+	else
+		printf '✗ run_test_suite should reject an empty suite\nStatus: %s\nOutput: %q\n' "$actual" "$output" >&2
+		(( fails++ ))
+	fi
+
+	(( tests++ ))
+	output=$(HOME="$tmpdir/home" "$runner" --test-dir "$tmpdir/nonexec" 2>&1)
+	actual=$?
+	if [[ "$actual" == 126 && "$output" == *'not executable'* ]]; then
+		printf '✓ run_test_suite rejects non-executable test files\n'
+	else
+		printf '✗ run_test_suite should reject non-executable test files\nStatus: %s\nOutput: %q\n' "$actual" "$output" >&2
+		(( fails++ ))
+	fi
+
+	(( tests++ ))
+	output=$(HOME="$tmpdir/home" "$runner" --test-dir "$tmpdir/capped" 2>&1)
+	actual=$?
+	if [[ "$actual" == 255 && "$output" == *'summed exit status: 300'* ]]; then
+		printf '✓ run_test_suite caps overflowing process exit statuses\n'
+	else
+		printf '✗ run_test_suite should report the exact sum and cap its process status\nStatus: %s\nOutput: %q\n' "$actual" "$output" >&2
+		(( fails++ ))
+	fi
+
+	(( tests++ ))
+	output=$(HOME="$tmpdir/home" "$runner" --help 2>&1)
+	actual=$?
+	if [[ "$actual" == 0 && "$output" == *'Usage: run_test_suite'* && "$output" == *'--test'* ]]; then
+		printf '✓ run_test_suite documents its CLI\n'
+	else
+		printf '✗ run_test_suite should document its CLI\nStatus: %s\nOutput: %q\n' "$actual" "$output" >&2
+		(( fails++ ))
+	fi
+
+	(( tests++ ))
+	output=$(HOME="$tmpdir/home" "$compatibility_runner" --test-dir "$tmpdir/passing" 2>&1)
+	actual=$?
+	if [[ "$actual" == 0 && "$output" == *'All 1 test files passed'* ]]; then
+		printf '✓ test_dotfiles forwards to run_test_suite\n'
+	else
+		printf '✗ test_dotfiles should forward to run_test_suite\nStatus: %s\nOutput: %q\n' "$actual" "$output" >&2
+		(( fails++ ))
+	fi
+
+	if (( fails > 0 )); then
+		printf '%s of %s run_test_suite tests failed!\n' "$fails" "$tests" >&2
+	else
+		printf 'All %s run_test_suite tests passed!\n' "$tests"
+	fi
+	return "$fails"
+}
+
+test_run_test_suite

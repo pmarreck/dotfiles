@@ -8,28 +8,28 @@ test_isacolortty() {
 	# --- Positive cases (color-capable) ---
 
 	(( tests++ ))
-	TERM=xterm-256color isacolortty
+	NO_COLOR= TERM=xterm-256color isacolortty
 	assert "$?" == "0" "xterm-256color should be color-capable"
 	(( fails += $? ))
 
 	# Modern terminals that lack the literal substring "color" in TERM
 	(( tests++ ))
-	TERM=xterm-ghostty isacolortty
+	NO_COLOR= TERM=xterm-ghostty isacolortty
 	assert "$?" == "0" "xterm-ghostty (Ghostty) should be color-capable"
 	(( fails += $? ))
 
 	(( tests++ ))
-	TERM=xterm-kitty isacolortty
+	NO_COLOR= TERM=xterm-kitty isacolortty
 	assert "$?" == "0" "xterm-kitty (Kitty) should be color-capable"
 	(( fails += $? ))
 
 	(( tests++ ))
-	TERM=wezterm isacolortty
+	NO_COLOR= TERM=wezterm isacolortty
 	assert "$?" == "0" "wezterm should be color-capable"
 	(( fails += $? ))
 
 	(( tests++ ))
-	TERM=alacritty isacolortty
+	NO_COLOR= TERM=alacritty isacolortty
 	assert "$?" == "0" "alacritty should be color-capable"
 	(( fails += $? ))
 

@@ -16,12 +16,12 @@
 # Usage:
 #   bin/test/shell_startup_time_test               # default: 10 iterations
 #   ITERATIONS=20 bin/test/shell_startup_time_test
-#   TIMEOUT=10 bin/test/shell_startup_time_test    # per-iteration timeout (sec)
+#   SHELL_STARTUP_TIMEOUT=10 bin/test/shell_startup_time_test
 
 set -u
 
 ITERATIONS="${ITERATIONS:-10}"
-TIMEOUT="${TIMEOUT:-5}"
+SHELL_STARTUP_TIMEOUT="${SHELL_STARTUP_TIMEOUT:-5}"
 SESSION_PREFIX="shell-startup-test-$$"
 
 # Discard one warmup pass to absorb cold filesystem caches (tmux binary load,
@@ -65,7 +65,7 @@ run_one() {
 	# Wait for the session to terminate (shell exited). Poll every 25ms.
 	# Cap total wait at $TIMEOUT seconds.
 	local poll_interval_us=25000  # 25ms in microseconds
-	local timeout_us=$((TIMEOUT * 1000000))
+	local timeout_us=$((SHELL_STARTUP_TIMEOUT * 1000000))
 	local waited_us=0
 	while tmux has-session -t "$session" 2>/dev/null; do
 		if (( waited_us >= timeout_us )); then
@@ -124,7 +124,7 @@ stats() {
 }
 
 main() {
-	echo "shell_startup_time_test: $ITERATIONS iterations (+ $WARMUP_ITERATIONS warmup), ${TIMEOUT}s timeout each"
+	echo "shell_startup_time_test: $ITERATIONS iterations (+ $WARMUP_ITERATIONS warmup), ${SHELL_STARTUP_TIMEOUT}s timeout each"
 	echo "  (decoration skipped via SHELL_STARTUP_BENCHMARK=1)"
 	echo
 
@@ -146,7 +146,7 @@ main() {
 		t=$(run_one "$i")
 		case "$t" in
 			TIMEOUT)
-				echo "TIMEOUT (>${TIMEOUT}s)" >&2
+				echo "TIMEOUT (>${SHELL_STARTUP_TIMEOUT}s)" >&2
 				((fails++))
 				;;
 			ERROR)

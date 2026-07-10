@@ -11,13 +11,21 @@ tests=0
 WRAPPER="$HOME/dotfiles/bin/sed"
 WRAPPER_CANONICAL="$(readlink -f "$WRAPPER")"
 WRAPPER_DIR="$(dirname "$WRAPPER_CANONICAL")"
+BASH_BIN="$(type -P bash)"
+TIMEOUT_BIN="$(type -P timeout)"
+SUPPORT_DIR=$(mktemp -d --tmpdir sed_test_support.XXXXXX)
+trap 'rm -rf "$SUPPORT_DIR"' EXIT
+for support_command in bash basename grep readlink; do
+	ln -s "$(type -P "$support_command")" "$SUPPORT_DIR/$support_command"
+done
+RESTRICTED_PATH="$WRAPPER_DIR:$SUPPORT_DIR:/bin:/usr/bin"
 
 # Test 1: PATH puts wrapper first AND has no gsed. Wrapper must not recurse.
 # /bin/sed (BSD on macOS, GNU on Linux) is always present in this PATH, so
 # the wrapper-with-fix should find /bin/sed and use it.
 ((tests++))
 echo "Testing: wrapper does not recurse when only itself is the first sed..."
-output=$(PATH="$WRAPPER_DIR:/bin:/usr/bin" timeout 3 "$WRAPPER" 's/hello/world/' <<<"hello" 2>/dev/null)
+output=$(PATH="$RESTRICTED_PATH" "$TIMEOUT_BIN" 3 "$BASH_BIN" "$WRAPPER" 's/hello/world/' <<<"hello" 2>/dev/null)
 rc=$?
 if [[ $rc -eq 124 ]]; then
 	echo "✗ Test failed: hit 3s timeout — wrapper is recursing into itself" >&2
@@ -49,7 +57,7 @@ if [[ -z "$REAL_SED" ]]; then
 else
 	REAL_SED_DIR="$(dirname "$REAL_SED")"
 	# /usr/bin needed for basename which the wrapper uses at the end of the script
-	output=$(PATH="$WRAPPER_DIR:$REAL_SED_DIR:/usr/bin" timeout 3 "$WRAPPER" 's/hello/world/' <<<"hello" 2>/dev/null)
+	output=$(PATH="$WRAPPER_DIR:$REAL_SED_DIR:$SUPPORT_DIR:/usr/bin" "$TIMEOUT_BIN" 3 "$BASH_BIN" "$WRAPPER" 's/hello/world/' <<<"hello" 2>/dev/null)
 	rc=$?
 	if [[ $rc -eq 0 ]] && [[ "$output" == "world" ]]; then
 		echo "✓ Test passed: real sed used (from $REAL_SED_DIR)"
@@ -77,11 +85,13 @@ fi
 # Test 4: when the fallback is non-GNU (BSD /bin/sed on macOS), warn to stderr.
 ((tests++))
 echo "Testing: wrapper warns to stderr when fallback is non-GNU..."
-err_output=$(PATH="$WRAPPER_DIR:/bin:/usr/bin" timeout 3 "$WRAPPER" 's/hello/world/' <<<"hello" 2>&1 >/dev/null)
-if [[ "$err_output" == *non-GNU* ]] || [[ "$err_output" == *warning* ]]; then
+FALLBACK_DIR=$(mktemp -d --tmpdir sed_test_fallback.XXXXXX)
+printf '#!/usr/bin/env bash\nif [[ "$1" == --version ]]; then exit 1; fi\nexec %q "$@"\n' "$REAL_SED" >"$FALLBACK_DIR/sed"
+chmod +x "$FALLBACK_DIR/sed"
+FALLBACK_PATH="$WRAPPER_DIR:$FALLBACK_DIR:$SUPPORT_DIR:/bin:/usr/bin"
+err_output=$(PATH="$FALLBACK_PATH" "$TIMEOUT_BIN" 3 "$BASH_BIN" "$WRAPPER" 's/hello/world/' <<<"hello" 2>&1 >/dev/null)
+if [[ "$err_output" == *non-GNU* ]]; then
 	echo "✓ Test passed: warning emitted on non-GNU fallback"
-elif [[ "$(uname)" == "Linux" ]]; then
-	echo "✓ Test skipped: Linux fallback /bin/sed is GNU, no warning expected"
 else
 	echo "✗ Test failed: expected warning, got: '$err_output'" >&2
 	((fails++))
@@ -90,7 +100,7 @@ fi
 # Test 5: MUTE_GNU_WRAPPER_WARNINGS=1 suppresses the warning.
 ((tests++))
 echo "Testing: MUTE_GNU_WRAPPER_WARNINGS=1 suppresses the warning..."
-err_output=$(MUTE_GNU_WRAPPER_WARNINGS=1 PATH="$WRAPPER_DIR:/bin:/usr/bin" timeout 3 "$WRAPPER" 's/hello/world/' <<<"hello" 2>&1 >/dev/null)
+err_output=$(MUTE_GNU_WRAPPER_WARNINGS=1 PATH="$FALLBACK_PATH" "$TIMEOUT_BIN" 3 "$BASH_BIN" "$WRAPPER" 's/hello/world/' <<<"hello" 2>&1 >/dev/null)
 if [[ -z "$err_output" ]]; then
 	echo "✓ Test passed: no stderr output when muted"
 else

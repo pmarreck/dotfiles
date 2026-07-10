@@ -28,7 +28,7 @@ fi
 FUNCTION_NAME="${COLOR_NAME}_text"
 
 # Compare the hexdump output to avoid escape sequence interpretation issues
-result="$(TERM=xterm-256color $FUNCTION_NAME "test" | hexdump -C)"
+result="$(NO_COLOR= FORCE_COLOR=1 TERM=xterm-256color "$FUNCTION_NAME" "test" | hexdump -C)"
 expected="$(printf "\033[${COLOR_CODE}mtest\033[0m" | hexdump -C)"
 
 if [ "$result" = "$expected" ]; then
@@ -46,7 +46,7 @@ else
   echo -n "Expected (should be ${COLOR_NAME}): "
   printf "\033[${COLOR_CODE}mtest\033[0m\n"
   echo -n "Actual output: "
-  $FUNCTION_NAME "test"
+  NO_COLOR= FORCE_COLOR=1 TERM=xterm-256color "$FUNCTION_NAME" "test"
   echo
   exit 1
 fi

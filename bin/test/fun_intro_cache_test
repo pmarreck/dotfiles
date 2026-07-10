@@ -18,12 +18,10 @@ tests=0
 # Use an isolated XDG_CACHE_HOME so we don't touch the user's real cache
 ORIG_XDG="${XDG_CACHE_HOME:-}"
 export XDG_CACHE_HOME="$(mktemp -d --tmpdir fun_intro_cache_test.XXXXXX)"
-trap 'XDG_CACHE_HOME="$ORIG_XDG" /bin/rm -rf "$XDG_CACHE_HOME"' EXIT
+export IMAGE_CAPABLE=false
+trap 'XDG_CACHE_HOME="$ORIG_XDG" rm -rf "$XDG_CACHE_HOME"' EXIT
 
-# Source fun_intro so we can call it as a bash function
-. "$HOME/dotfiles/bin/fun_intro"
-
-EXPECTED_PATH="$XDG_CACHE_HOME/dotfiles/fun_intro/cached"
+EXPECTED_PATH="$XDG_CACHE_HOME/dotfiles/fun_intro/cached.image_incapable"
 
 # Test 1: --cache-path emits expected XDG-rooted path
 ((tests++))
@@ -116,7 +114,7 @@ if command -v expect >/dev/null 2>&1 && command -v mandelbash >/dev/null 2>&1; t
 		echo "✗ Test failed: direct=$direct_bytes captured=$captured_bytes" >&2
 		((fails++))
 	fi
-	/bin/rm -f "$direct_file" "$captured_file"
+	rm -f "$direct_file" "$captured_file"
 else
 	echo "✓ Test skipped: expect or mandelbash not on PATH"
 fi
@@ -157,7 +155,7 @@ fi
 ((tests++))
 echo "Testing: SHELL_STARTUP_BENCHMARK=1 short-circuits decoration entirely..."
 # Wipe cache so we'd notice if cold-start path fired
-/bin/rm -f "$EXPECTED_PATH"
+rm -f "$EXPECTED_PATH"
 SHELL_STARTUP_BENCHMARK=1 bash -lic 'exit' >/dev/null 2>&1
 if [[ ! -e "$EXPECTED_PATH" ]] || [[ ! -s "$EXPECTED_PATH" ]]; then
 	echo "✓ Test passed: benchmark mode created no cache (decoration skipped)"

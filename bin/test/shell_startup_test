@@ -11,12 +11,12 @@
 #   - .bash_profile  (login shells)
 #   - .bashrc        (non-login interactive shells, e.g. tmux panes)
 #   - $BASH_ENV      (non-interactive shells, e.g. `ssh host cmd`, scripts)
-# Until ~/.shellenv exists, the non-interactive quadrant is expected to FAIL
-# (the TDD "red" that this refactor turns green).
+# Exercise the tracked shellenv directly; install_dotfiles links it to ~/.shellenv.
 
 set -u
 
 BASH_BIN="${BASH:-}"; [ -x "$BASH_BIN" ] || BASH_BIN="$(command -v bash)"
+SHELLENV="$HOME/dotfiles/.shellenv"
 # A pristine, SSH-like base PATH: deliberately NO ~/bin — exactly what sshd
 # hands a fresh shell before our dotfiles run. The env bucket must add the rest.
 BASE_PATH="/run/current-system/sw/bin:/usr/bin:/bin"
@@ -64,7 +64,7 @@ check "non-login interactive  (bash -i, ~tmux)" \
 
 # non-interactive: $BASH_ENV -> .shellenv (ssh-cmd / script case)
 check "non-interactive        (BASH_ENV, ~ssh cmd)" \
-	"$(clean_run "BASH_ENV=$HOME/.shellenv" --)"
+	"$(clean_run "BASH_ENV=$SHELLENV" --)"
 
 if (( fails )); then
 	echo "$fails quadrant(s) missing the env bucket" >&2

@@ -4,9 +4,18 @@
 test_randompassdict() {
 	local fails=0
 	local tests=0
-	
+	local tmpdir
+
 	# Override dictionary to use test file
-	export WORDLIST_FILEPATH="/tmp/test_dictionary.txt"
+	tmpdir=$(mktemp -d --tmpdir randompassdict_test.XXXXXX)
+	trap 'rm -rf "$tmpdir"' RETURN
+	export WORDLIST_FILEPATH="$tmpdir/dictionary.txt"
+	export RANDOM_SOURCE=/dev/urandom
+	printf '%s\n' \
+		a at cat dog fish bird house Apple Bobby Charlie David Edward \
+		password computer elephant fantastic wonderful programming dictionary \
+		beautiful extraordinary supercalifragilisticexpialidocious \
+		>"$WORDLIST_FILEPATH"
 	
 	echo "Testing randompassdict with test dictionary..."
 	
@@ -119,9 +128,8 @@ test_randompassdict() {
 	done
 	
 	# Count unique results
-	printf '%s\n' "${runs[@]}" | sort -u > /tmp/unique_runs.txt
-	unique_runs=$(cat /tmp/unique_runs.txt | wc -l)
-	rm -f /tmp/unique_runs.txt
+	printf '%s\n' "${runs[@]}" | sort -u > "$tmpdir/unique_runs.txt"
+	unique_runs=$(wc -l < "$tmpdir/unique_runs.txt")
 	
 	# We expect most runs to be different (at least 7 out of 10)
 	if [ "$unique_runs" -ge 7 ]; then
@@ -141,6 +149,7 @@ test_randompassdict() {
 	export JUST_OUTPUT_DICTIONARY=1
 	local dict_output=$(randompassdict 1 4 8 2>/dev/null)
 	unset JUST_OUTPUT_DICTIONARY
+	unset RANDOM_SOURCE
 	
 	# Should output the filtered dictionary, not a password
 	local dict_lines=$(echo "$dict_output" | wc -l)

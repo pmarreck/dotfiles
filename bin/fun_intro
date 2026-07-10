@@ -211,13 +211,13 @@ fun_intro() {
 				# place; both paths end up sharing the new inode.
 				# ln failure surfaces loudly — no silent cp fallback.
 				tmp_incap="${cache_incap}.new.$$"
-				/bin/rm -f "$tmp_incap"
+				rm -f "$tmp_incap"
 				ln "$tmp_image" "$tmp_incap"
 				mv "$tmp_image" "$cache_image"
 				mv "$tmp_incap" "$cache_incap"
 			fi
 		else
-			/bin/rm -f "$tmp_image"
+			rm -f "$tmp_image"
 			echo "$(date '+%Y-%m-%dT%H:%M:%S') fun_intro --regenerate-cache: rc=$rc, no cache written" >>"$err_log"
 		fi
 		return "$rc"

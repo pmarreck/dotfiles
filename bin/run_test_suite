@@ -1,79 +1,140 @@
 #!/usr/bin/env bash
 
-run_test_suite() {
-	# only redefine _run_expand_tests if it doesn't already exist
-	silence type _run_expand_tests || \
-	_run_expand_tests() {
-		# Only show test output if explicitly requested via GLOB_TEST_VERBOSE=true
-		# Test will still run silently to ensure functionality is correct
-		GLOB_TEST_VERBOSE=${GLOB_TEST_VERBOSE:-false} expand --test
-		return $?
-	}
-	local test_name="${1:-${0##*/}}"
-	local failed=false
-	local setup_fn="${2:-:}"    # Optional setup function
-	local test_fn="$3"         # The actual test function
-	local teardown_fn="${4:-:}" # Optional teardown function
-	local test_count=0
-	local pass_count=0
-	local fail_count=0
-	local verbose=${TEST_VERBOSE:-false}
+_run_test_suite_help() {
+	cat <<'EOF'
+Usage: run_test_suite [OPTIONS]
 
-	# Run tests in a subshell to capture failures
-	if (
-		# Run setup if provided
-		$setup_fn
+Discover and directly execute every *_test file in bin/test. Each test runs in
+its own process. The exit status is the sum of failing test exit codes, capped
+at 255 because process exit statuses are one byte.
 
-		# Run the test function if provided, otherwise assume tests are inline
-		if [[ -n "$test_fn" ]]; then
-			$test_fn
-		else
-			return 0  # No test function provided means success (inline tests handle their own returns)
-		fi
+Options:
+	-h, --help       Show this help message
+	--test           Run the runner's associated tests
+	--test-dir DIR   Discover tests in DIR instead of bin/test
 
-		# If we get here, all tests passed
-		true
-	); then
-		if [[ -n "$test_fn" ]]; then
-			$verbose && printf "\033[32m%s: PASS\033[0m\n" "$test_name"
-			((pass_count++))
-		fi
-	else
-		# Always show failures, even in non-verbose mode
-		printf "\033[31m%s: FAIL\033[0m\n" "$test_name"
-		((fail_count++))
-		failed=true
-	fi
-
-	# Run teardown if provided
-	$teardown_fn
-
-	# Update total test count
-	test_count=$((pass_count + fail_count))
-
-	# If this is the last test suite being run, show a summary (only in verbose mode unless there are failures)
-	# Use -- to ensure basename treats $0 as a filename even if it starts with a dash
-	if [[ "$test_name" == "$(basename -- "$0")" && ($verbose == true || $fail_count -gt 0) ]]; then
-		printf "\nTest Summary:\n"
-		printf "Total Tests: %d\n" $test_count
-		printf "\033[32mPassed: %d\033[0m\n" $pass_count
-		if [[ $fail_count -gt 0 ]]; then
-			printf "\033[31mFailed: %d\033[0m\n" $fail_count
-		fi
-	fi
-
-	$failed && return 1 || return 0
+The compatibility command test_dotfiles invokes this same runner.
+EOF
 }
 
-# Run the function if this script is executed directly
-if ! (return 0 2>/dev/null); then
-	# Check if we are running tests
-	if [ "$1" = "--test" ]; then
-		# Run tests from the test file
-		_test_file="$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
-		if [ -f "$_test_file" ]; then . "$_test_file" > /dev/null; fi
-	else
-		# If called directly, pass all arguments to the function
-		$(basename "${0##\-}") "$@"
+run_test_suite() {
+	local script_dir
+	local repo_root
+	local test_dir
+	local nullglob_was_set=false
+	local noglob_was_set=false
+	local test_files=()
+	local test_file
+	local test_name
+	local status
+	local summed_status=0
+	local passed=0
+	local failed=0
+	local total
+	local index=0
+
+	script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+	repo_root="$(dirname "$script_dir")"
+	test_dir="$script_dir/test"
+
+	while (( $# > 0 )); do
+		case "$1" in
+			-h | --help)
+				_run_test_suite_help
+				return 0
+				;;
+			--test-dir)
+				if (( $# < 2 )); then
+					printf 'Error: --test-dir requires a directory.\n' >&2
+					return 2
+				fi
+				test_dir="$2"
+				shift 2
+				;;
+			*)
+				printf 'Error: unknown option: %s\n' "$1" >&2
+				_run_test_suite_help >&2
+				return 2
+				;;
+		esac
+	done
+
+	if [[ ! -d "$test_dir" ]]; then
+		printf 'Error: test directory not found: %s\n' "$test_dir" >&2
+		return 2
 	fi
+	test_dir="$(cd "$test_dir" && pwd -P)"
+
+	shopt -q nullglob && nullglob_was_set=true
+	[[ "$-" == *f* ]] && noglob_was_set=true
+	set +f
+	shopt -s nullglob
+	test_files=("$test_dir"/*_test)
+	"$nullglob_was_set" || shopt -u nullglob
+	"$noglob_was_set" && set -f
+
+	total=${#test_files[@]}
+	if (( total == 0 )); then
+		printf 'Error: No test files found in %s.\n' "$test_dir" >&2
+		return 2
+	fi
+
+	printf 'Running %s test files from %s\n' "$total" "$test_dir"
+	for test_file in "${test_files[@]}"; do
+		(( index++ ))
+		test_name="${test_file##*/}"
+		printf '\n[%s/%s] %s\n' "$index" "$total" "$test_name"
+
+		if [[ ! -x "$test_file" ]]; then
+			status=126
+			printf 'FAIL %s: test file is not executable (exit %s)\n' "$test_name" "$status" >&2
+		else
+			if (cd "$repo_root" && "$test_file"); then
+				status=0
+			else
+				status=$?
+			fi
+		fi
+
+		if (( status == 0 )); then
+			(( passed++ ))
+			printf 'PASS %s\n' "$test_name"
+		else
+			(( failed++ ))
+			(( summed_status += status ))
+			if [[ -x "$test_file" ]]; then
+				printf 'FAIL %s (exit %s)\n' "$test_name" "$status" >&2
+			fi
+		fi
+	done
+
+	if (( failed == 0 )); then
+		printf '\nAll %s test files passed.\n' "$total"
+		return 0
+	fi
+
+	printf '\n%s of %s test files failed; %s passed; summed exit status: %s.\n' \
+		"$failed" "$total" "$passed" "$summed_status" >&2
+	if (( summed_status > 255 )); then
+		return 255
+	fi
+	return "$summed_status"
+}
+
+if ! (return 0 2>/dev/null); then
+	if [[ "${1:-}" == '--test' ]]; then
+		if (( $# != 1 )); then
+			printf 'Error: --test does not accept arguments.\n' >&2
+			exit 2
+		fi
+		test_file="$(dirname "${BASH_SOURCE[0]}")/test/run_test_suite_test"
+		if [[ ! -x "$test_file" ]]; then
+			printf 'Error: test file is missing or not executable: %s\n' "$test_file" >&2
+			exit 1
+		fi
+		"$test_file" >/dev/null
+		exit $?
+	fi
+	run_test_suite "$@"
+	exit $?
 fi

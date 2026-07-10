@@ -51,7 +51,7 @@ test_inspect() {
 	output=$(inspect assoc)
 	# Note that associative array order IS NOT GUARANTEED so we have to check both possibilities!
 	local a_first=false
-	[[ "$output" =~ *"( [a]"* ]] && a_first=true
+	[[ "$output" == 'assoc=([a]='* ]] && a_first=true
 	if $a_first; then
 		assert "$output" == "assoc=([a]=\"1\" [b]=\"2\");" "inspect should return the proper variable name and value declaration for associative arrays"
 	else

@@ -10,13 +10,21 @@ tests=0
 WRAPPER="$HOME/dotfiles/bin/shuf"
 WRAPPER_CANONICAL="$(readlink -f "$WRAPPER")"
 WRAPPER_DIR="$(dirname "$WRAPPER_CANONICAL")"
+BASH_BIN="$(type -P bash)"
+TIMEOUT_BIN="$(type -P timeout)"
+SUPPORT_DIR=$(mktemp -d --tmpdir shuf_test_support.XXXXXX)
+trap 'rm -rf "$SUPPORT_DIR"' EXIT
+for support_command in bash basename grep readlink; do
+	ln -s "$(type -P "$support_command")" "$SUPPORT_DIR/$support_command"
+done
+RESTRICTED_PATH="$WRAPPER_DIR:$SUPPORT_DIR:/bin:/usr/bin"
 
 # Test 1: PATH puts wrapper first AND has no gshuf. Wrapper must not recurse.
 # On macOS /bin and /usr/bin have no shuf; on Linux /usr/bin/shuf typically
 # exists. Either way, the wrapper must NOT time out.
 ((tests++))
 echo "Testing: wrapper does not recurse when only itself is reachable as shuf..."
-output=$(PATH="$WRAPPER_DIR:/bin:/usr/bin" timeout 3 "$WRAPPER" <<<"hello" 2>&1)
+output=$(PATH="$RESTRICTED_PATH" "$TIMEOUT_BIN" 3 "$BASH_BIN" "$WRAPPER" <<<"hello" 2>&1)
 rc=$?
 if [[ $rc -eq 124 ]]; then
 	echo "✗ Test failed: hit 3s timeout — wrapper is recursing into itself" >&2
@@ -47,7 +55,7 @@ if [[ -z "$REAL_SHUF" ]]; then
 	echo "✓ Test skipped: no non-wrapper shuf on this system to fall back to"
 else
 	REAL_SHUF_DIR="$(dirname "$REAL_SHUF")"
-	output=$(PATH="$WRAPPER_DIR:$REAL_SHUF_DIR" timeout 3 "$WRAPPER" <<<"hello" 2>&1)
+	output=$(PATH="$WRAPPER_DIR:$REAL_SHUF_DIR:$SUPPORT_DIR" "$TIMEOUT_BIN" 3 "$BASH_BIN" "$WRAPPER" <<<"hello" 2>&1)
 	rc=$?
 	if [[ $rc -eq 0 ]] && [[ "$output" == "hello" ]]; then
 		echo "✓ Test passed: real shuf used (single-line shuffle is identity)"

@@ -318,7 +318,7 @@ test_glob() {
   # Create test files for this test
   touch test1.jpg test2.jpg
   output=$(glob "test1.jpg" "nonexistent*.jpg" "test2.jpg" 2>/dev/null)
-  expected_files=$'test1.jpg\\ntest2.jpg'
+  expected_files=$'test1.jpg\ntest2.jpg'
   assert "$output" == "$expected_files" "glob should include only matching patterns, skip non-matching ones"
   (( fails += $? ))
   # Clean up test files
@@ -347,7 +347,7 @@ test_glob() {
   # Create test files for brace expansion
   touch test1.jpg test2.jpg test.png
   output=$(glob "*.{jpg,png}" 2>/dev/null)
-  expected_files=$'test.png\\ntest1.jpg\\ntest2.jpg'
+  expected_files=$'test.png\ntest1.jpg\ntest2.jpg'
   assert "$output" == "$expected_files" "glob should handle quoted brace expansion"
   (( fails += $? ))
   # Clean up test files
@@ -465,7 +465,7 @@ EOF
   (( tests++ ))
   touch "file with spaces.jpg" "other.txt"
   output=$(glob "file with spaces.jpg" "*.txt" 2>/dev/null)
-  expected_files=$'file with spaces.jpg\\nother.txt'
+  expected_files=$'file with spaces.jpg\nother.txt'
   assert "$output" == "$expected_files" "glob should treat file paths as patterns in direct mode"
   (( fails += $? ))
   # Clean up

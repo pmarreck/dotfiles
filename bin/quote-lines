@@ -1,20 +1,21 @@
 #!/usr/bin/env bash
 
-quote_lines() {
+quote-lines() {
 	_show_help() {
 		cat << 'EOF'
-quote_lines: Read newline-separated input from stdin and emit each line double-quoted,
-escaping any embedded double quotes.
+quote-lines: Read newline-separated input from stdin and emit each line double-quoted,
+escaping any embedded double quotes. Lines already surrounded by double quotes are
+emitted unchanged.
 
 USAGE:
-	quote_lines [OPTIONS]
+	quote-lines [OPTIONS]
 
 OPTIONS:
 	-h, --help   Show this help message
 	--test       Run associated tests
 
 EXAMPLES:
-	printf 'a\nb "c"\n' | quote_lines
+	printf 'a\nb "c"\n' | quote-lines
 	# => "a"
 	# => "b \"c\""
 EOF
@@ -27,9 +28,9 @@ EOF
 
 	if [[ "$1" == "--test" ]]; then
 		local test_file
-		test_file="$(dirname "${BASH_SOURCE[0]}")/test/quote_lines_test"
+		test_file="$(dirname "${BASH_SOURCE[0]}")/test/quote-lines_test"
 		if [[ -f "$test_file" ]]; then
-			"$test_file"
+			"$test_file" >/dev/null
 		else
 			echo "Error: Test file not found: $test_file" >&2
 			return 1
@@ -43,13 +44,17 @@ EOF
 		return 2
 	fi
 
-	# Read stdin and quote each line, escaping embedded quotes
+	# Read stdin and quote each unquoted line, escaping embedded quotes.
 	while IFS= read -r line || [[ -n "$line" ]]; do
+		if (( ${#line} >= 2 )) && [[ "${line:0:1}" == '"' && "${line: -1}" == '"' ]]; then
+			printf '%s\n' "$line"
+			continue
+		fi
 		line=${line//\"/\\\"}
 		printf '"%s"\n' "$line"
 	done
 }
 
 if ! (return 0 2>/dev/null); then
-	quote_lines "$@"
+	quote-lines "$@"
 fi

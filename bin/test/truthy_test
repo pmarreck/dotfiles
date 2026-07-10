@@ -72,6 +72,10 @@ truthy_test() {
 case "$(basename "${0##-}")" in
   truthy_test|falsey_test)
     truthy_test
+		exit $?
     ;;
 esac
-[ "$1" = "--test" ] && truthy_test
+if [ "$1" = "--test" ]; then
+	truthy_test
+	exit $?
+fi

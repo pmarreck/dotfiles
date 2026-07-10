@@ -11,7 +11,7 @@ load_and_filter_dict() {
 	# CORRECTION: We moved it out to its own file instead of being clever.
 	# Use the extracted dictionary file
 	local dict_file="${WORDLIST_FILEPATH:-"$HOME/dotfiles/bin/data/dictionary.txt"}"
-	[ -f "$dict_file" ] || { echo "error from load_and_filter_dict: $dict_file missing. Exiting."; return 1; }
+	[ -f "$dict_file" ] || { echo "error from load_and_filter_dict: $dict_file missing. Exiting." >&2; return 1; }
 	# take the dict, filter out anything not within the min/max length
 	# optionally filter out anything that starts with a capital letter (e.g. proper nouns)
 	local pool;

@@ -14,6 +14,14 @@ tests=0
 WRAPPER="$HOME/dotfiles/bin/tac"
 WRAPPER_CANONICAL="$(readlink -f "$WRAPPER")"
 WRAPPER_DIR="$(dirname "$WRAPPER_CANONICAL")"
+BASH_BIN="$(type -P bash)"
+TIMEOUT_BIN="$(type -P timeout)"
+SUPPORT_DIR=$(mktemp -d --tmpdir tac_test_support.XXXXXX)
+trap 'rm -rf "$SUPPORT_DIR"' EXIT
+for support_command in bash basename grep readlink; do
+	ln -s "$(type -P "$support_command")" "$SUPPORT_DIR/$support_command"
+done
+RESTRICTED_PATH="$WRAPPER_DIR:$SUPPORT_DIR:/bin:/usr/bin"
 
 # Test 1: When PATH puts the wrapper first AND has no gtac AND has no other tac,
 # the wrapper must error cleanly with rc=1 — NOT recurse into itself until
@@ -29,7 +37,7 @@ WRAPPER_DIR="$(dirname "$WRAPPER_CANONICAL")"
 # the wrapper must NOT recurse.
 ((tests++))
 echo "Testing: wrapper errors cleanly when only itself is reachable on PATH..."
-output=$(PATH="$WRAPPER_DIR:/bin:/usr/bin" timeout 3 "$WRAPPER" <<<"hello" 2>&1)
+output=$(PATH="$RESTRICTED_PATH" "$TIMEOUT_BIN" 3 "$BASH_BIN" "$WRAPPER" <<<"hello" 2>&1)
 rc=$?
 # Accept either: clean rc=1 with an Error message (macOS path, no real tac
 # anywhere), or rc=0 with the input echoed back (Linux path, /usr/bin/tac
@@ -66,7 +74,7 @@ if [[ -z "$REAL_TAC" ]]; then
 	echo "✓ Test skipped: no non-wrapper tac on this system to fall back to"
 else
 	REAL_TAC_DIR="$(dirname "$REAL_TAC")"
-	output=$(PATH="$WRAPPER_DIR:$REAL_TAC_DIR" timeout 3 "$WRAPPER" <<<$'a\nb\nc' 2>&1)
+	output=$(PATH="$WRAPPER_DIR:$REAL_TAC_DIR:$SUPPORT_DIR" "$TIMEOUT_BIN" 3 "$BASH_BIN" "$WRAPPER" <<<$'a\nb\nc' 2>&1)
 	rc=$?
 	expected=$'c\nb\na'
 	if [[ $rc -eq 0 ]] && [[ "$output" == "$expected" ]]; then

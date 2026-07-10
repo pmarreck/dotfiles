@@ -69,11 +69,11 @@ done
 width=${HR_WIDTH:-}
 if [[ -z "$width" ]]; then
 	if [[ -r /dev/tty ]]; then
-		if size=$(stty size </dev/tty 2>/dev/null); then
+		if size=$(stty size 2>/dev/null </dev/tty); then
 			width=${size##* }
 		fi
 		if [[ -z "$width" ]]; then
-			width=$(tput cols </dev/tty 2>/dev/null || true)
+			width=$(tput cols 2>/dev/null </dev/tty || true)
 		fi
 	fi
 fi

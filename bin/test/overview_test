@@ -15,7 +15,7 @@ export PATH="$TEST_DIR/bin:$PATH"
 # Setup mocks
 # 1. executables: mock command to list our test subjects
 cat <<'EOF' > "$TEST_DIR/bin/executables"
-#!/bin/bash
+#!/usr/bin/env bash
 echo "safe_cmd"
 echo "unsafe_cmd"
 echo "binary_safe_cmd"
@@ -26,7 +26,7 @@ chmod +x "$TEST_DIR/bin/executables"
 
 # 2. functions: mock command to list functions
 cat <<'EOF' > "$TEST_DIR/bin/functions"
-#!/bin/bash
+#!/usr/bin/env bash
 echo "safe_func"
 echo "unsafe_func"
 EOF
@@ -34,7 +34,7 @@ chmod +x "$TEST_DIR/bin/functions"
 
 # 3. safe_cmd: Has "--about" in text, returns success
 cat <<'EOF' > "$TEST_DIR/bin/safe_cmd"
-#!/bin/bash
+#!/usr/bin/env bash
 # This script handles --about flag
 if [[ "$1" == "--about" ]]; then
     echo "I am a safe command"
@@ -46,7 +46,7 @@ chmod +x "$TEST_DIR/bin/safe_cmd"
 # 4. unsafe_cmd: Does NOT have the flag in text. If called with --about, it explodes (simulated)
 # We make it fail hard if run, to ensure overview didn't run it
 cat <<'EOF' > "$TEST_DIR/bin/unsafe_cmd"
-#!/bin/bash
+#!/usr/bin/env bash
 # I do not handle the special flag
 echo "DANGER: I was executed!" >&2
 exit 1
@@ -56,7 +56,7 @@ chmod +x "$TEST_DIR/bin/unsafe_cmd"
 # 5. binary_safe_cmd: A "binary" (or file treated as such) that contains "--about" string
 # We'll use a text file but expect 'strings' to find it.
 cat <<'EOF' > "$TEST_DIR/bin/binary_safe_cmd"
-#!/bin/bash
+#!/usr/bin/env bash
 # garbage binary content...
 # string --about exists here
 if [[ "$1" == "--about" ]]; then
@@ -68,7 +68,7 @@ chmod +x "$TEST_DIR/bin/binary_safe_cmd"
 
 # 6. binary_unsafe_cmd: A "binary" without the string
 cat <<'EOF' > "$TEST_DIR/bin/binary_unsafe_cmd"
-#!/bin/bash
+#!/usr/bin/env bash
 # garbage binary content...
 # string is missing
 echo "DANGER: Binary executed!" >&2

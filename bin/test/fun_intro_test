@@ -43,7 +43,7 @@ assert_true() {
 
 # Isolated cache dir per run. fun_intro honors XDG_CACHE_HOME.
 TEST_CACHE=$(mktemp -d --tmpdir fun_intro_test.XXXXXX)
-trap '/bin/rm -rf "$TEST_CACHE"' EXIT
+trap 'rm -rf "$TEST_CACHE"' EXIT
 export XDG_CACHE_HOME="$TEST_CACHE"
 CACHE_DIR="$TEST_CACHE/dotfiles/fun_intro"
 CAP="$CACHE_DIR/cached.image_capable"
@@ -79,7 +79,7 @@ assert_eq "$out" "" "--pick=echo invokes echo (empty stdout)"
 
 # ─── --regenerate-cache --pick=<text-name>: BOTH buckets, hardlinked ───────
 echo "==> --regenerate-cache with text pick"
-/bin/rm -rf "$CACHE_DIR"
+rm -rf "$CACHE_DIR"
 # Use a known text-only entry from the pool. fortune is universal; fall back if absent.
 if command -v fortune >/dev/null 2>&1; then
 	text_pick="fortune"
@@ -127,7 +127,7 @@ echo "==> hardlink failure surfaces loudly"
 if [ -n "$text_pick" ]; then
 	# Make the cache dir un-writable so ln (and subsequent ops) cannot succeed.
 	# We expect a non-zero exit code, not a silent success via cp fallback.
-	/bin/rm -rf "$CACHE_DIR"
+	rm -rf "$CACHE_DIR"
 	mkdir -p "$CACHE_DIR"
 	# Create a regular file at the image_incapable path; this blocks ln (target exists).
 	# But we also need to ensure the regenerator doesn't pre-remove it improperly.
@@ -141,7 +141,7 @@ if [ -n "$text_pick" ]; then
 	mkdir -p "$INCAP.blocker"
 	# We can't easily force ln to fail in the bucket pipeline without internals access.
 	# Skip the explicit failure test — covered by code review of the impl (no `|| cp`).
-	/bin/rm -rf "$INCAP.blocker"
+	rm -rf "$INCAP.blocker"
 	echo "(deferred: ln-failure is asserted by code review — impl must not have '|| cp')"
 fi
 

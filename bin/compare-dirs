@@ -182,6 +182,21 @@ if IS_MAC then
 else
 	local ok, lib = pcall(ffi.load, "crypto")
 	if not ok then
+		-- Nix commonly keeps libcrypto outside the loader's default search path.
+		-- Ask the platform linker which exact library the reachable openssl uses.
+		local pipe = io.popen("ldd \"$(command -v openssl)\" 2>/dev/null")
+		if pipe then
+			for line in pipe:lines() do
+				local path = line:match("=>%s+(%S*libcrypto%.so[^%s]*)")
+				if path then
+					ok, lib = pcall(ffi.load, path)
+					if ok then break end
+				end
+			end
+			pipe:close()
+		end
+	end
+	if not ok then
 		io.stderr:write("Error: libcrypto not found. Install openssl.\n")
 		os.exit(2)
 	end

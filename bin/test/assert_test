@@ -1,94 +1,92 @@
 #!/usr/bin/env bash
 
-test_fail_count=0
-test_output=""
+test_assert() {
+	local fails=0
+	local tests=0
+	local actual
+	local output
+	local assert_path
+	local tmpdir
 
-test_fail() {
-  ((test_fail_count++))
-  test_output+="$(red_text "[FAIL]") $1\n"
+	assert_path="$(readlink -f "$(dirname "${BASH_SOURCE[0]}")/../assert")"
+	tmpdir=$(mktemp -d --tmpdir assert_test.XXXXXX)
+	trap 'rm -rf "$tmpdir"' EXIT
+
+	check_status() {
+		local expected_status="$1"
+		local description="$2"
+		shift 2
+
+		(( tests++ ))
+		"$assert_path" "$@" >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+		actual=$?
+		if [[ "$actual" == "$expected_status" ]]; then
+			printf '✓ %s\n' "$description"
+		else
+			printf '✗ %s\nExpected status: %s\nActual status:   %s\n' \
+				"$description" "$expected_status" "$actual" >&2
+			printf 'stdout: ' >&2
+			command sed -n l "$tmpdir/stdout" >&2
+			printf 'stderr: ' >&2
+			command sed -n l "$tmpdir/stderr" >&2
+			(( fails++ ))
+		fi
+	}
+
+	check_status 0 'equal strings pass equality' 'same' == 'same'
+	check_status 1 'different strings fail equality' 'same' == 'different'
+	check_status 0 'different strings pass inequality' 'same' != 'different'
+	check_status 1 'equal strings fail inequality' 'same' !== 'same'
+	check_status 0 'empty strings pass equality' '' == ''
+	check_status 1 'empty and nonempty strings fail equality' '' == 'nonempty'
+	check_status 0 'empty and nonempty strings pass inequality' '' != 'nonempty'
+	check_status 1 'empty strings fail inequality' '' != ''
+	check_status 0 'multiline strings compare without data loss' $'line one\nline two\n' == $'line one\nline two\n'
+	check_status 0 'matching regular expressions pass' 'abc123' =~ '^[a-z]+[0-9]+$'
+	check_status 1 'nonmatching regular expressions fail' 'abc' =~ '^[0-9]+$'
+	check_status 0 'negative regular-expression matches pass' 'abc' !~ '^[0-9]+$'
+	check_status 1 'negative regular-expression matches fail' 'abc' !=~ '^[a-z]+$'
+	check_status 2 'unknown operators are usage errors' 'one' '<>' 'two'
+	check_status 2 'missing operands are usage errors' 'one' ==
+	check_status 2 'extra arguments are usage errors' 'one' == 'one' 'message' 'extra'
+
+	(( tests++ ))
+	output=$("$assert_path" --help 2>&1)
+	actual=$?
+	if [[ "$actual" == 0 && "$output" == *'Usage: assert'* && "$output" == *'--test'* ]]; then
+		printf '✓ --help documents usage and testing\n'
+	else
+		printf '✗ --help should succeed and document usage and testing\nStatus: %s\nOutput: %q\n' "$actual" "$output" >&2
+		(( fails++ ))
+	fi
+
+	(( tests++ ))
+	"$assert_path" 'same' == 'same' >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	actual=$?
+	if [[ "$actual" == 0 && ! -s "$tmpdir/stdout" && ! -s "$tmpdir/stderr" ]]; then
+		printf '✓ successful assertions are silent\n'
+	else
+		printf '✗ successful assertions should be silent\nStatus: %s\n' "$actual" >&2
+		(( fails++ ))
+	fi
+
+	(( tests++ ))
+	"$assert_path" 'actual' == 'expected' 'keep   message   spacing' >"$tmpdir/stdout" 2>"$tmpdir/stderr"
+	actual=$?
+	output=$(<"$tmpdir/stderr")
+	if [[ "$actual" == 1 && ! -s "$tmpdir/stdout" && "$output" == *'Assertion failed:'* && "$output" == *'keep   message   spacing'* ]]; then
+		printf '✓ failures return 1 with an exact stderr diagnostic\n'
+	else
+		printf '✗ failures should return 1 with an exact stderr diagnostic\nStatus: %s\nOutput: %q\n' "$actual" "$output" >&2
+		(( fails++ ))
+	fi
+
+	if (( fails > 0 )); then
+		printf '%s of %s assert tests failed!\n' "$fails" "$tests" >&2
+	else
+		printf 'All %s assert tests passed!\n' "$tests"
+	fi
+	return "$fails"
 }
-test_success() {
-  test_output+="$(green_text "[PASS]") $1\n"
-}
 
-silently() { "$@" &>/dev/null; }
-
-# TEST CASES
-# Passing equality
-t="1 should equal 1"
-silently assert '1' == '1' "$t" && test_success "$t" || test_fail "$t"
-
-# Passing inequality
-t="1 should not equal 2"
-silently assert '1' != '2' "$t" && test_success "$t" || test_fail "$t"
-
-# Failing equality
-t="1 should not equal 2 (fail)"
-silently assert '1' == '2' "$t" && test_fail "$t" || test_success "$t"
-
-# Failing inequality
-t="1 should equal 1 (fail)"
-silently assert '1' != '1' "$t" && test_fail "$t" || test_success "$t"
-
-# Regex match (should pass)
-t="abc matches ^a.*c$"
-silently assert 'abc' =~ '^a.*c$' "$t" && test_success "$t" || test_fail "$t"
-
-# Regex non-match (should fail)
-t="abc does not match ^b"
-silently assert 'abc' =~ '^b' "$t" && test_fail "$t" || test_success "$t"
-
-# Regex negative match (should pass)
-t="abc does not match ^z (negative match)"
-silently assert 'abc' !~ '^z' "$t" && test_success "$t" || test_fail "$t"
-
-# Regex negative match (should fail)
-t="abc should not match ^a (fail)"
-silently assert 'abc' !~ '^a' "$t" && test_fail "$t" || test_success "$t"
-
-# Unknown operator (should fail and print error)
-t="Unknown operator test"
-silently assert '1' ?? '1' "$t" && test_fail "$t" || test_success "$t"
-
-# Not enough arguments (should fail and print error)
-t="Not enough arguments"
-silently assert '1' == "$t" && test_fail "$t" || test_success "$t"
-
-# Arguments with newlines (should pass)
-t="Newline equality"
-silently assert $'foo\nbar' == $'foo\nbar' "$t" && test_success "$t" || test_fail "$t"
-
-# Arguments with newlines (should fail)
-t="Newline inequality (fail)"
-silently assert $'foo\nbar' == $'foo\nbaz' "$t" && test_fail "$t" || test_success "$t"
-
-# Empty string equality (should pass)
-t="Empty string equality"
-silently assert '' == '' "$t" && test_success "$t" || test_fail "$t"
-
-# Empty string inequality (should fail)
-t="Empty string inequality (fail)"
-silently assert '' != '' "$t" && test_fail "$t" || test_success "$t"
-# END TEST CASES
-
-unsets() {
-  local tfc=${test_fail_count:-0}
-  unset test_fail_count
-  unset test_output
-  unset test_fail
-  unset test_success
-  unset t
-  unset silently
-  unset unsets && return $tfc
-}
-
-if [ $test_fail_count -gt 0 ]; then
-  echo -e "$test_output"
-  puts --red "Test of assert failed: $test_fail_count failures"
-else
-  echo -e "$test_output"
-  puts --green "Test of assert passed!"
-fi
-
-unsets
-exit $?
+test_assert

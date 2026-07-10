@@ -802,13 +802,13 @@ EOF
 			# Print results according to output format
 			case "$output_format" in
 				"double-quote")
-					if ! command -v quote_lines >/dev/null 2>&1; then
-						echo "Error: quote_lines not found on PATH" >&2
+					if ! command -v quote-lines >/dev/null 2>&1; then
+						echo "Error: quote-lines not found on PATH" >&2
 						_restore_shopts
 						unset -f _restore_shopts
 						return 2
 					fi
-					printf "%s\n" "${processed_args[@]}" | LC_ALL=C sort | quote_lines
+					printf "%s\n" "${processed_args[@]}" | LC_ALL=C sort | quote-lines
 					;;
 				"space")
 					# Space-separated output with quoting (original behavior)

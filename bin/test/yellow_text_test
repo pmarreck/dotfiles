@@ -3,4 +3,4 @@
 # Test file for yellow_text function
 # Simply calls the generic color_text_test with appropriate color settings
 
-TESTCOLOR=yellow:93 "$HOME/dotfiles/bin/test/_color_text_test"
+TESTCOLOR=yellow:93 "$HOME/dotfiles/bin/test/_color_text"

@@ -15,6 +15,7 @@ write_stub() {
 }
 
 setup_common_stubs() {
+	ln -s "$(type -P bash)" "$STUB_DIR/bash"
 	write_stub "wezterm" '#!/usr/bin/env bash
 printf "wezterm:%s\n" "$*" >>"${NEWTERM_TEST_LOG}"'
 	write_stub "nohup" '#!/usr/bin/env bash
@@ -76,6 +77,7 @@ run_darwin_open_fallback_test() {
 	echo "Testing: macOS falls back to open when wezterm CLI missing"
 	STUB_DIR=$(make_stub_dir)
 	NEWTERM_TEST_LOG="$STUB_DIR/log"
+	ln -s "$(type -P bash)" "$STUB_DIR/bash"
 	# Provide only open + nohup stubs so CLI lookup fails
 	write_stub "nohup" '#!/usr/bin/env bash
 printf "nohup:%s\n" "$*" >>"${NEWTERM_TEST_LOG}"

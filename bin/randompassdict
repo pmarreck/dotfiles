@@ -17,7 +17,8 @@ randompassdict() {
 	local numwords=$1
 	local minlen=${2:-4}
 	local maxlen=${3:-14}
-	local dict="$(load_and_filter_dict $minlen $maxlen)"
+	local dict
+	dict=$(load_and_filter_dict "$minlen" "$maxlen") || return 1
 	local poolsize=$(printf "%s" "$dict" | wc -l)
 	# why is poolsize getting spaces in front? No idea. Removing them.
 	poolsize=${poolsize##* }

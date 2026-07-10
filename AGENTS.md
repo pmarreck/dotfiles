@@ -20,6 +20,7 @@ Most executables in `bin/` support a `--test` flag:
 
 - **`script --test`**: Runs associated test with **stdout muted**, **stderr preserved**
 - **`bin/test/script_test`** (direct): Shows **progress on stdout**, **errors on stderr**
+- **`run_test_suite`**: Directly executes every `bin/test/*_test` file and sums failure exit codes (capped at 255)
 - **Exit codes**: Should return the **number of failed tests** (0 = all passed)
 
 #### Test File Structure

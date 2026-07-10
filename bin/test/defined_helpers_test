@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+
+library="$(readlink -f "$(dirname "${BASH_SOURCE[0]}")/../src/defined_helpers.sh")"
+
+BASH_ENV="$library" "$BASH" --noprofile --norc -c '
+	fails=0
+	tests=0
+
+	check_status() {
+		expected="$1"
+		description="$2"
+		shift 2
+		(( tests++ ))
+		"$@"
+		actual=$?
+		if [[ "$actual" == "$expected" ]]; then
+			printf "✓ %s\n" "$description"
+		else
+			printf "✗ %s: expected %s, got %s\n" "$description" "$expected" "$actual" >&2
+			(( fails++ ))
+		fi
+	}
+
+	test_variable="value"
+	test_function() { :; }
+	alias test_alias=:
+
+	check_status 0 "var_defined sees a caller-local variable" var_defined test_variable
+	check_status 1 "var_defined rejects an unset variable" var_defined definitely_unset
+	check_status 2 "var_defined rejects an invalid name" var_defined 1bad
+	check_status 0 "func_defined sees a caller function" func_defined test_function
+	check_status 1 "func_defined distinguishes builtins from functions" func_defined echo
+	check_status 0 "alias_defined sees a caller alias" alias_defined test_alias
+	check_status 1 "alias_defined rejects an unknown alias" alias_defined no_such_alias
+	check_status 0 "defined sees variables" defined test_variable
+	check_status 0 "defined sees functions" defined test_function
+	check_status 0 "defined sees aliases" defined test_alias
+	check_status 0 "defined sees builtins" defined echo
+	check_status 0 "defined sees PATH executables" defined bash
+	check_status 1 "defined rejects unknown names" defined definitely_unknown
+	check_status 0 "defined accepts multiple known names" defined test_variable test_function echo bash
+	check_status 2 "defined requires at least one name" defined
+
+	if (( fails > 0 )); then
+		printf "%s of %s defined-helper tests failed!\n" "$fails" "$tests" >&2
+	else
+		printf "All %s defined-helper tests passed!\n" "$tests"
+	fi
+	exit "$fails"
+'
+bash_status=$?
+
+if ! /bin/sh -c '. "$1"; portable_variable=value; var_defined portable_variable && defined portable_variable printf' sh "$library"; then
+	printf '✗ defined helpers should remain POSIX-shell compatible\n' >&2
+	exit $((bash_status + 1))
+fi
+printf '✓ defined helpers remain POSIX-shell compatible\n'
+exit "$bash_status"

@@ -4,9 +4,17 @@
 test_load_and_filter_dict() {
 	local fails=0
 	local tests=0
-	
+	local tmpdir
+
 	# Override dictionary to use test file
-	export WORDLIST_FILEPATH="/tmp/test_dictionary.txt"
+	tmpdir=$(mktemp -d --tmpdir load_and_filter_dict_test.XXXXXX)
+	trap 'rm -rf "$tmpdir"' RETURN
+	export WORDLIST_FILEPATH="$tmpdir/dictionary.txt"
+	printf '%s\n' \
+		a at cat dog fish bird house Apple Bobby Charlie David Edward \
+		password computer elephant fantastic wonderful programming dictionary \
+		beautiful extraordinary supercalifragilisticexpialidocious \
+		>"$WORDLIST_FILEPATH"
 	
 	echo "Testing load_and_filter_dict with test dictionary..."
 	echo "Test dictionary contains:"

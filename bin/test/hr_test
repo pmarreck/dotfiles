@@ -47,11 +47,11 @@ fi
 echo "Testing: hr matches terminal width when TTY is available..."
 tty_width=""
 if [[ -r /dev/tty ]]; then
-	if size=$(stty size </dev/tty 2>/dev/null); then
+	if size=$(stty size 2>/dev/null </dev/tty); then
 		tty_width=${size##* }
 	fi
 	if [[ -z "$tty_width" ]]; then
-		tty_width=$(tput cols </dev/tty 2>/dev/null || true)
+		tty_width=$(tput cols 2>/dev/null </dev/tty || true)
 	fi
 fi
 if [[ -n "$tty_width" && "$tty_width" =~ ^[0-9]+$ && "$tty_width" -gt 0 ]]; then

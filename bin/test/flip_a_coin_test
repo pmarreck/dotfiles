@@ -2,9 +2,22 @@
 
 # Test the flip_a_coin function
 test_flip_a_coin() {
-  # Test with fixed RANDOM values
-  assert $(RANDOM=0 flip_a_coin) == "tails"
-  assert $(RANDOM=1 flip_a_coin) == "heads"
+	local fails=0
+	local tests=0
+
+	(( tests++ ))
+	assert "$(FLIP_A_COIN_RANDOM=0 flip_a_coin)" == "tails" "even injected values should produce tails"
+	(( fails += $? ))
+	(( tests++ ))
+	assert "$(FLIP_A_COIN_RANDOM=1 flip_a_coin)" == "heads" "odd injected values should produce heads"
+	(( fails += $? ))
+
+	if (( fails > 0 )); then
+		printf '%s of %s flip_a_coin tests failed!\n' "$fails" "$tests" >&2
+	else
+		printf 'All %s flip_a_coin tests passed!\n' "$tests"
+	fi
+	return "$fails"
 }
 
 # Run the test if this script is executed directly

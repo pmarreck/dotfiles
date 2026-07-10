@@ -49,6 +49,7 @@ test_basic_functionality() {
 EOF
 		echo "$status_code"
 	}
+	export -f mock_curl
 	
 	# Test with mocked curl
 	local result
@@ -120,6 +121,7 @@ test_http_error_handling() {
 EOF
 		echo "401"  # Return error status
 	}
+	export -f mock_curl_error
 	
 	local result
 	result=$(CURL=mock_curl_error ask "test" 2>&1)

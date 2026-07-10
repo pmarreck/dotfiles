@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+
+test_quote-lines() {
+	local fails=0
+	local tests=0
+	local output
+	local expected
+	local once
+	local twice
+
+	# Simple quoting
+	(( tests++ ))
+	output=$(printf 'one\ntwo\n' | quote-lines)
+	expected=$'"one"\n"two"'
+	if [[ "$output" == "$expected" ]]; then
+		printf '✓ quote-lines wraps each line in double quotes\n'
+	else
+		printf '✗ quote-lines should wrap each line in double quotes\nExpected: %q\nActual:   %q\n' "$expected" "$output" >&2
+		(( fails++ ))
+	fi
+
+	# Escape embedded quotes
+	(( tests++ ))
+	output=$(printf 'a "b"\n' | quote-lines)
+	expected='"a \"b\""'
+	if [[ "$output" == "$expected" ]]; then
+		printf '✓ quote-lines escapes embedded double quotes\n'
+	else
+		printf '✗ quote-lines should escape embedded double quotes\nExpected: %q\nActual:   %q\n' "$expected" "$output" >&2
+		(( fails++ ))
+	fi
+
+	# Preserve empty lines
+	(( tests++ ))
+	output=$(printf '\n' | quote-lines)
+	expected='""'
+	if [[ "$output" == "$expected" ]]; then
+		printf '✓ quote-lines handles empty lines\n'
+	else
+		printf '✗ quote-lines should handle empty lines\nExpected: %q\nActual:   %q\n' "$expected" "$output" >&2
+		(( fails++ ))
+	fi
+
+	# Multiple lines with mixed content
+	(( tests++ ))
+	output=$(printf 'plain\nmix "ed"\n"already quoted"\n' | quote-lines)
+	expected=$'"plain"\n"mix \\"ed\\""\n"already quoted"'
+	if [[ "$output" == "$expected" ]]; then
+		printf '✓ quote-lines leaves already-quoted lines unchanged\n'
+	else
+		printf '✗ quote-lines should leave already-quoted lines unchanged\nExpected: %q\nActual:   %q\n' "$expected" "$output" >&2
+		(( fails++ ))
+	fi
+
+	# Idempotence
+	(( tests++ ))
+	once=$(printf 'plain\nmix "ed"\n"already quoted"\n' | quote-lines)
+	twice=$(printf '%s\n' "$once" | quote-lines)
+	if [[ "$twice" == "$once" ]]; then
+		printf '✓ quote-lines is idempotent\n'
+	else
+		printf '✗ quote-lines should be idempotent\nExpected: %q\nActual:   %q\n' "$once" "$twice" >&2
+		(( fails++ ))
+	fi
+
+	if [ $fails -gt 0 ]; then
+		printf '%s of %s quote-lines tests failed!\n' "$fails" "$tests" >&2
+	else
+		printf 'All %s quote-lines tests passed!\n' "$tests"
+	fi
+	return $fails
+}
+
+	test_quote-lines

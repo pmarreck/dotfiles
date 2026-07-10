@@ -20,16 +20,11 @@ calc() {
 	# Initialize bcscript
 	local bcscript=""
 
-	# Try to read from stdin if available
-	if read -t 0; then
-		read -d '' -r bcscript
+	# Explicit arguments take precedence; otherwise consume piped stdin.
+	if (( $# > 0 )); then
+		bcscript="$*"
 	else
-		if [[ $# > 0 ]]; then
-			# Join all arguments with spaces to handle operators properly
-			bcscript="$*"
-		else
-			read -d '' -r bcscript # last resort, just try stdin again
-		fi
+		read -d '' -r bcscript
 	fi
 
 	# Trim leading and trailing whitespace

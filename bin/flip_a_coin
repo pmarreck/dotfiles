@@ -2,7 +2,8 @@
 
 flip_a_coin() {
 	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-	(( RANDOM % 2 )) && echo "heads" || echo "tails"
+	local random_value="${FLIP_A_COIN_RANDOM:-$RANDOM}"
+	(( random_value % 2 )) && echo "heads" || echo "tails"
 }
 
 # Run the function if this script is executed directly
