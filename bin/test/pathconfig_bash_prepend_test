@@ -66,6 +66,26 @@ else
 	((fails++))
 fi
 
+# Test 4: NixOS's raw system profile contains a deliberately non-setuid sudo;
+# its privileged wrapper must remain ahead of it after the declarative rebuild.
+((tests++))
+echo "Testing: NixOS sudo resolves to the privileged wrapper after .pathconfig..."
+# The child shell intentionally expands HOME after env -i establishes it.
+# shellcheck disable=SC2016
+sudo_path=$(env -i HOME="$HOME" OSTYPE="linux-gnu" \
+	PATH="/run/wrappers/bin:/run/current-system/sw/bin:/usr/bin:/bin" \
+	"$BOOTSTRAP_BASH" --noprofile --norc -c '
+		. "$HOME/.pathconfig" 2>/dev/null
+		type -P sudo
+	' 2>/dev/null)
+
+if [[ "$sudo_path" == "/run/wrappers/bin/sudo" ]]; then
+	echo "✓ Test passed: sudo resolves to the privileged wrapper"
+else
+	echo "✗ Test failed: sudo resolves to '$sudo_path' (expected /run/wrappers/bin/sudo)" >&2
+	((fails++))
+fi
+
 # Summary
 if (( fails == 0 )); then
 	echo "All $tests tests passed"

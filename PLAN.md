@@ -1,5 +1,9 @@
 # dotfiles — TODO / Plans
 
+## Recent
+
+- [x] Preserve NixOS privileged-wrapper precedence when rebuilding PATH, with a regression test for `sudo`. (2026-07-10 14:51 EDT)
+
 ## Open
 
 ### Structured event emission (multi-phase, in design with project-manager)

@@ -88,6 +88,13 @@ if [[ -d "/run/current-system/sw/bin" ]]; then
 	PATH_ADDITIONS+=("/run/current-system/sw/bin")
 fi
 
+# NixOS exposes raw system binaries here, including a deliberately non-setuid
+# sudo. Re-prepend its privileged wrapper after the raw profile so commands
+# requiring wrapper permissions keep their security boundary.
+if [[ -d "/run/wrappers/bin" ]]; then
+	PATH_ADDITIONS+=("/run/wrappers/bin")
+fi
+
 # macOS Nix: prefer Nix over system and Homebrew
 if [[ "$OSTYPE" == "darwin"* ]]; then
 	PATH_ADDITIONS+=(
