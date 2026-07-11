@@ -53,24 +53,24 @@ EXAMPLES:
 	glob ls -la "*.jpg"            Run ls -la with globbed jpg files
 	glob --ignore-case ls "*.JPG"  Run ls with case-insensitive matching
 	glob jpegxl --lossless "*.jpg" Run jpegxl with globbed jpg files
-	
+
 	# Multiple file types (quoted brace expansion):
 	glob "*.{png,jpg,gif}"         Find png, jpg, and gif files
 	glob -i "*.{png,jpg,gif}"      Case-insensitive multiple types
-	
+
 	# Multiple patterns (alternative to brace expansion):
 	glob "*.png" "*.jpg" "*.gif"   Find png, jpg, and gif files
-	
+
 	# Recursive patterns:
 	glob "**/*.jpg"                Find all jpg files in subdirectories
 	glob -i "**/*.{png,jpg}"       Case-insensitive recursive search
-	
+
 	# Dotfiles (hidden files):
 	glob ".*"                      Find dotfiles in current directory
 	glob "**/.git"                 Find all .git directories recursively
 	glob --dotglob "**/*.par2"     Include dotfile matches like .file.par2
 	glob --batch rm "**/*.par2"    Run rm in batches when many matches
-	
+
 	# Non-matching pattern behavior:
 	glob "*.nonexistent"           Empty output, exit code 1
 	glob "*.txt" "*.nonexistent"   Only shows *.txt files (skips non-matching)
@@ -93,11 +93,11 @@ DESCRIPTION:
 	  or when --dotglob/--all is used
 	- Case sensitivity: Patterns are case-sensitive by default
 	- Brace expansion: Use quoted patterns like "*.{png,jpg}" for multiple types
-	
+
 	BRACE EXPANSION:
 	The glob function supports quoted brace expansion, allowing you to match
 	multiple file types or patterns in a single argument:
-	
+
 	glob "*.{jpg,png,gif}"         # Match all image files
 	glob "file.{txt,log,bak}"      # Match specific file with different extensions
 	glob "**/*.{js,ts,jsx,tsx}"    # Recursive search for JavaScript/TypeScript files
@@ -143,6 +143,7 @@ EOF
 		return 0
 	fi
 	if [[ $# -eq 0 ]]; then
+		echo "Error: No arguments provided" >&2
 		_show_help
 		return 2
 	fi
@@ -157,7 +158,7 @@ EOF
 	local space_flag=false
 	local null_flag=false
 	local processed_argv=()
-	
+
 	# Process arguments to extract flags
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -203,7 +204,7 @@ EOF
 				;;
 		esac
 	done
-	
+
 	# Restore arguments without flags
 	set -- "${processed_argv[@]}"
 
@@ -217,8 +218,9 @@ EOF
 		fi
 		output_format="double-quote"
 	fi
-	
+
 	if [[ $# -eq 0 ]]; then
+		echo "Error: No arguments provided after option parsing" >&2
 		_show_help
 		return 2
 	fi
@@ -226,14 +228,14 @@ EOF
 	# Preprocess arguments for brace expansion
 	local brace_globbed_argv=()
 	local arg
-	
+
 	for arg in "$@"; do
 		# Check if argument contains brace expansion patterns
 		# Regex matches: {word1,word2} or {word1,word2,word3} etc.
 		# Must have at least one comma inside braces
 		if [[ "$arg" =~ \{[^}]*,[^}]*\} ]]; then
 			debug "Detected brace expansion in: $arg"
-			
+
 			# Use bash to expand the braces
 			# Escape shell metacharacters so bash -c treats them as literals
 			local escaped_arg="${arg// /\\ }"
@@ -245,22 +247,22 @@ EOF
 				brace_globbed_argv+=("$arg")
 				continue
 			}
-			
+
 			# Add each globbed item to the array
 			while IFS= read -r globbed_item; do
 				[[ -n "$globbed_item" ]] && brace_globbed_argv+=("$globbed_item")
 			done <<< "$globbed_items"
-			
+
 			debug "Brace expansion result: ${brace_globbed_argv[*]}"
 		else
 			# No brace expansion needed
 			brace_globbed_argv+=("$arg")
 		fi
 	done
-	
+
 	# Replace the original arguments with brace-globbed ones
 	set -- "${brace_globbed_argv[@]}"
-	
+
 	debug "Final arguments after brace expansion: $*"
 
 	# Store original globbing states to restore later
@@ -294,7 +296,7 @@ EOF
 			fi
 		fi
 	}
-	
+
 	_get_arg_max() {
 		if [[ -n "$GLOB_ARG_MAX" && "$GLOB_ARG_MAX" =~ ^[0-9]+$ ]]; then
 			echo "$GLOB_ARG_MAX"
@@ -308,7 +310,7 @@ EOF
 		fi
 		return 1
 	}
-	
+
 	_get_arg_budget() {
 		local arg_max
 		arg_max=$(_get_arg_max) || return 1
@@ -324,7 +326,7 @@ EOF
 			echo "$arg_max"
 		fi
 	}
-	
+
 	_arg_total_bytes() {
 		local total=0
 		local item
@@ -347,11 +349,11 @@ EOF
 			printf "%ds" "$secs"
 		fi
 	}
-	
+
 	_run_batched() {
 		local cmd="$1"
 		shift
-		
+
 		local arg_max
 		arg_max=$(_get_arg_max) || arg_max=""
 		local budget
@@ -368,12 +370,12 @@ EOF
 		local total_bytes
 		local batch_count=0
 		local batch_durations=()
-		
+
 		local overall_status=0
 		local chunk=()
 		local base_size=$(( ${#cmd} + 1 ))
 		local current_size=$base_size
-		
+
 		if [[ -z "$budget" ]]; then
 			echo "Warning: ARG_MAX unavailable; batching one argument per command" >&2
 			batch_count=$#
@@ -413,7 +415,7 @@ EOF
 			done
 			return $overall_status
 		fi
-		
+
 		total_bytes=$(_arg_total_bytes "$cmd" "$@")
 		local item
 		local item_size
@@ -433,20 +435,20 @@ EOF
 				batch_count=$((batch_count + 1))
 				continue
 			fi
-			
+
 			if (( current_size + item_size > chunk_budget )) && (( chunk_size > 0 )); then
 				batch_count=$((batch_count + 1))
 				current_size=$base_size
 				chunk_size=0
 			fi
-			
+
 			current_size=$(( current_size + item_size ))
 			chunk_size=$(( chunk_size + 1 ))
 		done
 		if (( chunk_size > 0 )); then
 			batch_count=$((batch_count + 1))
 		fi
-		
+
 		if (( batch_count > 1 )); then
 			if (( total_bytes > budget )); then
 				echo "Results > ARG_MAX; batching results into $batch_count batches:" >&2
@@ -454,7 +456,7 @@ EOF
 				echo "Batching results into $batch_count batches:" >&2
 			fi
 		fi
-		
+
 		local batch_index=0
 		for item in "$@"; do
 			item_size=$(( ${#item} + 1 ))
@@ -498,7 +500,7 @@ EOF
 					chunk=()
 					current_size=$base_size
 				fi
-				
+
 				local batch_start=$SECONDS
 				"$cmd" "$item"
 				local status=$?
@@ -532,7 +534,7 @@ EOF
 				echo "Batch $batch_index/$batch_count done$eta_text" >&2
 				continue
 			fi
-			
+
 			if (( current_size + item_size > chunk_budget )) && [[ ${#chunk[@]} -gt 0 ]]; then
 				local batch_start=$SECONDS
 				"$cmd" "${chunk[@]}"
@@ -568,11 +570,11 @@ EOF
 				chunk=()
 				current_size=$base_size
 			fi
-			
+
 			chunk+=("$item")
 			current_size=$(( current_size + item_size ))
 		done
-		
+
 		if [[ ${#chunk[@]} -gt 0 ]]; then
 			local batch_start=$SECONDS
 			"$cmd" "${chunk[@]}"
@@ -606,7 +608,7 @@ EOF
 			fi
 			echo "Batch $batch_index/$batch_count done$eta_text" >&2
 		fi
-		
+
 		return $overall_status
 	}
 
@@ -741,7 +743,11 @@ EOF
 
 	# Check if we found any matches
 	if ! $found_any_matches; then
-		debug "No matches found for any patterns"
+		if [[ ${#_glob_patterns_seen[@]} -gt 0 ]]; then
+			echo "Error: No matches found for pattern(s): ${_glob_patterns_seen[*]}" >&2
+		else
+			echo "Error: No matches found" >&2
+		fi
 		_restore_shopts
 		unset -f _restore_shopts
 		return 1
