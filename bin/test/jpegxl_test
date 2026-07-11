@@ -395,6 +395,26 @@ test_jpegxl() {
         (( fails++ ))
     fi
 
+    # Test 23: --trash-originals (plural alias) also parses and works
+    (( tests++ ))
+    local plural_test_file="$test_dir/plural_test.jpg"
+    magick -size 10x10 gradient:red-blue "$plural_test_file"
+    DEBUG=true jpegxl --trash-originals "$plural_test_file" >/dev/null 2>&1
+    if [[ ! -f "$plural_test_file" && -f "$test_dir/plural_test.jxl" ]]; then
+        # Best-effort cleanup from Trash (same pattern as Test 22)
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            find "$HOME/.Trash" -name "plural_test*" -exec rm -f {} + 2>/dev/null
+        else
+            local linux_trash="${XDG_DATA_HOME:-$HOME/.local/share}/Trash/files"
+            find "$linux_trash" -name "plural_test*" -exec rm -f {} + 2>/dev/null
+            find "${XDG_DATA_HOME:-$HOME/.local/share}/Trash/info" -name "plural_test*" -exec rm -f {} + 2>/dev/null
+        fi
+        echo "✓ --trash-originals (plural alias) test passed"
+    else
+        echo "✗ --trash-originals (plural alias) test failed"
+        (( fails++ ))
+    fi
+
     # Clean up test directory
     echo "Cleaning up test directory..."
     rm -rf "$test_dir"
