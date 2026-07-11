@@ -57,6 +57,81 @@ silence() {
 	"$@" >/dev/null 2>&1
 }
 
+# Resolve target file to absolute path
+get_abspath() {
+	local target="$1"
+	if [[ "$target" = /* ]]; then
+		echo "$target"
+	else
+		echo "$PWD/$target"
+	fi
+}
+
+# Trash a file on macOS or Linux
+trash_file() {
+	local file="$1"
+	if [[ "$OSTYPE" == "darwin"* ]]; then
+		if [[ -x "/usr/bin/trash" ]]; then
+			/usr/bin/trash "$file"
+		elif command -v trash &>/dev/null; then
+			trash "$file"
+		elif osascript -e "tell application \"Finder\" to delete POSIX file \"$(get_abspath "$file")\"" &>/dev/null; then
+			return 0
+		else
+			# Fallback to moving to ~/.Trash/
+			mkdir -p "$HOME/.Trash"
+			local base=$(basename "$file")
+			local dest="$HOME/.Trash/$base"
+			if [[ -e "$dest" ]]; then
+				local timestamp=$(date +%Y%m%d%H%M%S)
+				local name="${base%.*}"
+				local ext="${base##*.}"
+				if [[ "$name" == "$ext" ]]; then
+					dest="$HOME/.Trash/${name}-${timestamp}"
+				else
+					dest="$HOME/.Trash/${name}-${timestamp}.${ext}"
+				fi
+			fi
+			mv "$file" "$dest"
+		fi
+	else
+		# Linux/Unix
+		if command -v gio &>/dev/null; then
+			gio trash "$file"
+		elif command -v trash-put &>/dev/null; then
+			trash-put "$file"
+		else
+			# Fallback to FreeDesktop Trash directory
+			local trash_dir="${XDG_DATA_HOME:-$HOME/.local/share}/Trash"
+			mkdir -p "$trash_dir/files" "$trash_dir/info"
+			local base=$(basename "$file")
+			local dest="$trash_dir/files/$base"
+			local info_dest="$trash_dir/info/${base}.trashinfo"
+			if [[ -e "$dest" ]]; then
+				local timestamp=$(date +%Y%m%d%H%M%S)
+				local name="${base%.*}"
+				local ext="${base##*.}"
+				if [[ "$name" == "$ext" ]]; then
+					dest="$trash_dir/files/${name}-${timestamp}"
+					info_dest="$trash_dir/info/${name}-${timestamp}.trashinfo"
+				else
+					dest="$trash_dir/files/${name}-${timestamp}.${ext}"
+					info_dest="$trash_dir/info/${name}-${timestamp}.${ext}.trashinfo"
+				fi
+			fi
+			local abs_path
+			abs_path=$(get_abspath "$file")
+			# Write .trashinfo file
+			cat <<EOF > "$info_dest"
+[Trash Info]
+Path=${abs_path}
+DeletionDate=$(date +%Y-%m-%dT%H:%M:%S)
+EOF
+			mv "$file" "$dest"
+		fi
+	fi
+}
+
 # Check for required dependencies
 check_dependencies() {
 	local missing_deps=()
@@ -227,7 +302,8 @@ Options:
 	--to=FORMAT              Convert JXL to another format (jpeg, png, etc.)
 	--preserve-timestamps    Preserve original timestamps (default)
 	--no-preserve-timestamps Do not preserve original timestamps
-	test                     Run self-test
+	--trash-original         Move original files to Trash after successful conversion
+	--test, test             Run self-test
 
 Environment Variables:
 	JPEGXL_DEFAULT_EFFORT    Set default compression effort (1-10, default: 9)
@@ -276,6 +352,7 @@ process_file() {
 	local preserve_timestamps="$5"
 	local to_format="$6"
 	local quality="$7"
+	local trash_original="${8:-false}"
 
 	if [[ ! -f "$file" ]]; then
 		err "File not found: $file"
@@ -452,6 +529,10 @@ process_file() {
 
 	if [[ -f "$output" ]]; then
 		display_compression_ratio "$original_file" "$output"
+		if [[ "$trash_original" == "true" ]]; then
+			debug "Trashing original file: $original_file"
+			trash_file "$original_file"
+		fi
 		return 0
 	else
 		err "Output file not produced for $original_file."
@@ -467,6 +548,7 @@ jpegxl() {
 	local distance=${JPEGXL_DEFAULT_DISTANCE:-1}
 	local lossy=false
 	local preserve_timestamps=true
+	local trash_original=false
 	# Respect PRESERVE_TIMESTAMPS env var (unset/empty = true; 0/no/false = false)
 	if [[ -n "$PRESERVE_TIMESTAMPS" ]]; then
 		case "${PRESERVE_TIMESTAMPS,,}" in
@@ -482,9 +564,14 @@ jpegxl() {
 		case "$1" in
 			-h|--help) print_help; return 0 ;;
 			--about) echo "jpegxl - Convert images to and from JPEG XL format with advanced controls"; return 0 ;;
-			test)
+			test|--test)
 				# We now defer to the separate test file
-				"$HOME/dotfiles/bin/test/jpegxl_test"
+				if [[ "$1" == "--test" ]]; then
+					# stdout muted, stderr preserved
+					"$HOME/dotfiles/bin/test/jpegxl_test" >/dev/null
+				else
+					"$HOME/dotfiles/bin/test/jpegxl_test"
+				fi
 				return $?
 				;;
 			--effort=*) effort="${1#*=}" ;;
@@ -508,6 +595,7 @@ jpegxl() {
 			--basic) effort=5; lossy=true ;;
 			--preserve-timestamps) preserve_timestamps=true ;;
 			--no-preserve-timestamps) preserve_timestamps=false ;;
+			--trash-original) trash_original=true ;;
 			--to=*) to_format="${1#*=}" ;;
 			-*) err "Unknown option: $1"; print_help; return 1 ;;
 			*) files+=("$1") ;; # Collect all non-option arguments as files
@@ -541,6 +629,7 @@ jpegxl() {
 		debug "Distance set to: $distance"
 		debug "Lossy mode: $lossy"
 		debug "Preserve timestamps: $preserve_timestamps"
+		debug "Trash original: $trash_original"
 		debug "Target format: $to_format"
 		debug "Quality: $quality"
 		debug "Files to process: ${files[*]}"
@@ -548,7 +637,7 @@ jpegxl() {
 
 	local failures=0
 	for file in "${files[@]}"; do
-		if ! process_file "$file" "$effort" "$distance" "$lossy" "$preserve_timestamps" "$to_format" "$quality"; then
+		if ! process_file "$file" "$effort" "$distance" "$lossy" "$preserve_timestamps" "$to_format" "$quality" "$trash_original"; then
 			((failures++))
 		fi
 	done

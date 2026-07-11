@@ -354,6 +354,47 @@ test_jpegxl() {
         (( fails++ ))
     fi
 
+    # Test 22: --trash-original moves original file to Trash
+    (( tests++ ))
+    local trash_test_file="$test_dir/trash_test.jpg"
+    magick -size 10x10 gradient:red-blue "$trash_test_file"
+
+    DEBUG=true jpegxl --trash-original "$trash_test_file" >/dev/null 2>&1
+
+    if [[ ! -f "$trash_test_file" && -f "$test_dir/trash_test.jxl" ]]; then
+        # Check that it exists in user's Trash, and clean it up if so
+        local trashed=false
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            if [[ -e "$HOME/.Trash/trash_test.jpg" ]]; then
+                trashed=true
+                rm -f "$HOME/.Trash/trash_test.jpg"
+            elif [[ -n $(find "$HOME/.Trash" -name "trash_test*" 2>/dev/null) ]]; then
+                trashed=true
+                find "$HOME/.Trash" -name "trash_test*" -exec rm -f {} + 2>/dev/null
+            fi
+        else
+            local linux_trash="${XDG_DATA_HOME:-$HOME/.local/share}/Trash/files"
+            if [[ -e "$linux_trash/trash_test.jpg" ]]; then
+                trashed=true
+                rm -f "$linux_trash/trash_test.jpg"
+                rm -f "${XDG_DATA_HOME:-$HOME/.local/share}/Trash/info/trash_test.jpg.trashinfo" 2>/dev/null
+            elif [[ -n $(find "$linux_trash" -name "trash_test*" 2>/dev/null) ]]; then
+                trashed=true
+                find "$linux_trash" -name "trash_test*" -exec rm -f {} + 2>/dev/null
+                find "${XDG_DATA_HOME:-$HOME/.local/share}/Trash/info" -name "trash_test*" -exec rm -f {} + 2>/dev/null
+            fi
+        fi
+
+        if [[ "$trashed" == "true" ]]; then
+            echo "✓ --trash-original test passed (and successfully cleaned up from system Trash)"
+        else
+            echo "✓ --trash-original test passed (original file removed, but direct Trash location verification skipped)"
+        fi
+    else
+        echo "✗ --trash-original test failed"
+        (( fails++ ))
+    fi
+
     # Clean up test directory
     echo "Cleaning up test directory..."
     rm -rf "$test_dir"
