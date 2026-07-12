@@ -1,0 +1,134 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+nethogs_cmd=${NETHOGS_BIN_UNDER_TEST:-"$script_dir/../nethogs"}
+
+if [[ ! -x "$nethogs_cmd" ]]; then
+	echo "nethogs_test: unable to locate executable at $nethogs_cmd" >&2
+	exit 1
+fi
+
+tmpdir=$(mktemp -d)
+trap 'rm -rf "$tmpdir"' EXIT
+
+netdir="$tmpdir/net"
+mkdir -p "$netdir/enp0s25/statistics" "$netdir/lo/statistics"
+printf 'up\n' >"$netdir/enp0s25/operstate"
+printf '1000\n' >"$netdir/enp0s25/speed"
+printf '100\n' >"$netdir/enp0s25/statistics/rx_bytes"
+printf '200\n' >"$netdir/enp0s25/statistics/tx_bytes"
+printf 'unknown\n' >"$netdir/lo/operstate"
+printf '0\n' >"$netdir/lo/speed"
+printf '999\n' >"$netdir/lo/statistics/rx_bytes"
+printf '999\n' >"$netdir/lo/statistics/tx_bytes"
+
+ip_stub="$tmpdir/ip"
+ss_stub="$tmpdir/ss"
+netstat_stub="$tmpdir/netstat"
+route_stub="$tmpdir/route"
+lsof_stub="$tmpdir/lsof"
+sleep_stub="$tmpdir/sleep"
+
+cat >"$ip_stub" <<'IP'
+#!/usr/bin/env bash
+echo "default via 192.0.2.1 dev enp0s25"
+IP
+cat >"$ss_stub" <<'SS'
+#!/usr/bin/env bash
+cat <<'EOF'
+tcp 0 0 192.0.2.2:40000 203.0.113.10:443 users:(("browser",pid=101,fd=3))
+tcp 0 0 192.0.2.2:40001 203.0.113.11:443 users:(("browser",pid=101,fd=4))
+tcp 0 0 192.0.2.2:40002 198.51.100.3:443 users:(("sync",pid=202,fd=5))
+EOF
+SS
+cat >"$netstat_stub" <<'NETSTAT'
+#!/usr/bin/env bash
+echo "Name  Mtu   Network       Address            Ipkts Ierrs Ibytes Opkts Oerrs Obytes Coll Drop"
+if [[ -e "$NETHOGS_TEST_UPDATED" ]]; then
+	echo "en0   1500  <Link#4>      00:11:22:33:44:55   1     0     1000100 1     0     500200 0    0"
+else
+	echo "en0   1500  <Link#4>      00:11:22:33:44:55   1     0     100     1     0     200    0    0"
+fi
+NETSTAT
+cat >"$route_stub" <<'ROUTE'
+#!/usr/bin/env bash
+echo "  interface: en0"
+ROUTE
+cat >"$lsof_stub" <<'LSOF'
+#!/usr/bin/env bash
+cat <<'EOF'
+p101
+cbrowser
+n192.0.2.2:40000->203.0.113.10:443
+n192.0.2.2:40001->203.0.113.11:443
+p202
+csync
+n192.0.2.2:40002->198.51.100.3:443
+EOF
+LSOF
+cat >"$sleep_stub" <<'SLEEP'
+#!/usr/bin/env bash
+printf '1000100\n' >"$NETHOGS_TEST_NETDIR/enp0s25/statistics/rx_bytes"
+printf '500200\n' >"$NETHOGS_TEST_NETDIR/enp0s25/statistics/tx_bytes"
+touch "$NETHOGS_TEST_UPDATED"
+SLEEP
+chmod +x "$ip_stub" "$ss_stub" "$netstat_stub" "$route_stub" "$lsof_stub" "$sleep_stub"
+
+run_nethogs() {
+	local platform="$1"
+	shift
+	NETHOGS_PLATFORM="$platform" \
+	NETHOGS_IP="$ip_stub" \
+	NETHOGS_SS="$ss_stub" \
+	NETHOGS_NETSTAT="$netstat_stub" \
+	NETHOGS_ROUTE="$route_stub" \
+	NETHOGS_LSOF="$lsof_stub" \
+	NETHOGS_SLEEP="$sleep_stub" \
+	NETHOGS_NET_CLASS_DIR="$netdir" \
+	NETHOGS_TEST_NETDIR="$netdir" \
+	NETHOGS_TEST_UPDATED="$tmpdir/updated" \
+	"$nethogs_cmd" "$@"
+}
+
+fails=0
+
+expect() {
+	local description="$1"
+	shift
+	if "$@"; then
+		echo "ok: $description"
+	else
+		echo "FAIL: $description" >&2
+		fails=$((fails + 1))
+	fi
+}
+
+echo "Testing: Linux reports sampled interface throughput and connections..."
+linux_output=$(run_nethogs Linux)
+expect "Linux shows measured download and upload" grep -Eq 'enp0s25.*8\.00 Mb/s.*4\.00 Mb/s.*1\.0 Gb/s' <<<"$linux_output"
+expect "Linux marks the default route" grep -Eq 'enp0s25.*default' <<<"$linux_output"
+expect "Linux aggregates application connections" grep -Eq 'browser.*101.*2.*203\.0\.113\.10:443' <<<"$linux_output"
+
+rm -f "$tmpdir/updated"
+printf '100\n' >"$netdir/enp0s25/statistics/rx_bytes"
+printf '200\n' >"$netdir/enp0s25/statistics/tx_bytes"
+
+echo "Testing: macOS reports sampled interface throughput and connections..."
+macos_output=$(run_nethogs Darwin)
+expect "macOS shows measured download and upload" grep -Eq 'en0.*8\.00 Mb/s.*4\.00 Mb/s' <<<"$macos_output"
+expect "macOS marks the default route" grep -Eq 'en0.*default' <<<"$macos_output"
+expect "macOS aggregates application connections" grep -Eq 'browser.*101.*2.*203\.0\.113\.10:443' <<<"$macos_output"
+
+echo "Testing: invalid sample duration fails clearly..."
+if run_nethogs Linux -d 0 >"$tmpdir/invalid.out" 2>&1; then
+	echo "FAIL: invalid duration unexpectedly succeeded" >&2
+	fails=$((fails + 1))
+else
+	expect "invalid duration explains the constraint" grep -Fq -- 'positive integer' "$tmpdir/invalid.out"
+fi
+
+if (( fails > 0 )); then
+	exit 1
+fi

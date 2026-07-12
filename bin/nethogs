@@ -1,0 +1,325 @@
+#!/usr/bin/env bash
+# shellcheck disable=SC2016
+
+set -euo pipefail
+
+if [[ "${1:-}" == "--test" ]]; then
+	shift || true
+	if [[ $# -gt 0 ]]; then
+		echo "nethogs: --test does not accept additional arguments" >&2
+		exit 1
+	fi
+	test_file="$HOME/dotfiles/bin/test/nethogs_test"
+	if [[ ! -x "$test_file" ]]; then
+		echo "nethogs: missing test file $test_file" >&2
+		exit 1
+	fi
+	"$test_file" >/dev/null
+	exit $?
+fi
+
+platform=${NETHOGS_PLATFORM:-$(uname -s)}
+AWK_BIN=${NETHOGS_AWK:-awk}
+SLEEP_BIN=${NETHOGS_SLEEP:-sleep}
+IP_BIN=${NETHOGS_IP:-ip}
+SS_BIN=${NETHOGS_SS:-ss}
+NETSTAT_BIN=${NETHOGS_NETSTAT:-netstat}
+ROUTE_BIN=${NETHOGS_ROUTE:-route}
+LSOF_BIN=${NETHOGS_LSOF:-lsof}
+NET_CLASS_DIR=${NETHOGS_NET_CLASS_DIR:-/sys/class/net}
+interval=1
+
+usage() {
+	cat <<'USAGE'
+Usage: nethogs [-d SECONDS]
+
+Show a human-readable, unprivileged network snapshot: measured upload/download
+rates by interface, followed by active application connections visible to this
+user. Interface rates are sampled over one second by default.
+
+Options:
+  -d SECONDS    Sampling duration (default 1).
+  -h, --help    Show this help text.
+  -a, --about   Describe this tool.
+  --test        Run the nethogs test suite (stdout muted) and exit.
+
+Environment:
+  NETHOGS_PLATFORM           Override detected platform for testing.
+  NETHOGS_AWK, NETHOGS_SLEEP Override required utility paths.
+  NETHOGS_IP, NETHOGS_SS     Linux utility paths.
+  NETHOGS_NET_CLASS_DIR      Linux network-interface sysfs directory.
+  NETHOGS_NETSTAT, NETHOGS_ROUTE, NETHOGS_LSOF
+                            macOS utility paths.
+USAGE
+}
+
+about() {
+	echo "nethogs: report interface throughput and active application connections without privileged packet capture."
+}
+
+is_positive_integer() {
+	[[ "$1" =~ ^[0-9]+$ ]] && (( $1 > 0 ))
+}
+
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+		-d)
+			if [[ $# -lt 2 ]] || ! is_positive_integer "$2"; then
+				echo "nethogs: -d requires a positive integer number of seconds" >&2
+				exit 1
+			fi
+			interval="$2"
+			shift 2
+			;;
+		-h|--help)
+			usage
+			exit 0
+			;;
+		-a|--about)
+			about
+			exit 0
+			;;
+		--)
+			shift
+			break
+			;;
+		*)
+			echo "nethogs: invalid option $1" >&2
+			usage >&2
+			exit 1
+			;;
+	esac
+done
+
+if [[ $# -gt 0 ]]; then
+	echo "nethogs: unexpected positional argument '$1'" >&2
+	exit 1
+fi
+
+require_command() {
+	if ! command -v "$1" >/dev/null 2>&1; then
+		echo "nethogs: required command '$1' not found" >&2
+		exit 1
+	fi
+}
+
+require_command "$AWK_BIN"
+require_command "$SLEEP_BIN"
+
+read_value() {
+	local path="$1"
+	local value=""
+	if [[ -r "$path" ]]; then
+		IFS= read -r value <"$path" || true
+		printf '%s\n' "$value"
+	else
+		printf '0\n'
+	fi
+}
+
+linux_counters() {
+	local interface state rx tx speed
+	if [[ ! -d "$NET_CLASS_DIR" ]]; then
+		echo "nethogs: network-interface directory not found: $NET_CLASS_DIR" >&2
+		exit 1
+	fi
+	while IFS= read -r interface; do
+		[[ "$interface" == "lo" ]] && continue
+		state=$(read_value "$NET_CLASS_DIR/$interface/operstate")
+		[[ "$state" == "down" ]] && continue
+		rx=$(read_value "$NET_CLASS_DIR/$interface/statistics/rx_bytes")
+		tx=$(read_value "$NET_CLASS_DIR/$interface/statistics/tx_bytes")
+		speed=$(read_value "$NET_CLASS_DIR/$interface/speed")
+		printf '%s\t%s\t%s\t%s\n' "$interface" "$rx" "$tx" "$speed"
+	done < <(find "$NET_CLASS_DIR" -mindepth 1 -maxdepth 1 -printf '%f\n' | sort)
+}
+
+macos_counters() {
+	"$NETSTAT_BIN" -ib | "$AWK_BIN" '
+		$1 == "Name" {
+			for (i = 1; i <= NF; ++i) {
+				if ($i == "Ibytes") ibytes = i;
+				if ($i == "Obytes") obytes = i;
+			}
+			next;
+		}
+		ibytes && obytes && $1 != "lo0" && $(ibytes) ~ /^[0-9]+$/ && $(obytes) ~ /^[0-9]+$/ {
+			if ($(ibytes) > rx[$1]) rx[$1] = $(ibytes);
+			if ($(obytes) > tx[$1]) tx[$1] = $(obytes);
+		}
+		END {
+			for (interface in rx)
+				printf "%s\t%s\t%s\t-\n", interface, rx[interface], tx[interface];
+		}
+	' | sort
+}
+
+linux_default_interface() {
+	"$IP_BIN" route show default 2>/dev/null | "$AWK_BIN" '
+		$1 == "default" {
+			for (i = 1; i < NF; ++i) {
+				if ($i == "dev") {
+					print $(i + 1);
+					exit;
+				}
+			}
+		}
+	'
+}
+
+macos_default_interface() {
+	"$ROUTE_BIN" -n get default 2>/dev/null | "$AWK_BIN" '/^[[:space:]]*interface:/{print $2; exit}'
+}
+
+linux_connection_records() {
+	"$SS_BIN" -H -tupn state established 2>/dev/null | "$AWK_BIN" '
+		{
+			line = $0;
+			if (!match(line, /users:\(\("[^"]+",pid=[0-9]+/))
+				next;
+			owner = substr(line, RSTART, RLENGTH);
+			sub(/^users:\(\("/, "", owner);
+			split(owner, parts, "\",pid=");
+			visible = line;
+			sub(/[[:space:]]+users:\(.*/, "", visible);
+			split(visible, fields, /[[:space:]]+/);
+			peer = (length(fields) >= 5) ? fields[5] : "?";
+			printf "%s\t%s\t%s\n", parts[1], parts[2], peer;
+		}
+	'
+}
+
+macos_connection_records() {
+	{ "$LSOF_BIN" -nP -iTCP -sTCP:ESTABLISHED -Fpcn 2>/dev/null || true; } | "$AWK_BIN" '
+		/^p/ { pid = substr($0, 2); next; }
+		/^c/ { app = substr($0, 2); next; }
+		/^n/ && app != "" && pid != "" { printf "%s\t%s\t%s\n", app, pid, substr($0, 2); }
+	'
+}
+
+case "$platform" in
+	Linux)
+		require_command "$IP_BIN"
+		require_command "$SS_BIN"
+		counter_source=linux_counters
+		default_source=linux_default_interface
+		connection_source=linux_connection_records
+		;;
+	Darwin)
+		require_command "$NETSTAT_BIN"
+		require_command "$ROUTE_BIN"
+		require_command "$LSOF_BIN"
+		counter_source=macos_counters
+		default_source=macos_default_interface
+		connection_source=macos_connection_records
+		;;
+	*)
+		echo "nethogs: unsupported platform '$platform'" >&2
+		exit 1
+		;;
+esac
+
+mapfile -t before < <("$counter_source")
+if (( ${#before[@]} == 0 )); then
+	echo "nethogs: no active non-loopback interfaces found" >&2
+	exit 1
+fi
+
+"$SLEEP_BIN" "$interval"
+mapfile -t after < <("$counter_source")
+
+declare -A rx_before tx_before rx_after tx_after capacity
+for row in "${before[@]}"; do
+	IFS=$'\t' read -r interface rx tx speed <<<"$row"
+	rx_before["$interface"]="$rx"
+	tx_before["$interface"]="$tx"
+	capacity["$interface"]="$speed"
+done
+for row in "${after[@]}"; do
+	IFS=$'\t' read -r interface rx tx speed <<<"$row"
+	rx_after["$interface"]="$rx"
+	tx_after["$interface"]="$tx"
+	[[ -n "${capacity[$interface]:-}" ]] || capacity["$interface"]="$speed"
+done
+
+default_interface=$("$default_source")
+
+echo "Network activity (${interval}s sample; rates are actual interface traffic)"
+for interface in "${!rx_before[@]}"; do
+	role=""
+	[[ "$interface" == "$default_interface" ]] && role="default"
+	printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+		"$interface" "$role" "${rx_before[$interface]}" "${tx_before[$interface]}" \
+		"${rx_after[$interface]:-${rx_before[$interface]}}" "${tx_after[$interface]:-${tx_before[$interface]}}" \
+		"${capacity[$interface]}"
+done | sort | "$AWK_BIN" -F '\t' -v seconds="$interval" '
+	function rate(bytes, bits) {
+		bits = bytes * 8 / seconds;
+		if (bits >= 1000000000) return sprintf("%.2f Gb/s", bits / 1000000000);
+		if (bits >= 1000000) return sprintf("%.2f Mb/s", bits / 1000000);
+		if (bits >= 1000) return sprintf("%.2f Kb/s", bits / 1000);
+		return sprintf("%.0f b/s", bits);
+	}
+	function capacity_label(speed) {
+		if (speed !~ /^[0-9]+$/ || speed <= 0) return "-";
+		if (speed >= 1000) return sprintf("%.1f Gb/s", speed / 1000);
+		return speed " Mb/s";
+	}
+	BEGIN { printf "%-18s %-8s %12s %12s %10s\n", "INTERFACE", "ROUTE", "DOWNLOAD", "UPLOAD", "LINK"; }
+	{
+		down = $5 - $3;
+		up = $6 - $4;
+		if (down < 0) down = 0;
+		if (up < 0) up = 0;
+		printf "%-18s %-8s %12s %12s %10s\n", $1, $2, rate(down), rate(up), capacity_label($7);
+	}
+'
+
+if (( ${#rx_before[@]} > 1 )); then
+	echo "Note: interface rates are not additive; tunnel traffic can also appear on its physical carrier."
+fi
+
+connection_rows=$("$connection_source" | "$AWK_BIN" -F '\t' '
+	{
+		app = $1;
+		pid = $2;
+		peer = $3;
+		connections[app]++;
+		pid_key = app SUBSEP pid;
+		if (!(pid_key in seen_pid)) {
+			seen_pid[pid_key] = 1;
+			pid_count[app]++;
+			if (pid_count[app] <= 3)
+				pids[app] = pids[app] (pids[app] ? "," : "") pid;
+		}
+		peer_key = app SUBSEP peer;
+		if (!(peer_key in seen_peer)) {
+			seen_peer[peer_key] = 1;
+			peer_count[app]++;
+			if (peer_count[app] <= 3)
+				peers[app] = peers[app] (peers[app] ? ", " : "") peer;
+		}
+	}
+	END {
+		for (app in connections) {
+			pid_label = pids[app];
+			if (pid_count[app] > 3) pid_label = pid_label ",+" (pid_count[app] - 3);
+			peer_label = peers[app];
+			if (peer_count[app] > 3) peer_label = peer_label ", +" (peer_count[app] - 3);
+			printf "%s\t%s\t%d\t%s\n", app, pid_label, connections[app], peer_label;
+		}
+	}
+')
+
+echo
+echo "Active application connections (attribution, not per-process bandwidth)"
+if [[ -z "$connection_rows" ]]; then
+	echo "  No process-owned established connections are visible to this user."
+else
+	printf '%s\n' "$connection_rows" | sort -t $'\t' -k3,3nr | "$AWK_BIN" -F '\t' '
+		BEGIN { printf "%-24s %-18s %6s  %s\n", "PROCESS", "PIDS", "CONN", "REMOTE PEERS"; }
+		{ printf "%-24s %-18s %6s  %s\n", $1, $2, $3, $4; }
+	'
+fi
+
+echo "Per-process byte rates require privileged packet capture; this snapshot only claims measured link traffic."
