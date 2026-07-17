@@ -6,9 +6,10 @@
 #   created          no session existed -> created + launched agent
 #   joined-running   session + agent already live -> touched nothing
 #   joined-launched  session existed agentless -> launched agent into it
-# Keystroke lore (hard-won 2026-06-11): the launch command goes to a SHELL,
-# so it gets a plain Enter; messages to a RUNNING Claude need the kitty
-# CSI u submit ($'\e[13u'). Never confuse the two.
+# Keystroke lore (hard-won 2026-06-11 and 2026-07-17): the launch command goes
+# to a SHELL, so it gets a plain Enter. Messages to a running Claude need kitty
+# CSI u submit ($'\e[13u'). Codex needs bracketed paste followed by plain Enter
+# so its paste-burst guard cannot reinterpret submission as a newline.
 # Env: ERECT_TMUX_SOCKET (tests: tmux -L socket), ERECT_DRY_RUN (print
 # launch/ping instead of sending), ERECT_BOOT_TIMEOUT (seconds, default 120).
 
@@ -57,16 +58,28 @@ _eas_running() {
 _eas_bootwait() {
 	# 120s default: direnv `use flake` projects evaluate nix before the shell
 	# accepts the queued launch line (observed live on entropy_shield, 2026-06-12).
-	local n="$1" t="${ERECT_BOOT_TIMEOUT:-120}" i=0
+	local n="$1" agent="$2" t="${ERECT_BOOT_TIMEOUT:-120}" i=0 pane trust_accepted=0
 	while [ "$i" -lt "$t" ]; do
-		_eas_tmux capture-pane -pt "$n" 2>/dev/null | grep -qE '❯|esc to interrupt|bypass permissions' && return 0
+		pane=$(_eas_tmux capture-pane -pt "$n" 2>/dev/null)
+		if [ "$agent" = "codex" ]; then
+			if [ "$trust_accepted" = "0" ] && [[ "$pane" == *"Do you trust the contents of this directory?"* ]]; then
+				# The caller explicitly requested unrestricted Codex in this project;
+				# let Codex persist its own repository-root trust decision.
+				_eas_tmux send-keys -t "$n" Enter
+				trust_accepted=1
+			elif [[ "$pane" == *"OpenAI Codex"* && "$pane" != *"Booting MCP server"* ]]; then
+				return 0
+			fi
+		elif grep -qE '❯|esc to interrupt|bypass permissions' <<<"$pane"; then
+			return 0
+		fi
 		sleep 1; i=$((i+1))
 	done
 	return 1
 }
 
 _eas_launch() {
-	local n="$1" fresh="$2"
+	local n="$1" fresh="$2" agent="$3"
 	local cmd="$_b_fresh"
 	[ "$fresh" = "0" ] && cmd="$_b_resume"
 	[ -n "${_b_checker:-}" ] && cmd="MFIC_ROLE=checker $cmd"
@@ -75,14 +88,14 @@ _eas_launch() {
 		return 0
 	fi
 	_eas_tmux send-keys -t "$n" "$cmd" Enter
-	if ! _eas_bootwait "$n"; then
+	if ! _eas_bootwait "$n" "$agent"; then
 		if [ "$fresh" = "0" ]; then
 			# resume may have had nothing to resume; fall back to a fresh start
 			local fcmd="$_b_fresh"
 			[ -n "${_b_checker:-}" ] && fcmd="MFIC_ROLE=checker $fcmd"
 			_eas_tmux send-keys -t "$n" C-u
 			_eas_tmux send-keys -t "$n" "$fcmd" Enter
-			_eas_bootwait "$n" && return 0
+			_eas_bootwait "$n" "$agent" && return 0
 		fi
 		echo "erect-agent-stack: agent did not boot in $n within ${ERECT_BOOT_TIMEOUT:-120}s" >&2
 		return 69
@@ -90,13 +103,20 @@ _eas_launch() {
 }
 
 _eas_ping() {
-	local n="$1" msg="$2"
+	local n="$1" msg="$2" agent="$3" buffer
 	if [ -n "${ERECT_DRY_RUN:-}" ]; then
 		echo "ping: $msg"
 		return 0
 	fi
-	_eas_tmux send-keys -t "$n" "$msg"
-	_eas_tmux send-keys -t "$n" $'\e[13u'
+	if [ "$agent" = "codex" ]; then
+		buffer="erect-agent-stack-ping-$$"
+		_eas_tmux set-buffer -b "$buffer" "$msg"
+		_eas_tmux paste-buffer -d -p -r -b "$buffer" -t "$n"
+		_eas_tmux send-keys -t "$n" Enter
+	else
+		_eas_tmux send-keys -t "$n" "$msg"
+		_eas_tmux send-keys -t "$n" $'\e[13u'
+	fi
 }
 
 erect-agent-stack() {
@@ -110,6 +130,7 @@ erect-agent-stack() {
 				echo "a remoted unrestricted agent in it. Idempotent: created | joined-running |"
 				echo "joined-launched. Default dir root: ~/Code/<name>."
 				echo "--agent: backend (default claude); non-claude gated on its API-key env var + bin on PATH."
+				echo "Codex: first-run project trust is accepted automatically; --ping uses bracketed paste + Enter."
 				echo "--checker: boot the agent in MFIC adversarial-checker role (MFIC_ROLE=checker)."
 				echo "--fresh: skip --resume. --ping: deliver a message once the agent is up (LLMsend rules)."
 				return 0
@@ -160,14 +181,14 @@ erect-agent-stack() {
 			outcome="joined-running"
 		else
 			outcome="joined-launched"
-			_eas_launch "$name" "$resume_default" || rc=$?
+			_eas_launch "$name" "$resume_default" "$agent" || rc=$?
 		fi
 	else
 		_eas_tmux new-session -d -s "$name" -c "$dir"
 		outcome="created"
-		_eas_launch "$name" "$resume_default" || rc=$?
+		_eas_launch "$name" "$resume_default" "$agent" || rc=$?
 	fi
-	[ "$rc" = "0" ] && [ -n "$ping" ] && _eas_ping "$name" "$ping"
+	[ "$rc" = "0" ] && [ -n "$ping" ] && _eas_ping "$name" "$ping" "$agent"
 	echo "$outcome: $name @ $dir"
 	# Join the session for a human at a real terminal; never for pipelines/agents.
 	if [ "$rc" = "0" ] && [ "$attach" != "never" ] && [ -t 0 ] && [ -t 1 ]; then

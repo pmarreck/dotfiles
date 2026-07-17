@@ -7,6 +7,8 @@ erect_agent_stack_test() {
   tmproot=$(cd "$tmproot" && pwd -P)
   mkdir -p "$tmproot/projalpha"
   mkdir -p "$tmproot/projbeta"
+  mkdir -p "$tmproot/projgamma"
+  mkdir -p "$tmproot/projdelta"
   _t() { tmux -L "$sock" "$@"; }
   _t kill-server 2>/dev/null
 
@@ -72,7 +74,6 @@ erect_agent_stack_test() {
   out=$(ERECT_TMUX_SOCKET="$sock" ERECT_DRY_RUN=1 erect-agent-stack --fresh --agent codex "$tmproot/projbeta" 2>&1)
   assert "$out" =~ "launch: codex --dangerously-bypass-approvals-and-sandbox" "codex fresh uses danger flag"
   ((fails+=$?))
-
   out=$(ERECT_TMUX_SOCKET="$sock" ERECT_DRY_RUN=1 erect-agent-stack --agent codex "$tmproot/projbeta" 2>&1)
   assert "$out" =~ "launch: codex resume --last --dangerously-bypass-approvals-and-sandbox" "codex resume uses resume subcommand"
   ((fails+=$?))
@@ -99,6 +100,42 @@ erect_agent_stack_test() {
 
   out=$(ERECT_TMUX_SOCKET="$sock" ERECT_DRY_RUN=1 erect-agent-stack --fresh --checker "$tmproot/projbeta" 2>&1)
   assert "$out" =~ "launch: MFIC_ROLE=checker claude" "--checker prepends MFIC_ROLE=checker"
+  ((fails+=$?))
+
+  # Codex's first-run trust gate is accepted once, then its own chrome—not
+  # Claude's readiness markers—satisfies the boot gate.
+  _t set-environment -g PATH "$HOME/dotfiles/bin/test/fixtures/erect-agent-stack:$PATH"
+  _t set-environment -g ERECT_TMUX_SOCKET "$sock"
+  _t set-option -g default-command \
+    "exec env PATH='$HOME/dotfiles/bin/test/fixtures/erect-agent-stack:$PATH' bash --noprofile --norc"
+  out=$(PATH="$HOME/dotfiles/bin/test/fixtures/erect-agent-stack:$PATH" \
+    OPENAI_API_KEY=test ERECT_TMUX_SOCKET="$sock" ERECT_BOOT_TIMEOUT=5 \
+    erect-agent-stack --fresh --agent codex --no-attach "$tmproot/projgamma" 2>&1)
+  status=$?
+  assert "$status" == "0" "Codex chrome satisfies the boot-readiness gate"
+  ((fails+=$?))
+  _t wait-for -S fake_codex_stop
+
+  # Codex's paste-burst protection needs an explicit bracketed paste boundary;
+  # the following plain Enter must remain a distinct submit key.
+  local capture="$tmproot/codex-ping.bin"
+  local ready="codex_reader_ready_$$" done="codex_reader_done_$$"
+  local reader
+  reader="stty raw -echo; printf '\\033[?2004hesc to interrupt\\r\\n'; tmux -L '$sock' wait-for -S '$ready'; IFS= read -r -d '|' data; printf '%s' \"\$data\" > '$capture'; tmux -L '$sock' wait-for -S '$done'; stty sane"
+  _t new-session -d -s projdelta -c "$tmproot/projdelta"
+  _t send-keys -t projdelta "$reader" Enter
+  _t wait-for "$ready"
+  out=$(OPENAI_API_KEY=test ERECT_TMUX_SOCKET="$sock" \
+    erect-agent-stack --agent codex --ping "hello codex" --no-attach "$tmproot/projdelta" 2>&1)
+  status=$?
+  _t send-keys -t projdelta -l '|'
+  _t wait-for "$done"
+  local ping_hex
+  ping_hex=$(od -An -tx1 -v "$capture" | tr -d ' \n')
+  assert "$status" == "0" "Codex ping delivery exits 0"
+  ((fails+=$?))
+  assert "$ping_hex" == "1b5b3230307e68656c6c6f20636f6465781b5b3230317e0a" \
+    "Codex ping is bracketed paste followed by plain Enter"
   ((fails+=$?))
   _t kill-server 2>/dev/null
   rm -rf "$tmproot"

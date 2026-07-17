@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+
+printf 'Do you trust the contents of this directory?\n'
+IFS= read -r _accepted
+printf 'OpenAI Codex ready\n'
+tmux -L "$ERECT_TMUX_SOCKET" wait-for fake_codex_stop

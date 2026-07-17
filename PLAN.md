@@ -2,6 +2,9 @@
 
 ## Recent
 
+- [x] Make `erect-agent-stack --agent codex` bypass first-run project trust,
+  recognize Codex readiness, and submit `--ping` via bracketed paste plus a
+  plain Enter without timing sleeps. (2026-07-17 10:10 EDT)
 - [x] Preserve NixOS privileged-wrapper precedence when rebuilding PATH, with a regression test for `sudo`. (2026-07-10 14:51 EDT)
 
 ## Open
