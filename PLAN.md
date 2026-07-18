@@ -2,6 +2,10 @@
 
 ## Recent
 
+- [ ] Empirically test Codex bracketed-paste submission with the target tmux
+  session unattached, attached and visibly shown, and attached but hidden.
+  - Curiosity poke: does the outer terminal's visibility affect the pane PTY at
+    all, or is `session_attached` the only potentially observable variable?
 - [x] Make `erect-agent-stack --agent codex` bypass first-run project trust,
   recognize Codex readiness, and submit `--ping` via bracketed paste plus a
   plain Enter without timing sleeps. (2026-07-17 10:10 EDT)
