@@ -4,7 +4,7 @@
 tests=0
 fails=0
 
-tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/getfile_test.XXXXXX")
+tmpdir=$(mktemp -d --tmpdir getfile_test.XXXXXX)
 trap 'rm -rf "$tmpdir"' EXIT
 
 # One-shot HTTP server via nc
@@ -32,12 +32,120 @@ serve_once() {
 	sleep 0.3
 }
 
-if ! command -v nc >/dev/null 2>&1 || ! command -v zip >/dev/null 2>&1; then
-	echo "⊘ getfile integration tests skipped: optional archive/network tools unavailable"
-	exit 0
+# Test 1: --unzip meters the streamed compressed bytes using the response's
+# Content-Length, without staging the archive on disk. Every dependency is
+# mocked, but getfile itself is executed through PATH.
+((tests++))
+payload='streamed progress payload'
+payload_size=$(printf '%s' "$payload" | wc -c | tr -d ' ')
+total_size=$((payload_size * 2))
+mock_bin="$tmpdir/mock-bin"
+pv_log="$tmpdir/pv.log"
+extracted_stream="$tmpdir/extracted-stream"
+mkdir -p "$mock_bin"
+printf '%s\n' \
+	'#!/usr/bin/env bash' \
+	'printf "%s" "${MOCK_HEADERS:?}"' > "$mock_bin/curl"
+printf '%s\n' \
+	'#!/usr/bin/env bash' \
+	'printf "%s" "${MOCK_PAYLOAD:?}"' > "$mock_bin/wget"
+printf '%s\n' \
+	'#!/usr/bin/env bash' \
+	'printf "%s\n" "$*" >> "${PV_LOG:?}"' \
+	'cat' > "$mock_bin/pv"
+printf '%s\n' \
+	'#!/usr/bin/env bash' \
+	'cat >> "${EXTRACTED_STREAM:?}"' > "$mock_bin/bsdtar"
+chmod +x "$mock_bin/curl" "$mock_bin/wget" "$mock_bin/pv" "$mock_bin/bsdtar"
+known_length_headers=$(printf 'HTTP/1.1 200 OK\r\nContent-Length: %s\r\n\r\n' "$payload_size")
+if PATH="$mock_bin:$PATH" MOCK_HEADERS="$known_length_headers" MOCK_PAYLOAD="$payload" \
+	PV_LOG="$pv_log" EXTRACTED_STREAM="$extracted_stream" getfile --unzip 'mock://archive-a.zip' 'mock://archive-b.zip' 2>/dev/null; then
+	pv_calls=0
+	pv_args=""
+	if [ -f "$pv_log" ]; then
+		pv_calls=$(wc -l < "$pv_log")
+		pv_args=$(<"$pv_log")
+	fi
+	if [[ "$(<"$extracted_stream")" == "${payload}${payload}" && "$pv_calls" -ge 3 && \
+		"$pv_args" == *"-s $payload_size"* && "$pv_args" == *"-s $total_size"* ]]; then
+		echo "✓ --unzip meters per-archive and aggregate streamed bytes"
+	else
+		echo "✗ --unzip should send Content-Length to per-archive and aggregate progress meters" >&2
+		echo "  pv calls: $pv_calls; args: $pv_args" >&2
+		((fails++))
+	fi
+else
+	echo "✗ --unzip progress path failed" >&2
+	((fails++))
 fi
 
-# Test 1: --help mentions --unzip
+# Test 2: An omitted Content-Length still gets a per-archive rate meter, but
+# never presents a misleading aggregate ETA.
+((tests++))
+unknown_pv_log="$tmpdir/unknown-pv.log"
+unknown_extracted_stream="$tmpdir/unknown-extracted-stream"
+unknown_headers=$'HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n'
+if PATH="$mock_bin:$PATH" MOCK_HEADERS="$unknown_headers" MOCK_PAYLOAD="$payload" \
+	PV_LOG="$unknown_pv_log" EXTRACTED_STREAM="$unknown_extracted_stream" getfile --unzip 'mock://unknown-a.zip' 'mock://unknown-b.zip' 2>/dev/null; then
+	unknown_pv_calls=$(wc -l < "$unknown_pv_log")
+	unknown_pv_args=$(<"$unknown_pv_log")
+	if [[ "$(<"$unknown_extracted_stream")" == "${payload}${payload}" && "$unknown_pv_calls" == 2 && "$unknown_pv_args" != *'-s '* ]]; then
+		echo "✓ --unzip omits aggregate ETA when Content-Length is unavailable"
+	else
+		echo "✗ --unzip should retain per-archive rate without inventing an aggregate total" >&2
+		echo "  pv calls: $unknown_pv_calls; args: $unknown_pv_args" >&2
+		((fails++))
+	fi
+else
+	echo "✗ --unzip unknown-length progress path failed" >&2
+	((fails++))
+fi
+
+# Test 3: Without pv, keep the archive in the pipe and surface the downloader's
+# own progress UI instead of going silently back to a quiet stream.
+((tests++))
+fallback_bin="$tmpdir/fallback-bin"
+fallback_wget_log="$tmpdir/fallback-wget.log"
+fallback_extracted_stream="$tmpdir/fallback-extracted-stream"
+mkdir -p "$fallback_bin"
+printf '%s\n' \
+	'#!/usr/bin/env bash' \
+	'printf "%s\n" "$*" > "${WGET_LOG:?}"' \
+	'printf "%s" "${MOCK_PAYLOAD:?}"' > "$fallback_bin/wget"
+printf '%s\n' \
+	'#!/usr/bin/env bash' \
+	'cat > "${EXTRACTED_STREAM:?}"' > "$fallback_bin/bsdtar"
+chmod +x "$fallback_bin/wget" "$fallback_bin/bsdtar"
+ln -s "$BASH" "$fallback_bin/bash"
+ln -s "$(type -P cat)" "$fallback_bin/cat"
+fallback_output=$(PATH="$fallback_bin:/usr/bin:/bin" WGET_LOG="$fallback_wget_log" MOCK_PAYLOAD="$payload" \
+	EXTRACTED_STREAM="$fallback_extracted_stream" "$HOME/dotfiles/bin/getfile" --unzip 'mock://fallback.zip' 2>&1)
+fallback_status=$?
+if [ "$fallback_status" -eq 0 ]; then
+	if [[ "$(<"$fallback_extracted_stream")" == "$payload" && "$(<"$fallback_wget_log")" == *'--progress=bar'* ]]; then
+		echo "✓ --unzip falls back to downloader progress without pv"
+	else
+		echo "✗ --unzip should keep downloader progress when pv is unavailable" >&2
+		echo "  wget args: $(<"$fallback_wget_log")" >&2
+		((fails++))
+	fi
+else
+	echo "✗ --unzip fallback progress path failed" >&2
+	echo "  Status: $fallback_status; output: $fallback_output" >&2
+	((fails++))
+fi
+
+if ! command -v nc >/dev/null 2>&1 || ! command -v zip >/dev/null 2>&1; then
+	echo "⊘ getfile integration tests skipped: optional archive/network tools unavailable"
+	if [ "$fails" -eq 0 ]; then
+		echo "All $tests tests passed"
+	else
+		echo "$fails of $tests tests failed" >&2
+	fi
+	exit "$fails"
+fi
+
+# Test 2: --help mentions --unzip
 ((tests++))
 if getfile --help 2>&1 | grep -q -- "--unzip"; then
 	echo "✓ --help mentions --unzip"
@@ -46,7 +154,7 @@ else
 	((fails++))
 fi
 
-# Test 2: --unzip extracts zip contents
+# Test 3: --unzip extracts zip contents
 ((tests++))
 echo "hello from getfile test" > "$tmpdir/testfile.txt"
 (cd "$tmpdir" && zip -q test.zip testfile.txt && rm testfile.txt)
@@ -66,7 +174,7 @@ else
 fi
 wait "$server_pid" 2>/dev/null || true
 
-# Test 3: normal download still works
+# Test 4: normal download still works
 ((tests++))
 echo "normal content" > "$tmpdir/normalfile.txt"
 port=$(find_free_port)
@@ -85,7 +193,7 @@ else
 fi
 wait "$server_pid" 2>/dev/null || true
 
-# Test 4: --unzip with multiple URLs
+# Test 5: --unzip with multiple URLs
 ((tests++))
 echo "file_a" > "$tmpdir/a.txt"
 echo "file_b" > "$tmpdir/b.txt"
@@ -111,7 +219,7 @@ fi
 wait "$pid1" 2>/dev/null || true
 wait "$pid2" 2>/dev/null || true
 
-# Test 5: runs cleanly when GREP_QUIET is unset in the environment
+# Test 6: runs cleanly when GREP_QUIET is unset in the environment
 # Regression: bash arrays cannot be exported, so child scripts never inherit
 # GREP_QUIET. The old guard `(( ${#GREP_QUIET[@]} ))` itself tripped `set -u`
 # with "unbound variable" before its fallback could run.

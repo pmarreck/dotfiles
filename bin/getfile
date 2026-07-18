@@ -13,7 +13,8 @@ Usage: getfile [options] URL [URL...]
 Download remote files to disk using wget (preferred) or curl.
 
 Options:
-  --unzip   Stream-unzip each URL through bsdtar (disables resume).
+  --unzip   Stream-unzip each URL through bsdtar with download progress (disables resume).
+            Uses pv for per-archive and, when all lengths are known, total ETA.
   --help    Show this help message and exit.
   --about   Show a short description and exit.
   --test    Run associated tests.
@@ -39,14 +40,62 @@ run_downloader() {
 }
 
 stream_download() {
-	local url="$1"
+	local url="$1" show_progress="${2:-false}"
 	if command -v wget >/dev/null 2>&1; then
-		wget -q -O - -- "$url"
+		if $show_progress; then
+			wget -O - --progress=bar -- "$url"
+		else
+			wget -q -O - -- "$url"
+		fi
 	elif command -v curl >/dev/null 2>&1; then
-		curl -sfL -- "$url"
+		if $show_progress; then
+			curl -fL --progress-bar -- "$url"
+		else
+			curl -sfL -- "$url"
+		fi
 	else
 		echo "getfile: require wget or curl" >&2
 		return 1
+	fi
+}
+
+# Print an HTTP Content-Length, if the server supplies a usable one. HEAD is
+# deliberately best-effort: a streaming GET remains the source of truth.
+remote_content_length() {
+	local headers
+	if command -v curl >/dev/null 2>&1; then
+		headers=$(curl -fsSIL -- "$1" 2>/dev/null) || return 1
+	elif command -v wget >/dev/null 2>&1; then
+		headers=$(wget --spider --server-response -- "$1" 2>&1) || return 1
+	else
+		return 1
+	fi
+	printf '%s\n' "$headers" | tr -d '\r' | awk '
+		tolower($0) ~ /^[[:space:]]*content-length:[[:space:]]*/ {
+			value = $0
+			sub(/^[^:]*:[[:space:]]*/, "", value)
+		}
+		END {
+			if (value ~ /^[0-9]+$/) print value
+		}
+	'
+}
+
+progress_label() {
+	local path="${1%%\?*}" label
+	label="${path##*/}"
+	printf '%s\n' "${label:-$1}"
+}
+
+OVERALL_PROGRESS_ACTIVE=false
+OVERALL_PROGRESS_PID=""
+
+stop_overall_progress() {
+	if $OVERALL_PROGRESS_ACTIVE; then
+		exec 3>&-
+		wait "$OVERALL_PROGRESS_PID" 2>/dev/null || true
+		OVERALL_PROGRESS_ACTIVE=false
+		OVERALL_PROGRESS_PID=""
 	fi
 }
 
@@ -106,10 +155,57 @@ if $unzip_mode; then
 		echo "getfile: --unzip requires bsdtar or libarchive-based tar" >&2
 		exit 1
 	}
-	for url in "${args[@]}"; do
-		echo "getfile: stream-unzipping $url" >&2
-		stream_download "$url" | "$unzipper" -xf -
-	done
+	if command -v pv >/dev/null 2>&1; then
+		stream_sizes=()
+		total_size=0
+		all_sizes_known=true
+		for url in "${args[@]}"; do
+			size=$(remote_content_length "$url" || true)
+			if [[ "$size" =~ ^[0-9]+$ ]]; then
+				stream_sizes+=("$size")
+				total_size=$((total_size + 10#$size))
+			else
+				stream_sizes+=("")
+				all_sizes_known=false
+			fi
+		done
+
+		if $all_sizes_known; then
+			echo "getfile: streaming ${#args[@]} archive(s), $total_size bytes total" >&2
+			display_args=(-f)
+			[ -t 2 ] && display_args=(-c)
+			exec 3> >(pv "${display_args[@]}" -s "$total_size" -N total >/dev/null)
+			OVERALL_PROGRESS_ACTIVE=true
+			OVERALL_PROGRESS_PID=$!
+			trap stop_overall_progress EXIT
+		else
+			echo "getfile: one or more servers omitted Content-Length; aggregate ETA unavailable" >&2
+		fi
+
+		for index in "${!args[@]}"; do
+			url="${args[index]}"
+			size="${stream_sizes[index]}"
+			label="$(progress_label "$url")"
+			display_args=(-f)
+			[ -t 2 ] && display_args=(-c)
+			pv_args=("${display_args[@]}" -N "[$((index + 1))/${#args[@]}] $label")
+			[ -n "$size" ] && pv_args+=(-s "$size")
+			echo "getfile: stream-unzipping $url" >&2
+			if $OVERALL_PROGRESS_ACTIVE; then
+				stream_download "$url" | tee /dev/fd/3 | pv "${pv_args[@]}" | "$unzipper" -xf -
+			else
+				stream_download "$url" | pv "${pv_args[@]}" | "$unzipper" -xf -
+			fi
+		done
+		stop_overall_progress
+		trap - EXIT
+	else
+		echo "getfile: pv unavailable; using downloader progress per archive" >&2
+		for url in "${args[@]}"; do
+			echo "getfile: stream-unzipping $url" >&2
+			stream_download "$url" true | "$unzipper" -xf -
+		done
+	fi
 else
 	run_downloader "${args[@]}"
 fi
