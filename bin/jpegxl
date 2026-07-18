@@ -71,10 +71,8 @@ get_abspath() {
 trash_file() {
 	local file="$1"
 	if [[ "$OSTYPE" == "darwin"* ]]; then
-		if [[ -x "/usr/bin/trash" ]]; then
-			/usr/bin/trash "$file"
-		elif command -v trash &>/dev/null; then
-			trash "$file"
+		if command -v trash &>/dev/null && trash "$file"; then
+			return 0
 		elif osascript -e "tell application \"Finder\" to delete POSIX file \"$(get_abspath "$file")\"" &>/dev/null; then
 			return 0
 		else
@@ -96,10 +94,10 @@ trash_file() {
 		fi
 	else
 		# Linux/Unix
-		if command -v gio &>/dev/null; then
-			gio trash "$file"
-		elif command -v trash-put &>/dev/null; then
-			trash-put "$file"
+		if command -v gio &>/dev/null && gio trash "$file"; then
+			return 0
+		elif command -v trash-put &>/dev/null && trash-put "$file"; then
+			return 0
 		else
 			# Fallback to FreeDesktop Trash directory
 			local trash_dir="${XDG_DATA_HOME:-$HOME/.local/share}/Trash"
@@ -302,6 +300,7 @@ Options:
 	--to=FORMAT              Convert JXL to another format (jpeg, png, etc.)
 	--preserve-timestamps    Preserve original timestamps (default)
 	--no-preserve-timestamps Do not preserve original timestamps
+	--abort-if-larger        Discard output unless it is smaller than the source
 	--trash-original[s]      Move original files to Trash after successful conversion
 	--test, test             Run self-test
 
@@ -353,6 +352,7 @@ process_file() {
 	local to_format="$6"
 	local quality="$7"
 	local trash_original="${8:-false}"
+	local abort_if_larger="${9:-false}"
 
 	if [[ ! -f "$file" ]]; then
 		err "File not found: $file"
@@ -521,17 +521,34 @@ process_file() {
 		fi
 	fi
 
-	# Post-processing
-	if [[ "$preserve_timestamps" == "true" ]]; then
-		debug "Preserving timestamps from $original_file to $output"
-		touch -r "$original_file" "$output"
-	fi
-
 	if [[ -f "$output" ]]; then
+		if [[ "$abort_if_larger" == "true" ]]; then
+			local original_size
+			local output_size
+			original_size=$($STAT -c "%s" "$original_file")
+			output_size=$($STAT -c "%s" "$output")
+			if [[ "$output_size" -ge "$original_size" ]]; then
+				warn "Discarding $output: it is not smaller than $original_file ($output_size bytes vs $original_size bytes)."
+				if ! rm -f -- "$output"; then
+					err "Could not discard oversized output: $output"
+				fi
+				return 1
+			fi
+		fi
+
+		# Post-processing
+		if [[ "$preserve_timestamps" == "true" ]]; then
+			debug "Preserving timestamps from $original_file to $output"
+			touch -r "$original_file" "$output"
+		fi
+
 		display_compression_ratio "$original_file" "$output"
 		if [[ "$trash_original" == "true" ]]; then
 			debug "Trashing original file: $original_file"
-			trash_file "$original_file"
+			if ! trash_file "$original_file"; then
+				err "Converted $original_file, but could not trash the original."
+				return 1
+			fi
 		fi
 		return 0
 	else
@@ -549,6 +566,7 @@ jpegxl() {
 	local lossy=false
 	local preserve_timestamps=true
 	local trash_original=false
+	local abort_if_larger=false
 	# Respect PRESERVE_TIMESTAMPS env var (unset/empty = true; 0/no/false = false)
 	if [[ -n "$PRESERVE_TIMESTAMPS" ]]; then
 		case "${PRESERVE_TIMESTAMPS,,}" in
@@ -595,6 +613,7 @@ jpegxl() {
 			--basic) effort=5; lossy=true ;;
 			--preserve-timestamps) preserve_timestamps=true ;;
 			--no-preserve-timestamps) preserve_timestamps=false ;;
+			--abort-if-larger) abort_if_larger=true ;;
 			--trash-original|--trash-originals) trash_original=true ;;
 			--to=*) to_format="${1#*=}" ;;
 			-*) err "Unknown option: $1"; print_help; return 1 ;;
@@ -630,6 +649,7 @@ jpegxl() {
 		debug "Lossy mode: $lossy"
 		debug "Preserve timestamps: $preserve_timestamps"
 		debug "Trash original: $trash_original"
+		debug "Abort if larger: $abort_if_larger"
 		debug "Target format: $to_format"
 		debug "Quality: $quality"
 		debug "Files to process: ${files[*]}"
@@ -637,7 +657,7 @@ jpegxl() {
 
 	local failures=0
 	for file in "${files[@]}"; do
-		if ! process_file "$file" "$effort" "$distance" "$lossy" "$preserve_timestamps" "$to_format" "$quality" "$trash_original"; then
+		if ! process_file "$file" "$effort" "$distance" "$lossy" "$preserve_timestamps" "$to_format" "$quality" "$trash_original" "$abort_if_larger"; then
 			((failures++))
 		fi
 	done

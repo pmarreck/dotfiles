@@ -6,7 +6,7 @@ test_jpegxl() {
     local tests=0
 
 	# Create a test directory
-	local test_dir=$(mktemp --tmpdir -d jpegxl_test.XXXXXX)
+	local test_dir=$(mktemp -d --tmpdir jpegxl_test.XXXXXX)
 	echo "Running jpegxl tests in temporary directory: $test_dir"
 
     # Create test images in the test directory
@@ -354,66 +354,130 @@ test_jpegxl() {
         (( fails++ ))
     fi
 
-    # Test 22: --trash-original moves original file to Trash
-    (( tests++ ))
-    local trash_test_file="$test_dir/trash_test.jpg"
-    magick -size 10x10 gradient:red-blue "$trash_test_file"
+	# Tests 22-25: --abort-if-larger rejects equal-or-larger output but keeps
+	# smaller output. Use a controlled cjxl so the boundary is deterministic.
+	local abort_mock_bin="$test_dir/abort-mock-bin"
+	mkdir -p "$abort_mock_bin"
+	cat <<'EOF' > "$abort_mock_bin/cjxl"
+#!/usr/bin/env bash
+previous_arg=""
+for arg in "$@"; do
+	input="$previous_arg"
+	previous_arg="$arg"
+done
+output="$previous_arg"
 
-    DEBUG=true jpegxl --trash-original "$trash_test_file" >/dev/null 2>&1
+case "${JPEGXL_TEST_CJXL_MODE:-larger}" in
+	larger) cat "$input" "$input" "$input" "$input" > "$output" ;;
+	equal) cat "$input" > "$output" ;;
+	smaller) printf 'smaller output\n' > "$output" ;;
+esac
+EOF
+	chmod +x "$abort_mock_bin/cjxl"
 
-    if [[ ! -f "$trash_test_file" && -f "$test_dir/trash_test.jxl" ]]; then
-        # Check that it exists in user's Trash, and clean it up if so
-        local trashed=false
-        if [[ "$OSTYPE" == "darwin"* ]]; then
-            if [[ -e "$HOME/.Trash/trash_test.jpg" ]]; then
-                trashed=true
-                rm -f "$HOME/.Trash/trash_test.jpg"
-            elif [[ -n $(find "$HOME/.Trash" -name "trash_test*" 2>/dev/null) ]]; then
-                trashed=true
-                find "$HOME/.Trash" -name "trash_test*" -exec rm -f {} + 2>/dev/null
-            fi
-        else
-            local linux_trash="${XDG_DATA_HOME:-$HOME/.local/share}/Trash/files"
-            if [[ -e "$linux_trash/trash_test.jpg" ]]; then
-                trashed=true
-                rm -f "$linux_trash/trash_test.jpg"
-                rm -f "${XDG_DATA_HOME:-$HOME/.local/share}/Trash/info/trash_test.jpg.trashinfo" 2>/dev/null
-            elif [[ -n $(find "$linux_trash" -name "trash_test*" 2>/dev/null) ]]; then
-                trashed=true
-                find "$linux_trash" -name "trash_test*" -exec rm -f {} + 2>/dev/null
-                find "${XDG_DATA_HOME:-$HOME/.local/share}/Trash/info" -name "trash_test*" -exec rm -f {} + 2>/dev/null
-            fi
-        fi
+	(( tests++ ))
+	if jpegxl --help | grep -q -- '--abort-if-larger'; then
+		echo "✓ --abort-if-larger is documented"
+	else
+		echo "✗ --abort-if-larger is not documented" >&2
+		(( fails++ ))
+	fi
 
-        if [[ "$trashed" == "true" ]]; then
-            echo "✓ --trash-original test passed (and successfully cleaned up from system Trash)"
-        else
-            echo "✓ --trash-original test passed (original file removed, but direct Trash location verification skipped)"
-        fi
-    else
-        echo "✗ --trash-original test failed"
-        (( fails++ ))
-    fi
+	(( tests++ ))
+	local larger_test_file="$test_dir/larger_test.jpg"
+	local larger_test_output="$test_dir/larger_test.jxl"
+	magick -size 10x10 gradient:red-blue "$larger_test_file"
+	local larger_result
+	larger_result=$(PATH="$abort_mock_bin:$PATH" JPEGXL_TEST_CJXL_MODE=larger jpegxl --abort-if-larger "$larger_test_file" 2>&1)
+	local larger_status=$?
+	if [[ "$larger_status" -ne 0 && -f "$larger_test_file" && ! -e "$larger_test_output" && "$larger_result" == *"not smaller"* ]]; then
+		echo "✓ --abort-if-larger discards a larger output"
+	else
+		echo "✗ --abort-if-larger larger-output test failed (status $larger_status: $larger_result)" >&2
+		(( fails++ ))
+	fi
 
-    # Test 23: --trash-originals (plural alias) also parses and works
-    (( tests++ ))
-    local plural_test_file="$test_dir/plural_test.jpg"
-    magick -size 10x10 gradient:red-blue "$plural_test_file"
-    DEBUG=true jpegxl --trash-originals "$plural_test_file" >/dev/null 2>&1
-    if [[ ! -f "$plural_test_file" && -f "$test_dir/plural_test.jxl" ]]; then
-        # Best-effort cleanup from Trash (same pattern as Test 22)
-        if [[ "$OSTYPE" == "darwin"* ]]; then
-            find "$HOME/.Trash" -name "plural_test*" -exec rm -f {} + 2>/dev/null
-        else
-            local linux_trash="${XDG_DATA_HOME:-$HOME/.local/share}/Trash/files"
-            find "$linux_trash" -name "plural_test*" -exec rm -f {} + 2>/dev/null
-            find "${XDG_DATA_HOME:-$HOME/.local/share}/Trash/info" -name "plural_test*" -exec rm -f {} + 2>/dev/null
-        fi
-        echo "✓ --trash-originals (plural alias) test passed"
-    else
-        echo "✗ --trash-originals (plural alias) test failed"
-        (( fails++ ))
-    fi
+	(( tests++ ))
+	local equal_test_file="$test_dir/equal_test.jpg"
+	local equal_test_output="$test_dir/equal_test.jxl"
+	magick -size 10x10 gradient:red-blue "$equal_test_file"
+	local equal_result
+	equal_result=$(PATH="$abort_mock_bin:$PATH" JPEGXL_TEST_CJXL_MODE=equal jpegxl --abort-if-larger "$equal_test_file" 2>&1)
+	local equal_status=$?
+	if [[ "$equal_status" -ne 0 && -f "$equal_test_file" && ! -e "$equal_test_output" && "$equal_result" == *"not smaller"* ]]; then
+		echo "✓ --abort-if-larger discards an equal-sized output"
+	else
+		echo "✗ --abort-if-larger equal-size test failed (status $equal_status: $equal_result)" >&2
+		(( fails++ ))
+	fi
+
+	(( tests++ ))
+	local smaller_test_file="$test_dir/smaller_test.jpg"
+	local smaller_test_output="$test_dir/smaller_test.jxl"
+	magick -size 10x10 gradient:red-blue "$smaller_test_file"
+	PATH="$abort_mock_bin:$PATH" JPEGXL_TEST_CJXL_MODE=smaller jpegxl --abort-if-larger "$smaller_test_file" >/dev/null 2>&1
+	local smaller_status=$?
+	if [[ "$smaller_status" -eq 0 && -f "$smaller_test_file" && -f "$smaller_test_output" ]]; then
+		echo "✓ --abort-if-larger keeps a smaller output"
+	else
+		echo "✗ --abort-if-larger smaller-output test failed (status $smaller_status)" >&2
+		(( fails++ ))
+	fi
+
+	# Test 26: --trash-original removes the original using an isolated Trash.
+	# gio is deliberately made to fail on Linux: it often cannot trash files from
+	# temporary or network filesystems, so jpegxl must use its fallback instead.
+	local trash_mock_bin="$test_dir/trash-mock-bin"
+	local isolated_data_home="$test_dir/xdg-data"
+	local mock_trash_dir="$test_dir/mock-trash"
+	mkdir -p "$trash_mock_bin" "$isolated_data_home" "$mock_trash_dir"
+	if [[ "$OSTYPE" == "darwin"* ]]; then
+		cat <<'EOF' > "$trash_mock_bin/trash"
+#!/usr/bin/env bash
+mkdir -p "$JPEGXL_TEST_TRASH_DIR"
+mv "$1" "$JPEGXL_TEST_TRASH_DIR/"
+EOF
+		chmod +x "$trash_mock_bin/trash"
+	else
+		cat <<'EOF' > "$trash_mock_bin/gio"
+#!/usr/bin/env bash
+exit 1
+EOF
+		chmod +x "$trash_mock_bin/gio"
+	fi
+
+	(( tests++ ))
+	local trash_test_file="$test_dir/trash_test.jpg"
+	magick -size 10x10 gradient:red-blue "$trash_test_file"
+	PATH="$trash_mock_bin:$PATH" XDG_DATA_HOME="$isolated_data_home" JPEGXL_TEST_TRASH_DIR="$mock_trash_dir" DEBUG=true jpegxl --trash-original "$trash_test_file" >/dev/null 2>&1
+	if [[ "$OSTYPE" == "darwin"* ]]; then
+		local trash_test_destination="$mock_trash_dir/trash_test.jpg"
+	else
+		local trash_test_destination="$isolated_data_home/Trash/files/trash_test.jpg"
+	fi
+	if [[ ! -f "$trash_test_file" && -f "$test_dir/trash_test.jxl" && -f "$trash_test_destination" ]]; then
+		echo "✓ --trash-original test passed"
+	else
+		echo "✗ --trash-original test failed" >&2
+		(( fails++ ))
+	fi
+
+	# Test 27: --trash-originals (plural alias) follows the same path.
+	(( tests++ ))
+	local plural_test_file="$test_dir/plural_test.jpg"
+	magick -size 10x10 gradient:red-blue "$plural_test_file"
+	PATH="$trash_mock_bin:$PATH" XDG_DATA_HOME="$isolated_data_home" JPEGXL_TEST_TRASH_DIR="$mock_trash_dir" DEBUG=true jpegxl --trash-originals "$plural_test_file" >/dev/null 2>&1
+	if [[ "$OSTYPE" == "darwin"* ]]; then
+		local plural_test_destination="$mock_trash_dir/plural_test.jpg"
+	else
+		local plural_test_destination="$isolated_data_home/Trash/files/plural_test.jpg"
+	fi
+	if [[ ! -f "$plural_test_file" && -f "$test_dir/plural_test.jxl" && -f "$plural_test_destination" ]]; then
+		echo "✓ --trash-originals (plural alias) test passed"
+	else
+		echo "✗ --trash-originals (plural alias) test failed" >&2
+		(( fails++ ))
+	fi
 
     # Clean up test directory
     echo "Cleaning up test directory..."
