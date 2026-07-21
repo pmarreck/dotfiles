@@ -1,0 +1,131 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ "${1:-}" == "--test" ]]; then
+	shift || true
+	if [[ $# -gt 0 ]]; then
+		echo "diskhogs: --test does not accept additional arguments" >&2
+		exit 1
+	fi
+	test_file="$HOME/dotfiles/bin/test/diskhogs_test"
+	if [[ ! -x "$test_file" ]]; then
+		echo "diskhogs: missing test file $test_file" >&2
+		exit 1
+	fi
+	"$test_file" >/dev/null
+	exit $?
+fi
+
+platform=${DISKHOGS_PLATFORM:-$(uname -s)}
+effective_uid=${DISKHOGS_EUID:-$EUID}
+iotop_bin=${DISKHOGS_IOTOP:-iotop}
+fs_usage_bin=${DISKHOGS_FS_USAGE:-fs_usage}
+sudo_bin=${DISKHOGS_SUDO:-sudo}
+interval=1
+original_args=("$@")
+
+usage() {
+	cat <<'USAGE'
+Usage: diskhogs [-d SECONDS]
+
+Show system-wide disk activity for one sampled interval. diskhogs elevates via
+sudo because per-process disk I/O is privileged on both Linux and macOS.
+
+Options:
+  -d SECONDS    Sampling duration; a positive integer (default 1).
+  -h, --help    Show this help text.
+  -a, --about   Describe this tool.
+  --test        Run the diskhogs test suite (stdout muted) and exit.
+
+Platform behavior:
+  Linux   Uses iotop to show active processes with current read/write bandwidth.
+  macOS   Uses fs_usage -f diskio to show disk-I/O events, byte counts, and paths.
+
+Environment:
+  DISKHOGS_PLATFORM, DISKHOGS_IOTOP, DISKHOGS_FS_USAGE, DISKHOGS_SUDO
+                    Override platform or command paths (primarily for testing).
+USAGE
+}
+
+about() {
+	echo "diskhogs: show the processes currently driving disk I/O."
+}
+
+is_positive_integer() {
+	[[ "$1" =~ ^[0-9]+$ ]] && (( $1 > 0 ))
+}
+
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+		-d)
+			if [[ $# -lt 2 ]] || ! is_positive_integer "$2"; then
+				echo "diskhogs: -d requires a positive integer number of seconds" >&2
+				exit 1
+			fi
+			interval="$2"
+			shift 2
+			;;
+		-h|--help)
+			usage
+			exit 0
+			;;
+		-a|--about)
+			about
+			exit 0
+			;;
+		--)
+			shift
+			break
+			;;
+		*)
+			echo "diskhogs: invalid option $1" >&2
+			usage >&2
+			exit 1
+			;;
+	esac
+done
+
+if [[ $# -gt 0 ]]; then
+	echo "diskhogs: unexpected positional argument '$1'" >&2
+	exit 1
+fi
+
+case "$platform" in
+	Linux|Darwin) ;;
+	*)
+		echo "diskhogs: unsupported platform '$platform'" >&2
+		exit 1
+		;;
+esac
+
+if [[ "$effective_uid" != "0" ]]; then
+	if ! command -v "$sudo_bin" >/dev/null 2>&1; then
+		echo "diskhogs: system-wide disk activity requires root, but sudo is unavailable" >&2
+		exit 1
+	fi
+	self_path=${BASH_SOURCE[0]}
+	if [[ "$self_path" != */* ]]; then
+		self_path=$(command -v "$self_path")
+	fi
+	exec "$sudo_bin" "$self_path" "${original_args[@]}"
+fi
+
+case "$platform" in
+	Linux)
+		if ! command -v "$iotop_bin" >/dev/null 2>&1; then
+			echo "diskhogs: Linux requires iotop" >&2
+			exit 1
+		fi
+		echo "diskhogs: active Linux processes by physical disk read/write bandwidth (${interval}s sample)" >&2
+		exec "$iotop_bin" -b -n 1 -d "$interval" -o -P
+		;;
+	Darwin)
+		if ! command -v "$fs_usage_bin" >/dev/null 2>&1; then
+			echo "diskhogs: macOS requires fs_usage" >&2
+			exit 1
+		fi
+		echo "diskhogs: macOS disk-I/O events (${interval}s sample); B= is byte count and the process is at right" >&2
+		exec "$fs_usage_bin" -w -f diskio -t "$interval"
+		;;
+esac

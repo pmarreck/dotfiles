@@ -223,7 +223,7 @@ alias size='wc -c' # this may shadow a builtin tool used with binary compilation
 # vibe-kanban
 alias vk='HOST=0.0.0.0 BACKEND_PORT=10001 TMPDIR=$XDG_CACHE_HOME/vibe-kanban npx vibe-kanban'
 alias backlog='nix run github:MrLesk/Backlog.md'
-alias hogs='hr; echo "Memhogs:"; memhogs; hr; echo "CPU hogs:"; cpuhogs; hr; echo "Network hogs:"; nethogs; hr'
+alias hogs='hr; echo "Memhogs:"; memhogs; hr; echo "CPU hogs:"; cpuhogs; hr; echo "Network hogs:"; nethogs; hr; echo "Disk hogs:"; diskhogs; hr'
 alias entropy='cd $CODE/entropy_shield'
 alias codescan-proj='cd $CODE/codescan'
 alias ffpw='$(which ffpw) --channel nightly'

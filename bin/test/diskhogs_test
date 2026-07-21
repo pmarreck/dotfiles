@@ -1,0 +1,150 @@
+#!/usr/bin/env bash
+
+set -uo pipefail
+
+fails=0
+tests=0
+
+test_dir=$(mktemp -d --tmpdir diskhogs_test.XXXXXX)
+trap 'rm -rf "$test_dir"' EXIT
+
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+repo_root=$(cd "$script_dir/../.." && pwd)
+diskhogs_cmd=${DISKHOGS_BIN:-"$script_dir/../diskhogs"}
+
+if [[ ! -x "$diskhogs_cmd" ]]; then
+	echo "diskhogs_test: unable to locate diskhogs executable at $diskhogs_cmd" >&2
+	exit 1
+fi
+
+iotop_log="$test_dir/iotop.log"
+fs_usage_log="$test_dir/fs_usage.log"
+sudo_log="$test_dir/sudo.log"
+iotop_stub="$test_dir/iotop"
+fs_usage_stub="$test_dir/fs_usage"
+sudo_stub="$test_dir/sudo"
+
+cat <<'EOF' > "$iotop_stub"
+#!/usr/bin/env bash
+printf '%s\n' "$*" > "$DISKHOGS_TEST_IOTOP_LOG"
+cat <<'OUTPUT'
+Total DISK READ:         0.00 B/s | Total DISK WRITE:        77.00 M/s
+Actual DISK READ:        0.00 B/s | Actual DISK WRITE:       77.00 M/s
+  TID  PRIO  USER     DISK READ  DISK WRITE  SWAPIN     IO>    COMMAND
+15521 be/4 root        0.00 B/s   77.00 M/s  0.00 %  0.00 % nix-daemon
+OUTPUT
+EOF
+
+cat <<'EOF' > "$fs_usage_stub"
+#!/usr/bin/env bash
+printf '%s\n' "$*" > "$DISKHOGS_TEST_FS_USAGE_LOG"
+printf '%s\n' '09:01:00.000  write  B=4096  /nix/store/example  nix-daemon.15521'
+EOF
+
+cat <<'EOF' > "$sudo_stub"
+#!/usr/bin/env bash
+printf '%s\n' "$*" > "$DISKHOGS_TEST_SUDO_LOG"
+EOF
+
+chmod +x "$iotop_stub" "$fs_usage_stub" "$sudo_stub"
+
+run_diskhogs() {
+	local platform="$1"
+	shift
+	env \
+		DISKHOGS_PLATFORM="$platform" \
+		DISKHOGS_EUID=0 \
+		DISKHOGS_IOTOP="$iotop_stub" \
+		DISKHOGS_FS_USAGE="$fs_usage_stub" \
+		DISKHOGS_SUDO="$sudo_stub" \
+		DISKHOGS_TEST_IOTOP_LOG="$iotop_log" \
+		DISKHOGS_TEST_FS_USAGE_LOG="$fs_usage_log" \
+		DISKHOGS_TEST_SUDO_LOG="$sudo_log" \
+		"$diskhogs_cmd" "$@"
+}
+
+((tests++))
+if output=$(run_diskhogs Linux --help); then
+	if [[ "$output" == *'Usage: diskhogs'* && "$output" == *'sudo'* && "$output" == *'-d SECONDS'* ]]; then
+		echo "✓ --help documents sampling and privilege requirements"
+	else
+		echo "✗ --help omitted diskhogs usage details" >&2
+		((fails++))
+	fi
+else
+	echo "✗ --help exited unsuccessfully" >&2
+	((fails++))
+fi
+
+((tests++))
+if output=$(run_diskhogs Linux -d 3 2>&1); then
+	if [[ "$(<"$iotop_log")" == '-b -n 1 -d 3 -o -P' && "$output" == *'nix-daemon'* && "$output" == *'77.00 M/s'* ]]; then
+		echo "✓ Linux delegates to iotop for active per-process bandwidth"
+	else
+		echo "✗ Linux did not invoke iotop with the expected active-process sample" >&2
+		((fails++))
+	fi
+else
+	echo "✗ Linux diskhogs run failed" >&2
+	((fails++))
+fi
+
+((tests++))
+if output=$(run_diskhogs Darwin -d 3 2>&1); then
+	if [[ "$(<"$fs_usage_log")" == '-w -f diskio -t 3' && "$output" == *'nix-daemon.15521'* && "$output" == *'B=4096'* ]]; then
+		echo "✓ macOS delegates to fs_usage disk-I/O tracing"
+	else
+		echo "✗ macOS did not invoke fs_usage with the expected disk-I/O sample" >&2
+		((fails++))
+	fi
+else
+	echo "✗ macOS diskhogs run failed" >&2
+	((fails++))
+fi
+
+((tests++))
+rm -f "$sudo_log"
+if env \
+	DISKHOGS_PLATFORM=Linux \
+	DISKHOGS_EUID=1000 \
+	DISKHOGS_SUDO="$sudo_stub" \
+	DISKHOGS_TEST_SUDO_LOG="$sudo_log" \
+	"$diskhogs_cmd" -d 2; then
+	if [[ "$(<"$sudo_log")" == "$diskhogs_cmd -d 2" ]]; then
+		echo "✓ unprivileged invocation re-execs through sudo"
+	else
+		echo "✗ unprivileged invocation did not re-exec diskhogs through sudo" >&2
+		((fails++))
+	fi
+else
+	echo "✗ unprivileged invocation should delegate to sudo" >&2
+	((fails++))
+fi
+
+((tests++))
+if run_diskhogs Linux -d 0 >"$test_dir/invalid.out" 2>&1; then
+	echo "✗ invalid sample duration unexpectedly succeeded" >&2
+	((fails++))
+elif grep -q 'positive integer' "$test_dir/invalid.out"; then
+	echo "✓ invalid sample duration reports the constraint"
+else
+	echo "✗ invalid sample duration did not explain the constraint" >&2
+	((fails++))
+fi
+
+((tests++))
+if grep -q 'Disk hogs.*diskhogs' "$repo_root/.aliases"; then
+	echo "✓ hogs alias includes diskhogs"
+else
+	echo "✗ hogs alias does not include diskhogs" >&2
+	((fails++))
+fi
+
+if (( fails > 0 )); then
+	echo "$fails of $tests diskhogs tests failed" >&2
+
+else
+	echo "All $tests diskhogs tests passed"
+fi
+
+exit "$fails"
