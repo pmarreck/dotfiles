@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+
+colordatetimestamp() {
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+
+	case "$1" in
+		--help|-h)
+			cat <<'EOF'
+Usage: colordatetimestamp [--date|-d[=| ]'date']
+
+Print a datetimestamp with year, month, day, hour, minute, and second in
+red, orange, yellow, green, blue, and magenta respectively.
+
+  --date|-d [date]  date to use, defaults to now, see man date for format details
+  --help|-h         show this help
+  --about|-a        describe this command
+EOF
+			return 0
+			;;
+		--about|-a)
+			echo "Print a YYYYMMDDHHMMSS timestamp with rainbow-colored date and time fields."
+			return 0
+			;;
+	esac
+
+	local timestamp status
+	timestamp=$(DATETIMESTAMPFORMAT='+%Y%m%d%H%M%S.%3N' datetimestamp "$@")
+	status=$?
+	if ((status != 0)); then
+		return "$status"
+	fi
+	timestamp=${timestamp%%.*}
+
+	if [[ ! "$timestamp" =~ ^[0-9]{14}$ ]]; then
+		printf 'colordatetimestamp: datetimestamp returned an unexpected value: %s\n' "$timestamp" >&2
+		return 1
+	fi
+
+	local ANSI=${ANSI:-'\e['}
+	local TXTRED=${TXTRED:-'0;31m'}
+	local TXTORG=${TXTORG:-'38;5;208m'}
+	local TXTYLW=${TXTYLW:-'0;33m'}
+	local TXTGRN=${TXTGRN:-'0;32m'}
+	local TXTBLU=${TXTBLU:-'0;34m'}
+	local TXTMAG=${TXTMAG:-'0;35m'}
+	local TXTRST=${TXTRST:-'m'}
+
+	printf '%b%.4s%b%.2s%b%.2s%b%.2s%b%.2s%b%.2s%b\n' \
+		"${ANSI}${TXTRED}" "${timestamp:0:4}" \
+		"${ANSI}${TXTORG}" "${timestamp:4:2}" \
+		"${ANSI}${TXTYLW}" "${timestamp:6:2}" \
+		"${ANSI}${TXTGRN}" "${timestamp:8:2}" \
+		"${ANSI}${TXTBLU}" "${timestamp:10:2}" \
+		"${ANSI}${TXTMAG}" "${timestamp:12:2}" \
+		"${ANSI}${TXTRST}"
+}
+
+if ! (return 0 2>/dev/null); then
+	if [ "$1" = "--test" ]; then
+		_test_file="$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+		if [ -f "$_test_file" ]; then . "$_test_file" >/dev/null; fi
+	else
+		$(basename "${0##\-}") "$@"
+	fi
+fi

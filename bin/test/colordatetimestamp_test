@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+
+test_colordatetimestamp() {
+	local fails=0
+	local tests=0
+	local timestamp plain_timestamp output expected exit_code
+
+	echo "Testing colordatetimestamp..."
+
+	((tests++))
+	echo "Checking that timestamp fields receive the requested ANSI colors..."
+	timestamp=$(datetimestamp --date='@2147483640')
+	plain_timestamp=${timestamp%%.*}
+	output=$(ANSI=$'\033[' TXTRED='0;31m' TXTORG='38;5;208m' TXTYLW='0;33m' TXTGRN='0;32m' TXTBLU='0;34m' TXTMAG='0;35m' TXTRST='0m' colordatetimestamp --date='@2147483640' 2>&1)
+	exit_code=$?
+	expected=$'\033[0;31m'"${plain_timestamp:0:4}"$'\033[38;5;208m'"${plain_timestamp:4:2}"$'\033[0;33m'"${plain_timestamp:6:2}"$'\033[0;32m'"${plain_timestamp:8:2}"$'\033[0;34m'"${plain_timestamp:10:2}"$'\033[0;35m'"${plain_timestamp:12:2}"$'\033[0m'
+
+	if [ "$exit_code" -eq 0 ] && [ "$output" = "$expected" ]; then
+		echo "✓ colordatetimestamp colors year through second and drops fractional seconds"
+	else
+		echo "✗ colordatetimestamp did not produce the expected colored timestamp" >&2
+		echo "  exit code: $exit_code (expected 0)" >&2
+		echo "  output:   $(printf %q "$output")" >&2
+		echo "  expected: $(printf %q "$expected")" >&2
+		((fails++))
+	fi
+
+	((tests++))
+	echo "Checking --help..."
+	output=$(colordatetimestamp --help 2>&1)
+	exit_code=$?
+	if [ "$exit_code" -eq 0 ] && [[ "$output" == *"Usage: colordatetimestamp"* ]]; then
+		echo "✓ colordatetimestamp provides help"
+	else
+		echo "✗ colordatetimestamp --help failed" >&2
+		echo "  exit code: $exit_code (expected 0)" >&2
+		echo "  output: $output" >&2
+		((fails++))
+	fi
+
+	((tests++))
+	echo "Checking that invalid datetimestamp options are rejected..."
+	output=$(colordatetimestamp --not-an-option 2>&1)
+	exit_code=$?
+	if [ "$exit_code" -eq 2 ] && [[ "$output" == *"Unknown option: --not-an-option"* ]]; then
+		echo "✓ colordatetimestamp preserves datetimestamp option errors"
+	else
+		echo "✗ colordatetimestamp did not preserve invalid-option failure" >&2
+		echo "  exit code: $exit_code (expected 2)" >&2
+		echo "  output: $output" >&2
+		((fails++))
+	fi
+
+	if ((fails > 0)); then
+		echo "colordatetimestamp test FAILED: $fails of $tests tests failed" >&2
+		return "$fails"
+	fi
+
+	echo "colordatetimestamp test PASSED: All $tests tests passed"
+}
+
+test_colordatetimestamp
+exit $?
