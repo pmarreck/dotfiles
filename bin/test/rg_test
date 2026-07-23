@@ -1,0 +1,210 @@
+#!/usr/bin/env bash
+
+set -u
+
+# shellcheck disable=SC1091 # Stable dotfiles path supplied by the test environment.
+source "$HOME/dotfiles/bin/src/capture.bash"
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+guard="$repo_root/bin/rg"
+find_guard="$repo_root/bin/find"
+fd_guard="$repo_root/bin/fd"
+shell_guard="$repo_root/bin/src/rg_guard_env.bash"
+tmp="$(mktemp -d --tmpdir rg_guard_test.XXXXXX)"
+fake_bin="$tmp/bin"
+safe_root="$tmp/safe"
+mkdir -p "$fake_bin" "$safe_root"
+ln -s /nix/store "$tmp/store-link"
+ln -s "$HOME" "$tmp/home-link"
+real_bash="$(readlink -f "$(command -v bash)" 2>/dev/null || :)"
+bounded_store_dir="${real_bash%/*}"
+if [[ "$bounded_store_dir" == /nix/store/* && -d "$bounded_store_dir" ]]; then
+	ln -s "$bounded_store_dir" "$tmp/store-child-link"
+fi
+
+# shellcheck disable=SC2329 # Invoked indirectly by EXIT trap.
+cleanup() {
+	rm -rf -- "$tmp"
+}
+trap cleanup EXIT
+
+# shellcheck disable=SC2016 # ${0##*/} belongs to the generated fake executable.
+printf '%s\n' \
+	'#!/usr/bin/env bash' \
+	'printf "delegated:%s\\n" "${0##*/}"' \
+	'printf "arg=<%s>\\n" "$@"' >"$fake_bin/rg"
+chmod +x "$fake_bin/rg"
+ln -s rg "$fake_bin/find"
+ln -s rg "$fake_bin/fd"
+
+test_path="$fake_bin:/run/current-system/sw/bin:/usr/bin:/bin"
+tests=0
+fails=0
+
+pass() {
+	printf '✓ %s\n' "$1"
+}
+
+fail() {
+	printf '✗ %s\n' "$1" >&2
+	printf '  rc=%s\n  stdout=%q\n  stderr=%q\n' "$rc" "$out" "$err" >&2
+	((fails++))
+}
+
+expect() {
+	local description="$1"
+	local expected_rc="$2"
+	local out_fragment="$3"
+	local err_fragment="$4"
+	shift 4
+	((tests++))
+	out='' err='' rc=0
+	capture "$@"
+	if [[ "$rc" == "$expected_rc" && "$out" == *"$out_fragment"* && "$err" == *"$err_fragment"* ]]; then
+		pass "$description"
+	else
+		fail "$description"
+	fi
+}
+
+expect "ordinary searches delegate unchanged" 0 'arg=<needle>' '' \
+	env PATH="$test_path" "$guard" needle "$safe_root"
+
+# shellcheck disable=SC2016 # $1 belongs to the child Bash.
+expect "piped stdin is not mistaken for an implicit current-directory search" 0 'delegated:rg' '' \
+	env PATH="$test_path" bash -c 'cd "$HOME" && printf "needle\n" | "$1" needle' bash "$guard"
+
+expect "an explicit Nix store root is blocked" 77 '' 'REFUSING' \
+	env PATH="$test_path" "$guard" needle /nix/store
+
+expect "a specific bounded Nix store child remains searchable" 0 'delegated:rg' '' \
+	env PATH="$test_path" "$guard" needle /nix/store/example-source
+
+expect "a symlink resolving into the Nix store is blocked" 77 '' 'REFUSING' \
+	env PATH="$test_path" "$guard" needle "$tmp/store-link"
+
+if [[ -L "$tmp/store-child-link" ]]; then
+	expect "a symlink to one bounded Nix store directory remains searchable" 0 'delegated:rg' '' \
+		env PATH="$test_path" "$guard" needle "$tmp/store-child-link"
+fi
+
+expect "an exact home-directory search root is blocked with an indexed alternative" 77 '' 'Use fsearch' \
+	env PATH="$test_path" "$guard" needle "$HOME"
+
+expect "a directory symlink resolving to home is also blocked" 77 '' 'Use fsearch' \
+	env PATH="$test_path" "$guard" needle "$tmp/home-link"
+
+expect "a specific directory beneath home remains searchable" 0 'delegated:rg' '' \
+	env PATH="$test_path" "$guard" needle "$HOME/dotfiles"
+
+expect "a single Nix-store-backed symlinked file remains safe" 0 'arg=</etc/os-release>' '' \
+	env PATH="$test_path" "$guard" needle /etc/os-release
+
+# shellcheck disable=SC2016 # $1 belongs to the child Bash.
+expect "an implicit search from inside the Nix store is blocked" 77 '' 'REFUSING' \
+	env PATH="$test_path" bash -c 'cd /nix/store && exec "$1" needle' bash "$guard"
+
+expect "rg --files treats its first positional as a search root" 77 '' 'REFUSING' \
+	env PATH="$test_path" "$guard" --files /nix/store
+
+expect "a literal /nix/store pattern with a safe root remains valid" 0 'arg=</nix/store>' '' \
+	env PATH="$test_path" "$guard" -F /nix/store "$safe_root"
+
+expect "an explicit -e pattern mentioning /nix/store remains valid" 0 'arg=</nix/store>' '' \
+	env PATH="$test_path" "$guard" -e /nix/store "$safe_root"
+
+if command -v unshare >/dev/null 2>&1; then
+	expect "namespace root without sudo provenance remains blocked" 77 '' 'must be invoked through sudo' \
+		unshare -Ur env -u SUDO_USER PATH="$test_path" "$guard" needle /nix/store
+
+	expect "sudo-provenance root may proceed but receives a severe warning" 0 'delegated' 'STRONGLY ADVISED AGAINST' \
+		unshare -Ur env SUDO_USER=pmarreck PATH="$test_path" "$guard" needle /nix/store
+
+	expect "sudo-provenance root may search home but is pointed to indexed CLI search" 0 'delegated' 'fsearch --cli' \
+		unshare -Ur env SUDO_USER=pmarreck PATH="$test_path" "$guard" needle "$HOME"
+else
+	printf '↷ root-provenance cases require Linux unshare; covered by the Linux suite\n'
+fi
+
+# shellcheck disable=SC2016 # $1 belongs to the child Bash.
+expect "exported agent-shell function outranks a bundled rg earlier on PATH" 77 'function' 'REFUSING' \
+	env PATH="$test_path" bash -c '. "$1"; bash -c "type -t rg; rg needle /nix/store"' bash "$shell_guard"
+
+expect "ordinary find traversal delegates unchanged" 0 'delegated:find' '' \
+	env PATH="$test_path" "$find_guard" "$safe_root" -name needle
+
+expect "find blocks an explicit Nix store starting point" 77 '' 'REFUSING' \
+	env PATH="$test_path" "$find_guard" /nix/store -name '*.nix'
+
+expect "find blocks home as an exact traversal starting point" 77 '' 'Use fsearch' \
+	env PATH="$test_path" "$find_guard" "$HOME" -name '*.nix'
+
+expect "find blocks a Nix store root after BSD -E" 77 '' 'REFUSING' \
+	env PATH="$test_path" "$find_guard" -E /nix/store -regex '.*'
+
+expect "find blocks a Nix store root supplied through BSD -f" 77 '' 'REFUSING' \
+	env PATH="$test_path" "$find_guard" -f /nix/store -name '*.nix'
+
+expect "find blocks a directory symlink resolving into the Nix store" 77 '' 'REFUSING' \
+	env PATH="$test_path" "$find_guard" "$tmp/store-link" -type f
+
+# shellcheck disable=SC2016 # $1 belongs to the child Bash.
+expect "find blocks an implicit traversal from inside the Nix store" 77 '' 'REFUSING' \
+	env PATH="$test_path" bash -c 'cd /nix/store && exec "$1" .' bash "$find_guard"
+
+expect "find allows /nix/store used only as an expression value" 0 'arg=</nix/store>' '' \
+	env PATH="$test_path" "$find_guard" "$safe_root" -path /nix/store
+
+if command -v unshare >/dev/null 2>&1; then
+	expect "sudo-provenance root may run find but receives a severe warning" 0 'delegated:find' 'STRONGLY ADVISED AGAINST' \
+		unshare -Ur env SUDO_USER=pmarreck PATH="$test_path" "$find_guard" /nix/store -type f
+fi
+
+# shellcheck disable=SC2016 # $1 belongs to the child Bash.
+expect "exported agent-shell function also outranks bundled find" 77 'function' 'REFUSING' \
+	env PATH="$test_path" bash -c '. "$1"; bash -c "type -t find; find /nix/store -type f"' bash "$shell_guard"
+
+expect "ordinary fd search delegates unchanged" 0 'delegated:fd' '' \
+	env PATH="$test_path" "$fd_guard" needle "$safe_root"
+
+expect "fd blocks a positional Nix store search root" 77 '' 'REFUSING' \
+	env PATH="$test_path" "$fd_guard" . /nix/store
+
+expect "fd blocks home as an exact search root" 77 '' 'Use fsearch' \
+	env PATH="$test_path" "$fd_guard" . "$HOME"
+
+expect "fd allows /nix/store used as its pattern with a safe root" 0 'arg=</nix/store>' '' \
+	env PATH="$test_path" "$fd_guard" /nix/store "$safe_root"
+
+expect "fd blocks --search-path rooted in the Nix store" 77 '' 'REFUSING' \
+	env PATH="$test_path" "$fd_guard" --search-path /nix/store needle
+
+expect "fd blocks a Nix store base directory" 77 '' 'REFUSING' \
+	env PATH="$test_path" "$fd_guard" -C /nix/store needle
+
+expect "fd allows /nix/store used only as an exclusion pattern" 0 'arg=</nix/store>' '' \
+	env PATH="$test_path" "$fd_guard" --exclude /nix/store needle "$safe_root"
+
+expect "fd blocks a directory symlink resolving into the Nix store" 77 '' 'REFUSING' \
+	env PATH="$test_path" "$fd_guard" . "$tmp/store-link"
+
+# shellcheck disable=SC2016 # $1 belongs to the child Bash.
+expect "fd blocks an implicit traversal from inside the Nix store" 77 '' 'REFUSING' \
+	env PATH="$test_path" bash -c 'cd /nix/store && exec "$1" needle' bash "$fd_guard"
+
+if command -v unshare >/dev/null 2>&1; then
+	expect "sudo-provenance root may run fd but receives a severe warning" 0 'delegated:fd' 'STRONGLY ADVISED AGAINST' \
+		unshare -Ur env SUDO_USER=pmarreck PATH="$test_path" "$fd_guard" . /nix/store
+fi
+
+# shellcheck disable=SC2016 # $1 belongs to the child Bash.
+expect "exported agent-shell function also outranks bundled fd" 77 'function' 'REFUSING' \
+	env PATH="$test_path" bash -c '. "$1"; bash -c "type -t fd; fd . /nix/store"' bash "$shell_guard"
+
+if (( fails == 0 )); then
+	printf 'All %s search guard tests passed\n' "$tests"
+else
+	printf '%s of %s search guard tests failed\n' "$fails" "$tests" >&2
+fi
+
+exit "$fails"

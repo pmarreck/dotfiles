@@ -1,0 +1,399 @@
+#!/usr/bin/env bash
+
+# Multicall safety wrapper around ripgrep, find, and fd. A recursive /nix/store
+# scan can monopolize ZFS and make the entire workstation unresponsive, so
+# ordinary invocations cannot use the store as a search root. The emergency
+# escape hatch requires actual sudo provenance—not merely an already-root
+# shell—and remains intentionally loud.
+
+set -u
+
+readonly EX_NOPERM=77
+readonly NIX_STORE=/nix/store
+readonly INVOKED_AS="${0##*/}"
+
+guarded_home="${HOME:?}"
+if (( EUID == 0 )) && [[ -n "${SUDO_USER:-}" ]]; then
+	if command -v getent >/dev/null 2>&1; then
+		passwd_entry="$(getent passwd "$SUDO_USER" 2>/dev/null || :)"
+		[[ -n "$passwd_entry" ]] && guarded_home="$(awk -F: '{print $6}' <<<"$passwd_entry")"
+	elif command -v dscl >/dev/null 2>&1; then
+		dscl_home="$(dscl . -read "/Users/$SUDO_USER" NFSHomeDirectory 2>/dev/null || :)"
+		[[ -n "$dscl_home" ]] && guarded_home="${dscl_home#NFSHomeDirectory: }"
+	fi
+fi
+readonly GUARDED_HOME="$guarded_home"
+unset guarded_home passwd_entry dscl_home
+
+find_real_tool() {
+	local tool="$1"
+	local candidate
+	while IFS= read -r candidate; do
+		[[ -x "$candidate" ]] || continue
+		[[ "$candidate" -ef "${BASH_SOURCE[0]}" ]] && continue
+		printf '%s\n' "$candidate"
+		return 0
+	done < <(type -a -p "$tool" 2>/dev/null)
+	return 1
+}
+
+canonical_path() {
+	local path="$1"
+	local resolved
+
+	if command -v realpath >/dev/null 2>&1; then
+		resolved="$(realpath -m -- "$path" 2>/dev/null)" && {
+			printf '%s\n' "$resolved"
+			return 0
+		}
+	fi
+	if command -v grealpath >/dev/null 2>&1; then
+		resolved="$(grealpath -m -- "$path" 2>/dev/null)" && {
+			printf '%s\n' "$resolved"
+			return 0
+		}
+	fi
+	if [[ -d "$path" ]]; then
+		(cd "$path" 2>/dev/null && pwd -P)
+		return $?
+	fi
+	return 1
+}
+
+is_nix_store_path() {
+	local path="$1"
+	local resolved
+
+	[[ "$path" == "$NIX_STORE" || "$path" == "$NIX_STORE/" ]] && return 0
+	# NixOS intentionally symlinks many ordinary files into the store. Reading
+	# one bounded store directory is safe; only aliases of the store root itself
+	# can cross every derivation and reproduce the catastrophic traversal.
+	[[ -d "$path" ]] || return 1
+	resolved="$(canonical_path "$path")" || return 1
+	[[ "$resolved" == "$NIX_STORE" ]]
+}
+
+is_home_root() {
+	local path="$1"
+	local resolved home_resolved
+
+	[[ -d "$path" ]] || return 1
+	resolved="$(canonical_path "$path")" || return 1
+	home_resolved="$(canonical_path "$GUARDED_HOME")" || return 1
+	[[ "$resolved" == "$home_resolved" ]]
+}
+
+# Parse only enough of ripgrep's CLI grammar to distinguish patterns from path
+# operands. Options whose following values may resemble paths are consumed here;
+# everything else beginning with '-' is self-contained from the guard's view.
+collect_rg_search_roots() {
+	local arg
+	local consume_next=none
+	local end_options=false
+	local explicit_pattern=false
+	local files_mode=false
+	local no_search=false
+	local -a positionals=()
+	GUARD_ROOTS=()
+
+	for arg in "$@"; do
+		if [[ "$consume_next" != none ]]; then
+			[[ "$consume_next" == pattern ]] && explicit_pattern=true
+			consume_next=none
+			continue
+		fi
+
+		if ! "$end_options"; then
+			case "$arg" in
+				--)
+					end_options=true
+					continue
+					;;
+				-h | --help | -V | --version | --type-list | --pcre2-version | --generate)
+					no_search=true
+					continue
+					;;
+				--files)
+					files_mode=true
+					continue
+					;;
+				-e | --regexp | -f | --file)
+					explicit_pattern=true
+					consume_next=pattern
+					continue
+					;;
+				-e?* | -f?* | --regexp=* | --file=*)
+					explicit_pattern=true
+					continue
+					;;
+				-A | --after-context | -B | --before-context | -C | --context | \
+				-E | --encoding | -g | --glob | --iglob | -j | --threads | \
+				-M | --max-columns | -m | --max-count | -r | --replace | \
+				-t | --type | -T | --type-not | --color | --colors | \
+				--context-separator | --dfa-size-limit | --engine | \
+				--field-context-separator | --field-match-separator | \
+				--hostname-bin | --hyperlink-format | --ignore-file | \
+				--max-depth | --max-filesize | --path-separator | --pre | \
+				--pre-glob | --regex-size-limit | --sort | --sortr | \
+				--type-add | --type-clear)
+					consume_next=option
+					continue
+					;;
+				-*)
+					continue
+					;;
+			esac
+		fi
+
+		positionals+=("$arg")
+	done
+
+	"$no_search" && return 0
+
+	if "$files_mode" || "$explicit_pattern"; then
+		GUARD_ROOTS=("${positionals[@]}")
+	elif (( ${#positionals[@]} > 1 )); then
+		GUARD_ROOTS=("${positionals[@]:1}")
+	fi
+
+	# With no explicit path operand, ripgrep reads a piped/redirected regular
+	# input stream instead of traversing the current directory. `/dev/null`,
+	# a closed stdin, and terminal input all make ripgrep search `.`.
+	if (( ${#GUARD_ROOTS[@]} == 0 )) && [[ ! -p /dev/stdin && ! -f /dev/stdin ]]; then
+		GUARD_ROOTS=(.)
+	fi
+}
+
+# find accepts one or more starting points followed by an expression. Only the
+# leading starting points are traversal roots; later values such as
+# `-path /nix/store` are predicates and must not trigger the guard.
+collect_find_search_roots() {
+	local arg
+	local consume_next=none
+	local parsing_roots=true
+	local no_search=false
+	GUARD_ROOTS=()
+
+	for arg in "$@"; do
+		if [[ "$consume_next" != none ]]; then
+			[[ "$consume_next" == root ]] && GUARD_ROOTS+=("$arg")
+			consume_next=none
+			continue
+		fi
+
+		if "$parsing_roots"; then
+			case "$arg" in
+				--help | --version)
+					no_search=true
+					continue
+					;;
+				-- | -E | -H | -L | -P | -X | -d | -s | -x | -O?*)
+					continue
+					;;
+				-D)
+					consume_next=option
+					continue
+					;;
+				-f)
+					consume_next=root
+					continue
+					;;
+				-* | '!' | '(' | ')' | ',')
+					parsing_roots=false
+					continue
+					;;
+				*)
+					GUARD_ROOTS+=("$arg")
+					continue
+					;;
+			esac
+		fi
+	done
+
+	"$no_search" && {
+		GUARD_ROOTS=()
+		return 0
+	}
+	(( ${#GUARD_ROOTS[@]} == 0 )) && GUARD_ROOTS=(.)
+}
+
+# fd follows `[pattern] [path]...`, but --search-path supplies roots directly
+# and --base-directory changes how relative roots resolve. Execution options
+# consume the rest of argv, so their command arguments are never search roots.
+collect_fd_search_roots() {
+	local arg root
+	local consume_next=none
+	local end_options=false
+	local execution_args=false
+	local no_search=false
+	local base_dir=''
+	local -a positionals=()
+	local -a explicit_roots=()
+	local -a resolved_roots=()
+	GUARD_ROOTS=()
+
+	for arg in "$@"; do
+		"$execution_args" && continue
+
+		if [[ "$consume_next" != none ]]; then
+			case "$consume_next" in
+				base) base_dir="$arg" ;;
+				root) explicit_roots+=("$arg") ;;
+			esac
+			consume_next=none
+			continue
+		fi
+
+		if ! "$end_options"; then
+			case "$arg" in
+				--)
+					end_options=true
+					continue
+					;;
+				-h | --help | -V | --version)
+					no_search=true
+					continue
+					;;
+				-x | --exec | -X | --exec-batch)
+					execution_args=true
+					continue
+					;;
+				-C | --base-directory)
+					consume_next=base
+					continue
+					;;
+				--base-directory=*)
+					base_dir="${arg#*=}"
+					continue
+					;;
+				--search-path)
+					consume_next=root
+					continue
+					;;
+				--search-path=*)
+					explicit_roots+=("${arg#*=}")
+					continue
+					;;
+				--and | -d | --max-depth | --min-depth | --exact-depth | \
+				-E | --exclude | -t | --type | -e | --extension | \
+				-S | --size | --changed-within | --change-newer-than | \
+				--newer | --changed-after | --changed-before | \
+				--change-older-than | --older | -o | --owner | --format | \
+				--batch-size | --ignore-file | -c | --color | \
+				--ignore-contain | -j | --threads | --max-results | \
+				--path-separator)
+					consume_next=option
+					continue
+					;;
+				-*)
+					continue
+					;;
+			esac
+		fi
+
+		positionals+=("$arg")
+	done
+
+	"$no_search" && return 0
+
+	if (( ${#explicit_roots[@]} > 0 )); then
+		GUARD_ROOTS=("${explicit_roots[@]}")
+	elif (( ${#positionals[@]} > 1 )); then
+		GUARD_ROOTS=("${positionals[@]:1}")
+	else
+		GUARD_ROOTS=(.)
+	fi
+
+	if [[ -n "$base_dir" ]]; then
+		for root in "${GUARD_ROOTS[@]}"; do
+			if [[ "$root" == /* ]]; then
+				resolved_roots+=("$root")
+			else
+				resolved_roots+=("$base_dir/$root")
+			fi
+		done
+		GUARD_ROOTS=("${resolved_roots[@]}")
+	fi
+}
+
+print_refusal() {
+	local dangerous_root="$1"
+	local root_kind="$2"
+	printf '\033[1;31m%s-guard: REFUSING to search %q.\033[0m\n' "$INVOKED_AS" "$dangerous_root" >&2
+	case "$root_kind" in
+		nix-store)
+			printf 'Recursive /nix/store traversal can saturate ZFS I/O and freeze the workstation.\n' >&2
+			printf 'Resolve one exact derivation/source path through Nix metadata and search only that bounded directory.\n' >&2
+			;;
+		home)
+			printf 'Traversing the entire home directory is too exhaustive for this workstation.\n' >&2
+			printf 'Use fsearch --cli with the existing index instead:\n' >&2
+			printf '  fsearch --cli --path "%s" --search PATTERN\n' "$GUARDED_HOME" >&2
+			printf 'Or narrow this command to one specific directory beneath home.\n' >&2
+			;;
+	esac
+	printf 'Emergency override must be invoked through sudo, and is STRONGLY ADVISED AGAINST regardless.\n' >&2
+	printf 'Explicit form: sudo -- "%s/bin/%s" [%s arguments...]\n' "$GUARDED_HOME" "$INVOKED_AS" "$INVOKED_AS" >&2
+}
+
+print_sudo_warning() {
+	local dangerous_root="$1"
+	local root_kind="$2"
+	printf '\033[1;31m======================================================================\033[0m\n' >&2
+	printf '\033[1;31mDANGER: searching %q is STRONGLY ADVISED AGAINST.\033[0m\n' "$dangerous_root" >&2
+	printf '\033[1;31mThis can monopolize storage I/O and make every desktop/terminal stall.\033[0m\n' >&2
+	if [[ "$root_kind" == home ]]; then
+		printf '\033[1;31mUse instead: fsearch --cli --path "%s" --search PATTERN\033[0m\n' "$GUARDED_HOME" >&2
+	else
+		printf '\033[1;31mPrefer resolving one exact store derivation and searching only that path.\033[0m\n' >&2
+	fi
+	printf '\033[1;31m======================================================================\033[0m\n' >&2
+}
+
+if (( $# == 1 )) && [[ "$1" == --test ]]; then
+	exec "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/test/rg_test" >/dev/null
+fi
+
+case "$INVOKED_AS" in
+	rg | find | fd) ;;
+	*)
+		printf 'search-guard: unsupported invocation name: %s\n' "$INVOKED_AS" >&2
+		exit 64
+		;;
+esac
+
+real_tool="$(find_real_tool "$INVOKED_AS")" || {
+	printf '%s-guard: unable to find the real %s executable after the wrapper on PATH\n' "$INVOKED_AS" "$INVOKED_AS" >&2
+	exit 127
+}
+
+declare -a GUARD_ROOTS
+case "$INVOKED_AS" in
+	rg) collect_rg_search_roots "$@" ;;
+	find) collect_find_search_roots "$@" ;;
+	fd) collect_fd_search_roots "$@" ;;
+esac
+
+for root in "${GUARD_ROOTS[@]}"; do
+	root_kind=''
+	if is_nix_store_path "$root"; then
+		root_kind=nix-store
+	elif is_home_root "$root"; then
+		root_kind=home
+	else
+		continue
+	fi
+	if (( EUID != 0 )); then
+		print_refusal "$root" "$root_kind"
+		exit "$EX_NOPERM"
+	fi
+	if [[ -z "${SUDO_USER:-}" ]]; then
+		print_refusal "$root" "$root_kind"
+		printf '%s-guard: root privilege alone is insufficient; this must be invoked through sudo.\n' "$INVOKED_AS" >&2
+		exit "$EX_NOPERM"
+	fi
+	print_sudo_warning "$root" "$root_kind"
+	break
+done
+
+exec "$real_tool" "$@"

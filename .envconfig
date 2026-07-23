@@ -6,6 +6,10 @@
 # Moved from .envrc to avoid direnv
 . "${HOME}/dotfiles/bin/src/truthy.sh"
 
+# Keep agent subprocesses behind the /nix/store and whole-home traversal guard
+# even when an agent runtime prepends its own rg/find/fd binaries before ~/bin.
+. "$HOME/dotfiles/bin/src/rg_guard_env.bash"
+
 # XDG vars per spec: https://specifications.freedesktop.org/basedir-spec/basedir-spec-latest.html
 export XDG_STATE_HOME="$HOME/.local/state"
 export XDG_DATA_HOME="$HOME/.local/share"
