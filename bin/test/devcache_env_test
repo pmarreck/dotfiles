@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+
+set -u
+
+fails=0
+fixture_root=$(mktemp -d --tmpdir devcache_env_test.XXXXXX)
+cache_root="$fixture_root/cache"
+project_a="$fixture_root/project-a"
+project_b="$fixture_root/project-b"
+mkdir -p "$cache_root" "$project_a/subdir" "$project_b"
+git -C "$project_a" init -q
+git -C "$project_b" init -q
+
+fail() {
+	printf 'FAIL: %s\n' "$1" >&2
+	fails=$((fails + 1))
+}
+
+assert_equal() {
+	local expected="$1" actual="$2" description="$3"
+	[ "$expected" = "$actual" ] || fail "$description (expected '$expected', got '$actual')"
+}
+
+. "$HOME/dotfiles/bin/src/devcache_env.bash"
+
+CARGO_TARGET_DIR=keep-cargo
+ZIG_GLOBAL_CACHE_DIR=keep-zig-global
+ZIG_LOCAL_CACHE_DIR=keep-zig-local
+configure_devcache_env "$cache_root" "$project_a"
+assert_equal keep-cargo "$CARGO_TARGET_DIR" "absent sentinel preserves Cargo override"
+assert_equal keep-zig-global "$ZIG_GLOBAL_CACHE_DIR" "absent sentinel preserves Zig global override"
+assert_equal keep-zig-local "$ZIG_LOCAL_CACHE_DIR" "absent sentinel preserves Zig local override"
+
+touch "$cache_root/.devcache-ready"
+configure_devcache_env "$cache_root" "$project_a"
+project_a_cargo="$CARGO_TARGET_DIR"
+project_a_zig_local="$ZIG_LOCAL_CACHE_DIR"
+assert_equal "$cache_root" "$DEVCACHE_ROOT" "ready cache exports its root"
+assert_equal "$cache_root/zig/global" "$ZIG_GLOBAL_CACHE_DIR" "Zig global cache is shared"
+
+configure_devcache_env "$cache_root" "$project_a/subdir"
+assert_equal "$project_a_cargo" "$CARGO_TARGET_DIR" "Cargo target is stable across repository subdirectories"
+assert_equal "$project_a_zig_local" "$ZIG_LOCAL_CACHE_DIR" "Zig local cache is stable across repository subdirectories"
+
+configure_devcache_env "$cache_root" "$project_b"
+[ "$project_a_cargo" != "$CARGO_TARGET_DIR" ] || fail "different repositories get different Cargo targets"
+[ "$project_a_zig_local" != "$ZIG_LOCAL_CACHE_DIR" ] || fail "different repositories get different Zig local caches"
+assert_equal "$cache_root/zig/global" "$ZIG_GLOBAL_CACHE_DIR" "different repositories retain shared Zig global cache"
+
+cd "$project_a"
+configure_devcache_env "$cache_root"
+assert_equal "$project_a_cargo" "$CARGO_TARGET_DIR" "prompt refresh follows an interactive cd"
+assert_equal "$project_a_zig_local" "$ZIG_LOCAL_CACHE_DIR" "prompt refresh updates Zig local cache after cd"
+
+rg -qF '. "$HOME/dotfiles/bin/src/devcache_env.bash"' "$HOME/dotfiles/.envconfig" || fail ".envconfig sources devcache policy"
+rg -qF 'configure_devcache_env' "$HOME/dotfiles/.envconfig" || fail ".envconfig invokes devcache policy"
+rg -qF 'precmd_functions+=(configure_devcache_env)' "$HOME/dotfiles/bin/apply-hooks" || fail "interactive prompt refreshes devcache paths after cd"
+
+rm-safe -r "$fixture_root"
+exit "$fails"

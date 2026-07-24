@@ -76,6 +76,22 @@ for combo in "Linux otherhost" "Darwin nixos" "Darwin macbook"; do
 	rm -rf "$mockdir"
 done
 
+mockdir=$(mock_host_dir "Linux" "thelio-nixos")
+win_missing=$(mktemp -d --tmpdir darktide_win.XXXXXX)/does-not-exist
+lin_tmp=$(mktemp -d --tmpdir darktide_lin.XXXXXX)
+output=$(PATH="$mockdir:$PATH" DARKTIDE_WIN_MODS="$win_missing" DARKTIDE_LIN_MODS="$lin_tmp" darktide-sync-mods 2>&1)
+status=$?
+expect_status "accepts the current thelio-nixos hostname" 1 "$status"
+expect_not_host_guard="${output#*only runs on the}"
+((tests++))
+if [[ "$expect_not_host_guard" == "$output" ]]; then
+	echo "✓ Test passed: thelio-nixos reaches path validation"
+else
+	echo "✗ Test failed: thelio-nixos was rejected by the host guard" >&2
+	((fails++))
+fi
+rm -rf "$mockdir" "$lin_tmp"
+
 # --- Missing Windows mods dir: passes the host guard, fails cleanly after
 mockdir=$(mock_host_dir "Linux" "nixos")
 win_missing=$(mktemp -d --tmpdir darktide_win.XXXXXX)/does-not-exist
@@ -134,6 +150,10 @@ else
 fi
 
 # --- CLI surface
+
+paths_output=$(darktide-sync-mods --paths)
+expect_contains "--paths reports the Windows source" "/mnt/win/Program Files (x86)/Steam/steamapps/common/Warhammer 40,000 DARKTIDE/mods" "$paths_output"
+expect_contains "--paths reports the NVMe Steam destination" "/mnt/steam-nvme/SteamLibrary/steamapps/common/Warhammer 40,000 DARKTIDE/mods" "$paths_output"
 
 help_output=$(darktide-sync-mods --help)
 expect_contains "--help shows usage" "Usage:" "$help_output"

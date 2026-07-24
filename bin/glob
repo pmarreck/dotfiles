@@ -695,8 +695,17 @@ EOF
 
 			# Native bash glob expansion via expand_glob helper (subshell-isolated).
 			# Avoids depending on compgen, which is absent in Nix's stripped pkgs.bash.
+			#
+			# Sort each pattern's matches by CODE-POINT order (LC_ALL=C = UTF-8
+			# byte order), NOT the locale's collation. This matches ripgrep
+			# --sort path and fd, and — crucially — makes glob's output identical
+			# on every machine and in CI, independent of LC_COLLATE/LANG. (bash's
+			# own glob and `ls` honor the locale; glob deliberately does not.)
+			# Sorting per-pattern here keeps positional command semantics intact
+			# (literal args stay put; only each pattern's expansion is ordered),
+			# and display mode's later global LC_ALL=C sort stays consistent.
 			local matches=()
-			mapfile -t matches < <(expand_glob "$arg")
+			mapfile -t matches < <(expand_glob "$arg" | LC_ALL=C sort)
 
 			if [[ ${#matches[@]} -eq 0 ]]; then
 				debug "No matches found for pattern: $arg - skipping"

@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+
+# sessions — list tmux sessions, optionally filtered by attached state.
+#
+# Promoted from the old `alias sessions='tmux list-sessions'` so it can filter
+# on whether a session currently has a client attached. tmux marks attached
+# sessions with a trailing "(attached)" in `list-sessions` output; we classify
+# on that literal marker.
+#
+#   sessions                       list all sessions (verbatim tmux list-sessions)
+#   sessions --attached            only sessions with a client attached
+#   sessions --headless            only sessions with NO client attached
+#   sessions --unattached          synonym for --headless
+#   sessions -F '#S' ...           any other args pass through to list-sessions
+#
+# tmux binary is resolved from TMUX_BIN (for tests/overrides), else PATH.
+
+sessions() {
+	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+
+	_sessions_help() {
+		cat <<'HELP'
+Usage: sessions [FILTER] [tmux list-sessions args...]
+
+List tmux sessions, optionally filtered by whether a client is attached.
+
+Filters (mutually exclusive):
+  --attached              Show only sessions with a client attached
+  --headless              Show only sessions with NO client attached
+  --unattached            Synonym for --headless
+
+Other:
+  -h, --help              Show this help
+  --about                 One-line description
+  --test                  Run the sessions test suite
+
+Any arguments other than the filters are forwarded to `tmux list-sessions`
+(e.g. -F '#S' for a custom format). Attached-state filtering keys off tmux's
+trailing "(attached)" marker, so a custom -F that drops it disables filtering.
+HELP
+	}
+
+	local filter="all"
+	local tmux_args=()
+	while [ $# -gt 0 ]; do
+		case "$1" in
+			-h|--help)      _sessions_help; return 0 ;;
+			--about)        echo "sessions: list tmux sessions, optionally filtered by attached/headless state"; return 0 ;;
+			--attached)     filter="attached"; shift ;;
+			--headless|--unattached) filter="headless"; shift ;;
+			--)             shift; tmux_args+=("$@"); break ;;
+			*)              tmux_args+=("$1"); shift ;;
+		esac
+	done
+
+	local tmux_bin="${TMUX_BIN:-}"
+	[ -z "$tmux_bin" ] && tmux_bin=$(command -v tmux 2>/dev/null)
+	if [ -z "$tmux_bin" ]; then
+		echo "sessions: tmux not found in PATH" >&2
+		return 127
+	fi
+
+	local raw rc
+	raw=$("$tmux_bin" list-sessions "${tmux_args[@]}")
+	rc=$?
+	[ "$rc" -ne 0 ] && return "$rc"
+
+	# Empty listing → nothing to filter or print.
+	[ -z "$raw" ] && return 0
+
+	case "$filter" in
+		attached) printf '%s\n' "$raw" | grep -F '(attached)' ;;
+		headless) printf '%s\n' "$raw" | grep -Fv '(attached)' ;;
+		*)        printf '%s\n' "$raw" ;;
+	esac
+	# grep exits 1 when the filter matches nothing; that is a successful,
+	# empty result for us — do not propagate it as an error.
+	return 0
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	if [ "$1" = "--test" ]; then
+		_test_file="$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+		if [ -f "$_test_file" ]; then . "$_test_file" > /dev/null; fi
+	else
+		$(basename "${0##\-}") "$@"
+	fi
+fi

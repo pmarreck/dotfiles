@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 
-printf 'Do you trust the contents of this directory?\n'
+# Deliberately mixed case proves the launcher fallback is semantic rather than
+# coupled to one release's exact capitalization or full prompt wording.
+printf 'dO yOu TrUsT this folder? (y/n)\n'
 IFS= read -r _accepted
+[ "$_accepted" = "y" ] || exit 73
 printf 'OpenAI Codex ready\n'
 tmux -L "$ERECT_TMUX_SOCKET" wait-for fake_codex_stop

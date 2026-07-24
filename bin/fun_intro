@@ -157,6 +157,28 @@ fun_intro() {
 		fi
 		pick_arg="--pick=$_selected_fun_thing"
 
+		# Image picks emit graphics escape bytes. This regenerator runs in the
+		# background with no terminal to query — and even the expect PTY below
+		# can't answer a real graphics capability query — so display_image's live
+		# auto-detection would fail and produce no bytes. Force the protocol via
+		# DISPLAY_IMAGE_FORCE_PROTOCOL so the escapes are captured for later replay
+		# into a known-capable terminal. Reuse the capability the login shell
+		# already probed (exported KITTY_CAPABLE/SIXEL_CAPABLE); default to kitty
+		# (display_image's preferred protocol). Text picks never touch display_image.
+		local _force_proto="" _fp_prefix=""
+		if [ "$is_image" = "true" ]; then
+			if [ "${KITTY_CAPABLE:-false}" = "true" ]; then
+				_force_proto="kitty"
+			elif [ "${SIXEL_CAPABLE:-false}" = "true" ]; then
+				_force_proto="sixel"
+			else
+				_force_proto="kitty"
+			fi
+			# Literal prefix for the expect path: it is re-parsed by `sh -c`, so
+			# the assignment is recognized syntactically (unlike a bash expansion).
+			_fp_prefix="DISPLAY_IMAGE_FORCE_PROTOCOL=$_force_proto "
+		fi
+
 		tmp_image="${cache_image}.new.$$"
 
 		if command -v expect >/dev/null 2>&1; then
@@ -180,7 +202,7 @@ fun_intro() {
 			#      as raw text rather than an image.
 			expect -c "
 				set timeout 5
-				spawn -noecho sh -c \"stty -opost; fun_intro $pick_arg\"
+				spawn -noecho sh -c \"stty -opost; ${_fp_prefix}fun_intro $pick_arg\"
 				expect {
 					timeout {
 						puts stderr \"fun_intro --regenerate-cache: timed out after 5s\"
@@ -194,8 +216,14 @@ fun_intro() {
 			# Fallback: no expect. Force-color env vars; emits plain text for
 			# scripts that strictly require a TTY (unavoidable without PTY).
 			echo "$(date '+%Y-%m-%dT%H:%M:%S') fun_intro --regenerate-cache: expect not on PATH, falling back to direct (color may be lost)" >>"$err_log"
-			FORCE_COLOR=1 CLICOLOR_FORCE=1 TERM="${TERM:-xterm-256color}" \
-				fun_intro "$pick_arg" >"$tmp_image" 2>>"$err_log"
+			# Subshell + export so the protocol override reaches display_image deep
+			# in the call chain. A `VAR=val ${expansion}cmd` prefix would NOT work:
+			# assignments from expansion aren't recognized, they become the command.
+			(
+				export FORCE_COLOR=1 CLICOLOR_FORCE=1 TERM="${TERM:-xterm-256color}"
+				[ -n "$_force_proto" ] && export DISPLAY_IMAGE_FORCE_PROTOCOL="$_force_proto"
+				fun_intro "$pick_arg"
+			) >"$tmp_image" 2>>"$err_log"
 			rc=$?
 		fi
 

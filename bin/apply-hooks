@@ -159,6 +159,12 @@ if ! array_contains_element precmd_functions __wezterm_osc7_home; then
 	precmd_functions+=(__wezterm_osc7_home)
 fi
 
+# Refresh per-project compiler-cache paths after interactive directory changes.
+# Agent command shells start in their project and get the same policy from .envconfig.
+if declare -F configure_devcache_env >/dev/null && ! array_contains_element precmd_functions configure_devcache_env; then
+	precmd_functions+=(configure_devcache_env)
+fi
+
 report_prompt_commands "after" "custom hooks"
 
 # ==============================================================================

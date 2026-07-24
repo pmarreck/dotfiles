@@ -17,6 +17,11 @@ export XDG_BIN_HOME="$HOME/.local/bin"
 export XDG_CONFIG_HOME="$HOME/.config"
 export XDG_CACHE_HOME="$HOME/.cache"
 
+# Reproducible compiler state belongs on the disposable NVMe devpool. The
+# helper is a no-op unless the mounted dataset's readiness sentinel exists.
+. "$HOME/dotfiles/bin/src/devcache_env.bash"
+configure_devcache_env
+
 # SSL cert config validation
 if [ ! -d "$SSL_CERT_DIR" ]; then
   if [ -d /etc/ssl/certs ]; then

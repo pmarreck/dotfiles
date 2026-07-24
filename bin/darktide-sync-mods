@@ -7,7 +7,8 @@ set -u
 # temp directories instead of real Steam paths (never exercise real rsync
 # against real game data from a test run).
 WIN_MODS="${DARKTIDE_WIN_MODS:-/mnt/win/Program Files (x86)/Steam/steamapps/common/Warhammer 40,000 DARKTIDE/mods}"
-LIN_MODS="${DARKTIDE_LIN_MODS:-$HOME/.local/share/Steam/steamapps/common/Warhammer 40,000 DARKTIDE/mods}"
+LIN_GAME_DIR="${DARKTIDE_LINUX_GAME_DIR:-/mnt/steam-nvme/SteamLibrary/steamapps/common/Warhammer 40,000 DARKTIDE}"
+LIN_MODS="${DARKTIDE_LIN_MODS:-$LIN_GAME_DIR/mods}"
 
 # Guard: dotfiles sync to macOS too, where /mnt/win, ntfs3, and the Linux Steam
 # layout don't exist. This script only makes sense on the 'nixos' gaming box.
@@ -15,7 +16,7 @@ LIN_MODS="${DARKTIDE_LIN_MODS:-$HOME/.local/share/Steam/steamapps/common/Warhamm
 # actually running on (or pretending to be) the nixos box.
 _darktide_host_ok() {
 	local os_name="${1:-$(uname -s)}" host="${2:-$(hostname -s 2>/dev/null || hostname)}"
-	[ "$os_name" = "Linux" ] && [ "$host" = "nixos" ]
+	[ "$os_name" = "Linux" ] && [[ "$host" = "nixos" || "$host" = "thelio-nixos" ]]
 }
 
 darktide-sync-mods() {
@@ -65,7 +66,7 @@ case "${1:-}" in
 	-h|--help)
 		echo "darktide-sync-mods - one-way sync of Darktide mods, Windows NTFS -> native Linux Steam"
 		echo ""
-		echo "Usage: darktide-sync-mods [--delete]"
+		echo "Usage: darktide-sync-mods [--delete|--paths]"
 		echo ""
 		echo "Copies mod files from the Windows Steam install (mounted NTFS) to the"
 		echo "native Linux Steam install. Additive by default; --delete mirrors"
@@ -74,12 +75,16 @@ case "${1:-}" in
 		echo ""
 		echo "Options:"
 		echo "  --delete      Mirror: delete Linux-side mods absent on Windows"
+		echo "  --paths       Show the resolved source and destination paths"
 		echo "  -h, --help    Show this help message"
 		echo "  -a, --about   Show brief description"
 		echo "  --test        Run tests"
 		;;
 	-a|--about)
 		echo "One-way sync of Darktide mods from Windows NTFS Steam to native Linux Steam"
+		;;
+	--paths)
+		printf 'source=%s\ndestination=%s\n' "$WIN_MODS" "$LIN_MODS"
 		;;
 	--test)
 		if [[ -f "$HOME/dotfiles/bin/test/darktide-sync-mods_test" ]]; then

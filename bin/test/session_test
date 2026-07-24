@@ -4,6 +4,8 @@
 #       outside tmux, but switch-client when already INSIDE tmux (you cannot
 #       `attach` a nested session — `tmux new -A` silently failed to switch),
 #   (b) forward "$@" through the bin/session executable to the function.
+# External attach also detaches an older client on the same session, avoiding
+# mixed terminal geometries that can trigger redundant redraw work.
 # Regression guard: a dropped "$@" once collapsed every `session NAME` to the
 # default session (bin/session called `session`, not `session "$@"`).
 #
@@ -27,7 +29,7 @@ export -f tmux # so the bin/session subprocess (last check) sees the mock too
 . "$_here/../src/session.bash"
 
 check "outside tmux → attach-or-create" \
-	"tmux new-session -A -s mini_blar" \
+	"tmux new-session -Ad -s mini_blar" \
 	"$(unset TMUX; session mini_blar)"
 
 check "inside tmux, session exists → switch-client only" \
@@ -39,12 +41,12 @@ check "inside tmux, session absent → create detached then switch" \
 	"$(TMUX=fake MOCK_HAS=1 session mini_blar)"
 
 check "no arg → default session (preserved)" \
-	"tmux new-session -A -s default" \
+	"tmux new-session -Ad -s default" \
 	"$(unset TMUX; session)"
 
 # The executable must forward its arg (not collapse to default).
 check "bin/session forwards its arg through to the function" \
-	"tmux new-session -A -s mini_blar" \
+	"tmux new-session -Ad -s mini_blar" \
 	"$(TMUX= "$_here/../session" mini_blar)"
 
 exit $fails

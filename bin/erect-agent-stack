@@ -23,16 +23,19 @@ _eas_tmux() {
 # codex --dangerously-bypass-approvals-and-sandbox, gemini --yolo. claude keeps the
 # original remoted bypass launch. Non-claude backends are gated on an API-key env var.
 _eas_backend() {
-	local agent="$1" n="$2"
+	local agent="$1" n="$2" dir="$3" trust_override escaped_dir
 	case "$agent" in
 		claude)
 			_b_bin=claude; _b_gate=""   # default: no env gate (auth via config/login)
 			_b_fresh="claude --rc --permission-mode bypassPermissions --name $n"
-			_b_resume="$_b_fresh --resume $n" ;;
+			_b_resume="$_b_fresh --continue" ;;
 		codex)
+			escaped_dir=${dir//\\/\\\\}
+			escaped_dir=${escaped_dir//\"/\\\"}
+			printf -v trust_override '%q' "projects.\"$escaped_dir\".trust_level=\"trusted\""
 			_b_bin=codex; _b_gate=OPENAI_API_KEY
-			_b_fresh="codex --dangerously-bypass-approvals-and-sandbox"
-			_b_resume="codex resume --last --dangerously-bypass-approvals-and-sandbox" ;;
+			_b_fresh="codex --dangerously-bypass-approvals-and-sandbox -c $trust_override"
+			_b_resume="codex resume --last --dangerously-bypass-approvals-and-sandbox -c $trust_override" ;;
 		gemini)
 			_b_bin=gemini; _b_gate=GEMINI_API_KEY
 			_b_fresh="gemini --yolo"
@@ -58,16 +61,18 @@ _eas_running() {
 _eas_bootwait() {
 	# 120s default: direnv `use flake` projects evaluate nix before the shell
 	# accepts the queued launch line (observed live on entropy_shield, 2026-06-12).
-	local n="$1" agent="$2" t="${ERECT_BOOT_TIMEOUT:-120}" i=0 pane trust_accepted=0
+	local n="$1" agent="$2" t="${ERECT_BOOT_TIMEOUT:-120}" i=0 pane pane_lower
 	while [ "$i" -lt "$t" ]; do
 		pane=$(_eas_tmux capture-pane -pt "$n" 2>/dev/null)
 		if [ "$agent" = "codex" ]; then
-			if [ "$trust_accepted" = "0" ] && [[ "$pane" == *"Do you trust the contents of this directory?"* ]]; then
-				# The caller explicitly requested unrestricted Codex in this project;
-				# let Codex persist its own repository-root trust decision.
+			pane_lower=${pane,,}
+			if [[ "$pane_lower" == *"do you trust"* ]] && ! grep -qiE 'context left|esc to interrupt|OpenAI Codex' <<<"$pane"; then
+				# Broad fallback for Codex versions whose trust gate predates or ignores
+				# the explicit per-project trust override. Normal agent chrome guards
+				# against matching the same words inside conversation text.
+				_eas_tmux send-keys -t "$n" y
 				_eas_tmux send-keys -t "$n" Enter
-				trust_accepted=1
-			elif [[ "$pane" == *"OpenAI Codex"* && "$pane" != *"Booting MCP server"* ]]; then
+			elif grep -qiE 'context left|esc to interrupt|OpenAI Codex' <<<"$pane" && [[ "$pane" != *"Booting MCP server"* ]]; then
 				return 0
 			fi
 		elif grep -qE '❯|esc to interrupt|bypass permissions' <<<"$pane"; then
@@ -159,7 +164,7 @@ erect-agent-stack() {
 	dir=$(cd "$dir" && pwd -P)
 	local name; name=$(basename "$dir")
 	# Resolve the backend (validates the agent name).
-	if ! _eas_backend "$agent" "$name"; then
+	if ! _eas_backend "$agent" "$name" "$dir"; then
 		echo "erect-agent-stack: unknown agent: $agent (claude|codex|gemini|grok)" >&2
 		return 64
 	fi

@@ -35,17 +35,17 @@ erect_agent_stack_test() {
   ((fails+=$?))
   assert "$out" =~ "created" "reports created outcome"
   ((fails+=$?))
-  assert "$out" =~ "claude --rc --permission-mode bypassPermissions --name projalpha --resume projalpha" \
-    "dry-run shows launch command with resume-by-default"
+  assert "$out" =~ "claude --rc --permission-mode bypassPermissions --name projalpha --continue" \
+    "dry-run resumes the most recent conversation in the project directory"
   ((fails+=$?))
   assert "$(_t list-sessions -F '#S' 2>/dev/null | grep -cx projalpha)" == "1" "tmux session exists"
   ((fails+=$?))
   assert "$(_t display-message -pt projalpha '#{pane_current_path}')" == "$tmproot/projalpha" "session cwd = project dir"
   ((fails+=$?))
 
-  # --fresh omits --resume
+  # --fresh omits --continue
   out=$(ERECT_TMUX_SOCKET="$sock" ERECT_DRY_RUN=1 erect-agent-stack --fresh "$tmproot/projalpha" 2>&1)
-  assert "$out" !=~ "--resume" "--fresh omits resume flag"
+  assert "$out" !=~ "--continue" "--fresh omits continue flag"
   ((fails+=$?))
 
   # JOINED-LAUNCHED branch: session exists, no agent marker -> no dup session
@@ -73,6 +73,9 @@ erect_agent_stack_test() {
   # --- backend broadening (--agent / --checker / env-gating) ---
   out=$(ERECT_TMUX_SOCKET="$sock" ERECT_DRY_RUN=1 erect-agent-stack --fresh --agent codex "$tmproot/projbeta" 2>&1)
   assert "$out" =~ "launch: codex --dangerously-bypass-approvals-and-sandbox" "codex fresh uses danger flag"
+  ((fails+=$?))
+  [[ "$out" == *"projects.\\\"$tmproot/projbeta\\\".trust_level=\\\"trusted\\\""* ]]; status=$?
+  assert "$status" == "0" "Codex launch explicitly trusts the canonical project path"
   ((fails+=$?))
   out=$(ERECT_TMUX_SOCKET="$sock" ERECT_DRY_RUN=1 erect-agent-stack --agent codex "$tmproot/projbeta" 2>&1)
   assert "$out" =~ "launch: codex resume --last --dangerously-bypass-approvals-and-sandbox" "codex resume uses resume subcommand"
@@ -115,6 +118,22 @@ erect_agent_stack_test() {
   assert "$status" == "0" "Codex chrome satisfies the boot-readiness gate"
   ((fails+=$?))
   _t wait-for -S fake_codex_stop
+
+  # A resumed Codex pane may be filled by prior conversation, but its persistent
+  # footer is definitive without confusing a foreground trust gate for readiness.
+  (
+    . "$HOME/dotfiles/bin/erect-agent-stack"
+    _eas_tmux() {
+      case "$1" in
+        capture-pane) printf 'prior conversation without startup header\n95%% context left\n' ;;
+        display-message) printf 'codex\n' ;;
+      esac
+    }
+    ERECT_BOOT_TIMEOUT=1 _eas_bootwait resumed-codex codex
+  )
+  status=$?
+  assert "$status" == "0" "Codex persistent chrome satisfies resumed-session readiness"
+  ((fails+=$?))
 
   # Codex's paste-burst protection needs an explicit bracketed paste boundary;
   # the following plain Enter must remain a distinct submit key.

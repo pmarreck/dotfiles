@@ -11,7 +11,9 @@ session() {
 		tmux has-session -t "=$name" 2>/dev/null || tmux new-session -d -s "$name"
 		tmux switch-client -t "=$name"
 	else
-		tmux new-session -A -s "$name"
+		# `-d` modifies `-A`'s attach behavior: detach an older client already
+		# viewing this session, preventing mixed-size duplicate redraw storms.
+		tmux new-session -Ad -s "$name"
 	fi
 }
 

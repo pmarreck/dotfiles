@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+# sessions_test — filtering of `tmux list-sessions` by attached state.
+#
+# Verifies:
+#   - no args           → passes tmux list-sessions through verbatim
+#   - --attached        → only lines marked "(attached)"
+#   - --headless        → only lines NOT marked "(attached)"
+#   - --unattached      → synonym for --headless
+#   - an empty filter result still exits 0 (success, just nothing matched)
+#   - -h/--help, --about behave per convention
+#   - extra args pass through to tmux list-sessions
+#
+# tmux is injected via TMUX_BIN (same convention as kill-session) so the test
+# is hermetic and deterministic — no real server, no attached-client PTY needed.
+
+set -u
+
+export PATH="$HOME/dotfiles/bin:$PATH"
+
+tests=0
+fails=0
+
+assert_eq() {
+	local actual="$1" expected="$2" msg="$3"
+	((tests++))
+	if [ "$actual" = "$expected" ]; then
+		echo "✓ $msg"
+	else
+		{
+			echo "✗ $msg"
+			echo "  expected: $(printf '%q' "$expected")"
+			echo "  actual:   $(printf '%q' "$actual")"
+		} >&2
+		((fails++)) || :
+	fi
+}
+
+WORK=$(mktemp -d --tmpdir sessions_test.XXXXXX)
+trap 'rm -rf "$WORK"' EXIT
+
+# Build a fake tmux that emits canned `list-sessions` output. $1 = output file
+# whose contents become the fake's list-sessions stdout; it also records the
+# args it was invoked with to "$WORK/tmux_args" for passthrough assertions.
+make_fake_tmux() {
+	local sessions_text="$1"
+	printf '%s' "$sessions_text" >"$WORK/sessions.txt"
+	cat >"$WORK/tmux" <<'FAKE'
+#!/usr/bin/env bash
+work="${0%/tmux}"
+if [ "$1" = "list-sessions" ]; then
+	shift
+	printf '%s ' "$@" >"$work/tmux_args"
+	cat "$work/sessions.txt"
+	exit 0
+fi
+echo "fake tmux: unsupported: $*" >&2
+exit 1
+FAKE
+	chmod +x "$WORK/tmux"
+	export TMUX_BIN="$WORK/tmux"
+}
+
+THREE=$'main: 3 windows (created Thu) (attached)\nwork: 1 windows (created Thu)\nscratch: 2 windows (created Thu) (attached)\n'
+make_fake_tmux "$THREE"
+
+# ─── no args: passthrough verbatim ───────────────────────────────────────────
+echo "==> no args (passthrough)"
+out=$(sessions 2>/dev/null); rc=$?
+assert_eq "$rc" "0" "sessions (no args) exits 0"
+assert_eq "$out" "main: 3 windows (created Thu) (attached)
+work: 1 windows (created Thu)
+scratch: 2 windows (created Thu) (attached)" "sessions with no args lists all sessions verbatim"
+
+# ─── --attached ──────────────────────────────────────────────────────────────
+echo "==> --attached"
+out=$(sessions --attached 2>/dev/null); rc=$?
+assert_eq "$rc" "0" "sessions --attached exits 0"
+assert_eq "$out" "main: 3 windows (created Thu) (attached)
+scratch: 2 windows (created Thu) (attached)" "sessions --attached shows only attached sessions"
+
+# ─── --headless / --unattached ───────────────────────────────────────────────
+echo "==> --headless / --unattached"
+out=$(sessions --headless 2>/dev/null)
+assert_eq "$out" "work: 1 windows (created Thu)" "sessions --headless shows only non-attached sessions"
+out=$(sessions --unattached 2>/dev/null)
+assert_eq "$out" "work: 1 windows (created Thu)" "sessions --unattached is a synonym for --headless"
+
+# ─── empty filter result still exits 0 ───────────────────────────────────────
+echo "==> empty filter result"
+make_fake_tmux $'work: 1 windows (created Thu)\n'   # no attached sessions
+out=$(sessions --attached 2>/dev/null); rc=$?
+assert_eq "$rc" "0" "sessions --attached exits 0 even when nothing matches"
+assert_eq "$out" "" "sessions --attached yields empty output when no attached sessions"
+make_fake_tmux "$THREE"
+
+# ─── passthrough of extra args to tmux list-sessions ─────────────────────────
+echo "==> extra args passthrough"
+sessions -F '#S' >/dev/null 2>&1
+assert_eq "$(cat "$WORK/tmux_args")" "-F #S " "extra args are forwarded to tmux list-sessions"
+
+# ─── help / about ────────────────────────────────────────────────────────────
+echo "==> help / about"
+out=$(sessions --help 2>/dev/null); rc=$?
+assert_eq "$rc" "0" "sessions --help exits 0"
+case "$out" in *Usage:*) echo "✓ --help shows usage"; ((tests++));; *) echo "✗ --help shows usage" >&2; ((tests++)); ((fails++));; esac
+out=$(sessions --about 2>/dev/null); rc=$?
+assert_eq "$rc" "0" "sessions --about exits 0"
+lines=$(printf '%s' "$out" | grep -c '')
+assert_eq "$lines" "1" "sessions --about is a single line"
+
+# ─── Summary ─────────────────────────────────────────────────────────────────
+echo
+if [ "$fails" -eq 0 ]; then
+	echo "All $tests sessions tests passed"
+else
+	echo "$fails of $tests sessions tests failed" >&2
+fi
+exit "$fails"

@@ -7,12 +7,14 @@ set -u
 
 DARKTIDE_DTKIT_PATCH_VERSION="0.1.8"
 DARKTIDE_DTKIT_PATCH_TRIPLE="x86_64-unknown-linux-musl"
+DARKTIDE_LINUX_GAME_DIR="${DARKTIDE_LINUX_GAME_DIR:-/mnt/steam-nvme/SteamLibrary/steamapps/common/Warhammer 40,000 DARKTIDE}"
+DARKTIDE_BUNDLE_DIR_RESOLVED="${DARKTIDE_BUNDLE_DIR:-$DARKTIDE_LINUX_GAME_DIR/bundle}"
 
 # Guard: dotfiles sync to macOS too; this only makes sense on the 'nixos' gaming
 # box. os_name/host are injectable so tests can exercise both branches.
 _darktide_host_ok() {
 	local os_name="${1:-$(uname -s)}" host="${2:-$(hostname -s 2>/dev/null || hostname)}"
-	[ "$os_name" = "Linux" ] && [ "$host" = "nixos" ]
+	[ "$os_name" = "Linux" ] && [[ "$host" = "nixos" || "$host" = "thelio-nixos" ]]
 }
 
 # Resolves the dtkit-patch binary, downloading+caching it on first use.
@@ -94,7 +96,7 @@ darktide-patch-mods() {
 	# dtkit-patch wants the bundle/ subfolder itself (it reads bundle_database.data
 	# directly inside it) -- not the game root. Matches the community-documented
 	# `--toggle ../bundle` launch option (run from a tools/ sibling of bundle/).
-	local bundle_dir="${DARKTIDE_BUNDLE_DIR:-$HOME/.local/share/Steam/steamapps/common/Warhammer 40,000 DARKTIDE/bundle}"
+	local bundle_dir="$DARKTIDE_BUNDLE_DIR_RESOLVED"
 	if [ ! -d "$bundle_dir" ]; then
 		echo "❌ Darktide bundle dir not found: $bundle_dir" >&2
 		return 1
@@ -126,7 +128,7 @@ case "${1:-}" in
 	-h|--help)
 		echo "darktide-patch-mods - enable/disable the Darktide mod-loader bundle patch (dtkit-patch)"
 		echo ""
-		echo "Usage: darktide-patch-mods [--patch|--unpatch|--toggle]"
+		echo "Usage: darktide-patch-mods [--patch|--unpatch|--toggle|--paths]"
 		echo ""
 		echo "Wraps dtkit-patch (github.com/manshanko/dtkit-patch), auto-downloading its"
 		echo "native Linux binary to ~/.cache/darktide-patch-mods on first use. Patches"
@@ -139,12 +141,16 @@ case "${1:-}" in
 		echo "  --patch       Patch the bundle database (default)"
 		echo "  --unpatch     Remove the patch"
 		echo "  --toggle      Toggle patch/unpatch"
+		echo "  --paths       Show the resolved bundle path"
 		echo "  -h, --help    Show this help message"
 		echo "  -a, --about   Show brief description"
 		echo "  --test        Run tests"
 		;;
 	-a|--about)
 		echo "Enable/disable the Darktide mod-loader bundle patch via dtkit-patch"
+		;;
+	--paths)
+		printf 'bundle=%s\n' "$DARKTIDE_BUNDLE_DIR_RESOLVED"
 		;;
 	--test)
 		if [[ -f "$HOME/dotfiles/bin/test/darktide-patch-mods_test" ]]; then

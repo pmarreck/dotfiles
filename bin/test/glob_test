@@ -743,6 +743,40 @@ EOF
   assert "$error_msg" =~ "Error: No arguments provided after option parsing" "glob should print an error reason to stderr when no arguments remain after option parsing"
   (( fails += $? ))
 
+  # Test 63: Ordering is code-point (LC_ALL=C), locale-INDEPENDENT — matching
+  # ripgrep --sort path and fd, NOT locale collation (ls/bash-glob honor
+  # LC_COLLATE; glob deliberately does not, for reproducible output on every
+  # machine and in CI). Metamorphic MFIC check: the SAME invocation under C and
+  # under a dictionary-collating locale must yield the SAME code-point order.
+  # The dict-locale probe keeps the second locale non-vacuous only when a
+  # dictionary collation is actually available (else we assert under C alone).
+  touch aafirst.jpg "test with spaces.jpg" test1.jpg test2.jpg zzlast.jpg
+  local cp_display cp_cmd dict_locale _loc _locs out
+  cp_display=$'aafirst.jpg\ntest with spaces.jpg\ntest1.jpg\ntest2.jpg\nzzlast.jpg'
+  cp_cmd="aafirst.jpg test with spaces.jpg test1.jpg test2.jpg zzlast.jpg"
+  dict_locale=""
+  # Discriminator that actually flips between C (byte: space 0x20 < '1') and
+  # dictionary collation (space ignored → digit sorts before the 'w' letter).
+  for _loc in en_US.UTF-8 en_US.utf8 C.UTF-8; do
+    if [[ "$(printf 'test1\ntest with spaces\n' | LC_ALL="$_loc" sort 2>/dev/null)" != "$(printf 'test1\ntest with spaces\n' | LC_ALL=C sort)" ]]; then
+      dict_locale="$_loc"; break
+    fi
+  done
+  _locs=(C)
+  [[ -n "$dict_locale" ]] && _locs+=("$dict_locale")
+  for _loc in "${_locs[@]}"; do
+    (( tests++ ))
+    out=$(LC_ALL="$_loc" glob "*.jpg" 2>/dev/null)
+    assert "$out" == "$cp_display" "glob display order is code-point under LC_ALL=$_loc"
+    (( fails += $? ))
+    (( tests++ ))
+    out=$(LC_ALL="$_loc" glob echo "*.jpg" 2>/dev/null)
+    assert "$out" == "$cp_cmd" "glob command order is code-point under LC_ALL=$_loc"
+    (( fails += $? ))
+  done
+  [[ -z "$dict_locale" ]] && echo "Note: no dictionary-collating locale available; code-point test ran under C only" >&2
+  rm -f aafirst.jpg "test with spaces.jpg" test1.jpg test2.jpg zzlast.jpg
+
   # Leave temp dir (mktemp -d creates a temporary directory that will be cleaned up by the system)
   popd >/dev/null
 

@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+# display_image_test — protocol forcing via env override and -p precedence.
+#
+# Verifies the DISPLAY_IMAGE_FORCE_PROTOCOL env override that lets non-interactive
+# contexts (e.g. the fun_intro cache regenerator, which has no terminal to query
+# — and never could — yet must emit bytes destined for a later, known-capable
+# terminal) bypass live detection:
+#   - DISPLAY_IMAGE_FORCE_PROTOCOL=kitty → emits kitty APC graphics (ESC _ G …), exit 0
+#   - DISPLAY_IMAGE_FORCE_PROTOCOL=sixel → emits sixel DCS (ESC P …), exit 0
+#   - an explicit -p/--protocol still wins over the env override
+#   - an unknown forced protocol fails loudly (exit 1), no silent detection fallback
+
+set -u
+
+export PATH="$HOME/dotfiles/bin:$PATH"
+
+tests=0
+fails=0
+
+assert_eq() {
+	local actual="$1" expected="$2" msg="$3"
+	((tests++))
+	if [ "$actual" = "$expected" ]; then
+		echo "✓ $msg"
+	else
+		{
+			echo "✗ $msg"
+			echo "  expected: $(printf '%q' "$expected")"
+			echo "  actual:   $(printf '%q' "$actual")"
+		} >&2
+		((fails++)) || :
+	fi
+}
+
+assert_contains() {
+	local haystack="$1" needle="$2" msg="$3"
+	((tests++))
+	if [[ "$haystack" == *"$needle"* ]]; then
+		echo "✓ $msg"
+	else
+		{
+			echo "✗ $msg"
+			echo "  looking for: $needle"
+			echo "  in:          $haystack"
+		} >&2
+		((fails++)) || :
+	fi
+}
+
+IMG="$HOME/dotfiles/bin/data/inthebeginning.jpg"
+WORK=$(mktemp -d --tmpdir display_image_test.XXXXXX)
+trap 'rm -rf "$WORK"' EXIT
+
+# First N bytes of a file as a raw string (control-code safe for the leading
+# escape introducer we assert on; no trailing newline in these sequences).
+firstn() { head -c "$1" "$2"; }
+
+# ─── forced kitty: emits kitty APC graphics without any terminal to detect ───
+echo "==> DISPLAY_IMAGE_FORCE_PROTOCOL=kitty"
+DISPLAY_IMAGE_FORCE_PROTOCOL=kitty display_image -g 100x100 "$IMG" >"$WORK/k.out" 2>"$WORK/k.err"
+rc=$?
+assert_eq "$rc" "0" "forced kitty exits 0 (no detection needed)"
+assert_eq "$(firstn 3 "$WORK/k.out")" $'\033_G' "forced kitty output starts with kitty APC (ESC _ G)"
+
+# ─── forced sixel: emits sixel DCS stream ────────────────────────────────────
+echo "==> DISPLAY_IMAGE_FORCE_PROTOCOL=sixel"
+DISPLAY_IMAGE_FORCE_PROTOCOL=sixel display_image -g 100x100 "$IMG" >"$WORK/s.out" 2>"$WORK/s.err"
+rc=$?
+assert_eq "$rc" "0" "forced sixel exits 0 (no detection needed)"
+assert_eq "$(firstn 2 "$WORK/s.out")" $'\033P' "forced sixel output starts with DCS (ESC P)"
+
+# ─── explicit -p wins over the env override ──────────────────────────────────
+echo "==> -p overrides DISPLAY_IMAGE_FORCE_PROTOCOL"
+DISPLAY_IMAGE_FORCE_PROTOCOL=sixel display_image -p kitty -g 100x100 "$IMG" >"$WORK/o.out" 2>"$WORK/o.err"
+rc=$?
+assert_eq "$rc" "0" "-p kitty + env sixel exits 0"
+assert_eq "$(firstn 3 "$WORK/o.out")" $'\033_G' "-p kitty wins over env sixel (kitty APC emitted)"
+
+# ─── unknown forced protocol fails loudly (no silent detection fallback) ─────
+echo "==> unknown forced protocol fails loudly"
+DISPLAY_IMAGE_FORCE_PROTOCOL=bogus display_image -g 100x100 "$IMG" >"$WORK/b.out" 2>"$WORK/b.err"
+rc=$?
+assert_eq "$rc" "1" "forced bogus protocol exits 1"
+assert_contains "$(cat "$WORK/b.err")" "Unknown protocol" "forced bogus protocol names the error"
+
+# ─── Summary ─────────────────────────────────────────────────────────────────
+echo
+if [ "$fails" -eq 0 ]; then
+	echo "All $tests display_image tests passed"
+else
+	echo "$fails of $tests display_image tests failed" >&2
+fi
+exit "$fails"

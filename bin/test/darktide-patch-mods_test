@@ -136,6 +136,14 @@ for combo in "Linux otherhost" "Darwin nixos" "Darwin macbook"; do
 	rm -rf "$mockdir"
 done
 
+mockdir=$(mock_host_dir "Linux" "thelio-nixos")
+missing_game=$(mktemp -d --tmpdir darktide_game.XXXXXX)/does-not-exist
+output=$(PATH="$mockdir:$PATH" DARKTIDE_BUNDLE_DIR="$missing_game" darktide-patch-mods 2>&1)
+status=$?
+expect_status "accepts the current thelio-nixos hostname" 1 "$status"
+expect_not_contains "thelio-nixos reaches path validation" "only runs on the 'nixos'" "$output"
+rm -rf "$mockdir"
+
 # --- Unknown action rejected before touching the dtkit-patch binary at all
 
 hostmock=$(mock_host_dir "Linux" "nixos")
@@ -311,6 +319,9 @@ rm -f "$bad_fixture_tarball"
 rm -rf "$hostmock" "$game_tmp"
 
 # --- CLI surface
+
+paths_output=$(darktide-patch-mods --paths)
+expect_contains "--paths reports the NVMe bundle destination" "/mnt/steam-nvme/SteamLibrary/steamapps/common/Warhammer 40,000 DARKTIDE/bundle" "$paths_output"
 
 help_output=$(darktide-patch-mods --help)
 expect_contains "--help shows usage" "Usage:" "$help_output"

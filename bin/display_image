@@ -74,6 +74,15 @@ display_image() {
 
 	needs magick "please install imagemagick" || return 1
 
+	# Env override for non-interactive callers. When there is no terminal to
+	# query (background cache regeneration, pipes) but the bytes are destined
+	# for a later, known-capable terminal, the caller declares the protocol via
+	# DISPLAY_IMAGE_FORCE_PROTOCOL instead of relying on live detection that
+	# cannot succeed here. An explicit -p/--protocol still wins over this.
+	if [[ -z "$protocol" && -n "${DISPLAY_IMAGE_FORCE_PROTOCOL:-}" ]]; then
+		protocol="$DISPLAY_IMAGE_FORCE_PROTOCOL"
+	fi
+
 	# Auto-detect protocol if not forced
 	if [[ -z "$protocol" ]]; then
 		if check_kitty_support 2>/dev/null; then
