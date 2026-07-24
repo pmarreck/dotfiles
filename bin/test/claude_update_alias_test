@@ -4,6 +4,7 @@ set -u
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 alias_line="$(rg '^alias upgrade_claude=' "$repo_root/.aliases")"
+shadowed_prefix='--prefix "$HOME/.local"'
 failures=0
 
 pass() {
@@ -15,7 +16,7 @@ fail() {
 	failures=$((failures + 1))
 }
 
-if [[ "$alias_line" != *'--prefix "$HOME/.local"'* ]]; then
+if [[ "$alias_line" != *"$shadowed_prefix"* ]]; then
 	pass 'Claude updater honors the configured npm global prefix'
 else
 	fail 'Claude updater must not install behind the earlier PATH entry'
