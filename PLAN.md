@@ -1,5 +1,16 @@
 # dotfiles — TODO / Plans
 
+## Active — Claude updater correctness (started 2026-07-24)
+
+- [x] Repair `update_claude` so it updates the PATH-winning npm-global
+  installation and explicitly authorizes only Anthropic's native-binary
+  postinstall hook.
+  - Curiosity poke: an apparently successful global install can update a
+    shadowed prefix and leave the invoked executable stale.
+  Completed 2026-07-24 13:00 EDT: the ordinary `claude` resolution now reports
+  2.1.218, its installed executable is the expected hard link to Anthropic's
+  matching native package, and the focused three-assertion regression is green.
+
 ## Active — cross-platform GPU observability (started 2026-07-24)
 
 - [x] Add `gpuhogs`: a user-invoked Linux/macOS GPU-process snapshot command

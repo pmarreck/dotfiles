@@ -45,6 +45,7 @@ annotate=[
 	bin/rule30 = Terminal Wolfram Rule 30 cellular-automaton visualizer; WIDTH/LINES env overrides
 	bin/src/rg_guard_env.bash = Exports rg, find, and fd shell functions so agent-bundled PATH entries cannot bypass the ~/bin multicall safety guard.
 	bin/test/block-attribution_test = tests the global PreToolUse hook that blocks AI authorship trailers (hook at ~/.claude/hooks/block-attribution/)
+	bin/test/claude_update_alias_test = Regression test ensuring update_claude targets the PATH-winning npm prefix and narrowly allows Anthropic postinstall.
 	bin/test/darktide-patch-mods_test = Test suite for bin/darktide-patch-mods: host-guard, action validation, DTKIT_PATCH_BIN override, cache-hit/fresh-download/download-failure paths via mocked curl+fixture tarball
 	bin/test/darktide-sync-mods_test = Test suite for bin/darktide-sync-mods: host-guard matrix, real rsync against temp dirs (idempotency, additive vs --delete), CLI surface
 	bin/test/display_image_test = tests DISPLAY_IMAGE_FORCE_PROTOCOL env override (forced kitty/sixel emission, -p precedence, loud unknown-protocol failure)

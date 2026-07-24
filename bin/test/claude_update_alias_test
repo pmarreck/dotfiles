@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+
+set -u
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+alias_line="$(rg '^alias upgrade_claude=' "$repo_root/.aliases")"
+failures=0
+
+pass() {
+	printf 'ok - %s\n' "$1"
+}
+
+fail() {
+	printf 'not ok - %s\n' "$1" >&2
+	failures=$((failures + 1))
+}
+
+if [[ "$alias_line" != *'--prefix "$HOME/.local"'* ]]; then
+	pass 'Claude updater honors the configured npm global prefix'
+else
+	fail 'Claude updater must not install behind the earlier PATH entry'
+fi
+
+if [[ "$alias_line" == *'--allow-scripts=@anthropic-ai/claude-code'* ]]; then
+	pass 'Claude updater explicitly allows only the reviewed package script'
+else
+	fail 'Claude updater must explicitly allow the Anthropic postinstall'
+fi
+
+if [[ "$alias_line" == *'@anthropic-ai/claude-code@latest'* ]]; then
+	pass 'Claude updater requests the latest release explicitly'
+else
+	fail 'Claude updater must request the latest Claude release'
+fi
+
+exit "$failures"
