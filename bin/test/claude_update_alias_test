@@ -4,7 +4,7 @@ set -u
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 alias_line="$(rg '^alias upgrade_claude=' "$repo_root/.aliases")"
-shadowed_prefix='--prefix "$HOME/.local"'
+shadowed_prefix="--prefix \"\$HOME/.local\""
 failures=0
 
 pass() {
