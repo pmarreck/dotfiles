@@ -24,6 +24,7 @@ hide=[
 ]
 
 annotate=[
+	RULES.md = Durable dotfiles policy decisions, including the explicit decision not to add i18n to personal helper commands.
 	bin/base85 = LuaJIT base85 encode/decode (Z85/ZeroMQ default, Adobe ASCII85 via -A); stdin only, --encode/--decode/auto-detect alphabet+direction; Z85 arbitrary-length via BLIP-pad wrapper (-p/-P to force/disable)
 	bin/checksite = Poll a URL until response stops matching a down-pattern, then alert (tput bel); --once/--input - for offline testing
 	bin/darktide-patch-mods = Reapplies the Darktide bundle loader patch to the dedicated NVMe Steam installation
@@ -34,6 +35,7 @@ annotate=[
 	bin/fd = Symlink to the multicall rg/find/fd safety guard; dispatches to real fd after distinguishing its pattern from search roots.
 	bin/find = Symlink to the multicall rg/find/fd safety guard; dispatches to real find after checking traversal starting points.
 	bin/fun_intro = login-shell decoration + capability-bucketed cache; image-pick regen forces DISPLAY_IMAGE_FORCE_PROTOCOL so graphics bytes are captured without a TTY to query
+	bin/gpuhogs = Cross-platform GPU-process snapshot: NVIDIA pmon, nvtop AMD/Intel fallback, macOS powermetrics, active/resident classification, and JSON.
 	bin/gum-demo = Interactive walkthrough of the gum TUI tool's features
 	bin/include = keep only stdin lines matching a ripgrep regex (rg wrapper, inverse of exclude)
 	bin/md-section = list markdown headings / extract the section under one (fence-aware, level-aware, derives TOC from headings; LuaJIT)
@@ -50,6 +52,7 @@ annotate=[
 	bin/test/exclude_test = test suite for bin/exclude (semantics + --help regression guards)
 	bin/test/fixtures/erect-agent-stack/codex = Fake Codex trust and readiness TUI for deterministic agent-stack orchestration tests
 	bin/test/fun_intro_test = tests for capability-bucketed fun_intro cache (image_capable/image_incapable, hardlink invariant)
+	bin/test/gpuhogs_test = Hermetic Linux NVIDIA/nvtop and macOS powermetrics coverage for gpuhogs collectors, classification, errors, and aggregate hogs membership.
 	bin/test/include_test = test suite for bin/include (semantics + --help regression guards)
 	bin/test/nas_ps1_test = static-content validation for bin/nas.ps1 (no pwsh required locally); checks param block, both protocol branches, safety helpers, mojibake hygiene; opportunistic pwsh parse if available
 	bin/test/nas_test = TDD coverage for bin/nas: pure helpers (_nas_fstab_line, _nas_nixos_snippet, _nas_auto_nfs_line), platform override, --help, --dry-run for all three OS branches

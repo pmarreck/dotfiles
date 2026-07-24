@@ -1,5 +1,45 @@
 # dotfiles — TODO / Plans
 
+## Active — cross-platform GPU observability (started 2026-07-24)
+
+- [x] Add `gpuhogs`: a user-invoked Linux/macOS GPU-process snapshot command
+  with Linux NVIDIA (`nvidia-smi pmon`), Linux AMD/Intel (`nvtop --snapshot`),
+  and privileged macOS (`powermetrics --show-process-gpu`) adapters feeding one
+  normalized renderer; include JSON and interactive `nvtop`.
+  - Curiosity poke: distinguish GPU-active processes, CPU-hot processes that
+    retain GPU contexts, and merely resident contexts—VRAM ownership alone does
+    not prove current contention.
+- [x] Add `gpuhogs` to the aggregate `hogs` alias and cover the alias as a set
+  so a future edit cannot silently drop any member of the observability family.
+  Completed 2026-07-24 12:27 EDT: 32 focused tests and all 152 dotfiles test
+  files pass; the macOS command surface was also checked live on Peter's Mac.
+- [ ] Remove `diskhogs`' unconditional sudo requirement: provide the strongest
+  useful unprivileged per-process view each OS permits, while reserving
+  privileged all-user visibility for an explicit mode or on-demand collector.
+  - Curiosity poke: Linux may expose same-user `/proc/<pid>/io` counters while
+    macOS may require a narrowly privileged sampler for process attribution;
+    do not pretend device-wide I/O is per-process evidence.
+
+## Backlog — resurrect Peter's historical iTunes preferences/playlists
+
+- [ ] Recover every historically starred/liked track and the contents/order of
+  old playlists from `/mnt/Fileserver/Music/iTunes/iTunes Music/`, including
+  Apple's old malformed/nonconforming XML metadata rather than relying only on
+  present audio filenames.
+- [ ] Inventory every candidate iTunes library/playlist metadata file, preserve
+  originals read-only, and build a tolerant parser/repair pipeline with
+  regression fixtures for each concrete XML violation encountered.
+- [ ] Reconcile duplicate library snapshots and stable track identifiers without
+  erasing historical evidence; retain which library/playlist asserted each
+  like, star, membership, order, rating, and last-known file location.
+- [ ] Produce a human-readable Markdown document plus structured JSON/CSV
+  exports suitable for recreating the recovered collections in Spotify,
+  SoundCloud, Apple Music, or later migration tooling.
+  - Curiosity poke: “ever liked” may be encoded through ratings, loved/disliked
+    flags, smart-playlist predicates, or playlist membership depending on the
+    iTunes era; treat them as distinct provenance-bearing signals before
+    deciding which ones belong in the final union.
+
 ## Active — collation / listing thread (started 2026-07-23)
 
 Additive to the already-shipped fun_intro/rg/sessions work; established goals stand.

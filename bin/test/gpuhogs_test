@@ -1,0 +1,302 @@
+#!/usr/bin/env bash
+
+# gpuhogs_test — hermetic Linux/macOS GPU-process adapter and renderer coverage.
+# The fixtures classify the whole process set: active GPU work, CPU-hot context,
+# and idle resident context. No real GPU, sudo, or timing dependency is used.
+
+set -u
+
+tests=0
+fails=0
+test_root=$(mktemp -d "${TMPDIR:-/tmp}/gpuhogs_test.XXXXXX")
+trap 'rm -rf "$test_root"' EXIT
+
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+repo_root=$(cd "$script_dir/../.." && pwd)
+gpuhogs_cmd=${GPUHOGS_BIN_UNDER_TEST:-"$script_dir/../gpuhogs"}
+gpuhogs_resolved=$(cd "$(dirname "$gpuhogs_cmd")" && pwd)/$(basename "$gpuhogs_cmd")
+
+pass() {
+	tests=$((tests + 1))
+	printf '✓ %s\n' "$1"
+}
+
+fail() {
+	tests=$((tests + 1))
+	fails=$((fails + 1))
+	printf '✗ %s\n' "$1" >&2
+}
+
+expect_contains() {
+	local description="$1" needle="$2" haystack="$3"
+	if [[ "$haystack" == *"$needle"* ]]; then
+		pass "$description"
+	else
+		fail "$description (missing: $needle)"
+	fi
+}
+
+expect_not_contains() {
+	local description="$1" needle="$2" haystack="$3"
+	if [[ "$haystack" != *"$needle"* ]]; then
+		pass "$description"
+	else
+		fail "$description (unexpected: $needle)"
+	fi
+}
+
+if [[ ! -x "$gpuhogs_cmd" ]]; then
+	printf 'gpuhogs_test: executable not found: %s\n' "$gpuhogs_cmd" >&2
+	exit 1
+fi
+
+cat >"$test_root/nvidia-smi" <<'STUB'
+#!/usr/bin/env bash
+if [[ "$*" != "pmon -s um -c 1" ]]; then
+	printf 'nvidia-smi stub: unexpected arguments: %s\n' "$*" >&2
+	exit 2
+fi
+cat <<'PMON'
+# gpu         pid   type     sm    mem    enc    dec    jpg    ofa     fb   ccpm    command
+# Idx           #    C/G      %      %      %      %      %      %     MB     MB    name
+    0         101     G      72     40      -      -      -      -   4096      0    darktide
+    0         202     C      55     30      -      -      -      -   8192      0    ollama
+    0         303   C+G       -      -      -      -      -      -      6      0    loupe
+    0         404     G       -      -      -      -      -      -    267      0    slack
+PMON
+STUB
+
+cat >"$test_root/nvidia-smi-fail" <<'STUB'
+#!/usr/bin/env bash
+exit 9
+STUB
+
+cat >"$test_root/ps" <<'STUB'
+#!/usr/bin/env bash
+pid=""
+while (( $# > 0 )); do
+	if [[ "$1" == "-p" ]]; then pid="$2"; shift 2; else shift; fi
+done
+case "$pid" in
+	101) printf 'peter 85.0 S /games/Warhammer 40K DARKTIDE\n' ;;
+	202) printf 'peter 240.0 S ollama runner --model qwen\n' ;;
+	303) printf 'peter 100.0 R /nix/store/loupe/bin/.loupe-wrapped\n' ;;
+	404) printf 'peter 0.2 S /opt/slack/slack --type=gpu-process\n' ;;
+	505) printf 'peter 18.0 S /Applications/MetalGame.app/MetalGame\n' ;;
+	*) exit 1 ;;
+esac
+STUB
+
+cat >"$test_root/nvtop" <<'STUB'
+#!/usr/bin/env bash
+if [[ "$*" == "--snapshot" ]]; then
+	cat <<'JSON'
+[
+  {
+    "device_name": "AMD Radeon Test",
+    "processes": [
+      {
+        "pid": "606",
+        "cmdline": "/games/radv-game",
+        "kind": "graphic",
+        "user": "peter",
+        "gpu_usage": "45",
+        "gpu_mem_bytes_alloc": "1073741824"
+      }
+    ]
+  }
+]
+JSON
+	exit 0
+fi
+printf 'nvtop stub: unexpected arguments: %s\n' "$*" >&2
+exit 2
+STUB
+
+cat >"$test_root/powermetrics" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >"$GPUHOGS_TEST_POWERMETRICS_LOG"
+printf '<plist version="1.0"><dict/></plist>\0'
+STUB
+
+cat >"$test_root/plutil" <<'STUB'
+#!/usr/bin/env bash
+cat >/dev/null
+cat <<'JSON'
+{
+  "tasks": [
+    {"pid": 505, "name": "MetalGame", "gputime_ms_per_s": 625.0},
+    {"pid": 999, "name": "IdleApp", "gputime_ms_per_s": 0.0}
+  ]
+}
+JSON
+STUB
+
+cat >"$test_root/sudo" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >"$GPUHOGS_TEST_SUDO_LOG"
+STUB
+
+chmod +x "$test_root/nvidia-smi" "$test_root/nvidia-smi-fail" \
+	"$test_root/ps" "$test_root/nvtop" \
+	"$test_root/powermetrics" "$test_root/plutil" "$test_root/sudo"
+
+run_linux_nvidia() {
+	env \
+		GPUHOGS_PLATFORM=Linux \
+		GPUHOGS_NVIDIA_SMI="$test_root/nvidia-smi" \
+		GPUHOGS_NVTOP="$test_root/missing-nvtop" \
+		GPUHOGS_PS="$test_root/ps" \
+		GPUHOGS_JQ="$(command -v jq)" \
+		"$gpuhogs_cmd" "$@"
+}
+
+if output=$(run_linux_nvidia --help 2>&1); then
+	expect_contains "--help documents the CLI" "Usage: gpuhogs" "$output"
+	expect_contains "--help documents JSON" "--json" "$output"
+	expect_contains "--help documents both platforms" "Linux" "$output"
+	expect_contains "--help documents both platforms (macOS)" "macOS" "$output"
+else
+	fail "--help exits successfully"
+fi
+
+output=$(run_linux_nvidia 2>"$test_root/text.err")
+rc=$?
+if (( rc == 0 )); then
+	expect_contains "active game is classified over the process set" "ACTIVE" "$output"
+	expect_contains "active game is named" "Warhammer 40K DARKTIDE" "$output"
+	expect_contains "compute model runner is visible" "ollama runner --model qwen" "$output"
+	expect_contains "CPU-spinning GPU context is distinguished" "HOT-CPU" "$output"
+	expect_contains "Loupe's wrapped command is visible" ".loupe-wrapped" "$output"
+	expect_contains "idle GPU context is classified resident" "RESIDENT" "$output"
+	expect_contains "resident Slack process is visible" "slack --type=gpu-process" "$output"
+else
+	fail "Linux NVIDIA snapshot exits successfully"
+fi
+if [[ ! -s "$test_root/text.err" ]]; then
+	pass "successful text output keeps stderr clean"
+else
+	fail "successful text output leaked stderr"
+fi
+expect_contains "text output preserves literal percent headers" "GPU%" "$output"
+expect_contains "text output preserves both percent headers" "CPU%" "$output"
+
+json=$(run_linux_nvidia --json 2>"$test_root/json.err")
+rc=$?
+if (( rc == 0 )) && jq -e '
+	length == 4 and
+	(any(.[]; .pid == 101 and .status == "active" and .gpu_percent == 72)) and
+	(any(.[]; .pid == 303 and .status == "hot_cpu")) and
+	(any(.[]; .pid == 404 and .status == "resident"))
+' >/dev/null <<<"$json"; then
+	pass "JSON is structured and preserves all classifier outcomes"
+else
+	fail "JSON output is invalid or lost classifier outcomes"
+fi
+if [[ ! -s "$test_root/json.err" ]]; then
+	pass "successful JSON output keeps stderr clean"
+else
+	fail "successful JSON output leaked stderr"
+fi
+
+output=$(env \
+	GPUHOGS_PLATFORM=Linux \
+	GPUHOGS_NVIDIA_SMI="$test_root/missing-nvidia-smi" \
+	GPUHOGS_NVTOP="$test_root/nvtop" \
+	GPUHOGS_PS="$test_root/ps" \
+	GPUHOGS_JQ="$(command -v jq)" \
+	"$gpuhogs_cmd" 2>&1)
+rc=$?
+if (( rc == 0 )); then
+	expect_contains "Linux non-NVIDIA fallback uses nvtop" "radv-game" "$output"
+else
+	fail "Linux nvtop fallback exits successfully"
+fi
+
+output=$(env \
+	GPUHOGS_PLATFORM=Linux \
+	GPUHOGS_NVIDIA_SMI="$test_root/nvidia-smi-fail" \
+	GPUHOGS_NVTOP="$test_root/nvtop" \
+	GPUHOGS_PS="$test_root/ps" \
+	GPUHOGS_JQ="$(command -v jq)" \
+	"$gpuhogs_cmd" 2>&1)
+rc=$?
+if (( rc == 0 )); then
+	expect_contains "failed NVIDIA sampler falls back to nvtop" "radv-game" "$output"
+else
+	fail "failed NVIDIA sampler fallback exits successfully"
+fi
+
+power_log="$test_root/powermetrics.log"
+output=$(env \
+	GPUHOGS_PLATFORM=Darwin \
+	GPUHOGS_EUID=0 \
+	GPUHOGS_POWERMETRICS="$test_root/powermetrics" \
+	GPUHOGS_PLUTIL="$test_root/plutil" \
+	GPUHOGS_PS="$test_root/ps" \
+	GPUHOGS_JQ="$(command -v jq)" \
+	GPUHOGS_TEST_POWERMETRICS_LOG="$power_log" \
+	"$gpuhogs_cmd" 2>&1)
+rc=$?
+if (( rc == 0 )); then
+	expect_contains "macOS reports active Metal processes" "MetalGame" "$output"
+	expect_contains "macOS converts GPU milliseconds per second to percent" "62.5" "$output"
+	expect_not_contains "macOS excludes zero-GPU tasks" "IdleApp" "$output"
+	power_args=$(<"$power_log")
+	expect_contains "macOS requests per-process GPU time" "--show-process-gpu" "$power_args"
+	expect_contains "macOS requests one sample" "--sample-count 1" "$power_args"
+else
+	fail "macOS powermetrics snapshot exits successfully"
+fi
+
+sudo_log="$test_root/sudo.log"
+env \
+	GPUHOGS_PLATFORM=Darwin \
+	GPUHOGS_EUID=501 \
+	GPUHOGS_SUDO="$test_root/sudo" \
+	GPUHOGS_TEST_SUDO_LOG="$sudo_log" \
+	"$gpuhogs_cmd" -n 3 >/dev/null 2>"$test_root/sudo.err"
+rc=$?
+if (( rc == 0 )) && [[ -s "$sudo_log" ]]; then
+	sudo_args=$(<"$sudo_log")
+	expect_contains "unprivileged macOS collection re-execs through sudo" "$gpuhogs_resolved" "$sudo_args"
+	expect_contains "sudo re-exec preserves arguments" "-n 3" "$sudo_args"
+else
+	fail "unprivileged macOS collection delegates to sudo"
+fi
+
+output=$(env \
+	GPUHOGS_PLATFORM=Linux \
+	GPUHOGS_NVIDIA_SMI="$test_root/missing-nvidia-smi" \
+	GPUHOGS_NVTOP="$test_root/missing-nvtop" \
+	GPUHOGS_PS="$test_root/ps" \
+	GPUHOGS_JQ="$(command -v jq)" \
+	"$gpuhogs_cmd" 2>&1)
+rc=$?
+if (( rc != 0 )); then
+	expect_contains "missing Linux backend fails clearly" "no supported GPU process backend" "$output"
+else
+	fail "missing Linux backend unexpectedly succeeds"
+fi
+
+if about=$(run_linux_nvidia --about 2>&1) && [[ "$about" != *$'\n'* ]]; then
+	pass "--about is a successful one-line description"
+else
+	fail "--about must be one line"
+fi
+
+alias_line=$(rg '^alias hogs=' "$repo_root/.aliases")
+for member in memhogs cpuhogs gpuhogs nethogs diskhogs; do
+	if [[ "$alias_line" == *"$member"* ]]; then
+		pass "hogs aggregate contains $member"
+	else
+		fail "hogs aggregate is missing $member"
+	fi
+done
+
+if (( fails == 0 )); then
+	printf 'All %d gpuhogs tests passed\n' "$tests"
+else
+	printf '%d of %d gpuhogs tests failed\n' "$fails" "$tests" >&2
+fi
+exit "$fails"

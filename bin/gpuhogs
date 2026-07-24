@@ -1,0 +1,403 @@
+#!/usr/bin/env bash
+
+# gpuhogs — cross-platform GPU process visibility.
+# OS-specific collectors normalize Linux NVIDIA, Linux nvtop, and macOS
+# powermetrics records before pure text/JSON renderers format them.
+
+set -u
+set -o pipefail
+
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+
+count=20
+output_format=text
+interactive=false
+show_help=false
+show_about=false
+run_tests=false
+platform=${GPUHOGS_PLATFORM:-$(uname -s)}
+effective_uid=${GPUHOGS_EUID:-$EUID}
+hot_cpu_threshold=${GPUHOGS_HOT_CPU_THRESHOLD:-50}
+original_args=("$@")
+
+print_help() {
+	cat <<'EOF'
+Usage: gpuhogs [-n COUNT] [--json] [--interactive]
+
+Show processes executing work on, or retaining contexts in, local GPUs.
+
+Options:
+  -n COUNT          Maximum process rows (default 20).
+  --json            Emit structured JSON instead of the human table.
+  -I, --interactive Launch nvtop on Linux for continuous interactive monitoring.
+  --simple          Plain output (currently the default; reserved for consistency).
+  --no-color        Disable color (currently the default).
+  -h, --help        Show this help text.
+  -a, --about       Print a one-line description.
+  --test            Run the gpuhogs test suite (stdout muted).
+
+Backends:
+  Linux             nvidia-smi pmon for NVIDIA; nvtop snapshot for AMD/Intel fallback.
+  macOS             sudo powermetrics --show-process-gpu (collection only).
+
+Status:
+  ACTIVE             GPU work observed in the sample.
+  HOT-CPU            GPU context retained while the process burns substantial CPU.
+  RESIDENT           GPU context/VRAM retained without sampled GPU activity.
+EOF
+}
+
+while (( $# > 0 )); do
+	case "$1" in
+		-n)
+			if (( $# < 2 )); then
+				printf 'gpuhogs: option -n requires an argument\n' >&2
+				exit 2
+			fi
+			if [[ ! "$2" =~ ^[0-9]+$ ]] || (( 10#$2 <= 0 )); then
+				printf 'gpuhogs: COUNT must be a positive integer\n' >&2
+				exit 2
+			fi
+			count=$((10#$2))
+			shift 2
+			;;
+		--json)
+			output_format=json
+			shift
+			;;
+		--text)
+			output_format=text
+			shift
+			;;
+		-I|--interactive)
+			interactive=true
+			shift
+			;;
+		--simple|--no-color|--no-ansi)
+			shift
+			;;
+		-h|--help)
+			show_help=true
+			shift
+			;;
+		-a|--about)
+			show_about=true
+			shift
+			;;
+		--test)
+			run_tests=true
+			shift
+			;;
+		--*)
+			printf 'gpuhogs: invalid option %s\n' "$1" >&2
+			exit 2
+			;;
+		-*)
+			printf 'gpuhogs: invalid option %s\n' "$1" >&2
+			exit 2
+			;;
+		*)
+			printf 'gpuhogs: unexpected positional argument %s\n' "$1" >&2
+			exit 2
+			;;
+	esac
+done
+
+if "$show_help"; then
+	print_help
+	exit 0
+fi
+if "$show_about"; then
+	printf 'gpuhogs: show active and resident GPU processes on Linux and macOS.\n'
+	exit 0
+fi
+if "$run_tests"; then
+	test_file="$script_dir/test/gpuhogs_test"
+	if [[ ! -x "$test_file" ]]; then
+		printf 'gpuhogs: missing test file %s\n' "$test_file" >&2
+		exit 1
+	fi
+	"$test_file" >/dev/null
+	exit $?
+fi
+
+resolve_command() {
+	local override="$1" fallback="$2"
+	if [[ -n "$override" ]]; then
+		if [[ -x "$override" ]]; then
+			printf '%s' "$override"
+			return 0
+		fi
+		command -v "$override" 2>/dev/null
+		return
+	fi
+	command -v "$fallback" 2>/dev/null
+}
+
+ps_bin=$(resolve_command "${GPUHOGS_PS:-}" ps) || {
+	printf 'gpuhogs: required command not found: ps\n' >&2
+	exit 1
+}
+awk_bin=$(resolve_command "${GPUHOGS_AWK:-}" awk) || {
+	printf 'gpuhogs: required command not found: awk\n' >&2
+	exit 1
+}
+jq_bin=$(resolve_command "${GPUHOGS_JQ:-}" jq) || {
+	printf 'gpuhogs: required command not found: jq\n' >&2
+	exit 1
+}
+
+nvtop_bin=$(resolve_command "${GPUHOGS_NVTOP:-}" nvtop || true)
+if "$interactive"; then
+	if [[ -z "$nvtop_bin" ]]; then
+		printf 'gpuhogs: interactive monitoring requires nvtop\n' >&2
+		exit 1
+	fi
+	exec "$nvtop_bin"
+fi
+
+# Raw normalized fields:
+# GPU<TAB>PID<TAB>TYPE<TAB>GPU%<TAB>VRAM_BYTES<TAB>USER<TAB>COMMAND<TAB>ACTIVE
+collect_nvidia() {
+	local nvidia_smi="$1"
+	# shellcheck disable=SC2016 # This is an awk program, not shell interpolation.
+	"$nvidia_smi" pmon -s um -c 1 | "$awk_bin" '
+	$1 !~ /^#/ && $2 ~ /^[0-9]+$/ {
+		active = 0;
+		for (i = 4; i <= 9; ++i) {
+			if ($i ~ /^[0-9.]+$/ && ($i + 0) > 0)
+				active = 1;
+		}
+		gpu_percent = ($4 ~ /^[0-9.]+$/) ? ($4 + 0) : 0;
+		vram_bytes = ($10 ~ /^[0-9.]+$/) ? ($10 * 1048576) : 0;
+		command = $12;
+		for (i = 13; i <= NF; ++i)
+			command = command " " $i;
+		printf "%s\t%s\t%s\t%.2f\t%.0f\t?\t%s\t%d\n",
+			$1, $2, $3, gpu_percent, vram_bytes, command, active;
+	}
+	'
+}
+
+collect_nvtop() {
+	local nvtop="$1"
+	# shellcheck disable=SC2016 # This is a jq program, not shell interpolation.
+	"$nvtop" --snapshot | "$jq_bin" -r '
+		.[] as $device
+		| (($device.processes // []) | sort_by(.pid | tonumber) | group_by(.pid))[]
+		| . as $group
+		| ([ $group[].kind
+			| if . == "graphic" then "G"
+			  elif . == "compute" then "C"
+			  else .
+			  end
+		  ] | unique | join("+")) as $kind
+		| ([ $group[].gpu_usage
+			| select(. != null)
+			| tonumber
+		  ] | max // 0) as $gpu_percent
+		| ([ $group[].gpu_mem_bytes_alloc
+			| tonumber
+		  ] | max // 0) as $vram
+		| [
+			$device.device_name,
+			($group[0].pid | tonumber),
+			$kind,
+			$gpu_percent,
+			$vram,
+			($group[0].user // "?"),
+			($group[0].cmdline // ""),
+			(if $gpu_percent > 0 then 1 else 0 end)
+		  ]
+		| @tsv
+	'
+}
+
+collect_macos() {
+	local powermetrics="$1" plutil="$2"
+	"$powermetrics" \
+		--samplers tasks,gpu_power \
+		--show-process-gpu \
+		--format plist \
+		--sample-rate 1000 \
+		--sample-count 1 |
+		tr -d '\000' |
+		"$plutil" -convert json -o - - |
+		"$jq_bin" -r '
+			(.tasks // [])[]
+			| select((.gputime_ms_per_s // 0) > 0)
+			| [
+				"Apple GPU",
+				.pid,
+				"G",
+				((.gputime_ms_per_s // 0) / 10),
+				0,
+				"?",
+				(.name // ""),
+				1
+			  ]
+			| @tsv
+		'
+}
+
+raw_records=""
+case "$platform" in
+	Linux)
+		nvidia_smi_bin=$(resolve_command "${GPUHOGS_NVIDIA_SMI:-}" nvidia-smi || true)
+		if [[ -n "$nvidia_smi_bin" ]]; then
+			if ! raw_records=$(collect_nvidia "$nvidia_smi_bin"); then
+				raw_records=""
+				nvidia_smi_bin=""
+			fi
+		fi
+		if [[ -z "${nvidia_smi_bin:-}" ]]; then
+			if [[ -z "$nvtop_bin" ]]; then
+				printf 'gpuhogs: no supported GPU process backend found for Linux\n' >&2
+				exit 1
+			fi
+			raw_records=$(collect_nvtop "$nvtop_bin") || {
+				printf 'gpuhogs: nvtop GPU process sampler failed\n' >&2
+				exit 1
+			}
+		fi
+		;;
+	Darwin)
+		sudo_bin=$(resolve_command "${GPUHOGS_SUDO:-}" sudo) || {
+			printf 'gpuhogs: required command not found: sudo\n' >&2
+			exit 1
+		}
+		if (( effective_uid != 0 )); then
+			script_path=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")
+			exec "$sudo_bin" /usr/bin/env \
+				GPUHOGS_EUID=0 \
+				"$script_path" "${original_args[@]}"
+		fi
+		powermetrics_bin=$(resolve_command "${GPUHOGS_POWERMETRICS:-}" powermetrics) || {
+			printf 'gpuhogs: required command not found: powermetrics\n' >&2
+			exit 1
+		}
+		plutil_bin=$(resolve_command "${GPUHOGS_PLUTIL:-}" plutil) || {
+			printf 'gpuhogs: required command not found: plutil\n' >&2
+			exit 1
+		}
+		raw_records=$(collect_macos "$powermetrics_bin" "$plutil_bin") || {
+			printf 'gpuhogs: powermetrics GPU process sampler failed\n' >&2
+			exit 1
+		}
+		;;
+	*)
+		printf 'gpuhogs: no supported GPU process backend found for %s\n' "$platform" >&2
+		exit 1
+		;;
+esac
+
+# Enriched normalized fields:
+# RANK GPU PID USER TYPE GPU% VRAM_BYTES CPU% STATE STATUS COMMAND
+enrich_records() {
+	local gpu pid kind gpu_percent vram_bytes source_user source_command active
+	local details user cpu state command status rank
+	while IFS=$'\t' read -r gpu pid kind gpu_percent vram_bytes source_user source_command active; do
+		[[ -n "${pid:-}" ]] || continue
+		details=$("$ps_bin" -p "$pid" -o user= -o pcpu= -o state= -o args= 2>/dev/null || true)
+		user=""
+		cpu=0
+		state="?"
+		command=""
+		if [[ -n "$details" ]]; then
+			read -r user cpu state command <<<"$details"
+		fi
+		[[ -n "$user" ]] || user="${source_user:-?}"
+		[[ -n "$command" ]] || command="${source_command:-[unknown]}"
+		[[ "$cpu" =~ ^[0-9.]+$ ]] || cpu=0
+
+		if [[ "$active" == "1" ]]; then
+			status=active
+			rank=3
+		elif "$awk_bin" -v cpu="$cpu" -v threshold="$hot_cpu_threshold" \
+			'BEGIN { exit !(cpu >= threshold) }'; then
+			status=hot_cpu
+			rank=2
+		else
+			status=resident
+			rank=1
+		fi
+		printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+			"$rank" "$gpu" "$pid" "$user" "$kind" "$gpu_percent" "$vram_bytes" \
+			"$cpu" "$state" "$status" "$command"
+	done
+}
+
+records=$(printf '%s\n' "$raw_records" | enrich_records |
+	sort -t $'\t' -k1,1nr -k6,6nr -k7,7nr -k3,3n |
+	head -n "$count")
+
+render_text() {
+	# shellcheck disable=SC2016 # This is an awk program, not shell interpolation.
+	"$awk_bin" -F '\t' \
+		-v h_status="STATUS" \
+		-v h_gpu="GPU" \
+		-v h_pid="PID" \
+		-v h_user="USER" \
+		-v h_type="TYPE" \
+		-v h_gpu_percent="GPU%" \
+		-v h_vram="VRAM" \
+		-v h_cpu_percent="CPU%" \
+		-v h_state="STATE" \
+		-v h_command="COMMAND" \
+		-v s_active="ACTIVE" \
+		-v s_hot_cpu="HOT-CPU" \
+		-v s_resident="RESIDENT" \
+		-v empty="No GPU processes reported by the selected backend." \
+		-v legend="Legend: ACTIVE = sampled GPU work; HOT-CPU = GPU context plus high CPU; RESIDENT = context/VRAM without sampled GPU work." '
+	function human_bytes(bytes) {
+		if (bytes <= 0) return "-";
+		if (bytes >= 1073741824) return sprintf("%.1fG", bytes / 1073741824);
+		if (bytes >= 1048576) return sprintf("%.0fM", bytes / 1048576);
+		if (bytes >= 1024) return sprintf("%.0fK", bytes / 1024);
+		return sprintf("%.0fB", bytes);
+	}
+	BEGIN {
+		printf "%-9s %-18s %7s %-10s %-5s %6s %7s %6s %-5s %s\n",
+			h_status, h_gpu, h_pid, h_user, h_type, h_gpu_percent, h_vram,
+			h_cpu_percent, h_state, h_command;
+	}
+	NF >= 11 {
+		status = ($10 == "active") ? s_active :
+			(($10 == "hot_cpu") ? s_hot_cpu : s_resident);
+		printf "%-9s %-18.18s %7d %-10.10s %-5s %6.1f %7s %6.1f %-5s %s\n",
+			status, $2, $3, $4, $5, $6, human_bytes($7), $8, $9, $11;
+		rows++;
+	}
+	END {
+		if (!rows) print empty;
+		print "";
+		print legend;
+	}
+	'
+}
+
+render_json() {
+	"$jq_bin" -Rn '[
+		inputs
+		| split("\t")
+		| select(length >= 11)
+		| {
+			gpu: .[1],
+			pid: (.[2] | tonumber),
+			user: .[3],
+			type: .[4],
+			gpu_percent: (.[5] | tonumber),
+			vram_bytes: (.[6] | tonumber),
+			cpu_percent: (.[7] | tonumber),
+			process_state: .[8],
+			status: .[9],
+			command: .[10]
+		  }
+	]'
+}
+
+if [[ "$output_format" == json ]]; then
+	printf '%s\n' "$records" | render_json
+else
+	printf '%s\n' "$records" | render_text
+fi
