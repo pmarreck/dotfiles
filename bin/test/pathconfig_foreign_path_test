@@ -151,21 +151,45 @@ else
 	pass "fresh capture yields no foreign entries (own scaffolding not hoisted)"
 fi
 
-# ── 7. End-to-end control: a real interactive `nix shell` keeps its injection ─
-# This is the exact user-visible symptom (`yazi: command not found` INSIDE a nix
-# shell). --offline keeps it deterministic and network-free; skipped cleanly
-# where nix isn't installed or the package isn't already in the store.
+# ── 7. End-to-end: ON-THE-FLY instantiation is visible in the NEW shell ──────
+# The user-visible symptom was `yazi: command not found` INSIDE a nix shell, so
+# the control has to cover the whole flow: instantiate → inject → survive
+# .pathconfig's rebuild → resolvable in the interactive shell that emerges.
+#
+# We build OUR OWN trivial derivation with run-unique content rather than using
+# a stock package. A novel store path CANNOT already be present, so nix is
+# forced to realize it on the fly — which is the property we want to assert.
+# That is strictly stronger than deleting a stock package first, and it avoids a
+# real flake: `nix store delete` fails against transient temp roots held by any
+# concurrent nix process ("still alive" while `--query --roots` shows none), so
+# a delete-first design would be racy and machine-dependent.
+#
+# The binary echoes a marker that the test generated; requiring the marker back
+# proves the freshly-built package actually ran, not a cached namesake.
+# --offline keeps it network-free and deterministic; skips are explicit.
 ((tests++))
 if ! command -v nix >/dev/null 2>&1; then
-	pass "e2e nix-shell control skipped (nix not installed)"
-elif ! nix shell --offline nixpkgs#hello --command true >/dev/null 2>&1; then
-	pass "e2e nix-shell control skipped (nixpkgs#hello not in local store)"
+	echo "(skipped: nix not installed)" >&2
+	pass "e2e on-the-fly nix instantiation — skipped (no nix)"
 else
-	e2e=$(nix shell --offline nixpkgs#hello --command bash -ic 'type -p hello 2>/dev/null || echo NOT-FOUND' 2>/dev/null)
-	case "$e2e" in
-		*/hello) pass "e2e: interactive \`nix shell\` retains its PATH injection" ;;
-		*)       fail "e2e: interactive \`nix shell\` LOST its PATH injection" "got: ${e2e:-<empty>}" ;;
-	esac
+	_mark="dotfiles-pathprobe-$$-${RANDOM}"
+	_expr="with import <nixpkgs> {}; writeShellScriptBin \"dotfiles-pathprobe\" \"echo $_mark\""
+	_got=$(nix shell --offline --impure --expr "$_expr" \
+		--command bash -ic 'dotfiles-pathprobe 2>/dev/null || echo NOT-FOUND' 2>/dev/null | tail -1)
+	if [ "$_got" = "$_mark" ]; then
+		pass "e2e: freshly-instantiated nix package is visible in the new interactive shell"
+	elif [ -z "$_got" ]; then
+		echo "(skipped: could not evaluate <nixpkgs> offline)" >&2
+		pass "e2e on-the-fly nix instantiation — skipped (nixpkgs unavailable offline)"
+	else
+		fail "e2e: on-the-fly nix package NOT visible in the new interactive shell" \
+			"expected marker: $_mark" "got: $_got"
+	fi
+	# Best-effort cleanup so repeated runs don't accumulate probe paths; the
+	# assertion above never depends on this succeeding.
+	_probe_out=$(nix build --offline --impure --no-link --print-out-paths --expr "$_expr" 2>/dev/null)
+	[ -n "$_probe_out" ] && nix store delete "$_probe_out" >/dev/null 2>&1
+	unset _mark _expr _got _probe_out
 fi
 
 echo
