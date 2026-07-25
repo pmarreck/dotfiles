@@ -1,0 +1,81 @@
+# Tests that cannot run inside the Nix build sandbox, with the reason for each.
+#
+# These tests are NOT broken and NOT skipped locally — `bin/run_test_suite` runs
+# every one of them on a real machine, and the pre-push gate requires them green.
+# They are excluded only from `checks.<system>.test`, the hermetic flake check
+# that Mechatron builds, because the sandbox deliberately has no network, no
+# hardware access, no terminal, no user account, and none of the sibling
+# repositories under ~/Code.
+#
+# The flake prints this list and its count on every run, so the exclusion is
+# visible in the CI log rather than implied by a smaller number.
+#
+# Format: one test file name per line, '#' comments ignored. Keep the reason
+# attached to the entry. Removing an entry is a deliberate diff — that is the
+# point: it is how a test graduates to being hermetic.
+
+# ── Requires real hardware / kernel interfaces the sandbox does not expose ────
+cpuhogs_test
+diskhogs_test
+gpuhogs_test
+memhogs_test
+nethogs_test
+fingerprint_hw_os_test
+distro_pretty_test
+
+# ── Requires network access (the sandbox has none, by design) ────────────────
+find_github_forks_with_file_test
+webping_curl_test
+git_commit_ai_test
+
+# ── Requires a real terminal, tmux server, or interactive session ────────────
+sessions_test
+kill-session_test
+erect-agent-stack_test
+apply-hooks_test
+newterm_test
+shell_startup_test
+timed_test
+ask_test
+
+# ── Requires the user's live system configuration or account layout ──────────
+# pathconfig asserts NixOS wrapper ordering under /run/wrappers, executables and
+# overview enumerate the real PATH, get_all_git_stati walks real checkouts.
+pathconfig_bash_prepend_test
+executables_test
+overview_test
+get_all_git_stati_test
+
+# ── Requires sibling tools from ~/Code that are not part of this repository ───
+# printable-binary, rm-safe, capture, gstat and friends live in their own repos.
+# Making these hermetic means adding those repos as flake inputs — worth doing,
+# but a deliberate separate step.
+capture_test
+show_test
+strip_ansi_test
+counted_test
+hr_test
+histogram_test
+mdff_test
+rule30_test
+warhammer_quote_test
+date_test
+date_difference_days_test
+datetimestamp_test
+stat_test
+sed_test
+glob_test
+getfile_test
+block-attribution_test
+run_test_suite_test
+
+# ── Requires external services, credentials, or large media toolchains ───────
+encrypt_test
+decrypt_test
+epub_test
+jpeg_test
+jpegxl_test
+png_test
+darktide-patch-mods_test
+darktide-sync-mods_test
+rg_test

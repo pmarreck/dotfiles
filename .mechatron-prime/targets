@@ -1,0 +1,10 @@
+# Mechatron Prime CI build targets for dotfiles (Thelio x86_64-linux worker).
+# One valid Nix flake attribute per line; verified green 2026-07-25.
+#
+# checks.test runs bin/run_test_suite over everything except the entries in
+# bin/test/NOT_HERMETIC, which the sandbox cannot provide (hardware, network,
+# a terminal, the user's account, sibling ~/Code repos). That exclusion list is
+# committed and printed in full by the check, so the CI log always states what
+# was left out. The complete suite still runs locally and is what the pre-push
+# gate requires.
+checks.x86_64-linux.test
