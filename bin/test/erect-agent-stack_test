@@ -2,14 +2,27 @@
 
 # Test the erect-agent-stack function
 erect_agent_stack_test() {
-  local fails=0 out status sock="erect_test_$$"
+  local fails=0 out status sock
   local tmproot; tmproot=$(mktemp -d --tmpdir erect_agent_stack_test.XXXXXX)
   tmproot=$(cd "$tmproot" && pwd -P)
   mkdir -p "$tmproot/projalpha"
   mkdir -p "$tmproot/projbeta"
   mkdir -p "$tmproot/projgamma"
   mkdir -p "$tmproot/projdelta"
+  # Derive the tmux socket from the mktemp directory, NOT from $$. PIDs recycle,
+  # so a PID-named socket can land on a server left behind by an earlier run —
+  # inheriting its sessions, and with them their wrong cwd. That is exactly how
+  # this test failed 9 times out of 12 concurrent runs while passing solo.
+  sock="erect_test_$(basename "$tmproot")"
   _t() { tmux -L "$sock" "$@"; }
+  # Tear down on EVERY exit path, not just the happy one. The tmux server
+  # outlives this process otherwise; 53 such servers had accumulated, and that
+  # debris is what made the collision above reachable in the first place.
+  # Bake the values in now rather than deferring expansion: $sock and $tmproot are
+  # `local`, so by the time an EXIT trap fires the function has returned and both
+  # would expand to empty — silently running `tmux -L "" kill-server` and cleaning
+  # nothing, which is precisely how the server leak survived a first attempt at this.
+  trap "tmux -L '$sock' kill-server 2>/dev/null; rm -rf '$tmproot'" EXIT
   _t kill-server 2>/dev/null
 
   # --help exits 0 with usage
@@ -40,6 +53,16 @@ erect_agent_stack_test() {
   ((fails+=$?))
   assert "$(_t list-sessions -F '#S' 2>/dev/null | grep -cx projalpha)" == "1" "tmux session exists"
   ((fails+=$?))
+  # tmux derives #{pane_current_path} from the pane shell's own working directory,
+  # which is only accurate once that shell has actually started. Asserting straight
+  # after session creation races it: under load tmux answers with the cwd of the
+  # process that started the server — this test's — which is why this check passed
+  # when run alone and failed 9 of 12 concurrent runs. Wait for the pane to execute
+  # something before reading its cwd, using the same wait-for handshake as below.
+  # This observes readiness rather than assuming it, so there is no sleep and no
+  # dependence on how loaded the machine happens to be.
+  _t send-keys -t projalpha "tmux -L $sock wait-for -S cwd_ready" Enter
+  _t wait-for cwd_ready
   assert "$(_t display-message -pt projalpha '#{pane_current_path}')" == "$tmproot/projalpha" "session cwd = project dir"
   ((fails+=$?))
 
@@ -156,8 +179,8 @@ erect_agent_stack_test() {
   assert "$ping_hex" == "1b5b3230307e68656c6c6f20636f6465781b5b3230317e0a" \
     "Codex ping is bracketed paste followed by plain Enter"
   ((fails+=$?))
-  _t kill-server 2>/dev/null
-  rm -rf "$tmproot"
+  # Teardown is handled by the EXIT trap installed at the top, so it also runs
+  # when an assertion aborts the script or the harness times it out.
   return "$fails"
 }
 
