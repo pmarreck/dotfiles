@@ -16,12 +16,24 @@
 
 # Capture the truly pristine PATH once per session, then export it so every child shell
 # inherits the same original. PATH is rebuilt from ORIG_PATH every shell — our additions
-# are applied idempotently by construction. To force a re-capture (e.g. after NixOS rebuild),
-# run: unset ORIG_PATH; . ~/.pathconfig
+# are applied idempotently by construction, and entries injected by external tools are
+# preserved by the foreign-entry classification further down. To force a re-capture
+# (e.g. after a NixOS rebuild), run: unset ORIG_PATH; . ~/.pathconfig
 : "${ORIG_PATH:=$PATH}"
-# export read-only:
-readonly ORIG_PATH
+# NOT readonly: this variable is exported, so it is inherited by every child shell. Making
+# an inherited variable readonly turns a recoverable mistake into an unrecoverable one —
+# the child cannot correct a stale snapshot, and the re-capture documented above silently
+# fails ("cannot unset: readonly variable") in exactly the shell that needs it.
 export ORIG_PATH
+
+# Snapshot the INCOMING PATH before any of our own machinery mutates it. This is
+# the only correct input for the foreign-entry classification further down: the
+# modern-bash bootstrap below deliberately prepends a transient entry that the
+# rebuild is *supposed* to discard, so classifying against the live PATH would
+# mistake our own scaffolding for a foreign injection and re-hoist it to the
+# front — which on NixOS would put the raw, non-setuid system sudo ahead of its
+# privileged wrapper. (Caught by bin/test/pathconfig_bash_prepend_test.)
+_pc_incoming="$PATH"
 
 # Source path helpers (prepend_path, exclude_path)
 . "$HOME/dotfiles/bin/src/prepend_path.bash"
@@ -133,6 +145,40 @@ PATH_EXCLUSIONS=(
 	'/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin'
 )
 
+# ── Classify FOREIGN PATH entries before the rebuild wipes them ──────────────
+# Rebuilding from ORIG_PATH treats every non-base entry as stale garbage. But
+# ORIG_PATH is exported and therefore INHERITED, so a child shell's ORIG_PATH is
+# a snapshot taken BEFORE any external tool injected into PATH — and the rebuild
+# then silently deletes those injections. That is what broke `nix shell` /
+# `nix develop` in every *interactive* shell: the store bin dir vanished before
+# the prompt appeared. (`nix develop -c cmd` is non-interactive and never sources
+# this file, which is exactly why it went unnoticed for so long; direnv survived
+# because its hook re-applies PATH on every prompt, after this runs.)
+#
+# So this is a filter over a set, not "keep ORIG_PATH, drop the rest":
+#     foreign = current PATH − ORIG_PATH − PATH_ADDITIONS
+# Our own additions stay excluded from `foreign`, which is what keeps re-sourcing
+# idempotent. Kept bash-3.2 safe (no associative arrays) — see the macOS
+# bootstrap assertions in bin/test/pathconfig_bash_prepend_test.
+_pc_known=":"
+_pc_foreign=""
+_pc_old_ifs=$IFS
+IFS=:
+for _pc_e in $ORIG_PATH; do _pc_known="${_pc_known}${_pc_e}:"; done
+IFS=$_pc_old_ifs
+for _pc_e in "${PATH_ADDITIONS[@]}"; do _pc_known="${_pc_known}${_pc_e}:"; done
+IFS=:
+for _pc_e in $_pc_incoming; do
+	[ -z "$_pc_e" ] && continue
+	case "$_pc_known" in
+		*":$_pc_e:"*) ;;  # part of the pristine base or one of our additions
+		# Record it in _pc_known too, so a duplicated foreign entry stays single.
+		*) _pc_foreign="${_pc_foreign}${_pc_e}:"; _pc_known="${_pc_known}${_pc_e}:" ;;
+	esac
+done
+IFS=$_pc_old_ifs
+unset _pc_known _pc_e _pc_old_ifs _pc_incoming
+
 # Rebuild PATH from the pristine base plus additions. Idempotent by construction.
 PATH="$ORIG_PATH"
 # On macOS, prepend_path itself needs awk; keep the Nix bootstrap toolchain
@@ -148,6 +194,18 @@ for _dir in "${PATH_ADDITIONS[@]}"; do
 	[ -d "$_dir" ] && prepend_path "$_dir"
 done
 unset IGNORE_PREPEND_PATH_WARNINGS _dir
+
+# Re-apply the foreign entries classified above, at the FRONT and in their
+# original relative order. Front is deliberate: a tool that injected them
+# (`nix shell`, direnv, …) did so intending ITS binaries to win — that is the
+# whole point of entering the shell. They land ahead of the base, but the base's
+# own internal ordering is untouched, so NixOS's setuid sudo wrapper still
+# precedes the raw non-setuid system sudo. Placed before the exclusion and
+# existence filters below so foreign entries are held to the same standards.
+if [ -n "$_pc_foreign" ]; then
+	PATH="${_pc_foreign}${PATH}"
+fi
+unset _pc_foreign
 
 # Apply exclusions
 IGNORE_EXCLUDE_PATH_WARNINGS=true

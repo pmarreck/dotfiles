@@ -1,0 +1,177 @@
+#!/usr/bin/env bash
+
+# pathconfig_foreign_path_test — .pathconfig must not destroy FOREIGN PATH
+# injections made by external tools (nix shell / nix develop / direnv / any
+# future injector).
+#
+# The bug (Einstein, 2026-07-25): ORIG_PATH is captured with
+# `: "${ORIG_PATH:=$PATH}"`, then exported AND readonly. A child shell inherits
+# the parent's PRE-injection snapshot, declines to re-capture, and
+# `PATH="$ORIG_PATH"` discards whatever the external tool injected. Verified:
+#   nix shell nixpkgs#hello --command bash  -c 'type -p hello'  → found
+#   nix shell nixpkgs#hello --command bash -ic 'type -p hello'  → NOT FOUND
+#
+# The rebuild is a FILTER OVER A SET, so it is tested as a classifier over sets,
+# not on one example: foreign entries kept, our additions not duplicated,
+# security-relevant ordering preserved, idempotent across repeated sourcing.
+
+set -u
+
+fails=0
+tests=0
+
+pass() { echo "✓ $1"; }
+fail() { { echo "✗ $1"; shift; [ $# -gt 0 ] && printf '  %s\n' "$@"; } >&2; ((fails++)) || :; }
+
+WORK=$(mktemp -d --tmpdir pathconfig_foreign_test.XXXXXX)
+trap 'rm -rf "$WORK"' EXIT
+
+# Two distinct foreign dirs (a set, not a single example) + one that does NOT
+# exist, to pin down whether existence gates retention.
+mkdir -p "$WORK/nixlike/bin" "$WORK/direnvlike/bin"
+GHOST="$WORK/ghost-never-created/bin"
+
+# A plausible pristine base, mirroring NixOS ordering (wrapper dir must stay
+# ahead of the raw, deliberately non-setuid system sudo).
+BASE="/run/wrappers/bin:$HOME/.local/bin:/run/current-system/sw/bin:/usr/bin:/bin"
+
+# Source .pathconfig the way an inheriting child shell does: ORIG_PATH already
+# exported from the "parent" (WITHOUT the foreign entries — that is the bug
+# condition), while the live PATH carries the injections at the front.
+# $1 = how many times to source (idempotency probe). Echoes the resulting PATH.
+run_pathconfig() {
+	local times="${1:-1}"
+	env -i HOME="$HOME" OSTYPE="${OSTYPE:-linux-gnu}" TERM=dumb \
+		ORIG_PATH="$BASE" \
+		PATH="$WORK/nixlike/bin:$WORK/direnvlike/bin:$GHOST:$BASE" \
+		"$BASH" --noprofile --norc -c '
+			n="$1"
+			while [ "$n" -gt 0 ]; do . "$HOME/.pathconfig" >/dev/null 2>&1; n=$((n-1)); done
+			printf "%s" "$PATH"
+		' _ "$times" 2>/dev/null
+}
+
+count_in_path() { # count occurrences of an exact PATH element
+	local needle="$1" path="$2" n=0 e
+	local IFS=:
+	for e in $path; do [ "$e" = "$needle" ] && n=$((n+1)); done
+	printf '%s' "$n"
+}
+
+RESULT=$(run_pathconfig 1)
+
+# ── 1. Foreign entries SURVIVE (the core defect) ─────────────────────────────
+for d in "$WORK/nixlike/bin" "$WORK/direnvlike/bin"; do
+	((tests++))
+	if [ "$(count_in_path "$d" "$RESULT")" -ge 1 ]; then
+		pass "foreign injection survives .pathconfig: ${d#$WORK/}"
+	else
+		fail "foreign injection DESTROYED by .pathconfig: ${d#$WORK/}" \
+			"PATH head: $(printf '%.200s' "$RESULT")…"
+	fi
+done
+
+# ── 2. Foreign entries are not DUPLICATED ────────────────────────────────────
+((tests++))
+dupes=""
+for d in "$WORK/nixlike/bin" "$WORK/direnvlike/bin"; do
+	[ "$(count_in_path "$d" "$RESULT")" -gt 1 ] && dupes="$dupes $d"
+done
+if [ -z "$dupes" ]; then
+	pass "foreign injections appear exactly once (no duplication)"
+else
+	fail "foreign injections duplicated:$dupes"
+fi
+
+# ── 3. Our own additions are not duplicated (idempotence preserved) ──────────
+((tests++))
+own_dupes=""
+for d in "$HOME/bin" "$HOME/.local/bin"; do
+	[ "$(count_in_path "$d" "$RESULT")" -gt 1 ] && own_dupes="$own_dupes $d($(count_in_path "$d" "$RESULT"))"
+done
+if [ -z "$own_dupes" ]; then
+	pass "our own PATH additions are not duplicated"
+else
+	fail "our additions duplicated:$own_dupes"
+fi
+
+# ── 4. Security-relevant ordering: wrappers stay ahead of raw system sudo ────
+((tests++))
+w_idx=-1; s_idx=-1; i=0
+IFS=: read -ra _elems <<<"$RESULT"
+for e in "${_elems[@]}"; do
+	[ "$e" = "/run/wrappers/bin" ] && [ "$w_idx" -lt 0 ] && w_idx=$i
+	[ "$e" = "/run/current-system/sw/bin" ] && [ "$s_idx" -lt 0 ] && s_idx=$i
+	i=$((i+1))
+done
+if [ "$w_idx" -lt 0 ] || [ "$s_idx" -lt 0 ]; then
+	pass "wrapper-ordering invariant not applicable (paths absent in this env)"
+elif [ "$w_idx" -lt "$s_idx" ]; then
+	pass "/run/wrappers/bin stays ahead of /run/current-system/sw/bin"
+else
+	fail "sudo wrapper ordering violated (wrappers@$w_idx after system@$s_idx)" \
+		"resulting PATH: $RESULT"
+fi
+
+# ── 5. Idempotent: sourcing twice equals sourcing once ───────────────────────
+((tests++))
+twice=$(run_pathconfig 2)
+if [ "$twice" = "$RESULT" ]; then
+	pass "sourcing .pathconfig twice yields an identical PATH (idempotent)"
+else
+	fail "second sourcing changed PATH (not idempotent)" \
+		"once:  $RESULT" "twice: $twice"
+fi
+
+# ── 6. Non-existent foreign dir is not resurrected ───────────────────────────
+((tests++))
+if [ "$(count_in_path "$GHOST" "$RESULT")" -eq 0 ]; then
+	pass "non-existent foreign dir is not carried into PATH"
+else
+	pass "non-existent foreign dir preserved verbatim (acceptable: PATH is not validated)"
+fi
+
+# ── 6b. SPECIFICITY: our own transient scaffolding must NOT count as foreign ──
+# A classifier is only meaningful with a paired specificity corpus. .pathconfig
+# itself prepends a modern-bash bootstrap dir AFTER capturing ORIG_PATH, and the
+# rebuild is supposed to DISCARD it. An earlier version of this fix classified
+# from the live PATH and so mistook that scaffolding for a foreign injection,
+# re-hoisting /run/current-system/sw/bin to the front — ahead of NixOS's setuid
+# sudo wrapper. Here: a FRESH capture (ORIG_PATH unset ⇒ ORIG_PATH == incoming)
+# must yield an empty foreign set, i.e. nothing gets hoisted ahead of the base.
+((tests++))
+fresh=$(env -i HOME="$HOME" OSTYPE=linux-gnu TERM=dumb \
+	PATH="/run/wrappers/bin:/usr/bin:/bin" \
+	"$BASH" --noprofile --norc -c '. "$HOME/.pathconfig" >/dev/null 2>&1; printf "%s" "$PATH"' 2>/dev/null)
+first_elem=${fresh%%:*}
+if [ "$first_elem" = "/run/current-system/sw/bin" ]; then
+	fail "our own bootstrap scaffolding was misclassified as foreign and hoisted to the front" \
+		"first PATH element: $first_elem (would put raw non-setuid sudo ahead of the wrapper)"
+else
+	pass "fresh capture yields no foreign entries (own scaffolding not hoisted)"
+fi
+
+# ── 7. End-to-end control: a real interactive `nix shell` keeps its injection ─
+# This is the exact user-visible symptom (`yazi: command not found` INSIDE a nix
+# shell). --offline keeps it deterministic and network-free; skipped cleanly
+# where nix isn't installed or the package isn't already in the store.
+((tests++))
+if ! command -v nix >/dev/null 2>&1; then
+	pass "e2e nix-shell control skipped (nix not installed)"
+elif ! nix shell --offline nixpkgs#hello --command true >/dev/null 2>&1; then
+	pass "e2e nix-shell control skipped (nixpkgs#hello not in local store)"
+else
+	e2e=$(nix shell --offline nixpkgs#hello --command bash -ic 'type -p hello 2>/dev/null || echo NOT-FOUND' 2>/dev/null)
+	case "$e2e" in
+		*/hello) pass "e2e: interactive \`nix shell\` retains its PATH injection" ;;
+		*)       fail "e2e: interactive \`nix shell\` LOST its PATH injection" "got: ${e2e:-<empty>}" ;;
+	esac
+fi
+
+echo
+if [ "$fails" -eq 0 ]; then
+	echo "All $tests pathconfig foreign-PATH tests passed"
+else
+	echo "$fails of $tests pathconfig foreign-PATH tests failed" >&2
+fi
+exit "$fails"

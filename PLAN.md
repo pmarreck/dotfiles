@@ -1,5 +1,46 @@
 # dotfiles — TODO / Plans
 
+## Active — code-review remediation (2026-07-24/25)
+
+Driven by `CODE_REVIEW.md` (6-reviewer audit). Wave 1 + the nix-PATH bug are done.
+
+- [x] **`.pathconfig` destroyed every interactive `nix shell`/`nix develop` PATH
+  injection** (reported by Einstein 2026-07-25, independently reproduced).
+  `ORIG_PATH` is exported+readonly and captured only-if-unset, so a child shell
+  inherited the parent's PRE-injection snapshot and `PATH="$ORIG_PATH"` deleted
+  the nix entry. Non-interactive `nix develop -c` never sources `.pathconfig`,
+  which masked it; direnv survived only because its hook re-applies PATH after.
+  Fix = option B: classify `foreign = PATH − ORIG_PATH − PATH_ADDITIONS` and
+  re-apply at the front (kept bash-3.2 safe for the macOS bootstrap path); also
+  dropped `readonly ORIG_PATH` so the documented re-capture actually works.
+  New `bin/test/pathconfig_foreign_path_test` (8 assertions, set-based classifier
+  + offline e2e `nix shell` control) — RED first, then green. Completed
+  2026-07-25 09:2x EDT.
+  - Curiosity poke: `readonly` on an *exported* variable is the real footgun —
+    it makes a stale inherited snapshot unrecoverable in the child that needs it.
+- [x] Hook-lifecycle fixes (`bin/apply-hooks`): `unset __MCFLY_LOADED` before
+  mcfly init (its once-guard made every `.bashrc` re-source silently DROP mcfly
+  → history stopped recording); guard the starship PS0 timing magic against
+  unbounded accumulation (one extra `starship time` subprocess per re-source);
+  removed `__wezterm_osc7_home` (ran last every precmd, clobbering cwd with
+  `$HOME` → new tabs/splits opened in `$HOME`). Stub `apply-hooks_test` replaced
+  with a real 2-assertion regression test; both assertions proven non-vacuous by
+  neutering each fix (mcfly→0×, PS0→2×). 2026-07-24.
+- [x] Deleted stale duplicate runner `bin/dotfiles_test` (sourced instead of
+  exec'd tests, uncapped exit sum >255 wrapping, re-ran failures, no self-test).
+  `bin/run_test_suite` is the canonical one-command gate (154 tests, capped exit,
+  self-tested). Deleted the dead SED block in `.bash_profile` (result discarded
+  12 lines later; AWK detector preserved). 2026-07-24.
+- [ ] Wave 2 (remaining): fail-open guards (`.profile:15`, `.envconfig:3`),
+  `timeout` alias grouping (`.aliases:195`), dead LLM-detect regex (`.bashrc:71`,
+  `rg --fixed-strings` vs BRE `\|`), readonly re-declare guard (`.envconfig:298`),
+  inverted awk warning, `claude/codex.bash` empty-path guard, `/usr/bin/script`
+  (`.aliases:106`), `ARCHFLAGS` (`.bashrc:178`), 🔒 `~/Code/*/bin` PATH-shadowing.
+- [ ] Wave 3: `${EDIT}` → `${EDIT:-}` across 38 sites / 17 files (`set -u` abort).
+- [ ] Wave 4: decide + execute `.shellenv` (orphaned half-finished refactor —
+  finish+wire then delete live duplicates, or delete). NOTE: changes login-shell
+  load order on BOTH OSes; only Linux is testable from here.
+
 ## Active — Claude updater correctness (started 2026-07-24)
 
 - [x] Repair `update_claude` so it updates the PATH-winning npm-global
@@ -69,6 +110,14 @@ Additive to the already-shipped fun_intro/rg/sessions work; established goals st
 - [ ] `l`: promote alias → `bin/l` (preserve `le`/`l0-3`/`le0-3`/`lsize` family);
   default sort by name (eza already code-point & locale-independent — confirmed);
   add `l --date` → sort by modification date. Same transparent-note treatment.
+- [x] `code <partial> [--edit]`: sourced shell function (`bin/src/code.bash`,
+  wired into `.bashrc`) that cd's into the first `$CODE`(~/Code) project matching
+  `*partial*/` — case-insensitive, dirs-only, code-point-first via `glob -i`;
+  `--edit` opens it via `edit` instead. TDD 7/7 (`bin/test/code_test`), shellcheck
+  clean, live-verified (`code collat` → collation_mf, `code zed` → zed-…).
+  Completed 2026-07-24. (uncommitted)
+  - Curiosity poke: a cd-helper MUST be a sourced function; and `${EDIT:-}` (not
+    `${EDIT}`) keeps the self-edit hook `set -u`-safe for the test harness.
 - [ ] dirtree inbox (2026-07-23): plain PageUp/PageDown scroll WezTerm viewport
   instead of jumping shell history — find the readline/shell mapping responsible.
 
