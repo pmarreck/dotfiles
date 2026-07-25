@@ -20,8 +20,13 @@ set -u
 fails=0
 tests=0
 
+skips=0
 pass() { echo "✓ $1"; }
 fail() { { echo "✗ $1"; shift; [ $# -gt 0 ] && printf '  %s\n' "$@"; } >&2; ((fails++)) || :; }
+# A skipped check is NOT a passed check. Counting one as the other is how a test
+# suite reports green while asserting nothing — so skips get their own counter,
+# are never announced as ✓, and are surfaced loudly in the summary.
+skip() { echo "⊘ SKIPPED (asserted nothing): $1" >&2; ((skips++)) || :; }
 
 WORK=$(mktemp -d --tmpdir pathconfig_foreign_test.XXXXXX)
 trap 'rm -rf "$WORK"' EXIT
@@ -169,8 +174,7 @@ fi
 # --offline keeps it network-free and deterministic; skips are explicit.
 ((tests++))
 if ! command -v nix >/dev/null 2>&1; then
-	echo "(skipped: nix not installed)" >&2
-	pass "e2e on-the-fly nix instantiation — skipped (no nix)"
+	skip "e2e on-the-fly nix instantiation (nix not installed)"
 else
 	_mark="dotfiles-pathprobe-$$-${RANDOM}"
 	_expr="with import <nixpkgs> {}; writeShellScriptBin \"dotfiles-pathprobe\" \"echo $_mark\""
@@ -179,8 +183,7 @@ else
 	if [ "$_got" = "$_mark" ]; then
 		pass "e2e: freshly-instantiated nix package is visible in the new interactive shell"
 	elif [ -z "$_got" ]; then
-		echo "(skipped: could not evaluate <nixpkgs> offline)" >&2
-		pass "e2e on-the-fly nix instantiation — skipped (nixpkgs unavailable offline)"
+		skip "e2e on-the-fly nix instantiation (<nixpkgs> not evaluable offline)"
 	else
 		fail "e2e: on-the-fly nix package NOT visible in the new interactive shell" \
 			"expected marker: $_mark" "got: $_got"
@@ -193,9 +196,17 @@ else
 fi
 
 echo
+_asserted=$((tests - skips))
+if [ "$skips" -gt 0 ]; then
+	echo "⊘ $skips of $tests checks asserted NOTHING (see SKIPPED above) — coverage is incomplete on this machine" >&2
+fi
 if [ "$fails" -eq 0 ]; then
-	echo "All $tests pathconfig foreign-PATH tests passed"
+	if [ "$skips" -gt 0 ]; then
+		echo "All $_asserted asserted pathconfig foreign-PATH checks passed ($skips skipped)"
+	else
+		echo "All $_asserted pathconfig foreign-PATH checks passed"
+	fi
 else
-	echo "$fails of $tests pathconfig foreign-PATH tests failed" >&2
+	echo "$fails of $_asserted asserted pathconfig foreign-PATH checks failed" >&2
 fi
 exit "$fails"
