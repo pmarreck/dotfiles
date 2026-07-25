@@ -19,6 +19,23 @@ tests=0
 ORIG_XDG="${XDG_CACHE_HOME:-}"
 export XDG_CACHE_HOME="$(mktemp -d --tmpdir fun_intro_cache_test.XXXXXX)"
 export IMAGE_CAPABLE=false
+
+# `expect` is what makes fun_intro's cache regeneration capture a PTY, and the
+# ANSI-preservation and byte-fidelity checks below are the entire reason this
+# file exists — they guard the expect_out(buffer) truncation and the LF->CRLF
+# mangling that previously corrupted cached graphics output. When expect is not
+# installed those checks used to announce themselves as passing while asserting
+# nothing, so the suite reported green with its most important coverage inert.
+# Provision expect hermetically from the local nix store instead: no network, no
+# system change, no dependency on what happens to be installed on this machine.
+if ! command -v expect >/dev/null 2>&1; then
+	_expect_store=$(nix build --offline --no-link --print-out-paths nixpkgs#expect 2>/dev/null)
+	if [ -n "$_expect_store" ] && [ -x "$_expect_store/bin/expect" ]; then
+		PATH="$_expect_store/bin:$PATH"
+		export PATH
+	fi
+	unset _expect_store
+fi
 trap 'XDG_CACHE_HOME="$ORIG_XDG" rm -rf "$XDG_CACHE_HOME"' EXIT
 
 EXPECTED_PATH="$XDG_CACHE_HOME/dotfiles/fun_intro/cached.image_incapable"

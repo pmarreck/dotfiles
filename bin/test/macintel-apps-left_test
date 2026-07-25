@@ -2,6 +2,17 @@
 
 tests=0
 fails=0
+skips=0
+
+# A skipped check asserted nothing, so it is never reported as a pass — that is
+# how a suite goes green while covering nothing. Every skip must state WHAT is
+# not being checked, WHY, and WHEN that call was made, loudly, on stderr.
+skip() { # $1=what  $2=why  $3=when-decided
+	echo "⊘ SKIPPED (asserted nothing): $1" >&2
+	echo "    why:  $2" >&2
+	echo "    when: decision made $3" >&2
+	((skips++)) || :
+}
 
 # Test 1: --help flag works
 ((tests++))
@@ -85,7 +96,9 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
 		fi
 	fi
 else
-	echo "✓ skipped (not macOS)"
+	skip "output-format check (every emitted line ends in .app)" \
+		"macintel-apps-left scans /Applications and ~/Applications directly, so there is no way to feed it fixture input on Linux. The real fix is to make the scan injectable (pure formatting logic + an I/O adapter), which would let this run on every platform; logged in PLAN.md." \
+		"2026-07-25"
 fi
 
 # Test 6: --test flag runs this test (meta-test, skip if already recursing)
@@ -106,9 +119,17 @@ if [[ -z "${MACINTEL_APPS_LEFT_TESTING:-}" ]]; then
 fi
 
 # Summary
+asserted=$((tests - skips))
+if [[ "$skips" -gt 0 ]]; then
+	echo "⊘ $skips of $tests checks asserted NOTHING on this platform (see SKIPPED above)" >&2
+fi
 if [[ "$fails" -eq 0 ]]; then
-	echo "All $tests tests passed"
+	if [[ "$skips" -gt 0 ]]; then
+		echo "All $asserted asserted tests passed ($skips skipped)"
+	else
+		echo "All $tests tests passed"
+	fi
 else
-	echo "$fails of $tests tests failed" >&2
+	echo "$fails of $asserted asserted tests failed" >&2
 fi
 exit "$fails"
