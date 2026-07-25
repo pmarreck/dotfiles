@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+# code_test — `code <partial>` jumps to the first matching ~/Code project dir.
+#
+# `code` MUST be a sourced shell function (it cd's the interactive shell, which a
+# PATH executable cannot do), so — like edit_test — we source it and stub the
+# editor hop. Resolution is: glob -i "$CODE/*<query>*/" | head -1  (dirs only,
+# case-insensitive, code-point-first, depends on the `glob` script).
+#
+# Verifies:
+#   - a specific partial name cd's into that project dir
+#   - matching is case-insensitive
+#   - only DIRECTORIES match (a same-named file is ignored)
+#   - no match → nonzero exit, shell stays put (no cd)
+#   - ambiguous query resolves deterministically to the code-point-first dir
+#   - --edit hands the dir to `edit` and does NOT cd
+#   - no query → usage error (rc 2)
+
+set -u
+
+export PATH="$HOME/dotfiles/bin:$PATH"
+
+tests=0
+fails=0
+
+# Stubs: never fire a real editor or the self-edit hook.
+edit_function() { :; }
+__code_edit_log=""
+edit() { printf '%s\n' "$@" >>"$__code_edit_log"; }
+
+# Source the function under test.
+if [ ! -r "$HOME/dotfiles/bin/src/code.bash" ]; then
+	echo "[FAIL] bin/src/code.bash does not exist yet" >&2
+fi
+. "$HOME/dotfiles/bin/src/code.bash" 2>/dev/null
+
+# Fake $CODE tree.
+FAKE=$(mktemp -d --tmpdir code_test.XXXXXX)
+mkdir -p "$FAKE"/zedland "$FAKE"/my_ZED_tool "$FAKE"/notzed "$FAKE"/widget_proj
+touch "$FAKE"/loose_zed_file.txt   # a FILE matching 'zed' — must be ignored
+export CODE="$FAKE"
+trap 'rm -rf "$FAKE"' EXIT
+
+# Normalize an expected dir the same way `pwd` would report it (symlink-safe).
+norm() { ( cd "$1" 2>/dev/null && pwd ); }
+
+# Run `code $@` in a subshell (contains the cd); echo resulting PWD.
+run_cd() { ( cd /tmp && code "$@" >/dev/null 2>&1 && pwd ); }
+
+# 1: specific partial name cd's into the project dir
+((tests++))
+got=$(run_cd zedland); want=$(norm "$FAKE/zedland")
+if [ "$got" = "$want" ]; then echo "[PASS] code zedland -> $got"; else echo "[FAIL] code zedland -> '$got' (want '$want')" >&2; ((fails++)); fi
+
+# 2: case-insensitive
+((tests++))
+got=$(run_cd ZEDLAND)
+if [ "$got" = "$want" ]; then echo "[PASS] case-insensitive match"; else echo "[FAIL] case-insensitive -> '$got' (want '$want')" >&2; ((fails++)); fi
+
+# 3: dirs only — a query matching only a file yields no match
+((tests++))
+if ( cd /tmp && code loose_zed_file >/dev/null 2>&1 ); then echo "[FAIL] matched a file; should be dirs-only" >&2; ((fails++)); else echo "[PASS] files ignored (dirs only)"; fi
+
+# 4: no match → rc 1, no cd
+((tests++))
+res=$( cd /tmp && code zzznomatch >/dev/null 2>&1; printf '%s:%s' "$?" "$(pwd)" )
+if [ "$res" = "1:/tmp" ]; then echo "[PASS] no-match rc=1, no cd"; else echo "[FAIL] no-match -> '$res' (want '1:/tmp')" >&2; ((fails++)); fi
+
+# 5: ambiguous query → code-point-first dir (m < n < z → my_ZED_tool)
+((tests++))
+got=$(run_cd zed); want5=$(norm "$FAKE/my_ZED_tool")
+if [ "$got" = "$want5" ]; then echo "[PASS] ambiguous 'zed' -> code-point-first ($got)"; else echo "[FAIL] ambiguous 'zed' -> '$got' (want '$want5')" >&2; ((fails++)); fi
+
+# 6: --edit hands the dir to `edit`, no cd
+((tests++))
+__code_edit_log=$(mktemp --tmpdir code_edit.XXXXXX)
+res=$( cd /tmp && code zedland --edit >/dev/null 2>&1; printf 'pwd=%s' "$(pwd)" )
+logged=$(cat "$__code_edit_log"); rm -f "$__code_edit_log"
+if [ "$logged" = "$want" ] && [ "$res" = "pwd=/tmp" ]; then echo "[PASS] --edit opens editor on dir, no cd"; else echo "[FAIL] --edit: logged='$logged' $res (want logged='$want', pwd=/tmp)" >&2; ((fails++)); fi
+
+# 7: no query → usage rc 2
+((tests++))
+( code >/dev/null 2>&1 ); rc=$?
+if [ "$rc" = "2" ]; then echo "[PASS] no-arg usage rc=2"; else echo "[FAIL] no-arg rc=$rc (want 2)" >&2; ((fails++)); fi
+
+echo
+if [ "$fails" -eq 0 ]; then echo "All $tests code tests passed"; else echo "$fails of $tests code tests failed" >&2; fi
+exit "$fails"

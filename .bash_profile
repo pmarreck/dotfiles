@@ -47,20 +47,6 @@ fi
 # tmux helpers
 . "$HOME/dotfiles/bin/src/session.bash"
 
-# Warp terminal seems to have nonstandard behavior and non-gnu sed breaks things
-# so we are using this workaround:
-# Set SED env var to first gnu sed found on PATH; otherwise warn
-# Set SED env var - with Nix, sed is already GNU sed
-if [ -z ${SED+x} ]; then
-	if [[ "$(sed --version 2>/dev/null | head -1)" =~ .*GNU.* ]]; then
-		export SED="sed"
-	else
-		echo "Warning from .bash_profile: sed is not GNU sed. Some scripts may fail." >&2
-		export SED="sed"
-	fi
-fi
-
-# echo "SED in .bash_profile:56 is: $SED"
 # Awk-ward! (see note below about "using the right awk"...)
 [ -z "${AWK+x}" ] && \
 	export AWK=$(command -v frawk || command -v gawk || command -v awk)

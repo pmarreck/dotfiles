@@ -90,6 +90,9 @@ fi
 # have to source "edit" function for it to be able to see the functions via "functions"... lol sigh
 . "$HOME/dotfiles/bin/src/edit.bash"
 
+# `code <partial>` jumps to a ~/Code project by fuzzy name (needs cd → must be sourced)
+. "$HOME/dotfiles/bin/src/code.bash"
+
 # Pull in path configuration — but only if .bash_profile hasn't already done so.
 # We detect that by inspecting the BASH_SOURCE call stack (local to this source
 # chain, NOT an exported variable) — so we avoid the Claude-staleness footgun

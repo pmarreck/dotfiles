@@ -126,6 +126,11 @@ fi
 
 # mcfly - defines mcfly_prompt_command and adds to PROMPT_COMMAND
 if command -v mcfly >/dev/null 2>&1; then
+	# mcfly's init self-guards via __MCFLY_LOADED and no-ops if already loaded. The
+	# clean-slate above wiped PROMPT_COMMAND, so clear the guard to force real
+	# re-registration on a re-source — otherwise mcfly is silently dropped from
+	# precmd_functions and stops recording history after the 2nd .bashrc source.
+	unset __MCFLY_LOADED
 	eval "$(mcfly init bash)" || err "mcfly init failed"
 	report_prompt_commands "after" "mcfly init"
 fi
@@ -150,14 +155,18 @@ if [[ -n "${BASH_VERSION-}" ]] && [[ "${BASH_VERSINFO[0]}" -gt 4 || ( "${BASH_VE
 	starship_preexec_ps0() {
 		command starship time
 	}
-	# Magic string that sets STARSHIP_START_TIME when PS0 is expanded
-	PS0='${STARSHIP_START_TIME:$((STARSHIP_START_TIME="$(starship_preexec_ps0)",0)):0}'"${PS0-}"
+	# Magic string that sets STARSHIP_START_TIME when PS0 is expanded.
+	# Guard against unbounded accumulation on re-source: the clean-slate above
+	# resets PROMPT_COMMAND/precmd/preexec but NOT PS0, so without this guard each
+	# re-source prepends another copy → an extra `starship time` subprocess per
+	# command run (growing keystroke latency). Prepend the magic at most once.
+	[[ "$PS0" == *starship_preexec_ps0* ]] || PS0='${STARSHIP_START_TIME:$((STARSHIP_START_TIME="$(starship_preexec_ps0)",0)):0}'"${PS0-}"
 fi
 
-# Add custom hooks directly to precmd_functions (bash-preexec API)
-if ! array_contains_element precmd_functions __wezterm_osc7_home; then
-	precmd_functions+=(__wezterm_osc7_home)
-fi
+# NOTE: __wezterm_osc7_home was removed here (2026-07-24 code review). It emitted
+# OSC 7 for $HOME unconditionally and ran LAST every precmd, clobbering the correct
+# $PWD reported by __wezterm_osc7 — so new tabs/splits opened in $HOME instead of
+# cwd, and it fired a spurious set-working-directory on non-WezTerm terminals too.
 
 # Refresh per-project compiler-cache paths after interactive directory changes.
 # Agent command shells start in their project and get the same policy from .envconfig.

@@ -1,5 +1,93 @@
 #!/usr/bin/env bash
+# apply-hooks_test — regression tests for the prompt-hook lifecycle fixes
+# (2026-07-24 code review). Sources the REAL bin/apply-hooks in an isolated
+# shell with mocked mcfly/starship (for determinism) and stubbed helpers, then
+# RE-SOURCES it to simulate a second .bashrc load. Verifies:
+#   1. McFly survives a re-source — its once-guard (__MCFLY_LOADED) must not let
+#      the clean-slate silently drop mcfly_prompt_command (CRITICAL: history
+#      recording died on every re-source before the fix).
+#   2. The Starship PS0 timing magic does NOT accumulate on re-source (it was
+#      prepended every time → an extra `starship time` subprocess per command).
 
-# Test for apply-hooks
-echo "Test for apply-hooks is not yet implemented"
-exit 0
+set -u
+
+tests=0
+fails=0
+pass() { echo "[PASS] $1"; }
+fail() { echo "[FAIL] $1" >&2; ((fails++)) || :; }
+
+WORK=$(mktemp -d --tmpdir apply_hooks_test.XXXXXX)
+trap 'rm -rf "$WORK"' EXIT
+mkdir -p "$WORK/bin"
+
+# Fake mcfly: mimics the REAL once-guard — its init registers mcfly_prompt_command
+# only when __MCFLY_LOADED != loaded, and sets the guard (this is exactly the
+# behavior that made the clean-slate strategy drop it on re-source).
+cat >"$WORK/bin/mcfly" <<'EOF'
+#!/usr/bin/env bash
+[ "$1" = init ] || exit 0
+cat <<'INIT'
+if [[ "${__MCFLY_LOADED:-}" != "loaded" ]]; then
+	__MCFLY_LOADED=loaded
+	mcfly_prompt_command() { :; }
+	PROMPT_COMMAND="mcfly_prompt_command${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
+fi
+INIT
+EOF
+chmod +x "$WORK/bin/mcfly"
+
+# Fake starship: init registers starship_precmd; `time` prints a number.
+cat >"$WORK/bin/starship" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in
+	init) echo 'starship_precmd() { :; }; PROMPT_COMMAND="starship_precmd${PROMPT_COMMAND:+;$PROMPT_COMMAND}"' ;;
+	time) echo 0 ;;
+esac
+EOF
+chmod +x "$WORK/bin/starship"
+
+# Drive apply-hooks twice in one isolated bash, printing the observable state
+# after the SECOND source. Helpers apply-hooks expects from the interactive env
+# are stubbed; unrelated integrations are neutralized so branch selection is
+# deterministic. Real mcfly/starship are shadowed by our fakes via PATH.
+probe=$(PATH="$WORK/bin:$PATH" TERM_PROGRAM=xterm HOME="$HOME" bash --norc -c '
+	needs() { :; }
+	err() { :; }
+	report_prompt_commands() { :; }
+	array_contains_element() { local -n _a="$1"; local _e; for _e in "${_a[@]:-}"; do [ "$_e" = "$2" ] && return 0; done; return 1; }
+	command -v direnv >/dev/null && direnv() { :; }
+	command -v zoxide >/dev/null && zoxide() { :; }
+	export SED=sed AWK=awk
+	source "$HOME/dotfiles/bin/apply-hooks" >/dev/null 2>&1
+	source "$HOME/dotfiles/bin/apply-hooks" >/dev/null 2>&1
+	# Observable state after the second (re-)source:
+	printf "MCFLY=%s\n" "$( (printf "%s\n" "${precmd_functions[@]:-}"; printf "%s\n" "${PROMPT_COMMAND:-}") | grep -c mcfly_prompt_command)"
+	printf "PS0COUNT=%s\n" "$(grep -o starship_preexec_ps0 <<<"${PS0:-}" | wc -l | tr -d " ")"
+' 2>/dev/null)
+
+mcfly_hits=$(sed -n 's/^MCFLY=//p' <<<"$probe")
+ps0_count=$(sed -n 's/^PS0COUNT=//p' <<<"$probe")
+
+# 1: McFly still registered after a re-source (>=1 occurrence).
+((tests++))
+if [ "${mcfly_hits:-0}" -ge 1 ]; then
+	pass "mcfly_prompt_command survives a re-source (found ${mcfly_hits}×)"
+else
+	fail "mcfly_prompt_command DROPPED on re-source (found ${mcfly_hits:-?}× — expected >=1)"
+fi
+
+# 2: PS0 timing magic present but NOT duplicated (exactly 1 after two sources).
+((tests++))
+if [ "${ps0_count:-0}" = "1" ]; then
+	pass "PS0 starship timing magic present exactly once after re-source"
+else
+	fail "PS0 accumulation guard failed: starship_preexec_ps0 appears ${ps0_count:-?}× (expected 1)"
+fi
+
+echo
+if [ "$fails" -eq 0 ]; then
+	echo "All $tests apply-hooks tests passed"
+else
+	echo "$fails of $tests apply-hooks tests failed" >&2
+fi
+exit "$fails"
