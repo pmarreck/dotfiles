@@ -12,6 +12,10 @@ Options:
 	-h, --help       Show this help message
 	--test           Run the runner's associated tests
 	--test-dir DIR   Discover tests in DIR instead of bin/test
+	-j, --jobs N     Run N test files concurrently (default 8, or
+	                 $RUN_TEST_SUITE_JOBS). Use 1 for serial execution.
+	                 Results are always reported in discovery order, so
+	                 the report does not depend on the job count.
 
 The compatibility command test_dotfiles invokes this same runner.
 EOF
@@ -32,6 +36,17 @@ run_test_suite() {
 	local failed=0
 	local total
 	local index=0
+	# Tests are isolated per subprocess, so they parallelize; measured 225.8s ->
+	# 33.7s for 155 files. Default to a bounded pool rather than every core: the
+	# suite shares the machine with the agent fleet, and oversubscribing made a
+	# tmux-dependent test race its own session startup. `--jobs 1` restores fully
+	# serial execution.
+	local jobs="${RUN_TEST_SUITE_JOBS:-8}"
+	# `wait -n` is the pool primitive and needs bash 4.3+. Rather than emit subtly
+	# wrong results on an older bash, fall back to serial.
+	if (( BASH_VERSINFO[0] < 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] < 3) )); then
+		jobs=1
+	fi
 
 	script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 	repo_root="$(dirname "$script_dir")"
@@ -49,6 +64,18 @@ run_test_suite() {
 					return 2
 				fi
 				test_dir="$2"
+				shift 2
+				;;
+			-j | --jobs)
+				if (( $# < 2 )); then
+					printf 'Error: --jobs requires a positive integer.\n' >&2
+					return 2
+				fi
+				if [[ ! "$2" =~ ^[1-9][0-9]*$ ]]; then
+					printf 'Error: --jobs requires a positive integer, got: %s\n' "$2" >&2
+					return 2
+				fi
+				jobs="$2"
 				shift 2
 				;;
 			*)
@@ -79,21 +106,57 @@ run_test_suite() {
 		return 2
 	fi
 
-	printf 'Running %s test files from %s\n' "$total" "$test_dir"
-	for test_file in "${test_files[@]}"; do
+	printf 'Running %s test files from %s (jobs: %s)\n' "$total" "$test_dir" "$jobs"
+
+	# Execute concurrently into per-test scratch files, then report strictly in
+	# discovery order. Letting output interleave by completion order would make the
+	# report vary run to run, which is useless for review and for diffing CI logs.
+	local work_dir
+	work_dir="$(mktemp -d --tmpdir run_test_suite.XXXXXX)" || return 2
+	# shellcheck disable=SC2064  # expand now: this must survive the function returning
+	trap "rm -rf '$work_dir'" EXIT
+
+	local running=0 slot
+	for (( slot = 0; slot < total; slot++ )); do
+		while (( running >= jobs )); do
+			wait -n 2>/dev/null || :
+			(( running-- ))
+		done
+		(
+			local_file="${test_files[$slot]}"
+			if [[ ! -x "$local_file" ]]; then
+				printf '126' >"$work_dir/$slot.status"
+				: >"$work_dir/$slot.out"
+			else
+				(cd "$repo_root" && "$local_file") >"$work_dir/$slot.out" 2>&1
+				printf '%s' "$?" >"$work_dir/$slot.status"
+			fi
+		) &
+		(( running++ ))
+	done
+	wait
+
+	for (( slot = 0; slot < total; slot++ )); do
+		test_file="${test_files[$slot]}"
 		(( index++ ))
 		test_name="${test_file##*/}"
 		printf '\n[%s/%s] %s\n' "$index" "$total" "$test_name"
 
+		status="$(cat "$work_dir/$slot.status" 2>/dev/null)"
+		# A missing status file means the worker itself died; treat that as a
+		# failure rather than silently counting it as a pass.
+		[[ "$status" =~ ^[0-9]+$ ]] || status=125
+		cat "$work_dir/$slot.out" 2>/dev/null
+		# Several tests end their output without a trailing newline (a bare ANSI
+		# reset, typically). Without this the following PASS/FAIL line is glued to
+		# that output — `[0mPASS calc_test` — so `grep '^PASS '` silently
+		# undercounts, which is precisely the kind of miscount a suite gate keys on.
+		if [[ -s "$work_dir/$slot.out" && -n "$(tail -c1 "$work_dir/$slot.out")" ]]; then
+			printf '\n'
+		fi
+
 		if [[ ! -x "$test_file" ]]; then
-			status=126
 			printf 'FAIL %s: test file is not executable (exit %s)\n' "$test_name" "$status" >&2
-		else
-			if (cd "$repo_root" && "$test_file"); then
-				status=0
-			else
-				status=$?
-			fi
 		fi
 
 		if (( status == 0 )); then

@@ -98,6 +98,53 @@ test_run_test_suite() {
 		(( fails++ ))
 	fi
 
+	# ── Parallel execution must not weaken any of the guarantees above ──────────
+	# Running tests concurrently is only safe if it changes wall-clock time and
+	# nothing else: the same files must be discovered, the exit status must still
+	# be the exact sum capped at 255, and the report must not reorder itself run
+	# to run (a report whose order depends on which test happened to finish first
+	# is unreviewable in a diff).
+
+	(( tests++ ))
+	output=$(HOME="$tmpdir/home" "$runner" --jobs 4 --test-dir "$tmpdir/capped" 2>&1)
+	actual=$?
+	if [[ "$actual" == 255 && "$output" == *'summed exit status: 300'* ]]; then
+		printf '✓ run_test_suite preserves the capped exit sum when parallel\n'
+	else
+		printf '✗ parallel run must report sum 300 and exit 255\nStatus: %s\nOutput: %q\n' "$actual" "$output" >&2
+		(( fails++ ))
+	fi
+
+	(( tests++ ))
+	serial_report=$(HOME="$tmpdir/home" "$runner" --jobs 1 --test-dir "$tmpdir/mixed" 2>&1 | grep -E '^(PASS|FAIL) ')
+	par_report=$(HOME="$tmpdir/home" "$runner" --jobs 4 --test-dir "$tmpdir/mixed" 2>&1 | grep -E '^(PASS|FAIL) ')
+	if [[ -n "$serial_report" && "$serial_report" == "$par_report" ]]; then
+		printf '✓ run_test_suite reports identically regardless of job count\n'
+	else
+		printf '✗ parallel report differs from serial\nSerial: %q\nParallel: %q\n' "$serial_report" "$par_report" >&2
+		(( fails++ ))
+	fi
+
+	(( tests++ ))
+	par_a=$(HOME="$tmpdir/home" "$runner" --jobs 4 --test-dir "$tmpdir/mixed" 2>&1 | grep -E '^(PASS|FAIL) ')
+	par_b=$(HOME="$tmpdir/home" "$runner" --jobs 4 --test-dir "$tmpdir/mixed" 2>&1 | grep -E '^(PASS|FAIL) ')
+	if [[ "$par_a" == "$par_b" ]]; then
+		printf '✓ parallel report ordering is deterministic across runs\n'
+	else
+		printf '✗ parallel report ordering varies between runs\nRun A: %q\nRun B: %q\n' "$par_a" "$par_b" >&2
+		(( fails++ ))
+	fi
+
+	(( tests++ ))
+	output=$(HOME="$tmpdir/home" "$runner" --jobs 0 --test-dir "$tmpdir/passing" 2>&1)
+	actual=$?
+	if (( actual != 0 )) && [[ "$output" == *'--jobs'* ]]; then
+		printf '✓ run_test_suite rejects a nonsensical job count\n'
+	else
+		printf '✗ --jobs 0 should be rejected\nStatus: %s\nOutput: %q\n' "$actual" "$output" >&2
+		(( fails++ ))
+	fi
+
 	if (( fails > 0 )); then
 		printf '%s of %s run_test_suite tests failed!\n' "$fails" "$tests" >&2
 	else
