@@ -1,0 +1,8 @@
+# Skips the pre-push gate tolerates. Anything printing the loud
+# "SKIPPED (asserted nothing)" marker whose text does not match a line here
+# fails the push. One substring per line; '#' comments ignored.
+#
+# A skip is a check that asserted nothing, so every entry here is a hole in
+# coverage that someone accepted deliberately. Keep this list short, and make
+# each entry specific enough that a NEW skip cannot hide behind it.
+output-format check (every emitted line ends in .app)

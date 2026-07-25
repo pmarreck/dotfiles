@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+# pre-push-gate_test — the gate must demand a VALID pass, not merely exit 0.
+#
+# A gate that cannot tell "155 passed" from "0 discovered" is not a gate. These
+# assertions treat it as a classifier over sets: each dimension is exercised in
+# both directions, because a check that only ever sees the good case will happily
+# pass the bad one too.
+#
+# The runner is injected via PRE_PUSH_GATE_RUNNER so the gate's decision logic is
+# tested against synthetic reports instead of a 35-second suite run — the gate is
+# business logic and deserves to be tested like it.
+
+set -u
+
+GATE="$HOME/dotfiles/bin/pre-push-gate"
+
+tests=0
+fails=0
+ok()   { echo "✓ $1"; }
+bad()  { { echo "✗ $1"; shift; [ $# -gt 0 ] && printf '  %s\n' "$@"; } >&2; ((fails++)) || :; }
+
+WORK=$(mktemp -d --tmpdir pre_push_gate_test.XXXXXX)
+trap 'rm -rf "$WORK"' EXIT
+
+# Build a fake runner emitting a synthetic report. $1=exit code, $2=#PASS lines,
+# rest=extra lines appended (e.g. a skip marker).
+make_runner() {
+	local rc="$1" n="$2"; shift 2
+	{
+		printf '#!/usr/bin/env bash\n'
+		printf 'i=0; while [ "$i" -lt %s ]; do printf "PASS fake_%%s_test\\n" "$i"; i=$((i+1)); done\n' "$n"
+		for extra in "$@"; do printf 'printf "%%s\\n" %q\n' "$extra"; done
+		# Emit the canonical success summary only on the green path, mirroring the
+		# real runner. The gate keys on this POSITIVE evidence rather than on the
+		# absence of failure, because absence is not observable: bash truncates a
+		# child's exit status modulo 256, so a runner exiting 256 is indistinguish-
+		# able from one exiting 0. That wrap is the reason run_test_suite caps its
+		# summed status at 255, and run_test_suite_test asserts the cap directly —
+		# which is where that assertion can actually bite.
+		if [ "$rc" = 0 ]; then printf 'printf "\\nAll %%s test files passed.\\n" %s\n' "$n"; fi
+		printf 'exit %s\n' "$rc"
+	} >"$WORK/runner"
+	chmod +x "$WORK/runner"
+	printf '%s' "$WORK/runner"
+}
+
+run_gate() { # echoes exit code
+	PRE_PUSH_GATE_RUNNER="$1" PRE_PUSH_GATE_MIN_TESTS="${2:-155}" \
+		"$GATE" --check-only >/dev/null 2>&1
+	printf '%s' "$?"
+}
+
+# ── The happy case must actually pass, or every negative below is meaningless ──
+((tests++))
+r=$(make_runner 0 155)
+[ "$(run_gate "$r")" = 0 ] && ok "green suite at the floor passes" \
+	|| bad "a green suite meeting the floor must pass"
+
+# ── Exit-code integrity ───────────────────────────────────────────────────────
+((tests++))
+r=$(make_runner 1 155)
+[ "$(run_gate "$r")" != 0 ] && ok "non-zero runner status fails the gate" \
+	|| bad "a failing suite must fail the gate"
+
+# Exit 0 with failures in the report is the shape a broken runner takes; the gate
+# must not accept it just because the process status looked clean.
+((tests++))
+r=$(make_runner 0 155 'FAIL something_test (exit 1)')
+[ "$(run_gate "$r")" != 0 ] && ok "reported failures fail the gate even at exit 0" \
+	|| bad "a report containing FAIL must fail the gate regardless of exit status"
+
+# ── Test-count floor — the discovery-failure guard ────────────────────────────
+((tests++))
+r=$(make_runner 0 0)
+[ "$(run_gate "$r")" != 0 ] && ok "zero discovered tests fails despite exit 0" \
+	|| bad "0 tests with exit 0 is the canonical false green and must fail"
+
+((tests++))
+r=$(make_runner 0 154)
+[ "$(run_gate "$r")" != 0 ] && ok "one test short of the floor fails" \
+	|| bad "a count below the floor must fail"
+
+((tests++))
+r=$(make_runner 0 156)
+[ "$(run_gate "$r")" = 0 ] && ok "more tests than the floor passes" \
+	|| bad "growing the suite must not fail the gate"
+
+# ── Skip accounting ───────────────────────────────────────────────────────────
+((tests++))
+r=$(make_runner 0 155 '⊘ SKIPPED (asserted nothing): output-format check (every emitted line ends in .app)')
+[ "$(run_gate "$r")" = 0 ] && ok "an allowlisted skip is tolerated" \
+	|| bad "a skip on the committed allowlist must not fail the push"
+
+((tests++))
+r=$(make_runner 0 155 '⊘ SKIPPED (asserted nothing): some brand new hole nobody approved')
+[ "$(run_gate "$r")" != 0 ] && ok "an unlisted skip fails the gate" \
+	|| bad "a skip that is not on the allowlist must fail the push"
+
+echo
+if [ "$fails" -eq 0 ]; then
+	echo "All $tests pre-push-gate tests passed"
+else
+	echo "$fails of $tests pre-push-gate tests failed" >&2
+fi
+exit "$fails"

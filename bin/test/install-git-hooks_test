@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+# install-git-hooks_test — a hook that silently fails to install is a gate that
+# does not exist, so installation must be idempotent AND self-verifying.
+#
+# Every case runs against a throwaway git repository rather than this one; an
+# installer tested only against an already-correct repo proves nothing.
+
+set -u
+
+INSTALLER="$HOME/dotfiles/bin/install-git-hooks"
+
+tests=0
+fails=0
+ok()  { echo "✓ $1"; }
+bad() { { echo "✗ $1"; shift; [ $# -gt 0 ] && printf '  %s\n' "$@"; } >&2; ((fails++)) || :; }
+
+WORK=$(mktemp -d --tmpdir install_git_hooks_test.XXXXXX)
+trap 'rm -rf "$WORK"' EXIT
+
+fresh_repo() { # echoes a new repo path
+	local d; d="$WORK/repo.$RANDOM.$1"
+	mkdir -p "$d"; git -C "$d" init -q 2>/dev/null
+	printf '%s' "$d"
+}
+
+((tests++))
+r=$(fresh_repo a)
+"$INSTALLER" "$r" >/dev/null 2>&1
+if [ -x "$r/.git/hooks/pre-push" ]; then
+	ok "installs an executable pre-push hook"
+else
+	bad "pre-push hook was not installed or is not executable"
+fi
+
+((tests++))
+if grep -q 'pre-push-gate' "$r/.git/hooks/pre-push" 2>/dev/null; then
+	ok "installed hook invokes pre-push-gate"
+else
+	bad "installed hook does not reference pre-push-gate"
+fi
+
+# Idempotence: re-running must succeed and must not append a second copy.
+((tests++))
+before=$(cat "$r/.git/hooks/pre-push" 2>/dev/null)
+"$INSTALLER" "$r" >/dev/null 2>&1; rc=$?
+after=$(cat "$r/.git/hooks/pre-push" 2>/dev/null)
+if [ "$rc" = 0 ] && [ "$before" = "$after" ]; then
+	ok "re-running the installer is idempotent"
+else
+	bad "installer is not idempotent (rc=$rc, content changed: $([ "$before" = "$after" ] && echo no || echo yes))"
+fi
+
+# A pre-existing unrelated hook must not be destroyed silently.
+((tests++))
+r2=$(fresh_repo b)
+mkdir -p "$r2/.git/hooks"
+printf '#!/bin/sh\necho someone elses hook\n' > "$r2/.git/hooks/pre-push"
+chmod +x "$r2/.git/hooks/pre-push"
+out=$("$INSTALLER" "$r2" 2>&1); rc=$?
+if [ "$rc" != 0 ] || [ -n "$(glob ls "$r2/.git/hooks/pre-push.backup"* 2>/dev/null)" ]; then
+	ok "refuses to clobber a foreign hook, or preserves it"
+else
+	bad "an unrelated pre-push hook was overwritten with no backup and no error" "output: $out"
+fi
+
+# Self-verification must FAIL loudly when the install cannot take effect.
+((tests++))
+r3=$(fresh_repo c)
+chmod -w "$r3/.git/hooks" 2>/dev/null
+out=$("$INSTALLER" "$r3" 2>&1); rc=$?
+chmod +w "$r3/.git/hooks" 2>/dev/null
+if [ "$rc" != 0 ]; then
+	ok "reports failure when the hook cannot be written"
+else
+	bad "installer reported success despite being unable to install" "output: $out"
+fi
+
+((tests++))
+out=$("$INSTALLER" "$WORK/not-a-repo" 2>&1); rc=$?
+if [ "$rc" != 0 ]; then
+	ok "rejects a path that is not a git repository"
+else
+	bad "installer should reject a non-repository"
+fi
+
+echo
+if [ "$fails" -eq 0 ]; then
+	echo "All $tests install-git-hooks tests passed"
+else
+	echo "$fails of $tests install-git-hooks tests failed" >&2
+fi
+exit "$fails"

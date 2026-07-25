@@ -1,5 +1,30 @@
 # dotfiles — TODO / Plans
 
+## Active — suite gating (2026-07-25)
+
+- [x] Fix `erect-agent-stack_test` racing tmux session startup; it passed solo and
+  failed 9/12 concurrently. 60/60 green after. 2026-07-25.
+- [x] Parallelize `bin/run_test_suite`: 225.8s → ~35s, reported in discovery order
+  so the output stays diff-stable. 2026-07-25.
+- [x] `flake.nix` + `.mechatron-prime/targets`: hermetic `checks.x86_64-linux.test`
+  turns a standing "target-manifest missing" red into a real gate. 106 of 155 run
+  in the sandbox; the other 49 are listed with reasons in `bin/test/NOT_HERMETIC`
+  and printed by the check. 2026-07-25.
+- [x] Pre-push gate (`bin/pre-push-gate` + `bin/install-git-hooks`) demanding a
+  VALID pass: test-count floor, skip allowlist, positive success evidence.
+  2026-07-25.
+  - Curiosity poke: bash truncates a child's exit status mod 256, so `exit 256`
+    is indistinguishable from success — which is exactly why the runner caps its
+    summed status at 255 and why the gate keys on positive evidence.
+- [ ] Decide whether to test every commit in the outgoing range (≤5, in a detached
+  temp worktree) rather than just the tip. Mechatron judges each pushed commit
+  against its exact-commit manifest, so a red middle commit surfaces as a real
+  FAIL row even when the tip is green. Currently the gate tests the working tree.
+- [ ] Graduate tests off `NOT_HERMETIC`. The largest group only needs sibling
+  ~/Code repos (printable-binary, rm-safe) added as flake inputs.
+- [ ] Migrate the 9 legacy memories still in `~/.claude/projects/*/memory/` into
+  `~/MEMORIES` via the `memories` skill (another agent's migration is unfinished).
+
 ## Active — code-review remediation (2026-07-24/25)
 
 Driven by `CODE_REVIEW.md` (6-reviewer audit). Wave 1 + the nix-PATH bug are done.

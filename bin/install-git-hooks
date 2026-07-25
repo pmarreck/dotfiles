@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+
+# install-git-hooks — install this repository's git hooks, idempotently.
+#
+# A hook that silently fails to install is a gate that does not exist, so this
+# verifies its own work afterwards and reports failure rather than assuming the
+# write succeeded.
+#
+# This is deliberately NOT part of bin/apply-hooks. That script manages *shell
+# prompt* lifecycle — PROMPT_COMMAND, precmd_functions, starship, mcfly, wezterm
+# OSC — and shares only the word "hooks". Folding git-lifecycle installation into
+# it would merge two unrelated subsystems into the file whose fragility already
+# caused mcfly to be silently dropped on every re-source. One installer for git
+# hooks is the anti-proliferation rule; putting it in that file is not.
+#
+# Usage: install-git-hooks [REPO_ROOT]   (defaults to this repository)
+
+set -u
+
+self_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+target="${1:-$self_root}"
+
+case "${1:-}" in
+	-h|--help)
+		cat <<'EOF'
+Usage: install-git-hooks [REPO_ROOT]
+
+Installs the pre-push gate as REPO_ROOT/.git/hooks/pre-push. Idempotent: safe to
+run repeatedly. Verifies the installation afterwards and exits non-zero if the
+hook is not in place and executable.
+
+An existing hook that this script did not write is never overwritten silently —
+it is backed up first, and the backup path is reported.
+EOF
+		exit 0
+		;;
+esac
+
+if [ ! -d "$target" ]; then
+	echo "install-git-hooks: no such directory: $target" >&2
+	exit 1
+fi
+
+git_dir="$(git -C "$target" rev-parse --git-dir 2>/dev/null)" || {
+	echo "install-git-hooks: not a git repository: $target" >&2
+	exit 1
+}
+case "$git_dir" in
+	/*) ;;
+	*) git_dir="$target/$git_dir" ;;
+esac
+
+hooks_dir="$git_dir/hooks"
+hook_path="$hooks_dir/pre-push"
+marker="# managed-by: dotfiles/bin/install-git-hooks"
+
+mkdir -p "$hooks_dir" 2>/dev/null
+
+desired="$(cat <<EOF
+#!/usr/bin/env bash
+$marker
+# Refuses the push unless the suite produces a VALID pass: the runner reported
+# success, at least MIN_TEST_COUNT tests actually ran, and every skipped check is
+# on the committed allowlist. Regenerate with: bin/install-git-hooks
+exec "$self_root/bin/pre-push-gate" "\$@"
+EOF
+)"
+
+# Never destroy a hook this script did not write. Back it up and say where.
+if [ -e "$hook_path" ] && ! grep -qF "$marker" "$hook_path" 2>/dev/null; then
+	backup="$hook_path.backup.$(date +%Y%m%d%H%M%S)"
+	if ! cp "$hook_path" "$backup" 2>/dev/null; then
+		echo "install-git-hooks: refusing to replace an unmanaged hook; could not back it up: $hook_path" >&2
+		exit 1
+	fi
+	echo "install-git-hooks: existing unmanaged pre-push hook backed up to $backup" >&2
+fi
+
+# Idempotent: identical content is left untouched so mtimes stay stable.
+if [ -e "$hook_path" ] && [ "$(cat "$hook_path" 2>/dev/null)" = "$desired" ]; then
+	:
+elif ! printf '%s\n' "$desired" > "$hook_path" 2>/dev/null; then
+	echo "install-git-hooks: could not write $hook_path" >&2
+	exit 1
+fi
+
+chmod +x "$hook_path" 2>/dev/null
+
+# Self-verification. Everything above can fail quietly on a read-only or
+# unusual filesystem, and an unverified install is exactly the failure mode
+# this guards against.
+if [ ! -f "$hook_path" ]; then
+	echo "install-git-hooks: verification failed — $hook_path does not exist" >&2
+	exit 1
+fi
+if [ ! -x "$hook_path" ]; then
+	echo "install-git-hooks: verification failed — $hook_path is not executable" >&2
+	exit 1
+fi
+if ! grep -qF 'pre-push-gate' "$hook_path" 2>/dev/null; then
+	echo "install-git-hooks: verification failed — $hook_path does not invoke pre-push-gate" >&2
+	exit 1
+fi
+
+echo "install-git-hooks: pre-push gate installed and verified at $hook_path"
+exit 0

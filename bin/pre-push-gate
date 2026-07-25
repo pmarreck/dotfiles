@@ -1,0 +1,131 @@
+#!/usr/bin/env bash
+
+# pre-push-gate — refuse to push unless the suite produced a VALID pass.
+#
+# "Valid" is the whole point. A gate that only checks the exit status cannot tell
+# "155 passed" from "0 discovered", and the discovery failure is not hypothetical:
+# globbing is disabled in this shell, so a bare glob silently matches nothing and
+# reports success. This gate therefore requires positive evidence on three axes,
+# each backed by a committed file so that weakening any of them is a visible diff:
+#
+#   1. Test-count floor      bin/test/MIN_TEST_COUNT
+#   2. Skip accounting       bin/test/ALLOWED_SKIPS
+#   3. Reported success      the runner's own summary line, plus no FAIL lines
+#
+# Note on exit statuses: bash truncates a child's status modulo 256, so a runner
+# exiting 256 is indistinguishable from one exiting 0. That is precisely why
+# run_test_suite caps its summed status at 255, and why this gate keys on positive
+# evidence rather than on the absence of a non-zero status.
+#
+# Usage:
+#   pre-push-gate                Run as a git pre-push hook (reads refs on stdin)
+#   pre-push-gate --check-only   Run the suite and validate; skip all git logic
+#   pre-push-gate -h|--help
+#
+# Env:
+#   PRE_PUSH_GATE_RUNNER      Command to run (default: bin/run_test_suite)
+#   PRE_PUSH_GATE_MIN_TESTS   Override the committed floor (testing)
+#   PRE_PUSH_GATE_SKIP        If set to a truthy value, refuse loudly and exit 1;
+#                             there is deliberately no silent bypass.
+
+set -u
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+runner="${PRE_PUSH_GATE_RUNNER:-$repo_root/bin/run_test_suite}"
+min_file="$repo_root/bin/test/MIN_TEST_COUNT"
+skips_file="$repo_root/bin/test/ALLOWED_SKIPS"
+
+_help() {
+	cat <<'EOF'
+Usage: pre-push-gate [--check-only]
+
+Runs the test suite and refuses the push unless the result is a valid pass:
+the runner reported success, at least MIN_TEST_COUNT tests actually ran, and
+every skipped check is on the committed allowlist.
+
+Options:
+  --check-only   Validate the suite only; do not inspect git refs
+  -h, --help     Show this help
+EOF
+}
+
+case "${1:-}" in
+	-h|--help) _help; exit 0 ;;
+esac
+
+min_tests="${PRE_PUSH_GATE_MIN_TESTS:-}"
+if [ -z "$min_tests" ]; then
+	if [ -r "$min_file" ]; then
+		min_tests="$(grep -oE '^[0-9]+' "$min_file" | head -1)"
+	fi
+	# No floor means no gate. Refuse rather than pass vacuously.
+	if [ -z "$min_tests" ]; then
+		echo "pre-push-gate: missing or unreadable $min_file — refusing to pass without a floor" >&2
+		exit 1
+	fi
+fi
+
+if [ -n "${PRE_PUSH_GATE_SKIP:-}" ]; then
+	echo "pre-push-gate: there is no silent bypass. Fix the suite, or push a branch that is not gated." >&2
+	exit 1
+fi
+
+report="$(mktemp --tmpdir pre_push_gate.XXXXXX)"
+trap 'rm -f "$report"' EXIT
+
+echo "pre-push-gate: running the suite (floor: $min_tests tests)…" >&2
+"$runner" >"$report" 2>&1
+runner_status=$?
+
+pass_count="$(grep -cE '^PASS ' "$report" || true)"
+fail_count="$(grep -cE '^FAIL ' "$report" || true)"
+verdict=0
+
+if [ "$runner_status" -ne 0 ]; then
+	echo "pre-push-gate: runner exited $runner_status" >&2
+	verdict=1
+fi
+
+if [ "$fail_count" -ne 0 ]; then
+	echo "pre-push-gate: $fail_count test file(s) reported FAIL" >&2
+	grep -E '^FAIL ' "$report" | sed 's/^/    /' >&2
+	verdict=1
+fi
+
+# Positive evidence that the runner completed and agreed with what we counted.
+if ! grep -qE '^All [0-9]+ test files passed\.' "$report"; then
+	echo "pre-push-gate: runner did not report a completed, all-green suite" >&2
+	verdict=1
+fi
+
+if [ "$pass_count" -lt "$min_tests" ]; then
+	echo "pre-push-gate: only $pass_count tests ran; floor is $min_tests (see ${min_file#"$repo_root/"})" >&2
+	echo "    A count below the floor usually means discovery failed, not that tests were removed." >&2
+	verdict=1
+fi
+
+# Every skip is a check that asserted nothing. Unlisted ones block the push.
+if grep -q 'SKIPPED (asserted nothing)' "$report"; then
+	while IFS= read -r line; do
+		allowed=1
+		if [ -r "$skips_file" ]; then
+			while IFS= read -r entry; do
+				case "$entry" in ''|\#*) continue ;; esac
+				case "$line" in *"$entry"*) allowed=0; break ;; esac
+			done < "$skips_file"
+		fi
+		if [ "$allowed" -ne 0 ]; then
+			echo "pre-push-gate: unapproved skip — this check asserted nothing:" >&2
+			echo "    $line" >&2
+			echo "    Fix it, or add it to ${skips_file#"$repo_root/"} with a reason." >&2
+			verdict=1
+		fi
+	done < <(grep 'SKIPPED (asserted nothing)' "$report")
+fi
+
+if [ "$verdict" -eq 0 ]; then
+	echo "pre-push-gate: valid pass — $pass_count tests ran, none skipped without approval." >&2
+else
+	echo "pre-push-gate: PUSH REFUSED." >&2
+fi
+exit "$verdict"
