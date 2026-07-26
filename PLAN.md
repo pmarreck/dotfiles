@@ -77,6 +77,31 @@ Driven by `CODE_REVIEW.md` (6-reviewer audit). Wave 1 + the nix-PATH bug are don
   2.1.218, its installed executable is the expected hard link to Anthropic's
   matching native package, and the focused three-assertion regression is green.
 
+- [x] Supersede the npm-global updater with Claude Code's native self-update.
+  The npm approach above turned out to CAUSE a dual install: `~/.npmrc` sets
+  `prefix=$HOME/.local`, the same prefix the native installer owns, so
+  `npm install -g @anthropic-ai/claude-code` overwrote the native launcher at
+  `~/.local/bin/claude`. `claude update` then warned "Multiple installations
+  found" + "Configuration mismatch" and updated the npm copy instead.
+  - Curiosity poke: a half-finished native update leaves a ZERO-BYTE version
+    file (`~/.local/share/claude/versions/2.1.220` was 0 bytes) that still reads
+    as an installed version to the detector — size, not mere presence, is the
+    real health check.
+  Completed 2026-07-25 17:15 EDT: reinstalled the native build
+  (`claude install latest --force`), removed the npm-global package (needs an
+  explicit `--prefix`, and it deletes `~/.local/bin/claude` on the way out — the
+  native launcher symlink must be recreated afterward), and repointed
+  `upgrade_claude` at `command claude update`. `claude doctor` reports "No
+  installation issues found" (native 2.1.220, config method native), the alias
+  was verified behaviorally in an interactive shell, and the four-assertion
+  regression is green (154/155 dotfiles test files pass; the lone failure,
+  `block-attribution_test`, is unrelated — see below).
+
+- [ ] Restore the missing `~/.claude/hooks/` on framework-nixos. Both
+  `block-attribution/block-attribution.sh` (fails `block-attribution_test`) and
+  `block-git/block-git.sh` (the jj-only guard, so raw `git` is NOT blocked on
+  this box) are absent here though the canonical brief assumes them.
+
 ## Active — cross-platform GPU observability (started 2026-07-24)
 
 - [x] Add `gpuhogs`: a user-invoked Linux/macOS GPU-process snapshot command

@@ -204,7 +204,12 @@ alias lc='wc -l'
 
 alias upgrade_codex='npm install -g --prefix "$HOME/.local" @openai/codex@latest'
 alias update_codex=upgrade_codex
-alias upgrade_claude='npm install -g --allow-scripts=@anthropic-ai/claude-code @anthropic-ai/claude-code@latest'
+# Claude Code is a NATIVE install (binary in ~/.local/share/claude/versions/<ver>,
+# launcher symlinked at ~/.local/bin/claude) and self-updates. Do NOT switch this back
+# to `npm install -g @anthropic-ai/claude-code`: ~/.npmrc sets prefix=$HOME/.local, so
+# the npm copy overwrites the native launcher and Claude Code then reports "Multiple
+# installations found" + a config mismatch. `command` skips the `claude` shell function.
+alias upgrade_claude='command claude update'
 alias update_claude=upgrade_claude
 alias upgrade_opencode='echo "NOTE: This type of install currently will not run on NixOS as of 2025-10-29; use nixpkgs"; npm install -g --prefix "$HOME/.local" opencode-ai@latest'
 alias update_opencode=upgrade_opencode

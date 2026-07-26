@@ -1,10 +1,19 @@
 #!/usr/bin/env bash
 
+# Guards the Claude Code updater aliases.
+#
+# History: Claude Code is installed as a NATIVE build (binary in
+# ~/.local/share/claude/versions/<ver>, launcher symlinked at ~/.local/bin/claude)
+# and self-updates via `claude update`. An `npm install -g @anthropic-ai/claude-code`
+# lands in the SAME prefix (~/.npmrc sets prefix=$HOME/.local), so it overwrites the
+# native launcher and Claude Code then reports "Multiple installations found" plus a
+# config mismatch, leaving the updater confused about what it is updating.
+# These assertions keep the updater on the native self-update path.
+
 set -u
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
-alias_line="$(rg '^alias upgrade_claude=' "$repo_root/.aliases")"
-shadowed_prefix="--prefix \"\$HOME/.local\""
+aliases_file="$repo_root/.aliases"
 failures=0
 
 pass() {
@@ -16,22 +25,36 @@ fail() {
 	failures=$((failures + 1))
 }
 
-if [[ "$alias_line" != *"$shadowed_prefix"* ]]; then
-	pass 'Claude updater honors the configured npm global prefix'
+upgrade_line="$(rg '^alias upgrade_claude=' "$aliases_file")"
+update_line="$(rg '^alias update_claude=' "$aliases_file")"
+
+if [[ "$upgrade_line" != *'npm install'* ]]; then
+	pass 'Claude updater does not reinstall through npm'
 else
-	fail 'Claude updater must not install behind the earlier PATH entry'
+	fail 'Claude updater must not use npm; an npm global install clobbers the native launcher'
 fi
 
-if [[ "$alias_line" == *'--allow-scripts=@anthropic-ai/claude-code'* ]]; then
-	pass 'Claude updater explicitly allows only the reviewed package script'
+if [[ "$upgrade_line" == *'claude update'* ]]; then
+	pass 'Claude updater drives the native self-updater'
 else
-	fail 'Claude updater must explicitly allow the Anthropic postinstall'
+	fail 'Claude updater must run `claude update`'
 fi
 
-if [[ "$alias_line" == *'@anthropic-ai/claude-code@latest'* ]]; then
-	pass 'Claude updater requests the latest release explicitly'
+# `claude` is a shell FUNCTION here (it adds unlimited-privileges flags and resolves
+# its own path). Routing the updater through `command` skips that wrapper, so the
+# updater cannot be hijacked by — or fail inside — the function's `which claude` lookup.
+if [[ "$upgrade_line" == *'command claude'* ]]; then
+	pass 'Claude updater bypasses the claude shell function wrapper'
 else
-	fail 'Claude updater must request the latest Claude release'
+	fail 'Claude updater must invoke `command claude` so the shell function cannot intercept it'
+fi
+
+# Cover the alias family as a set: a future edit must not repair one name and
+# silently leave the other pointing at a stale updater.
+if [[ "$update_line" == *'upgrade_claude'* ]]; then
+	pass 'update_claude resolves to the same updater as upgrade_claude'
+else
+	fail 'update_claude must alias upgrade_claude so both names update identically'
 fi
 
 exit "$failures"
