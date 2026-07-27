@@ -1,16 +1,18 @@
 #!/usr/bin/env bash
 
+# Select the configured interactive or fallback editor while preserving every
+# caller argument as a distinct argv element, including paths containing spaces.
 choose_editor() {
 	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	if [[ -n "$VISUAL" && -t 1 ]]; then
 		# If VISUAL is set and the terminal is interactive
-		$VISUAL $*
+		$VISUAL "$@"
 	elif [[ -n "$EDITOR" ]]; then
 		# Otherwise, fall back to EDITOR if it's set
-		$EDITOR $*
+		$EDITOR "$@"
 	else
 		# Fallback to a sensible default, like vi or nano
-		nano $*
+		nano "$@"
 	fi
 }
 

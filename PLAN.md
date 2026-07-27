@@ -1,5 +1,28 @@
 # dotfiles — TODO / Plans
 
+## Active — shell helper argument correctness (2026-07-27)
+
+- [x] Remove inbox notes whose work is already landed using `rm-safe`; retain the
+  unresolved PageUp/PageDown and `session` notes until their work is handled.
+  Completed 2026-07-27 16:15 EDT; eight handled/superseded notes moved to the
+  recoverable trash.
+  - Curiosity poke: both assignment and completion notes for the same landed unit
+    are obsolete, while a superseded design note is removable only after its
+    replacement is evidenced in the repository.
+- [x] Make `edit "path with spaces"` pass the quoted path to the selected editor
+  as exactly one argument; preserve the complete argument vector for legitimate
+  multi-file editing. Add the regression red-first, run the focused and canonical
+  suites, update dirtree notes, and commit the known-good unit.
+  Completed 2026-07-27 16:18 EDT: the regression failed 3/5 before the fix and
+  passes 5/5 afterward; ShellCheck found no new warnings and all 160 repository
+  test files pass.
+  - Curiosity poke: directory/file/function/script classification should inspect
+    only the first argument, but the eventual editor invocation must not discard
+    or split any later arguments.
+- [ ] Repair the pending `session` regression reported 2026-07-26: outside tmux,
+  `new-session -A` must create-and-attach (`-AD`, not detached `-Ad`), with a
+  persistent attach-contract regression test before implementation.
+
 ## Active — suite gating (2026-07-25)
 
 - [x] Fix `erect-agent-stack_test` racing tmux session startup; it passed solo and

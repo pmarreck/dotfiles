@@ -66,6 +66,94 @@ fi
 rm -rf "$tmp_dir"
 rm -f /tmp/edit_test_stdout.$$ /tmp/edit_test_stderr.$$
 
+# Exercise the real edit -> choose_editor -> editor argv boundary. The earlier
+# tests intentionally stub choose_editor to isolate edit's classification.
+source "$repo_dir/bin/choose_editor"
+__edit_test_editor_argc=0
+__edit_test_editor_args=()
+# shellcheck disable=SC2329  # invoked indirectly through $EDITOR
+__edit_test_capture_editor() {
+	__edit_test_editor_argc=$#
+	__edit_test_editor_args=("$@")
+}
+EDITOR=__edit_test_capture_editor
+VISUAL=""
+
+((tests++))
+echo "Testing: edit preserves a quoted file path containing spaces as one editor argument..."
+tmp_dir="$(mktemp --tmpdir -d edit_test.XXXXXX)"
+quoted_path="$tmp_dir/file name with spaces.txt"
+touch "$quoted_path"
+__edit_test_editor_argc=0
+__edit_test_editor_args=()
+if edit "$quoted_path" >/tmp/edit_test_stdout.$$ 2>/tmp/edit_test_stderr.$$; then
+	if (( __edit_test_editor_argc == 1 )) && [[ "${__edit_test_editor_args[0]}" == "$quoted_path" ]]; then
+		echo "[PASS] edit preserved the quoted path as one editor argument"
+	else
+		echo "[FAIL] Expected one editor argument '$quoted_path'; got $__edit_test_editor_argc: '${__edit_test_editor_args[*]}'" >&2
+		((fails++))
+	fi
+else
+	echo "[FAIL] edit command failed for a quoted path containing spaces" >&2
+	cat /tmp/edit_test_stderr.$$ >&2
+	((fails++))
+fi
+rm -rf "$tmp_dir"
+rm -f /tmp/edit_test_stdout.$$ /tmp/edit_test_stderr.$$
+
+((tests++))
+echo "Testing: edit preserves multiple file arguments in order..."
+tmp_dir="$(mktemp --tmpdir -d edit_test.XXXXXX)"
+first_path="$tmp_dir/first file.txt"
+second_path="$tmp_dir/second file.txt"
+touch "$first_path" "$second_path"
+__edit_test_editor_argc=0
+__edit_test_editor_args=()
+if edit "$first_path" "$second_path" >/tmp/edit_test_stdout.$$ 2>/tmp/edit_test_stderr.$$; then
+	if (( __edit_test_editor_argc == 2 )) &&
+		[[ "${__edit_test_editor_args[0]}" == "$first_path" ]] &&
+		[[ "${__edit_test_editor_args[1]}" == "$second_path" ]]; then
+		echo "[PASS] edit preserved both file arguments in order"
+	else
+		echo "[FAIL] Expected two ordered editor arguments '$first_path' and '$second_path'; got $__edit_test_editor_argc: '${__edit_test_editor_args[*]}'" >&2
+		((fails++))
+	fi
+else
+	echo "[FAIL] edit command failed for multiple file arguments" >&2
+	cat /tmp/edit_test_stderr.$$ >&2
+	((fails++))
+fi
+rm -rf "$tmp_dir"
+rm -f /tmp/edit_test_stdout.$$ /tmp/edit_test_stderr.$$
+
+((tests++))
+echo "Testing: edit does not misclassify a spaced new filename as a same-named function..."
+tmp_dir="$(mktemp --tmpdir -d edit_test.XXXXXX)"
+# shellcheck disable=SC2329  # discovered indirectly by the function classifier
+collision() {
+	:
+}
+__edit_test_editor_argc=0
+__edit_test_editor_args=()
+pushd "$tmp_dir" >/dev/null || exit 1
+if edit "collision draft.txt" >/tmp/edit_test_stdout.$$ 2>/tmp/edit_test_stderr.$$; then
+	popd >/dev/null || exit 1
+	if (( __edit_test_editor_argc == 1 )) && [[ "${__edit_test_editor_args[0]}" == "collision draft.txt" ]]; then
+		echo "[PASS] edit treated the complete new filename as one editor argument"
+	else
+		echo "[FAIL] Expected one editor argument 'collision draft.txt'; got $__edit_test_editor_argc: '${__edit_test_editor_args[*]}'" >&2
+		((fails++))
+	fi
+else
+	popd >/dev/null || exit 1
+	echo "[FAIL] edit command failed for a new filename colliding with a function name" >&2
+	cat /tmp/edit_test_stderr.$$ >&2
+	((fails++))
+fi
+unset -f collision
+rm -rf "$tmp_dir"
+rm -f /tmp/edit_test_stdout.$$ /tmp/edit_test_stderr.$$
+
 if (( fails == 0 )); then
 	echo "edit_test PASSED: all $tests tests passed"
 else

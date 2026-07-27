@@ -2,6 +2,8 @@
 
 read -ra GREP_QUIET_ARRAY <<< "${GREP_QUIET:-grep -q}" # rehydrate exported string (arrays aren't exportable)
 
+# Resolve the first argument as a path/function/script, while forwarding path
+# arguments to the editor without changing their count, contents, or order.
 edit() {
 	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	if [ $# -eq 0 ]; then
@@ -9,15 +11,15 @@ edit() {
 	fi
 	# if the path is a directory, edit the directory without further checks
 	if [ -d "$1" ]; then
-		choose_editor "$1"
+		choose_editor "$@"
 	# if the file is in the current directory, edit it
 	elif [ -f "$1" ]; then
-		choose_editor "$1"
+		choose_editor "$@"
 	# if the file is a function, edit it by running it with EDIT=1 (which in my bash functions will fire up an editor at that line)
-	elif contains "$(functions)" $1; then
-		EDIT=1 $1
+	elif contains "$(functions)" "$1"; then
+		EDIT=1 "$1"
 	# if the file is an executable script, edit it
-	elif contains "$(executables --scripts)" $1; then
+	elif contains "$(executables --scripts)" "$1"; then
 		local full_path=$(which "$1")
 		# search for presence of "unset EDIT" in file to assume it uses my pattern of firing up an editor for that file or function if EDIT is set and it is run
 		if "${GREP_QUIET_ARRAY[@]}" "unset EDIT" "$full_path"; then
@@ -26,7 +28,7 @@ edit() {
 			choose_editor "$full_path"
 		fi
 	else
-		choose_editor "$1"
+		choose_editor "$@"
 	fi
 }
 
