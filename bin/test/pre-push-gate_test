@@ -101,6 +101,47 @@ r=$(make_runner 0 155 '⊘ SKIPPED (asserted nothing): some brand new hole nobod
 [ "$(run_gate "$r")" != 0 ] && ok "an unlisted skip fails the gate" \
 	|| bad "a skip that is not on the allowlist must fail the push"
 
+
+# ── "Nothing to push" must not run the suite ──────────────────────────────────
+# Running 160 tests to push zero commits is not just slow, it is a meaningless
+# gate: there is no new code to validate. Git contacts the remote BEFORE calling
+# pre-push and feeds the hook "<local ref> <local sha> <remote ref> <remote sha>"
+# on stdin, where remote sha is the freshly negotiated remote state — so this
+# decision needs no fetch of our own.
+# Tested in BOTH directions: a gate that always skipped would pass the first
+# assertion and is caught by the second.
+_marker="$WORK/runner_ran"
+_wrapped() { # wrap a runner so we can observe whether it was invoked at all
+	local inner="$1" w="$WORK/wrapper"
+	{ printf '#!%s\n' "$BASH"; printf 'touch %q\n' "$_marker"; printf 'exec %q "$@"\n' "$inner"; } > "$w"
+	chmod +x "$w"; printf '%s' "$w"
+}
+_hook_gate() { # $1=runner $2=local sha $3=remote sha ; echoes exit code
+	printf 'refs/heads/master %s refs/heads/master %s\n' "$2" "$3" \
+		| PRE_PUSH_GATE_RUNNER="$1" PRE_PUSH_GATE_MIN_TESTS=155 "$GATE" >/dev/null 2>&1
+	printf '%s' "$?"
+}
+_same=1111111111111111111111111111111111111111
+_diff=2222222222222222222222222222222222222222
+
+((tests++))
+rm -f "$_marker"; w=$(_wrapped "$(make_runner 0 155)")
+rc=$(_hook_gate "$w" "$_same" "$_same")
+if [ "$rc" = 0 ] && [ ! -e "$_marker" ]; then
+	ok "nothing to push → suite skipped entirely"
+else
+	bad "an up-to-date ref must skip the suite and pass" \
+		"exit=$rc  runner_invoked=$([ -e "$_marker" ] && echo yes || echo no)"
+fi
+
+((tests++))
+rm -f "$_marker"; w=$(_wrapped "$(make_runner 0 155)")
+rc=$(_hook_gate "$w" "$_diff" "$_same")
+if [ -e "$_marker" ]; then
+	ok "commits to push → suite still runs"
+else
+	bad "a ref with new commits MUST still run the suite" "exit=$rc"
+fi
 echo
 if [ "$fails" -eq 0 ]; then
 	echo "All $tests pre-push-gate tests passed"

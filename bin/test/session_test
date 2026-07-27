@@ -4,8 +4,14 @@
 #       outside tmux, but switch-client when already INSIDE tmux (you cannot
 #       `attach` a nested session — `tmux new -A` silently failed to switch),
 #   (b) forward "$@" through the bin/session executable to the function.
-# External attach also detaches an older client on the same session, avoiding
-# mixed terminal geometries that can trigger redundant redraw work.
+# External attach uses -AD, NOT -Ad. Lowercase -d means "do not attach the new
+# session to the current terminal", so `session NAME` created the session and
+# left you where you were — a second invocation then found it existing and
+# attached, which is the "have to run it twice" bug Peter reported 2026-07-27.
+# Uppercase -D is the flag that means "detach OTHER clients" (like
+# attach-session -d), which is the behavior the comment always intended.
+# This test previously asserted -Ad, pinning the bug: it was written to agree
+# with the implementation rather than the intent, so it passed vacuously.
 # Regression guard: a dropped "$@" once collapsed every `session NAME` to the
 # default session (bin/session called `session`, not `session "$@"`).
 #
@@ -29,7 +35,7 @@ export -f tmux # so the bin/session subprocess (last check) sees the mock too
 . "$_here/../src/session.bash"
 
 check "outside tmux → attach-or-create" \
-	"tmux new-session -Ad -s mini_blar" \
+	"tmux new-session -AD -s mini_blar" \
 	"$(unset TMUX; session mini_blar)"
 
 check "inside tmux, session exists → switch-client only" \
@@ -41,12 +47,12 @@ check "inside tmux, session absent → create detached then switch" \
 	"$(TMUX=fake MOCK_HAS=1 session mini_blar)"
 
 check "no arg → default session (preserved)" \
-	"tmux new-session -Ad -s default" \
+	"tmux new-session -AD -s default" \
 	"$(unset TMUX; session)"
 
 # The executable must forward its arg (not collapse to default).
 check "bin/session forwards its arg through to the function" \
-	"tmux new-session -Ad -s mini_blar" \
+	"tmux new-session -AD -s mini_blar" \
 	"$(TMUX= "$_here/../session" mini_blar)"
 
 exit $fails

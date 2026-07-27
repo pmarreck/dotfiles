@@ -11,9 +11,12 @@ session() {
 		tmux has-session -t "=$name" 2>/dev/null || tmux new-session -d -s "$name"
 		tmux switch-client -t "=$name"
 	else
-		# `-d` modifies `-A`'s attach behavior: detach an older client already
-		# viewing this session, preventing mixed-size duplicate redraw storms.
-		tmux new-session -Ad -s "$name"
+		# `-D` (uppercase) modifies `-A`'s attach behavior: attach, and detach an
+		# older client already viewing this session, preventing mixed-size duplicate
+		# redraw storms. Lowercase `-d` means "do NOT attach to the current
+		# terminal" — it was here until 2026-07-27 and caused `session NAME` to
+		# create the session without joining it, so you had to run it twice.
+		tmux new-session -AD -s "$name"
 	fi
 }
 
