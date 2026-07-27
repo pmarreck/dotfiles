@@ -1,0 +1,396 @@
+#!/usr/bin/env bash
+# steam-procs_test — enumeration layer: turning a process table into a matched
+# SET, with the exclusions that keep a kill tool from eating its own operator.
+#
+# Two tiers, deliberately:
+#
+#   A. HERMETIC. steam-procs reads its process table from $STEAM_PROCS_PROC_ROOT,
+#      so these cases build a fake /proc and assert EXACT SET EQUALITY on the
+#      matched pids. Deterministic, no Steam required, no live processes touched.
+#
+#   B. LIVE. Run against the real /proc. These cannot assert an exact set (the
+#      machine's state is not ours to fix), but they assert the invariants that
+#      matter with independent oracles: no kernel thread, never pid 1, never this
+#      test or its ancestors, and — the one that would have caught the 85-process
+#      regression — never a Claude agent, node, or tmux server.
+#
+# The live tier branches on whether Steam is running, using `pgrep -x steam` as
+# an oracle independent of the classifier. Both branches assert something real;
+# neither is a skip. The branch taken is printed so a reader can tell which
+# evidence this run produced.
+
+set -u
+
+PROCS="$HOME/dotfiles/bin/steam-procs"
+
+tests=0
+fails=0
+ok()  { echo "✓ $1"; }
+bad() { { echo "✗ $1"; shift; [ $# -gt 0 ] && printf '    %s\n' "$@"; } >&2; fails=$((fails+1)); }
+
+if [ ! -x "$PROCS" ]; then
+	echo "✗ $PROCS does not exist or is not executable" >&2
+	echo "1 of 1 steam-procs tests failed" >&2
+	exit 1
+fi
+
+WORK=$(mktemp -d --tmpdir steam_procs_test.XXXXXX)
+trap 'rm -rf "$WORK"' EXIT
+
+# --------------------------------------------------------------------------
+# A. Hermetic tier: a synthetic /proc.
+# --------------------------------------------------------------------------
+
+FAKE="$WORK/proc"
+mkdir -p "$FAKE"
+
+# mkproc PID COMM EXE PPID ARGV...
+# An empty EXE creates no exe symlink (unreadable or kernel thread); an empty
+# ARGV writes an empty cmdline, which is how the kernel marks kernel threads.
+mkproc() {
+	local pid="$1" comm="$2" exe="$3" ppid="$4"; shift 4
+	local d="$FAKE/$pid"
+	mkdir -p "$d"
+	printf '%s\n' "$comm" > "$d/comm"
+	[ -n "$exe" ] && ln -sfn "$exe" "$d/exe"
+	printf 'Name:\t%s\nPid:\t%s\nPPid:\t%s\n' "$comm" "$pid" "$ppid" > "$d/status"
+	if [ "$#" -gt 0 ]; then
+		printf '%s\0' "$@" > "$d/cmdline"
+	else
+		: > "$d/cmdline"
+	fi
+}
+
+PROTON='/home/pmarreck/.local/share/Steam/steamapps/common/Proton - Experimental'
+
+# --- Steam/Proton/Wine: every one of these must be matched. ---
+mkproc 100 'steam'          '/home/pmarreck/.local/share/Steam/ubuntu12_32/steam' 1 \
+	'/home/pmarreck/.local/share/Steam/ubuntu12_32/steam'
+mkproc 110 'steamwebhelper' '/home/pmarreck/.local/share/Steam/ubuntu12_64/steamwebhelper' 100 \
+	'./steamwebhelper' '-nocrashdialog'
+mkproc 120 'reaper'         '/home/pmarreck/.local/share/Steam/ubuntu12_32/reaper' 100 \
+	'reaper' 'SteamLaunch' 'AppId=1361210'
+mkproc 130 'wineserver'     "$PROTON/files/bin/wineserver" 100 \
+	"$PROTON/files/lib/wine/../../bin/wineserver"
+mkproc 140 'services.exe'   "$PROTON/files/lib/wine/x86_64-unix/wine64-preloader" 130 \
+	'C:\windows\system32\services.exe'
+mkproc 150 'plugplay.exe'   "$PROTON/files/lib/wine/x86_64-unix/wine64-preloader" 140 \
+	'C:\windows\system32\plugplay.exe'
+mkproc 160 'svchost.exe'    "$PROTON/files/lib/wine/x86_64-unix/wine64-preloader" 140 \
+	'C:\windows\system32\svchost.exe' '-k' 'netsvcs'
+mkproc 170 'winedevice.exe' "$PROTON/files/lib/wine/x86_64-unix/wine64-preloader" 140 \
+	'C:\windows\system32\winedevice.exe'
+mkproc 180 'Launcher.exe'   "$PROTON/files/lib/wine/x86_64-unix/wine64-preloader" 140 \
+	'Z:\mnt\steam-nvme\SteamLibrary\steamapps\common\DARKTIDE\launcher\Launcher.exe'
+# The game itself: comm is "main", argv is a Windows drive path, no "steam" in
+# either. Only the exe path identifies it.
+mkproc 190 'main'           "$PROTON/files/lib/wine/x86_64-unix/wine64-preloader" 180 \
+	'S:\common\DARKTIDE\binaries\Darktide.exe' '-eac-untrusted'
+# Innocent interpreters running Steam-resident scripts.
+mkproc 200 'python3'        '/usr/bin/python3.13' 100 \
+	'python3' "$PROTON/proton" 'waitforexitandrun'
+mkproc 210 'bash'           '/nix/store/rw9azi9-bash-interactive-5.3p9/bin/bash' 1 \
+	'bash' '/home/pmarreck/.local/share/Steam/steam.sh' '-srt-logger-opened'
+
+STEAM_PIDS='100 110 120 130 140 150 160 170 180 190 200 210'
+
+# --- Innocent: none of these may be matched. ---
+# Agents. Note the exe basename ends in .exe — the trap that would kill the fleet.
+mkproc 300 'claude' '/home/pmarreck/.npm-global/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe' 1 \
+	'/home/pmarreck/.npm-global/bin/claude' '--rc' '--permission-mode' 'bypassPermissions'
+mkproc 310 'node'   '/nix/store/qq1bhy1-nodejs-22.14.0/bin/node' 300 \
+	'node' '/home/pmarreck/.npm-global/bin/claude'
+# An agent working on THIS task: "steam" appears repeatedly in its argv.
+mkproc 320 'bash'   '/nix/store/bbzjxfam-bash-interactive-5.3p9/bin/bash' 300 \
+	'bash' '-c' 'cat /home/pmarreck/dotfiles/inbox/2026-07-26-from-Einstein-steam-procs-classifier-spec.md'
+mkproc 330 'nvim'   '/nix/store/9zk3v1p8-neovim-0.11.0/bin/nvim' 1 \
+	'nvim' '/home/pmarreck/dotfiles/bin/steam-procs'
+mkproc 340 'tmux: server' '/nix/store/ajvll7kw-tmux-3.6a/bin/tmux' 1 \
+	'tmux' 'new-session' '-Ad' '-s' 'Einstein'
+mkproc 350 'protonmail-brid' '/home/pmarreck/.local/bin/protonmail-bridge' 1 \
+	'protonmail-bridge' '--noninteractive'
+mkproc 360 'systemd' '/run/current-system/systemd/lib/systemd/systemd' 1 \
+	'/run/current-system/systemd/lib/systemd/systemd' '--user'
+# Kernel threads: no exe, empty cmdline. oom_reaper collides with Steam's reaper.
+mkproc 800 'oom_reaper' '' 2
+mkproc 810 'kthreadd'   '' 0
+mkproc 820 'z_wr_iss_0' '' 2
+
+run_fake() { STEAM_PROCS_PROC_ROOT="$FAKE" "$PROCS" "$@"; }
+
+# 1. Exact set equality — the classifier-over-sets discipline at this layer.
+tests=$((tests+1))
+got=$(run_fake --pids | sort -n | tr '\n' ' ' | sed 's/ *$//')
+want=$(printf '%s\n' $STEAM_PIDS | sort -n | tr '\n' ' ' | sed 's/ *$//')
+if [ "$got" = "$want" ]; then
+	ok "matched set is exactly the Steam/Proton/Wine processes (12 of 22)"
+else
+	missing=""; extra=""
+	for p in $want; do case " $got " in *" $p "*) ;; *) missing="$missing $p" ;; esac; done
+	for p in $got;  do case " $want " in *" $p "*) ;; *) extra="$extra $p" ;; esac; done
+	bad "matched set differs from the expected set" \
+	    "missing (should have matched):$missing" \
+	    "extra (FALSE POSITIVES — these get killed):$extra"
+fi
+
+# 2. Kernel threads must never appear, whatever they are named.
+tests=$((tests+1))
+if run_fake --pids | grep -qE '^(800|810|820)$'; then
+	bad "a kernel thread was matched (oom_reaper/kthreadd/z_wr_iss_0)"
+else
+	ok "kernel threads are never matched"
+fi
+
+# 3. Agents must never appear. This is the 85-process regression, in miniature.
+tests=$((tests+1))
+if run_fake --pids | grep -qE '^(300|310|320)$'; then
+	bad "a Claude agent / node / task shell was matched" \
+	    "an exe path ending in claude.exe must not read as a Wine binary"
+else
+	ok "Claude agents are never matched, including one whose argv is full of steam"
+fi
+
+# 4. Newest first: children must be killed before the parents that respawn them.
+tests=$((tests+1))
+order=$(run_fake --pids | tr '\n' ' ' | sed 's/ *$//')
+sorted=$(run_fake --pids | sort -rn | tr '\n' ' ' | sed 's/ *$//')
+if [ "$order" = "$sorted" ]; then
+	ok "output is ordered newest-pid-first"
+else
+	bad "output is not newest-first" "got:    $order" "wanted: $sorted"
+fi
+
+# 5. --pids must be machine-consumable: integers only, nothing else.
+tests=$((tests+1))
+if run_fake --pids | grep -qvE '^[0-9]+$'; then
+	bad "--pids emitted a non-integer line" "$(run_fake --pids | grep -vE '^[0-9]+$' | head -3)"
+else
+	ok "--pids emits bare integers only"
+fi
+
+# 6. Default output carries the command line, so a human can see what dies.
+tests=$((tests+1))
+if run_fake | grep -q '190' && run_fake | grep -q 'Darktide.exe'; then
+	ok "default output shows pid and command line"
+else
+	bad "default output is missing the pid or the command line" "$(run_fake | head -3)"
+fi
+
+# 7. --explain must attribute every line to a rule; unexplained kills are not
+#    something a user can sanity-check before pulling the trigger.
+tests=$((tests+1))
+unexplained=$(run_fake --explain | grep -cvE '(exe-under-steam-path|wine-loader-binary|wine-hosted-exe-comm|wine-service-comm|steam-comm|steam-path-in-argv)' || true)
+if [ "$unexplained" -eq 0 ]; then
+	ok "--explain names the rule that fired on every line"
+else
+	bad "$unexplained lines from --explain named no rule" "$(run_fake --explain | head -3)"
+fi
+
+# 8. An empty process table yields an empty set and a clean exit, not an error
+#    and not the whole table.
+tests=$((tests+1))
+mkdir -p "$WORK/emptyproc"
+out=$(STEAM_PROCS_PROC_ROOT="$WORK/emptyproc" "$PROCS" --pids 2>&1); rc=$?
+if [ -z "$out" ] && [ "$rc" -eq 1 ]; then
+	ok "empty process table → no output, rc 1 (nothing found)"
+else
+	bad "empty process table should yield nothing and rc 1" "rc=$rc out=[$out]"
+fi
+
+# --------------------------------------------------------------------------
+# B. Live tier: the real /proc on this machine.
+# --------------------------------------------------------------------------
+
+if [ ! -r /proc/self/cmdline ]; then
+	# Not Linux. The ps fallback is exercised instead; assert it does not crash
+	# and honours --pids.
+	tests=$((tests+1))
+	out=$("$PROCS" --pids 2>&1); rc=$?
+	if [ "$rc" -le 1 ] && ! printf '%s' "$out" | grep -qvE '^[0-9]*$'; then
+		ok "non-Linux ps fallback runs and emits pids only"
+	else
+		bad "ps fallback misbehaved" "rc=$rc out=$(printf '%s' "$out" | head -3)"
+	fi
+else
+	live_pids=$("$PROCS" --pids 2>/dev/null || true)
+	live_count=$(printf '%s' "$live_pids" | grep -c . || true)
+
+	# 9. Never this test, and never any of its ancestors — a tool that kills its
+	#    own operator's shell is worse than no tool.
+	tests=$((tests+1))
+	chain=""; p=$$
+	while [ -n "$p" ] && [ "$p" != "0" ] && [ "$p" != "1" ]; do
+		chain="$chain $p"
+		p=$(awk '/^PPid:/{print $2}' "/proc/$p/status" 2>/dev/null)
+	done
+	selfhit=""
+	for c in $chain; do
+		case $'\n'"$live_pids"$'\n' in *$'\n'"$c"$'\n'*) selfhit="$selfhit $c" ;; esac
+	done
+	if [ -z "$selfhit" ]; then
+		ok "excludes itself and its whole ancestor chain ($(printf '%s' "$chain" | wc -w) pids)"
+	else
+		bad "matched itself or an ancestor:$selfhit" "running the killer would kill the shell that ran it"
+	fi
+
+	# 10. THE REGRESSION DETECTOR. Independent oracle: pgrep by exact comm. No
+	#     agent, node, or tmux server may ever be matched, Steam running or not.
+	tests=$((tests+1))
+	protected=""
+	for name in claude node tmux ssh sshd systemd bash zsh; do
+		protected="$protected $(pgrep -x "$name" 2>/dev/null | tr '\n' ' ')"
+	done
+	hits=""
+	for c in $protected; do
+		case $'\n'"$live_pids"$'\n' in *$'\n'"$c"$'\n'*) hits="$hits $c" ;; esac
+	done
+	# The Steam client is itself started by a bash script, so a matched bash is
+	# legitimate iff its argv names a Steam path. Re-check those against argv.
+	real_hits=""
+	for h in $hits; do
+		if ! tr '\0' ' ' < "/proc/$h/cmdline" 2>/dev/null | grep -qiE '/(steamapps|\.steam|steamlibrary|pressure-vessel)/|/\.local/share/[Ss]team/'; then
+			real_hits="$real_hits $h($(cat "/proc/$h/comm" 2>/dev/null))"
+		fi
+	done
+	nprot=$(printf '%s' "$protected" | wc -w)
+	if [ -z "$real_hits" ]; then
+		ok "no agent/shell/tmux/ssh process matched ($nprot protected pids checked)"
+	else
+		bad "matched processes that are NOT Steam:$real_hits" \
+		    "this is the 85-process regression — running the killer would take them out"
+	fi
+
+	# procfs reports st_size 0 for every /proc file, so `[ -s cmdline ]` is ALWAYS
+	# false and silently turns any check built on it into a vacuous pass. Read the
+	# content instead. (Learned the hard way: an earlier draft of this file used
+	# -s and reported "0 Wine processes found" while 12 were running.)
+	has_argv() {
+		local f
+		IFS= read -r -d '' f < "/proc/$1/cmdline" 2>/dev/null && [ -n "$f" ]
+	}
+
+	# 11. No kernel thread, and never pid 1.
+	tests=$((tests+1))
+	ktp=""
+	for c in $live_pids; do
+		[ "$c" = "1" ] && ktp="$ktp 1(init)"
+		[ -e "/proc/$c/cmdline" ] || continue
+		has_argv "$c" || ktp="$ktp $c($(cat "/proc/$c/comm" 2>/dev/null))"
+	done
+	if [ -z "$ktp" ]; then
+		ok "no kernel thread and not pid 1 among $live_count matches"
+	else
+		bad "matched a kernel thread or init:$ktp"
+	fi
+
+	# 12. THE INDEPENDENT CONTROL: cgroup membership.
+	#
+	#     Neither ancestry nor session id works as an oracle here — Steam's
+	#     helpers get orphaned onto systemd --user (srt-logger's ppid is the user
+	#     manager, not Steam), and pressure-vessel setsid()s every container, so
+	#     each gets its own session. Cgroup membership survives both: it is
+	#     assigned by systemd, inherited by children, and unaffected by
+	#     reparenting.
+	#
+	#     Measured on this host: all Steam processes sit in
+	#     session.slice/org.gnome.Shell@user.service while every agent sits in
+	#     app.slice/tmux-spawn-<uuid>.scope. The classifier reads none of this,
+	#     which is exactly what makes it evidence rather than a restatement.
+	tests=$((tests+1))
+	cgroup_of() { sed -n 's/^0:://p' "/proc/$1/cgroup" 2>/dev/null | head -1; }
+	my_cg=$(cgroup_of $$)
+	if [ -z "$my_cg" ]; then
+		# No cgroup v2 accounting (non-systemd Linux). Fall back to the pid-set
+		# form of the same claim rather than asserting nothing.
+		agent_pids=$(pgrep -x claude 2>/dev/null | tr '\n' ' ')
+		hits=""
+		for c in $agent_pids; do
+			case $'\n'"$live_pids"$'\n' in *$'\n'"$c"$'\n'*) hits="$hits $c" ;; esac
+		done
+		if [ -z "$hits" ]; then
+			ok "no agent matched (cgroup v2 unavailable; used the pid-set form)"
+		else
+			bad "matched agent pids:$hits"
+		fi
+	else
+		# Cgroups holding the agent fleet, plus our own — unless Steam itself was
+		# launched from our cgroup, in which case overlap there is legitimate.
+		declare -A PROTECTED_CG=()
+		for c in $(pgrep -x claude 2>/dev/null); do
+			cg=$(cgroup_of "$c"); [ -n "$cg" ] && PROTECTED_CG["$cg"]=1
+		done
+		steam_cg=""
+		sr=$(pgrep -x steam 2>/dev/null | head -1)
+		[ -n "$sr" ] && steam_cg=$(cgroup_of "$sr")
+		[ "$my_cg" != "$steam_cg" ] && PROTECTED_CG["$my_cg"]=1
+		trespass=""
+		for c in $live_pids; do
+			cg=$(cgroup_of "$c")
+			[ -n "${PROTECTED_CG[$cg]:-}" ] && trespass="$trespass $c($(cat "/proc/$c/comm" 2>/dev/null))"
+		done
+		ncg="${#PROTECTED_CG[@]}"
+		if [ -z "$trespass" ]; then
+			ok "matched set is disjoint from the $ncg agent/self cgroup(s)"
+		else
+			bad "matched processes inside a protected cgroup:$trespass" \
+			    "this is the 85-process regression: the killer would take out the fleet"
+		fi
+	fi
+
+	# 13. Steam-state evidence. Oracle is `pgrep -x steam`, which knows nothing of
+	#     our classifier. Both branches assert; neither is a skip.
+	tests=$((tests+1))
+	steam_root=$(pgrep -x steam 2>/dev/null | head -1)
+	if [ -z "$steam_root" ]; then
+		echo "  (live tier: Steam is NOT running — asserting the matched set is empty)"
+		if [ "$live_count" -eq 0 ]; then
+			ok "Steam not running → zero matches"
+		else
+			bad "Steam is not running yet $live_count processes matched" \
+			    "$("$PROCS" --explain 2>/dev/null | head -5)"
+		fi
+	else
+		echo "  (live tier: Steam IS running as pid $steam_root)"
+		if printf '%s\n' "$live_pids" | grep -qx "$steam_root"; then
+			ok "the running Steam client itself is matched (pid $steam_root)"
+		else
+			bad "Steam is running as pid $steam_root but was not matched" \
+			    "a cleanup that spares the client leaves it to respawn everything"
+		fi
+	fi
+
+	# 14. Sensitivity on the live table: every Wine-hosted .exe process that
+	#     exists right now must be matched. These are the ones that survive a
+	#     crashed launch and block the next one.
+	tests=$((tests+1))
+	wine_live=""; wine_missed=""
+	for d in $(glob echo /proc/[0-9]*); do
+		pid="${d#/proc/}"
+		c=$(cat "$d/comm" 2>/dev/null) || continue
+		case "$c" in
+			*.exe)
+				has_argv "$pid" || continue
+				wine_live="$wine_live $pid"
+				case $'\n'"$live_pids"$'\n' in
+					*$'\n'"$pid"$'\n'*) ;;
+					*) wine_missed="$wine_missed $pid($c)" ;;
+				esac
+				;;
+		esac
+	done
+	nwine=$(printf '%s' "$wine_live" | wc -w)
+	if [ -z "$wine_missed" ]; then
+		ok "every live Wine-hosted .exe process is matched ($nwine found)"
+	else
+		bad "missed live Wine processes:$wine_missed" \
+		    "these are exactly the ones that wedge the next Proton launch"
+	fi
+fi
+
+echo
+if [ "$fails" -eq 0 ]; then
+	echo "All $tests steam-procs tests passed"
+else
+	echo "$fails of $tests steam-procs tests failed" >&2
+fi
+exit "$fails"

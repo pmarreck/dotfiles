@@ -27,7 +27,12 @@ trap 'rm -rf "$WORK"' EXIT
 make_runner() {
 	local rc="$1" n="$2"; shift 2
 	{
-		printf '#!/usr/bin/env bash\n'
+		# $BASH, not /usr/bin/env: this file is written at run time, so the
+		# flake's `patchShebangs bin` never sees it, and /usr/bin/env is absent
+		# inside the Nix sandbox. An unrunnable fake runner makes the gate see an
+		# empty report — which the gate correctly refuses, failing tests that
+		# assert a valid pass.
+		printf '#!%s\n' "$BASH"
 		printf 'i=0; while [ "$i" -lt %s ]; do printf "PASS fake_%%s_test\\n" "$i"; i=$((i+1)); done\n' "$n"
 		for extra in "$@"; do printf 'printf "%%s\\n" %q\n' "$extra"; done
 		# Emit the canonical success summary only on the green path, mirroring the

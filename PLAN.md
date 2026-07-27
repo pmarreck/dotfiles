@@ -16,6 +16,22 @@
   - Curiosity poke: bash truncates a child's exit status mod 256, so `exit 256`
     is indistinguishable from success — which is exactly why the runner caps its
     summed status at 255 and why the gate keys on positive evidence.
+- [x] Rebuild the Steam/Proton process classifier on executable paths rather than
+  argv, split pure classifier / enumeration / killing, and give the killer a
+  `--dry-run`. 2026-07-26 21:30 EDT.
+  - Measured against a live wedged Darktide launch, the old argv heuristic missed
+    11 of 20 true positives (every Wine helper, plus the game process itself,
+    whose argv is `S:\...\Darktide.exe`) and matched 4 innocent processes —
+    including the shell invoking the killer.
+  - Curiosity poke that paid off twice: every Claude agent's `/proc/pid/exe`
+    resolves to `.../claude-code/bin/claude.exe`, so keying the Wine rule on the
+    EXE basename rather than `comm` would have killed the whole fleet — the same
+    outcome as the reverted environment-based version, by a different door. And a
+    candidate `/nix/store/*-steam-*` argv rule was rejected after it matched the
+    diagnostic shell that was testing for it.
+  - `-s` is ALWAYS false on procfs (st_size is 0 even with content); it silently
+    turned one live assertion into a vacuous pass reporting "0 Wine processes"
+    while 12 were running. Read the content, never stat it.
 - [ ] Decide whether to test every commit in the outgoing range (≤5, in a detached
   temp worktree) rather than just the tip. Mechatron judges each pushed commit
   against its exact-commit manifest, so a red middle commit surfaces as a real

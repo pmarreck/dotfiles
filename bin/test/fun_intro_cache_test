@@ -75,28 +75,34 @@ else
 fi
 
 # Test 4: if expect is available, regenerated cache preserves ANSI escapes.
-# This is statistical — a single regen may pick a script that doesn't emit
-# ANSI (e.g., bashorg_quote). Try a few times to maximize chance of hitting
-# an ANSI-emitter (just_one_taoup, mandelbash, asciidragon, etc.).
+#
+# Pinned to mandelbash via --pick, rather than rolling the random pool up to 8
+# times. The old form was nondeterministic by construction — it passed only if a
+# random draw happened to land on an ANSI-emitting tool, so it failed reliably in
+# the Nix sandbox (where the pool's ANSI emitters mostly cannot run) while
+# passing on the host. A test whose verdict depends on a dice roll is not
+# evidence about the code. mandelbash always emits ANSI and is the same tool the
+# byte-identical check below already relies on.
 ((tests++))
-if command -v expect >/dev/null 2>&1; then
-	echo "Testing: expect-based regen preserves ANSI (max 8 attempts)..."
+if command -v expect >/dev/null 2>&1 && command -v mandelbash >/dev/null 2>&1; then
+	echo "Testing: expect-based regen preserves ANSI (pinned to mandelbash)..."
 	found_ansi=false
-	for attempt in 1 2 3 4 5 6 7 8; do
-		fun_intro --regenerate-cache >/dev/null 2>&1
-		if grep -q $'\033' "$EXPECTED_PATH" 2>/dev/null; then
-			found_ansi=true
-			echo "✓ Test passed: ANSI escapes captured in cache (attempt $attempt)"
-			break
-		fi
-	done
+	fun_intro --regenerate-cache --pick=mandelbash >/dev/null 2>&1
+	if grep -q $'\033' "$EXPECTED_PATH" 2>/dev/null; then
+		found_ansi=true
+		echo "✓ Test passed: ANSI escapes captured in cache"
+	fi
 	if ! $found_ansi; then
-		echo "✗ Test failed: no ANSI escapes after 8 regen attempts" >&2
-		echo "  (statistical — try running again, but if persistent indicates expect/PTY issue)" >&2
+		echo "✗ Test failed: no ANSI escapes in the regenerated cache" >&2
+		echo "  mandelbash always emits ANSI, so this is a real expect/PTY capture fault" >&2
 		((fails++))
 	fi
 else
-	echo "✓ Test skipped: expect not on PATH (would use direct fallback)"
+	# A skip is a check that asserted nothing. Say so on stderr, with what/why/
+	# when, rather than printing a ✓ that reads like evidence in the log.
+	echo "⊘ SKIPPED (asserted nothing): expect-based regen preserves ANSI" >&2
+	echo "    why:  expect and/or mandelbash are not on PATH here" >&2
+	echo "    when: decision made 2026-07-26" >&2
 fi
 
 # Test 4b: byte-fidelity regression test. The expect capture path MUST

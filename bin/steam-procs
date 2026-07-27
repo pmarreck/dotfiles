@@ -1,6 +1,166 @@
 #!/usr/bin/env bash
-# List Steam-related processes (excluding awk and ipcserver), newest first
-PS_PERSONALITY=linux ps -eo pid,args \
-  | tail -n +2 \
-  | awk -v filter="steam" 'tolower($0) ~ filter && $0 !~ " awk " && $0 !~ "/ipcserver" && $0 !~ "/steam-procs"' \
-  | sort -nr
+#
+# steam-procs — list the processes belonging to Steam, Proton, and Wine.
+#
+# Enumeration only. The decision of what counts as Steam lives in
+# bin/src/steam_classify.bash as a pure function of (comm, exe, argv), so it can
+# be unit-tested over a fixture corpus with nothing running; this file supplies
+# that function with a process table and applies the exclusions that depend on
+# who is asking.
+#
+# It replaces a one-line `ps | awk /steam/` heuristic which, measured against a
+# real wedged Darktide launch, missed 11 of 20 true positives — every Wine helper
+# (Windows-style argv) and the game process itself — while matching 4 innocent
+# processes, including the very shell invoking the killer.
+#
+# Exit status: 0 if anything matched, 1 if nothing did (as pgrep does).
+
+set -u
+
+# Globbing may be disabled in the caller's shell (Peter's is) and SHELLOPTS can
+# carry that in. Re-enable it explicitly rather than inheriting a broken glob,
+# which would silently enumerate nothing and report a clean machine.
+set +f
+
+_self="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+# shellcheck source=/dev/null
+. "$_self/src/steam_classify.bash" || {
+	echo "steam-procs: cannot load the classifier" >&2
+	exit 2
+}
+
+format=plain
+while [ "$#" -gt 0 ]; do
+	case "$1" in
+		-p|--pids)    format=pids ;;
+		-x|--explain) format=explain ;;
+		--about)
+			echo "steam-procs — lists Steam/Proton/Wine processes by executable path ($(uname -s)/$(uname -m))"
+			exit 0
+			;;
+		-h|--help)
+			cat <<'EOF'
+Usage: steam-procs [--pids | --explain]
+
+Lists processes belonging to Steam, Proton, and Wine, newest pid first, so that
+children can be killed before the parents that would respawn them.
+
+Options:
+  -p, --pids      Print bare pids only (for scripts)
+  -x, --explain   Print the classification rule that matched each process
+  -h, --help      This help
+      --about     One-line description
+
+Excluded, always: this process and its entire ancestor chain (a cleanup tool
+must not kill the shell that ran it), and kernel threads.
+
+Matching is by executable path, kernel command name, and Steam paths appearing
+as command-line ARGUMENTS — never by the bare word "steam" appearing anywhere,
+and never by environment (~/.envconfig exports STEAM_COMPAT_* to every process
+on this host, so the environment identifies nothing).
+
+Note: Wine loader binaries match even outside a Steam install, since a stray
+wineserver is the usual thing wedging the next Proton launch.
+
+Env:
+  STEAM_PROCS_PROC_ROOT   Read the process table from here instead of /proc
+                          (used by the tests to supply a synthetic table)
+EOF
+			exit 0
+			;;
+		*)
+			echo "steam-procs: unknown argument: $1 (try --help)" >&2
+			exit 2
+			;;
+	esac
+	shift
+done
+
+proc_root="${STEAM_PROCS_PROC_ROOT:-}"
+if [ -n "$proc_root" ]; then
+	mode=proc
+elif [ -r /proc/self/cmdline ]; then
+	proc_root=/proc
+	mode=proc
+else
+	mode=ps
+fi
+
+declare -A ARGV_OF=() REASON_OF=()
+matched=()
+
+# This process and its ancestors, so the cleanup never targets its own caller.
+declare -A EXCLUDE=()
+if [ "$mode" = proc ]; then
+	_p=$$
+	_hops=0
+	while [ -n "$_p" ] && [ "$_p" != "0" ] && [ "$_hops" -lt 64 ]; do
+		EXCLUDE["$_p"]=1
+		_p=$(awk '/^PPid:/{print $2; exit}' "$proc_root/$_p/status" 2>/dev/null)
+		_hops=$((_hops+1))
+	done
+fi
+
+if [ "$mode" = proc ]; then
+	for d in "$proc_root"/[0-9]*; do
+		[ -d "$d" ] || continue
+		pid="${d##*/}"
+		[ -n "${EXCLUDE[$pid]:-}" ] && continue
+
+		# cmdline first: it is a builtin read, and its emptiness identifies kernel
+		# threads and zombies. Skipping them here also avoids a readlink fork for
+		# the ~90% of /proc entries that are kernel threads on this machine.
+		# Empty fields are skipped: Wine pads its command line with runs of NUL
+		# bytes (213 of them on Darktide), which would otherwise render as a
+		# screenful of trailing spaces per line.
+		argv=""
+		while IFS= read -r -d '' field; do
+			[ -n "$field" ] || continue
+			argv="${argv}${field} "
+		done < "$d/cmdline" 2>/dev/null
+		argv="${argv% }"
+		[ -n "$argv" ] || continue
+
+		comm=""
+		IFS= read -r comm < "$d/comm" 2>/dev/null
+
+		# May be empty for another user's process; the classifier copes.
+		exe="$(readlink "$d/exe" 2>/dev/null)" || exe=""
+
+		if steam_proc_match "$comm" "$exe" "$argv"; then
+			matched+=("$pid")
+			ARGV_OF["$pid"]="$argv"
+			REASON_OF["$pid"]="$STEAM_PROC_REASON"
+		fi
+	done
+else
+	# No /proc (macOS, BSD). The executable path is unavailable, so only the comm
+	# and argv rules can fire; derive comm from argv[0] as ps reports it.
+	self_pid=$$
+	while IFS= read -r line; do
+		pid="${line%% *}"
+		argv="${line#* }"
+		[ -n "$pid" ] || continue
+		[ "$pid" = "$self_pid" ] && continue
+		case "$pid" in *[!0-9]*) continue ;; esac
+		argv0="${argv%% *}"
+		comm="${argv0##*/}"
+		if steam_proc_match "$comm" "" "$argv"; then
+			matched+=("$pid")
+			ARGV_OF["$pid"]="$argv"
+			REASON_OF["$pid"]="$STEAM_PROC_REASON"
+		fi
+	done < <(PS_PERSONALITY=linux ps -eo pid=,args= 2>/dev/null | sed 's/^ *//')
+fi
+
+[ "${#matched[@]}" -eq 0 ] && exit 1
+
+while IFS= read -r pid; do
+	case "$format" in
+		pids)    printf '%s\n' "$pid" ;;
+		explain) printf '%7s  %-22s %s\n' "$pid" "${REASON_OF[$pid]}" "${ARGV_OF[$pid]}" ;;
+		*)       printf '%7s %s\n' "$pid" "${ARGV_OF[$pid]}" ;;
+	esac
+done < <(printf '%s\n' "${matched[@]}" | sort -rn)
+
+exit 0

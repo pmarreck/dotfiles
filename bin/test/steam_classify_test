@@ -1,0 +1,227 @@
+#!/usr/bin/env bash
+# steam_classify_test — the Steam/Proton process classifier, tested as a
+# CLASSIFIER OVER SETS rather than a predicate over examples.
+#
+# Why this file is shaped the way it is: an earlier attempt (Einstein,
+# 2026-07-26) keyed the matcher on process ENVIRONMENT and matched 85 processes
+# with Steam dead — including every Claude agent — because ~/.envconfig exports
+# STEAM_COMPAT_* globally, so every descendant of Peter's shell inherits it. A
+# sensitivity-only test suite passes that bug with flying colors. The specificity
+# half is therefore not optional here; it is the entire point.
+#
+# The corpora below are REAL (comm, exe, argv) triples captured from this host on
+# 2026-07-26 while Darktide was wedged, not invented ones. Two of them encode
+# traps that a plausible implementation walks straight into:
+#
+#   - every Claude agent's exe path ends in ".../bin/claude.exe", so a Wine rule
+#     keyed on the EXE BASENAME ending in .exe kills the whole agent fleet. The
+#     rule must key on comm.
+#   - the kernel's oom_reaper would be caught by a naive comm rule for "reaper"
+#     (a real Steam helper); kernel threads have an empty argv and must never
+#     match.
+
+set -u
+
+CLASSIFIER="$HOME/dotfiles/bin/src/steam_classify.bash"
+
+tests=0
+fails=0
+ok()  { echo "✓ $1"; }
+bad() { { echo "✗ $1"; shift; [ $# -gt 0 ] && printf '    %s\n' "$@"; } >&2; fails=$((fails+1)); }
+
+if [ ! -r "$CLASSIFIER" ]; then
+	echo "✗ $CLASSIFIER does not exist" >&2
+	echo "1 of 1 steam_classify tests failed" >&2
+	exit 1
+fi
+# shellcheck source=/dev/null
+. "$CLASSIFIER"
+
+# ---------------------------------------------------------------------------
+# Corpora. Format: comm|exe|argv   (no field here contains a pipe)
+# ---------------------------------------------------------------------------
+
+# MUST match. Captured live from a wedged Darktide launch.
+sensitivity=(
+	# --- Wine services: Windows-style argv, no "steam" anywhere in it. These are
+	# --- precisely the ones that survive a crash and block the NEXT launch.
+	'wineserver|/home/pmarreck/.local/share/Steam/steamapps/common/Proton - Experimental/files/bin/wineserver|/home/pmarreck/.local/share/Steam/steamapps/common/Proton - Experimental/files/lib/wine/../../bin/wineserver'
+	'services.exe|/home/pmarreck/.local/share/Steam/steamapps/common/Proton - Experimental/files/lib/wine/x86_64-unix/wine64-preloader|C:\windows\system32\services.exe'
+	'plugplay.exe|/home/pmarreck/.local/share/Steam/steamapps/common/Proton - Experimental/files/lib/wine/x86_64-unix/wine64-preloader|C:\windows\system32\plugplay.exe'
+	'svchost.exe|/home/pmarreck/.local/share/Steam/steamapps/common/Proton - Experimental/files/lib/wine/x86_64-unix/wine64-preloader|C:\windows\system32\svchost.exe -k netsvcs'
+	'winedevice.exe|/home/pmarreck/.local/share/Steam/steamapps/common/Proton - Experimental/files/lib/wine/x86_64-unix/wine64-preloader|C:\windows\system32\winedevice.exe'
+	'explorer.exe|/home/pmarreck/.local/share/Steam/steamapps/common/Proton - Experimental/files/lib/wine/x86_64-unix/wine64-preloader|C:\windows\explorer.exe /desktop'
+	'rpcss.exe|/home/pmarreck/.local/share/Steam/steamapps/common/Proton - Experimental/files/lib/wine/x86_64-unix/wine64-preloader|C:\windows\system32\rpcss.exe'
+	'tabtip.exe|/home/pmarreck/.local/share/Steam/steamapps/common/Proton - Experimental/files/lib/wine/x86_64-unix/wine64-preloader|C:\windows\system32\tabtip.exe'
+	'Launcher.exe|/home/pmarreck/.local/share/Steam/steamapps/common/Proton - Experimental/files/lib/wine/x86_64-unix/wine64-preloader|Z:\mnt\steam-nvme\SteamLibrary\steamapps\common\Warhammer 40,000 DARKTIDE\launcher\Launcher.exe'
+	'steam.exe|/home/pmarreck/.local/share/Steam/steamapps/common/Proton - Experimental/files/lib/wine/x86_64-unix/wine-preloader|c:\windows\system32\steam.exe'
+
+	# The GAME ITSELF. comm is "main"; argv is a Windows drive path with no
+	# "steam" substring at all. Only the exe path identifies it. The argv-only
+	# heuristic this work replaces missed this process entirely.
+	'main|/home/pmarreck/.local/share/Steam/steamapps/common/Proton - Experimental/files/lib/wine/x86_64-unix/wine64-preloader|S:\common\Warhammer 40,000 DARKTIDE\binaries\Darktide.exe -eac-untrusted --bundle-dir ../bundle'
+
+	# --- Steam runtime plumbing: comm carries no "steam", exe path does.
+	'reaper|/home/pmarreck/.local/share/Steam/ubuntu12_32/reaper|/home/pmarreck/.local/share/Steam/ubuntu12_32/reaper SteamLaunch AppId=1361210'
+	'srt-bwrap|/home/pmarreck/.local/share/Steam/steamapps/common/SteamLinuxRuntime_4/pressure-vessel/libexec/steam-runtime-tools-0/srt-bwrap|srt-bwrap --args 26'
+	'srt-logger|/home/pmarreck/.local/share/Steam/steamapps/common/SteamLinuxRuntime_4/pressure-vessel/libexec/steam-runtime-tools-0/srt-logger|srt-logger --sh-syntax'
+	'pv-adverb|/usr/lib/pressure-vessel/from-host/libexec/steam-runtime-tools-0/pv-adverb|pv-adverb --prefix=/usr/lib/pressure-vessel/from-host'
+	'steamwebhelper|/home/pmarreck/.local/share/Steam/ubuntu12_64/steamwebhelper|./steamwebhelper -nocrashdialog -lang=en_US'
+	'steam|/home/pmarreck/.local/share/Steam/ubuntu12_32/steam|/home/pmarreck/.local/share/Steam/ubuntu12_32/steam'
+	'steam-runtime-l|/home/pmarreck/.local/share/Steam/ubuntu12_64/steam-runtime-launcher-service|steam-runtime-launcher-service --session'
+
+	# --- Interpreters whose EXE is innocent; only argv gives them away. These
+	# --- are real: the Proton launcher is a python script, and Steam itself is
+	# --- started by a bash script.
+	'python3|/usr/bin/python3.13|python3 /home/pmarreck/.local/share/Steam/steamapps/common/Proton - Experimental/proton waitforexitandrun'
+	'bash|/nix/store/rw9azi9kb2gyjxy9j1qzc1m6rz3zp0pn-bash-interactive-5.3p9/bin/bash|bash /home/pmarreck/.local/share/Steam/steam.sh -srt-logger-opened'
+)
+
+# MUST NOT match. Real processes from this host, plus the two documented traps.
+specificity=(
+	# THE TRAP THAT ATE THE FLEET, TAKE ONE: a Claude agent. Note the exe path
+	# ends in "claude.exe" — a Wine rule keyed on the exe basename matches all 14
+	# agents. The rule must key on comm ("claude"), which does not end in .exe.
+	'claude|/home/pmarreck/.npm-global/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe|/home/pmarreck/.npm-global/bin/claude --rc --permission-mode bypassPermissions --name dotfiles'
+	'claude|/home/pmarreck/.npm-global/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe|/home/pmarreck/.npm-global/bin/claude --resume --dangerously-skip-permissions'
+	'node|/nix/store/qq1bhy1sxsvfk3jqbcz9plw8n0m1nkrj-nodejs-22.14.0/bin/node|node /home/pmarreck/.npm-global/bin/claude'
+
+	# THE TRAP THAT ATE THE FLEET, TAKE TWO: an agent working on THIS VERY TASK.
+	# Its argv mentions steam repeatedly. Matching on the bare word "steam"
+	# anywhere in argv makes the cleanup tool kill the agent that runs it.
+	'bash|/nix/store/bbzjxfam8vv1nyikn5dsrazsw4ya5vzx-bash-interactive-5.3p9/bin/bash|bash -c cat /home/pmarreck/dotfiles/inbox/2026-07-26-from-Einstein-steam-procs-classifier-spec.md'
+	'rg|/nix/store/2xk8p1c7q3z9v4n6m0bd5rlwh8jftycs-ripgrep-14.1.1/bin/rg|rg -n steam /home/pmarreck/dotfiles/bin'
+	'nvim|/nix/store/9zk3v1p8q7c2x4n6m0bd5rlwh8jftycs-neovim-0.11.0/bin/nvim|nvim /home/pmarreck/dotfiles/bin/steam-procs'
+	'bash|/nix/store/bbzjxfam8vv1nyikn5dsrazsw4ya5vzx-bash-interactive-5.3p9/bin/bash|bash /home/pmarreck/dotfiles/bin/kill-steam-proton-pids --dry-run'
+
+	# THE KERNEL THREAD TRAP: "reaper" is a genuine Steam helper name, and the
+	# kernel has an oom_reaper. Kernel threads have an empty argv; killing one is
+	# at best a no-op and at worst a panic.
+	'oom_reaper||'
+	'kthreadd||'
+	'khugepaged||'
+	'z_wr_iss_0||'
+
+	# Ordinary userland that must survive a "frag Steam" sweep.
+	'tmux: server|/nix/store/ajvll7kw423j98gc0hry86bgic4lanl5-tmux-3.6a/bin/tmux|tmux new-session -Ad -s Einstein'
+	'bash|/nix/store/bbzjxfam8vv1nyikn5dsrazsw4ya5vzx-bash-interactive-5.3p9/bin/bash|-bash'
+	'bash|/nix/store/bbzjxfam8vv1nyikn5dsrazsw4ya5vzx-bash-interactive-5.3p9/bin/bash|bash /home/pmarreck/bin/session Einstein'
+	'sshd||sshd: /nix/store/71zy9jmcszcfmmn4zf68sm8vywryybhp-openssh-10.3p1/bin/sshd -D'
+	'systemd|/nix/store/8x3v9k2p1c7q4n6m0bd5rlwh8jftycs-systemd-257/lib/systemd/systemd|/run/current-system/systemd/lib/systemd/systemd --user'
+	'pipewire|/nix/store/mnb6gpwx37k6vc66xhgha2d56llbshcv-pipewire-1.6.7/bin/pipewire|/nix/store/mnb6gpwx37k6vc66xhgha2d56llbshcv-pipewire-1.6.7/bin/pipewire'
+	'Xorg|/nix/store/4v9k2p1c7q3z8x4n6m0bd5rlwh8jftycs-xorg-server-21.1.18/bin/X|/nix/store/4v9k2p1c7q3z8x4n6m0bd5rlwh8jftycs-xorg-server-21.1.18/bin/X :0'
+	'git|/nix/store/7p1c7q3z9v4n6m0bd5rlwh8jftycs2xk8-git-2.51.0/bin/git|git -C /home/pmarreck/dotfiles status'
+
+	# Non-Steam software that merely contains "proton" in its name. Peter uses
+	# Proton Mail/VPN; a bare "proton" path rule would sweep them up.
+	'protonmail-brid|/home/pmarreck/.local/bin/protonmail-bridge|protonmail-bridge --noninteractive'
+	'protonvpn|/nix/store/3z9v4n6m0bd5rlwh8jftycs2xk8p1c7-protonvpn-4.8.2/bin/protonvpn|protonvpn-app'
+)
+
+# ---------------------------------------------------------------------------
+# 1. Sensitivity over the SET: every true positive must match.
+# ---------------------------------------------------------------------------
+tests=$((tests+1))
+missed=()
+for row in "${sensitivity[@]}"; do
+	comm="${row%%|*}"; rest="${row#*|}"
+	exe="${rest%%|*}"; argv="${rest#*|}"
+	steam_proc_match "$comm" "$exe" "$argv" || missed+=("$comm  [$argv]")
+done
+if [ "${#missed[@]}" -eq 0 ]; then
+	ok "sensitivity: all ${#sensitivity[@]} known Steam/Proton/Wine processes match"
+else
+	bad "sensitivity: ${#missed[@]} of ${#sensitivity[@]} true positives were MISSED" "${missed[@]}"
+fi
+
+# ---------------------------------------------------------------------------
+# 2. Specificity over the SET: no true negative may match. This is the half
+#    whose absence let the environment-based classifier match 85 processes.
+# ---------------------------------------------------------------------------
+tests=$((tests+1))
+caught=()
+for row in "${specificity[@]}"; do
+	comm="${row%%|*}"; rest="${row#*|}"
+	exe="${rest%%|*}"; argv="${rest#*|}"
+	if steam_proc_match "$comm" "$exe" "$argv"; then
+		caught+=("$comm  exe=$exe")
+	fi
+done
+if [ "${#caught[@]}" -eq 0 ]; then
+	ok "specificity: none of the ${#specificity[@]} innocent processes match"
+else
+	bad "specificity: ${#caught[@]} FALSE POSITIVES — this tool KILLS what it matches" "${caught[@]}"
+fi
+
+# ---------------------------------------------------------------------------
+# 3. The classifier must be PURE: environment must not influence it. Einstein's
+#    version read STEAM_COMPAT_*, which ~/.envconfig exports to every process on
+#    this host. Same inputs, hostile environment, same answer.
+# ---------------------------------------------------------------------------
+tests=$((tests+1))
+agent='claude|/home/pmarreck/.npm-global/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe|/home/pmarreck/.npm-global/bin/claude --rc'
+comm="${agent%%|*}"; rest="${agent#*|}"; exe="${rest%%|*}"; argv="${rest#*|}"
+if STEAM_COMPAT_DATA_PATH=/home/pmarreck/.steam/steam/steamapps/compatdata \
+   STEAM_COMPAT_CLIENT_INSTALL_PATH=/home/pmarreck/.steam/root \
+   STEAM_EXTRA_COMPAT_TOOLS_PATHS=/home/pmarreck/.steam/root/compatibilitytools.d \
+   WINEPREFIX=/home/pmarreck/.steam/steam/steamapps/compatdata/1361210/pfx \
+   SteamAppId=1361210 \
+   bash -c ". '$CLASSIFIER'; steam_proc_match \"\$1\" \"\$2\" \"\$3\"" _ "$comm" "$exe" "$argv"
+then
+	bad "an agent matched purely because STEAM_COMPAT_*/WINEPREFIX were exported" \
+	    "this is the exact regression that would kill all 14 agents"
+else
+	ok "environment does not influence the verdict (STEAM_COMPAT_*, WINEPREFIX, SteamAppId)"
+fi
+
+# ---------------------------------------------------------------------------
+# 4. Determinism: the classifier is a pure function, so repeated calls on the
+#    same inputs must agree. Guards against any accidental /proc or clock read.
+# ---------------------------------------------------------------------------
+tests=$((tests+1))
+unstable=()
+for row in "${sensitivity[@]}" "${specificity[@]}"; do
+	comm="${row%%|*}"; rest="${row#*|}"; exe="${rest%%|*}"; argv="${rest#*|}"
+	steam_proc_match "$comm" "$exe" "$argv"; a=$?
+	steam_proc_match "$comm" "$exe" "$argv"; b=$?
+	steam_proc_match "$comm" "$exe" "$argv"; c=$?
+	[ "$a" = "$b" ] && [ "$b" = "$c" ] || unstable+=("$comm ($a/$b/$c)")
+done
+if [ "${#unstable[@]}" -eq 0 ]; then
+	ok "classifier is deterministic across repeated calls"
+else
+	bad "classifier gave different answers for identical inputs" "${unstable[@]}"
+fi
+
+# ---------------------------------------------------------------------------
+# 5. Every match must be attributable to a named rule. An unexplainable match in
+#    a tool that kills processes is not a match anyone should act on, and the
+#    reason string is what --explain shows the user before they pull the trigger.
+# ---------------------------------------------------------------------------
+tests=$((tests+1))
+unexplained=()
+for row in "${sensitivity[@]}"; do
+	comm="${row%%|*}"; rest="${row#*|}"; exe="${rest%%|*}"; argv="${rest#*|}"
+	reason=$(steam_proc_reason "$comm" "$exe" "$argv" 2>/dev/null)
+	[ -n "$reason" ] || unexplained+=("$comm")
+done
+if [ "${#unexplained[@]}" -eq 0 ]; then
+	ok "every match reports which rule fired"
+else
+	bad "${#unexplained[@]} matches had no explanation" "${unexplained[@]}"
+fi
+
+tests=$((tests+1))
+if [ -z "$(steam_proc_reason claude /home/pmarreck/.npm-global/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe 'claude --rc' 2>/dev/null)" ]; then
+	ok "non-matches report no rule"
+else
+	bad "a non-matching process was given a match reason"
+fi
+
+echo
+if [ "$fails" -eq 0 ]; then
+	echo "All $tests steam_classify tests passed"
+else
+	echo "$fails of $tests steam_classify tests failed" >&2
+fi
+exit "$fails"

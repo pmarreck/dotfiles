@@ -1,0 +1,211 @@
+#!/usr/bin/env bash
+# kill-steam-proton-pids_test — the killing layer.
+#
+# Nothing here kills a real process. The enumerator and the kill command are both
+# injected, so every case runs against a synthetic pid list and records what
+# WOULD have been signalled. That is the only honest way to test a tool whose
+# failure mode is "killed the wrong thing" — and it means this file is safe to
+# run while Peter is mid-game.
+#
+# The property under test that matters most is --dry-run: for a tool that kills
+# by pattern, a way to look before leaping is a safety control, not a nicety.
+
+set -u
+
+KILLER="$HOME/dotfiles/bin/kill-steam-proton-pids"
+
+tests=0
+fails=0
+ok()  { echo "✓ $1"; }
+bad() { { echo "✗ $1"; shift; [ $# -gt 0 ] && printf '    %s\n' "$@"; } >&2; fails=$((fails+1)); }
+
+if [ ! -x "$KILLER" ]; then
+	echo "✗ $KILLER does not exist or is not executable" >&2
+	echo "1 of 1 kill-steam-proton-pids tests failed" >&2
+	exit 1
+fi
+
+WORK=$(mktemp -d --tmpdir kill_steam_test.XXXXXX)
+trap 'rm -rf "$WORK"' EXIT
+
+KILLLOG="$WORK/killed"
+
+# Helper scripts are written at RUN time, so the flake's `patchShebangs bin` —
+# which only rewrites files present when the derivation is built — never sees
+# them. /usr/bin/env does not exist inside the Nix sandbox, so a
+# `#!/usr/bin/env bash` here is unrunnable there: the fakes silently fail to
+# execute, the killer sees an empty process list, and every kill assertion
+# "passes" by killing nothing. Use the running shell's own path instead.
+shebang="#!$BASH"
+
+# Fake enumerator: prints whatever pids $WORK/pidlist holds.
+{
+	printf '%s\n' "$shebang"
+	cat <<'EOF'
+# Ignores --pids/--explain; the killer only ever asks for pids.
+[ -s "$PIDLIST" ] || exit 1
+cat "$PIDLIST"
+EOF
+} > "$WORK/fake-procs"
+chmod +x "$WORK/fake-procs"
+
+# Fake kill: records the signal and pid instead of sending anything.
+{
+	printf '%s\n' "$shebang"
+	cat <<'EOF'
+printf '%s\n' "$*" >> "$KILLLOG"
+EOF
+} > "$WORK/fake-kill"
+chmod +x "$WORK/fake-kill"
+
+export PIDLIST="$WORK/pidlist" KILLLOG
+
+run() { # run [args...] — grace 0 so no test ever sleeps
+	KILL_STEAM_PROCS_CMD="$WORK/fake-procs" \
+	KILL_STEAM_KILL_CMD="$WORK/fake-kill" \
+	KILL_STEAM_GRACE_SECONDS=0 \
+	"$KILLER" "$@" 2>&1
+}
+
+printf '%s\n' 4444 3333 2222 > "$PIDLIST"
+
+# 1. --dry-run must not signal anything. This is the whole point of the flag.
+tests=$((tests+1))
+: > "$KILLLOG"
+out=$(run --dry-run); rc=$?
+if [ ! -s "$KILLLOG" ] && [ "$rc" -eq 0 ]; then
+	ok "--dry-run signals nothing and exits 0"
+else
+	bad "--dry-run sent signals (or failed)" "rc=$rc" "killed: $(tr '\n' ' ' < "$KILLLOG")"
+fi
+
+# 2. ...but it must still SHOW what it would kill, or it is useless.
+tests=$((tests+1))
+missing=""
+for p in 4444 3333 2222; do
+	printf '%s' "$out" | grep -q "$p" || missing="$missing $p"
+done
+if [ -z "$missing" ]; then
+	ok "--dry-run lists every pid it would kill"
+else
+	bad "--dry-run omitted pids:$missing" "output: $out"
+fi
+
+# 3. -n is the conventional short form.
+tests=$((tests+1))
+: > "$KILLLOG"
+run -n >/dev/null
+if [ ! -s "$KILLLOG" ]; then
+	ok "-n is accepted as the short form of --dry-run"
+else
+	bad "-n killed things" "killed: $(tr '\n' ' ' < "$KILLLOG")"
+fi
+
+# 4. Without the flag it must actually signal — otherwise the dry-run test above
+#    would pass for a tool that never kills anything at all.
+tests=$((tests+1))
+: > "$KILLLOG"
+run >/dev/null
+notkilled=""
+for p in 4444 3333 2222; do
+	grep -q " $p\$" "$KILLLOG" || notkilled="$notkilled $p"
+done
+if [ -z "$notkilled" ]; then
+	ok "a normal run signals every listed pid"
+else
+	bad "normal run failed to signal:$notkilled" "log: $(tr '\n' ' ' < "$KILLLOG")"
+fi
+
+# 5. Newest first: a parent killed before its child respawns the child.
+tests=$((tests+1))
+order=$(grep -oE '[0-9]+$' "$KILLLOG" | awk '!seen[$0]++' | tr '\n' ' ' | sed 's/ *$//')
+if [ "$order" = "4444 3333 2222" ]; then
+	ok "signals in newest-pid-first order"
+else
+	bad "kill order was not newest-first" "got: $order"
+fi
+
+# 6. Escalation: anything still listed after the grace period gets SIGKILL. The
+#    fake enumerator keeps returning the same pids, i.e. they "survived".
+tests=$((tests+1))
+if grep -qE '^-(9|KILL) ' "$KILLLOG"; then
+	ok "escalates to SIGKILL for survivors"
+else
+	bad "never escalated to SIGKILL" "log: $(tr '\n' ' ' < "$KILLLOG")"
+fi
+
+# 7. TERM must come before KILL — the point of the grace period.
+tests=$((tests+1))
+first_sig=$(head -1 "$KILLLOG" | awk '{print $1}')
+case "$first_sig" in
+	-15|-TERM|-SIGTERM) ok "sends SIGTERM before SIGKILL" ;;
+	*) bad "first signal was $first_sig, not SIGTERM" "log: $(head -3 "$KILLLOG" | tr '\n' ' ')" ;;
+esac
+
+# 8. SAFETY GUARD: a malformed enumerator must not be able to kill init or the
+#    caller. The killer trusts a list it did not compute; it must still refuse
+#    the pids that would take down the machine or the operator's own shell.
+tests=$((tests+1))
+: > "$KILLLOG"
+printf '%s\n' 1 0 "$$" 5555 > "$PIDLIST"
+run >/dev/null
+forbidden=""
+for p in 1 0 "$$"; do
+	grep -qE "(^| )$p\$" "$KILLLOG" && forbidden="$forbidden $p"
+done
+if [ -z "$forbidden" ] && grep -qE "(^| )5555\$" "$KILLLOG"; then
+	ok "refuses pid 0, pid 1, and its own pid — but still kills the real one"
+else
+	bad "safety guard failed (forbidden signalled:$forbidden)" "log: $(tr '\n' ' ' < "$KILLLOG")"
+fi
+
+# 9. Nothing to kill is a normal outcome, not an error.
+tests=$((tests+1))
+: > "$KILLLOG"
+: > "$PIDLIST"
+out=$(run); rc=$?
+if [ "$rc" -eq 0 ] && [ ! -s "$KILLLOG" ] && printf '%s' "$out" | grep -qi 'no steam'; then
+	ok "empty process list → says so, kills nothing, exits 0"
+else
+	bad "empty list mishandled" "rc=$rc out=$out killed=$(tr '\n' ' ' < "$KILLLOG")"
+fi
+
+# 10. Help mentions the safety flag, or nobody will know it exists.
+tests=$((tests+1))
+h=$("$KILLER" --help 2>&1); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$h" | grep -q -- '--dry-run'; then
+	ok "--help documents --dry-run"
+else
+	bad "--help missing or does not mention --dry-run" "rc=$rc"
+fi
+
+# 11. Unknown flags must not be silently ignored by a tool that kills things.
+tests=$((tests+1))
+printf '%s\n' 4444 > "$PIDLIST"
+: > "$KILLLOG"
+out=$(run --dry-runn 2>&1); rc=$?
+if [ "$rc" -ne 0 ] && [ ! -s "$KILLLOG" ]; then
+	ok "a mistyped flag is rejected rather than ignored (a typo must not kill)"
+else
+	bad "unknown flag was ignored; --dry-runn behaved like a real run" "rc=$rc"
+fi
+
+# 12. Executing the file must DO something. Before this work it only defined
+#     functions and was sourced by nothing, so running it was a silent no-op.
+tests=$((tests+1))
+printf '%s\n' 4444 > "$PIDLIST"
+: > "$KILLLOG"
+run >/dev/null
+if [ -s "$KILLLOG" ]; then
+	ok "running the script actually runs the killer (it used to be a no-op)"
+else
+	bad "executing the script did nothing" "it must not merely define functions"
+fi
+
+echo
+if [ "$fails" -eq 0 ]; then
+	echo "All $tests kill-steam-proton-pids tests passed"
+else
+	echo "$fails of $tests kill-steam-proton-pids tests failed" >&2
+fi
+exit "$fails"

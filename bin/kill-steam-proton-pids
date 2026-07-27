@@ -1,32 +1,139 @@
 #!/usr/bin/env bash
+#
+# kill-steam-proton-pids — terminate everything belonging to Steam, Proton, and
+# Wine, children first, so the next Proton launch is not blocked by a survivor of
+# the last crashed one.
+#
+# Layering: bin/src/steam_classify.bash decides WHAT is Steam (pure, unit-tested
+# over a fixture corpus), bin/steam-procs finds them, and this file does the one
+# irreversible thing. Keeping the irreversible part this small is the point.
+#
+# The previous version of this file defined three functions and called none of
+# them, and nothing sourced it — so running it was a silent no-op. It also had no
+# way to look before leaping.
 
-steam-pids() {
-  # ps inserts variable-width spacing; awk is safer than cut for extracting PID
-  steam-procs | awk '{print $1}'
+set -u
+
+_self_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+
+# Injectable so the tests can exercise the kill path without killing anything.
+# Defaults are the real thing.
+KILL_STEAM_PROCS_CMD="${KILL_STEAM_PROCS_CMD:-$_self_dir/steam-procs}"
+KILL_STEAM_KILL_CMD="${KILL_STEAM_KILL_CMD:-kill}"
+KILL_STEAM_GRACE_SECONDS="${KILL_STEAM_GRACE_SECONDS:-2}"
+
+_ksp_help() {
+	cat <<'EOF'
+Usage: kill-steam-proton-pids [-n | --dry-run]
+
+Terminates Steam, Proton, and Wine processes newest-pid-first: SIGTERM, a short
+grace period, then SIGKILL for whatever is still there.
+
+Options:
+  -n, --dry-run   List what would be killed and exit without signalling anything
+  -h, --help      This help
+      --about     One-line description
+
+Run `steam-procs --explain` to see why each process is considered Steam-related.
+
+Wine helpers (wineserver, services.exe, plugplay.exe, svchost.exe, Launcher.exe)
+carry Windows-style command lines with no "steam" in them; they are matched by
+their executable path. Those are usually the ones still holding the prefix after
+a crashed launch.
+EOF
 }
 
-steam-kill() {
-  steam-procs > /dev/stderr
-  # -r avoids calling kill with no arguments if there are no Steam PIDs
-  steam-pids | xargs -r -I {} kill $1 {}
+# Pids this tool must never signal, no matter what the enumerator says. The
+# enumerator already excludes the caller's ancestry; this is the belt to that
+# suspenders, because everything below here is irreversible.
+_ksp_forbidden() {
+	case "$1" in
+		''|*[!0-9]*) return 0 ;;   # not a pid at all
+	esac
+	[ "$1" -lt 2 ] && return 0     # pid 0 and init
+	[ "$1" = "$$" ] && return 0    # ourselves
+	[ "$1" = "${PPID:-}" ] && return 0
+	return 1
+}
+
+# Signal a list of pids, skipping the forbidden ones. Echoes the pids it acted on.
+_ksp_signal() {
+	local sig="$1"; shift
+	local pid
+	for pid in "$@"; do
+		_ksp_forbidden "$pid" && continue
+		"$KILL_STEAM_KILL_CMD" "-$sig" "$pid" 2>/dev/null
+	done
 }
 
 kill-steam-proton-pids() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-  # This bash one-liner performs the following tasks:
-  # 1. It sets the PS_PERSONALITY environment variable to 'linux' which standardizes the output format of the 'ps' command.
-  # 2. Runs the 'ps' command with the following options:
-  #    - 'e' to include processes from all users,
-  #    - 'o pid,args' to only show process ID and command arguments,
-  #    - '--sort=-pid' to sort by process ID in descending order (so it kills the newest processes first),
-  #      (unavailable on macOS so used 'sort -nr' instead)
-  #    - '--no-headers' to not include column headers in the output. (unavailable on macOS so used 'tail -n +2' instead)
-  # 3. It relies on external helper `steam-procs` to produce the filtered ps output described above.
-  # 4. That output is piped to awk again to print only the first column (the process ID) safely, regardless of spacing.
-  # 5. Finally, it pipes these process IDs to 'xargs' which executes the 'kill' command for each ID, terminating the processes.
-  steam-kill
-  sleep 2 # give it a chance to seppuku
-  # This usually leaves ~2 processes running still, which we now kill with extreme prejudice. You had your chance.
-  steam-kill -9
-  echo "Steam is now fragged."
+	# Peter's self-edit hook: `EDIT=1 kill-steam-proton-pids` opens this file.
+	# ${EDIT:-} rather than ${EDIT}, which is an unbound-variable error under
+	# `set -u` and made this function unusable in a strict shell.
+	if [ -n "${EDIT:-}" ]; then
+		unset EDIT
+		edit_function "${FUNCNAME[0]}" "$BASH_SOURCE"
+		return
+	fi
+
+	local dry_run=0
+	while [ "$#" -gt 0 ]; do
+		case "$1" in
+			-n|--dry-run) dry_run=1 ;;
+			-h|--help) _ksp_help; return 0 ;;
+			--about)
+				echo "kill-steam-proton-pids — terminates Steam/Proton/Wine processes, children first"
+				return 0
+				;;
+			*)
+				# A typo must never fall through into a real run.
+				echo "kill-steam-proton-pids: unknown argument: $1 (try --help)" >&2
+				return 2
+				;;
+		esac
+		shift
+	done
+
+	local pids
+	pids=$("$KILL_STEAM_PROCS_CMD" --pids 2>/dev/null)
+	if [ -z "$pids" ]; then
+		echo "No Steam/Proton/Wine processes are running." >&2
+		return 0
+	fi
+
+	# Metadata goes to stderr so `kill-steam-proton-pids --dry-run | wc -l` and
+	# friends still see a clean pid list on stdout.
+	"$KILL_STEAM_PROCS_CMD" --explain >&2 2>/dev/null || "$KILL_STEAM_PROCS_CMD" >&2
+
+	if [ "$dry_run" -eq 1 ]; then
+		printf '%s\n' "$pids"
+		echo "--dry-run: nothing was signalled." >&2
+		return 0
+	fi
+
+	# shellcheck disable=SC2086
+	_ksp_signal TERM $pids
+
+	# Give them a chance to exit cleanly before escalating.
+	[ "$KILL_STEAM_GRACE_SECONDS" != "0" ] && sleep "$KILL_STEAM_GRACE_SECONDS"
+
+	# Re-enumerate rather than reusing the list: a pid that already exited may
+	# have been recycled by an unrelated process in the meantime, and SIGKILLing
+	# a stale pid is how a cleanup tool kills a bystander.
+	local survivors
+	survivors=$("$KILL_STEAM_PROCS_CMD" --pids 2>/dev/null)
+	if [ -n "$survivors" ]; then
+		# shellcheck disable=SC2086
+		_ksp_signal KILL $survivors
+	fi
+
+	echo "Steam is now fragged." >&2
+	return 0
 }
+
+# Works both ways: sourced (Peter's shell gets the function) and executed
+# directly (which previously did nothing at all).
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+	kill-steam-proton-pids "$@"
+	exit $?
+fi
