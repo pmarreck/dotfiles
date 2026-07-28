@@ -161,6 +161,61 @@ Driven by `CODE_REVIEW.md` (6-reviewer audit). Wave 1 + the nix-PATH bug are don
     macOS may require a narrowly privileged sampler for process attribution;
     do not pretend device-wide I/O is per-process evidence.
 
+## Backlog (PARKED — revenue work comes first) — mechanically gate `--help` against the parser
+
+**Peter's theory, 2026-07-27:** `--help` should be derived from something
+co-located with the functionality (scraped comments in interpreted languages,
+generated at build time in compiled ones) so that "documented but not done" and
+"done but not documented" become hard to express. He already did the
+co-location half in `ixnay` — help lives beside each subcommand's parsing and is
+scraped on the fly — but it is not *enforced*.
+
+**Why this is on the list at all:** on 2026-07-27 `bin/pre-push-gate` documented
+a `--check-only` flag in `_help()` that had **no branch** in its
+`case "${1:-}"`. The flag was silently accepted, did nothing, and its own test
+suite used it while believing it was in check-only mode. Real divergence, in a
+gate whose whole job is refusing invalid states.
+
+**Prior art (two camps):**
+
+- *Parser from help*: `docopt` — the usage text IS the grammar, so an
+  undocumented flag cannot exist. Ports for Python/Rust/Go/C/bash.
+- *Help from code*: Rust `clap` derive (`///` doc comments → help at compile
+  time), Go `cobra` (Short/Long on the command struct), Python `click`
+  (decorators + docstrings). Zig `comptime` over a declaration struct gets the
+  same at build time. `help2man` runs it backwards (scrape `--help` → man page).
+  Newer: `usage` (jdx) — one spec file emits parser + docs + completions.
+
+**The refinement worth keeping:** co-location alone is not enough. A comment
+adjacent to the code can still lie, because comments are not executed. The
+property that actually holds is **single source of truth** — one declaration
+from which both the help text and the parse branch are derived, so documenting
+a flag *is* implementing its parse path.
+
+**And note the failure mode that bit us is the harder one:** `--check-only` was
+not *rejected*, it was **accepted and inert**. A check of "does the documented
+flag error?" would have passed, wrongly.
+
+**Proposed gate (MFIC-shaped, cheap):** a shared test helper
+`assert_help_matches_parser <cmd>` that:
+
+1. extracts the flag set from `--help` output;
+2. extracts the flag set from the parser (bash: the `case` arms; clap/cobra:
+   reflection is free);
+3. **asserts set equality in BOTH directions** — catching documented-but-unparsed
+   and parsed-but-undocumented;
+4. optional strongest rung: exercise each documented flag and assert it changes
+   observable behavior, catching accepted-but-inert.
+
+Step 3 alone is ~10 lines of bash and would have caught `--check-only`
+statically. Because the canonical brief already mandates `-h/--help` and
+`--about` on every CLI, this could become a fleet-wide standard that sits
+alongside the existing test-count floor and allowlisted-skips checks — turning a
+convention enforced by discipline into one enforced by the suite.
+
+**First step when unparked:** run the helper against the existing dotfiles CLIs
+and count the divergences. That number is the argument for adopting it fleet-wide.
+
 ## Backlog — resurrect Peter's historical iTunes preferences/playlists
 
 - [ ] Recover every historically starred/liked track and the contents/order of
