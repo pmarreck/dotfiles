@@ -63,10 +63,13 @@
     no-remote. Linux timer enabled/active; next run 2026-07-29 03:27 EDT.
   Completed 2026-07-28 12:30 EDT: all 166 local test files and the hermetic
   `checks.x86_64-linux.test` Nix derivation pass.
-- [ ] Tier 2 (local): report every branch's ahead/behind state, branches with no
+- [x] Tier 2 (local): report every branch's ahead/behind state, branches with no
   upstream, and last-commit staleness.
   - Curiosity poke: an unconfigured upstream is distinct from a configured
     upstream whose ref is unavailable; preserve both states in JSON.
+  Completed 2026-07-28 12:34 EDT: `--tier 2` marks the tier independently and
+  records configured/missing/unknown upstream state plus Git-derived epoch,
+  ISO timestamp, and integer age-in-days for every repository and branch.
 - [ ] Tier 3 (network): discover fork parents with `gh repo view ... --json
   parent`, compare default branches, and distinguish merely behind from
   diverged; fixture the `ollama` yolo/main stale-branch failure class.

@@ -72,7 +72,7 @@ git_in "$tracked" stash push -q -m fleet-test || exit 1
 
 json="$scratch/current.json"
 stderr="$scratch/stderr"
-"$fleet" --tier 1 --root "$scan_root" --format json --no-save >"$json" 2>"$stderr"
+"$fleet" --tier 2 --root "$scan_root" --format json --no-save >"$json" 2>"$stderr"
 command_status=$?
 
 fails=0
@@ -117,6 +117,15 @@ expect_eq "detached records use null branch" \
 expect_eq "all records carry SHA and ISO commit date" \
 	"true" \
 	"$(jq -r '[.repos[] | ((.head_sha | test("^[0-9a-f]{40}$")) and (.last_commit_date | test("^[0-9]{4}-")))] | all' "$json" 2>/dev/null)"
+expect_eq "Tier 2 is independently marked known" \
+	"known" \
+	"$(jq -r '.tiers["2"]' "$json" 2>/dev/null)"
+expect_eq "classifies the exact branch set with no configured upstream" \
+	'[{"repo":"dirty repo","branch":"main"},{"repo":"no-remote","branch":"main"},{"repo":"orphaned","branch":"main"},{"repo":"safe-detached","branch":"main"}]' \
+	"$(jq -c '[.repos[] as $repo | $repo.branches[] | select(.upstream_configured == false) | {repo: $repo.name, branch: .name}] | sort_by(.repo, .branch)' "$json" 2>/dev/null)"
+expect_eq "repo and branch staleness are nonnegative integer days" \
+	"true" \
+	"$(jq -r '[.repos[] | ((.last_commit_age_days | type) == "number"), (.branches[] | ((.last_commit_age_days | type) == "number"))] | all' "$json" 2>/dev/null)"
 
 if (( fails == 0 )); then
 	printf 'All %d fleet-status collector tests passed\n' "$tests"

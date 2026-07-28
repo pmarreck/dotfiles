@@ -22,6 +22,7 @@ fleet-status --format json
 fleet-status --format markdown
 fleet-status --root ~/Code --root ~/another-root
 fleet-status --tier 1
+fleet-status --tier 2
 ```
 
 Tier 1 records:
@@ -33,6 +34,11 @@ Tier 1 records:
   counts;
 - repositories with no remote;
 - stash count, HEAD SHA, current branch, and last-commit timestamp.
+
+Tier 2 extends the local snapshot with explicit configured/no-upstream/unknown
+sync state for every branch and integer last-commit age in days for both
+repositories and branches. It still performs no network access; ahead/behind
+reflects the locally stored upstream refs.
 
 Collection uses Git plumbing and porcelain v2. It performs no fetch and uses no
 Linux-only `/proc` paths or LuaJIT FFI syscall constants, so the same collector

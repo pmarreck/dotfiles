@@ -22,7 +22,7 @@ Collect Git fleet status as JSON and render an action-focused report.
 
 Options:
   --root ROOT       Scan ROOT; repeatable (default: ~/Code).
-  --tier 1          Run the local, network-free Tier 1 collector.
+  --tier 1|2        Run through the selected local, network-free tier.
   --format FORMAT   Output one-line, markdown, or json (default: one-line).
   --full            Render full state instead of the default delta.
   --max-names N     Names shown per one-line category before +N more (default: 4).
@@ -102,8 +102,8 @@ while index <= #arg do
 	end
 end
 
-if tier ~= "1" then
-	io.stderr:write("Error: only --tier 1 is implemented in this release boundary.\n")
+if tier ~= "1" and tier ~= "2" then
+	io.stderr:write("Error: --tier must currently be 1 or 2.\n")
 	os.exit(2)
 end
 if format ~= "one-line" and format ~= "markdown" and format ~= "json" then
@@ -112,7 +112,7 @@ if format ~= "one-line" and format ~= "markdown" and format ~= "json" then
 end
 if #roots == 0 then roots[1] = home .. "/Code" end
 
-local snapshot, err = fleet.collect_roots(roots)
+local snapshot, err = fleet.collect_roots(roots, { max_tier = tonumber(tier) })
 if not snapshot then
 	io.stderr:write("Error: " .. err .. "\n")
 	os.exit(1)

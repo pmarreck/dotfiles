@@ -367,12 +367,20 @@ local function collect_dirty(repo)
 	return dirty
 end
 
-local function collect_branches(repo)
-	local format = "%(refname:short)%09%(upstream:short)%09%(objectname)%09%(committerdate:iso-strict)"
+local function age_days(now_epoch, commit_epoch)
+	commit_epoch = tonumber(commit_epoch)
+	if not commit_epoch then return cjson.null end
+	return math.max(0, math.floor((now_epoch - commit_epoch) / 86400))
+end
+
+local function collect_branches(repo, now_epoch)
+	local format = "%(refname:short)%09%(upstream:short)%09%(objectname)"
+		.. "%09%(committerdate:iso-strict)%09%(committerdate:unix)"
 	local output = run_git(repo, "for-each-ref --format=" .. shell_quote(format) .. " refs/heads")
 	local branches = {}
 	for line in output:gmatch("[^\n]+") do
-		local name, upstream, sha, commit_date = line:match("^([^\t]*)\t([^\t]*)\t([^\t]*)\t(.*)$")
+		local name, upstream, sha, commit_date, commit_epoch =
+			line:match("^([^\t]*)\t([^\t]*)\t([^\t]*)\t([^\t]*)\t(.*)$")
 		if name then
 			local ahead, behind = 0, 0
 			local sync_status = "no_upstream"
@@ -400,6 +408,8 @@ local function collect_branches(repo)
 				sync_status = sync_status,
 				head_sha = sha,
 				last_commit_date = commit_date ~= "" and commit_date or cjson.null,
+				last_commit_epoch = tonumber(commit_epoch) or cjson.null,
+				last_commit_age_days = age_days(now_epoch, commit_epoch),
 			}
 		end
 	end
@@ -423,13 +433,14 @@ end
 
 --- Collect one working tree entirely through stable Git plumbing, keeping I/O
 --- outside the pure renderers and avoiding OS-specific filesystem constants.
-local function collect_repo(repo)
+local function collect_repo(repo, now_epoch)
 	local head_output, has_head = run_git(repo, "rev-parse --verify HEAD")
 	local head_sha = has_head and trim(head_output) or cjson.null
 	local branch_output, on_branch = run_git(repo, "symbolic-ref --quiet --short HEAD")
 	local branch = on_branch and trim(branch_output) or cjson.null
 	local detached = not on_branch and has_head
 	local date_output, has_date = run_git(repo, "show -s --format=%cI HEAD")
+	local epoch_output, has_epoch = run_git(repo, "show -s --format=%ct HEAD")
 	local remotes_output = run_git(repo, "remote")
 	local remotes = {}
 	for remote in remotes_output:gmatch("[^\n]+") do
@@ -449,7 +460,9 @@ local function collect_repo(repo)
 		branch = branch,
 		head_sha = head_sha,
 		last_commit_date = has_date and trim(date_output) or cjson.null,
-		branches = collect_branches(repo),
+		last_commit_epoch = has_epoch and (tonumber(trim(epoch_output)) or cjson.null) or cjson.null,
+		last_commit_age_days = has_epoch and age_days(now_epoch, trim(epoch_output)) or cjson.null,
+		branches = collect_branches(repo, now_epoch),
 	}
 end
 
@@ -474,7 +487,10 @@ end
 
 --- Discover and collect repeatable roots into the versioned Tier-1 JSON schema.
 --- Repository paths are de-duplicated when roots overlap.
-function M.collect_roots(roots)
+function M.collect_roots(roots, options)
+	options = options or {}
+	local max_tier = tonumber(options.max_tier) or 1
+	local now_epoch = tonumber(options.now_epoch) or os.time()
 	local paths = {}
 	local seen = {}
 	for _, root in ipairs(roots) do
@@ -492,13 +508,16 @@ function M.collect_roots(roots)
 	local repos = {}
 	for _, repo in ipairs(paths) do
 		local _, valid = run_git(repo, "rev-parse --git-dir")
-		if valid then repos[#repos + 1] = collect_repo(repo) end
+		if valid then repos[#repos + 1] = collect_repo(repo, now_epoch) end
 	end
+	local tiers = { ["1"] = "known" }
+	if max_tier >= 2 then tiers["2"] = "known" end
 	return {
 		schema_version = 1,
-		collected_at = os.date("!%Y-%m-%dT%H:%M:%SZ"),
+		collected_at = os.date("!%Y-%m-%dT%H:%M:%SZ", now_epoch),
+		collected_at_epoch = now_epoch,
 		roots = roots,
-		tiers = { ["1"] = "known" },
+		tiers = tiers,
 		repos = repos,
 	}
 end
