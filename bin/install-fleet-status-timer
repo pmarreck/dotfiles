@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+
+set -u
+
+_help() {
+	cat <<'EOF'
+Usage: install-fleet-status-timer
+
+Install and enable the nightly fleet-status systemd user timer on Linux.
+Existing non-matching unit files or symlinks are never overwritten.
+
+Options:
+  -h, --help  Show this help.
+  --about     Print a one-line description.
+EOF
+}
+
+case "${1:-}" in
+	-h | --help)
+		_help
+		exit 0
+		;;
+	--about)
+		printf '%s\n' 'install-fleet-status-timer — safely enable the nightly Linux user timer'
+		exit 0
+		;;
+	"") ;;
+	*)
+		printf 'Error: unknown option: %s\n' "$1" >&2
+		_help >&2
+		exit 2
+		;;
+esac
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+repo_root="$(dirname "$script_dir")"
+source_dir="$repo_root/systemd/user"
+unit_dir="${FLEET_STATUS_SYSTEMD_USER_DIR:-$HOME/.config/systemd/user}"
+systemctl_command="${FLEET_STATUS_SYSTEMCTL:-systemctl}"
+
+if [[ "$(uname -s)" != "Linux" ]]; then
+	printf 'Error: systemd user timers are Linux-only; see docs/fleet-status.md for launchd guidance.\n' >&2
+	exit 1
+fi
+if [[ ! -x "$systemctl_command" ]] && ! command -v "$systemctl_command" >/dev/null 2>&1; then
+	printf 'Error: systemctl is unavailable: %s\n' "$systemctl_command" >&2
+	exit 1
+fi
+
+mkdir -p "$unit_dir" || exit 1
+
+install_unit_link() {
+	local name="$1"
+	local source="$source_dir/$name"
+	local destination="$unit_dir/$name"
+	local current
+
+	if [[ ! -f "$source" ]]; then
+		printf 'Error: committed unit is missing: %s\n' "$source" >&2
+		return 1
+	fi
+	if [[ -L "$destination" ]]; then
+		current="$(readlink "$destination")"
+		if [[ "$current" == "$source" ]]; then return 0; fi
+		printf 'Error: refusing to replace non-matching symlink: %s -> %s\n' "$destination" "$current" >&2
+		return 1
+	fi
+	if [[ -e "$destination" ]]; then
+		printf 'Error: refusing to overwrite existing unit file: %s\n' "$destination" >&2
+		return 1
+	fi
+	ln -s "$source" "$destination"
+}
+
+install_unit_link fleet-status.service || exit 1
+install_unit_link fleet-status.timer || exit 1
+"$systemctl_command" --user daemon-reload || exit 1
+"$systemctl_command" --user enable --now fleet-status.timer || exit 1
+
+printf 'Enabled nightly fleet-status.timer; report: %s\n' \
+	"${XDG_STATE_HOME:-$HOME/.local/state}/fleet-status/report.md"

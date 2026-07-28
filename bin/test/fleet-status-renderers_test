@@ -1,0 +1,70 @@
+#!/usr/bin/env luajit
+
+local script = arg[0]
+local repo_root = script:match("^(.*)/bin/test/[^/]+$") or "."
+package.path = repo_root .. "/lib/?.lua;" .. package.path
+
+local cjson = require("cjson")
+local fleet = require("fleet_status")
+
+local function read_json(path)
+	local file = assert(io.open(path, "rb"))
+	local value = cjson.decode(assert(file:read("*a")))
+	file:close()
+	return value
+end
+
+local failures = 0
+local tests = 0
+local function expect(label, expected, actual)
+	tests = tests + 1
+	if expected ~= actual then
+		failures = failures + 1
+		io.stderr:write("FAIL " .. label .. "\nexpected: " .. expected .. "\nactual:   " .. actual .. "\n")
+	end
+end
+
+local fixture_dir = repo_root .. "/bin/test/fixtures/fleet-status"
+local current = read_json(fixture_dir .. "/current.json")
+local previous = read_json(fixture_dir .. "/previous.json")
+
+expect(
+	"full summary names every guilty repository",
+	"2 unpushed (alpha, delta) · 1 orphaned (beta) · 1 no-remote (beta) · 1 modified (alpha) · 1 staged (beta) · 1 untracked (alpha) · 1 stashed (beta)",
+	fleet.render_one_line(current, nil, { full = true })
+)
+
+expect(
+	"default summary emits value-sensitive delta",
+	"new: 1 unpushed (alpha) · 1 no-remote (beta) · 1 staged (beta) · 1 untracked (alpha) · changed: 1 unpushed (delta) · 1 modified (alpha) · 1 stashed (beta) · resolved: 1 modified (epsilon) · missing: 1 repo (zeta)",
+	fleet.render_one_line(current, previous)
+)
+
+expect(
+	"name truncation is explicit",
+	"2 unpushed (alpha, +1 more) · 1 orphaned (beta) · 1 no-remote (beta) · 1 modified (alpha) · 1 staged (beta) · 1 untracked (alpha) · 1 stashed (beta)",
+	fleet.render_one_line(current, nil, { full = true, max_names = 1 })
+)
+
+expect(
+	"no current risk is quiet and explicit",
+	"No Tier 1 fleet risks.",
+	fleet.render_one_line({ repos = {} }, nil, { full = true })
+)
+
+expect(
+	"no delta is quiet and explicit",
+	"No fleet status changes.",
+	fleet.render_one_line(current, current)
+)
+
+expect(
+	"JSON encoding is canonical and diff-stable",
+	'{"a":[true,false],"m":"x","z":1}',
+	fleet.encode_json({ z = 1, a = { true, false }, m = "x" })
+)
+
+if failures == 0 then
+	io.write(string.format("All %d fleet-status renderer tests passed\n", tests))
+end
+os.exit(failures)

@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the local Git fleet loss-risk report nightly
+
+[Timer]
+OnCalendar=*-*-* 03:15:00
+RandomizedDelaySec=15m
+Persistent=true
+Unit=fleet-status.service
+
+[Install]
+WantedBy=timers.target

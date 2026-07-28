@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+
+# Real-repository classifier test for the Tier 1 fleet-status collector.
+# Detached safety and no-remote behavior are asserted over complete sets.
+
+set -u
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+fleet="$repo_root/bin/fleet-status"
+scratch="$(mktemp -d "${TMPDIR:-/tmp}/fleet-status-collector.XXXXXX")" || exit 1
+trap 'rm -rf "$scratch"' EXIT
+scan_root="$scratch/fleet root"
+remote_root="$scratch/remotes"
+mkdir -p "$scan_root" "$remote_root"
+
+git_in() {
+	local repo="$1"
+	shift
+	git -C "$repo" -c user.name=FleetTest -c user.email=fleet@example.invalid "$@"
+}
+
+init_repo() {
+	local repo="$1"
+	mkdir -p "$repo"
+	git_in "$repo" init -q -b main || exit 1
+	printf 'initial\n' >"$repo/tracked"
+	git_in "$repo" add tracked
+	git_in "$repo" commit -q -m initial || exit 1
+}
+
+init_repo "$scan_root/safe-detached"
+git_in "$scan_root/safe-detached" switch -q --detach HEAD || exit 1
+
+init_repo "$scan_root/orphaned"
+git_in "$scan_root/orphaned" switch -q --detach HEAD || exit 1
+printf 'orphan\n' >>"$scan_root/orphaned/tracked"
+git_in "$scan_root/orphaned" commit -q -am orphan || exit 1
+orphan_sha="$(git_in "$scan_root/orphaned" rev-parse HEAD)"
+
+init_repo "$scan_root/dirty repo"
+printf 'modified\n' >>"$scan_root/dirty repo/tracked"
+printf 'staged\n' >"$scan_root/dirty repo/staged"
+git_in "$scan_root/dirty repo" add staged
+printf 'untracked\n' >"$scan_root/dirty repo/untracked"
+
+init_repo "$scan_root/no-remote"
+
+# A vendored/build/fixture repository nested below a non-repository directory
+# is not a fleet project and must not create duplicate/noisy risk alarms.
+init_repo "$scan_root/container/vendor/nested"
+
+tracked="$scan_root/tracked"
+tracked_remote="$remote_root/tracked.git"
+init_repo "$tracked"
+git init -q --bare "$tracked_remote" || exit 1
+git_in "$tracked" remote add origin "$tracked_remote"
+git_in "$tracked" push -q -u origin main || exit 1
+git_in "$tracked" switch -q -c feature
+git_in "$tracked" push -q -u origin feature || exit 1
+printf 'feature ahead\n' >>"$tracked/tracked"
+git_in "$tracked" commit -q -am "feature ahead" || exit 1
+git_in "$tracked" switch -q main
+
+other="$scratch/other"
+git clone -q -b main "$tracked_remote" "$other" || exit 1
+printf 'remote ahead\n' >>"$other/tracked"
+git_in "$other" commit -q -am "remote ahead" || exit 1
+git_in "$other" push -q origin main || exit 1
+git_in "$tracked" fetch -q origin || exit 1
+printf 'stash\n' >>"$tracked/tracked"
+git_in "$tracked" stash push -q -m fleet-test || exit 1
+
+json="$scratch/current.json"
+stderr="$scratch/stderr"
+"$fleet" --tier 1 --root "$scan_root" --format json --no-save >"$json" 2>"$stderr"
+command_status=$?
+
+fails=0
+tests=0
+
+expect_eq() {
+	local label="$1" expected="$2" actual="$3"
+	((tests++))
+	if [[ "$expected" == "$actual" ]]; then
+		return 0
+	fi
+	printf 'FAIL %s\nexpected: %s\nactual:   %s\n' "$label" "$expected" "$actual" >&2
+	((fails++))
+}
+
+expect_eq "collector exits successfully" "0" "$command_status"
+expect_eq "successful collection keeps stderr clean" "" "$(cat "$stderr")"
+expect_eq "discovers the exact working-tree set" \
+	'["dirty repo","no-remote","orphaned","safe-detached","tracked"]' \
+	"$(jq -c '[.repos[].name] | sort' "$json" 2>/dev/null)"
+expect_eq "partitions dirty state exactly" \
+	'{"modified":1,"staged":1,"untracked":1}' \
+	"$(jq -cS '.repos[] | select(.name == "dirty repo") | .dirty' "$json" 2>/dev/null)"
+expect_eq "classifies detached HEADs over the full safe/risky set" \
+	'[{"name":"orphaned","orphaned":1},{"name":"safe-detached","orphaned":0}]' \
+	"$(jq -c '[.repos[] | select(.detached_head) | {name, orphaned: (.orphaned_commits | length)}] | sort_by(.name)' "$json" 2>/dev/null)"
+expect_eq "reports the exact orphaned commit" \
+	"[\"$orphan_sha\"]" \
+	"$(jq -c '.repos[] | select(.name == "orphaned") | .orphaned_commits' "$json" 2>/dev/null)"
+expect_eq "classifies the complete no-remote set" \
+	'["dirty repo","no-remote","orphaned","safe-detached"]' \
+	"$(jq -c '[.repos[] | select(.no_remote) | .name] | sort' "$json" 2>/dev/null)"
+expect_eq "collects every branch, not only the current one" \
+	'[{"name":"feature","upstream":"origin/feature","ahead":1,"behind":0},{"name":"main","upstream":"origin/main","ahead":0,"behind":1}]' \
+	"$(jq -c '[.repos[] | select(.name == "tracked") | .branches[] | {name, upstream, ahead, behind}] | sort_by(.name)' "$json" 2>/dev/null)"
+expect_eq "counts stashes" \
+	"1" \
+	"$(jq -r '.repos[] | select(.name == "tracked") | .stash_count' "$json" 2>/dev/null)"
+expect_eq "detached records use null branch" \
+	"null" \
+	"$(jq -c '.repos[] | select(.name == "safe-detached") | .branch' "$json" 2>/dev/null)"
+expect_eq "all records carry SHA and ISO commit date" \
+	"true" \
+	"$(jq -r '[.repos[] | ((.head_sha | test("^[0-9a-f]{40}$")) and (.last_commit_date | test("^[0-9]{4}-")))] | all' "$json" 2>/dev/null)"
+
+if (( fails == 0 )); then
+	printf 'All %d fleet-status collector tests passed\n' "$tests"
+fi
+exit "$fails"

@@ -2,28 +2,41 @@
 
 ## Active — nightly fleet status report, all tiers (2026-07-28)
 
-- [ ] Ship Tier 1 first and independently: build `bin/fleet-status` in LuaJIT
+- [x] Ship Tier 1 first and independently: build `bin/fleet-status` in LuaJIT
   with collector → JSON → pure-renderer architecture, defaulting to `~/Code`
   with repeatable `--root`.
+  Completed 2026-07-28 12:28 EDT: canonical, versioned JSON feeds pure
+  one-line and Markdown renderers; LuaJIT+CJSON is declared through Nix.
   - Curiosity poke: JSON must remain extensible for later network-backed tiers
     without making current local-only consumers depend on absent fields.
-- [ ] TDD the one-line renderer first: name guilty repositories, truncate with
+- [x] TDD the one-line renderer first: name guilty repositories, truncate with
   `+N more`, support full state, and emit the delta from the previous run by
   default; add terminal-readable Markdown rendering.
   - Curiosity poke: distinguish newly risky, resolved, and materially changed
     risks so a delta cannot hide a repo merely because the category count stayed
     constant.
-- [ ] TDD the collector over sets of temporary Git repositories: separate
+  Completed 2026-07-28 12:18 EDT: six scalar/golden assertions cover
+  full/delta/truncation/quiet/canonical output; Peter visually approved the
+  exact Markdown before it became an assertion.
+- [x] TDD the collector over sets of temporary Git repositories: separate
   staged/modified/untracked counts; distinguish cosmetic detached HEAD from
   commits reachable from HEAD but no branch; collect per-branch ahead/behind,
   no-remote, stash count, branch, HEAD SHA, and last-commit date.
   - Curiosity poke: orphan detection must consider every local branch, including
     a branch whose tip is a descendant of detached HEAD, without mistaking tags
     or remote-tracking refs for local branches.
-- [ ] Persist current/previous JSON and rendered Markdown idempotently at a
+  Completed 2026-07-28 12:27 EDT: eleven real-repository assertions cover the
+  safe/risky detached classifier, every branch, dirty/no-remote sets, stash and
+  identity metadata, spaced paths, and nested-vendor exclusion. The live
+  regression reduced scope from 199 recursive working trees to 156 fleet
+  projects and runtime from ~3.5 minutes to 15 seconds.
+- [x] Persist current/previous JSON and rendered Markdown idempotently at a
   documented path; keep `--tier 1` fast.
   - Curiosity poke: interrupted collection must not overwrite the last known-good
     snapshot used as the next run's comparison oracle.
+  Completed 2026-07-28 12:20 EDT: twenty assertions cover atomic rotation,
+  first/full/delta/no-change output, Markdown publication, alternate state
+  directories, and read-only `--no-save`.
 - [x] Rename `bin/get_all_git_stati` to `bin/get-all-git-stati`, preserving a
   compatibility route only if repository/fleet references require it; add
   `--root` with `~/Code` default.
@@ -39,10 +52,17 @@
   - Curiosity poke: test executable files, not every sourced identifier/helper;
     the existing tree has many underscore-named legacy executables, so migration
     scope and explicit grandfathering must be mechanically visible.
-- [ ] Run focused tests after every red/green slice, then the complete
+- [x] Run focused tests after every red/green slice, then the complete
   `bin/run_test_suite`; keep the suite floor at least 160, update docs/dirtree
   notes, inspect stray files, and commit the known-good Tier 1 unit on `master`
   before beginning network tiers.
+  - Focused Tier-1 suites green: renderer 6, collector 11, persistence 20,
+    nightly 14, plus the approved Markdown golden output.
+  - Live report: 156 project repos; 13 unpushed; 27 detached (24 cosmetic-safe,
+    3 orphaned: MazeWarsVT100, deadcells_save_editor, entropy_shield); 5
+    no-remote. Linux timer enabled/active; next run 2026-07-29 03:27 EDT.
+  Completed 2026-07-28 12:30 EDT: all 166 local test files and the hermetic
+  `checks.x86_64-linux.test` Nix derivation pass.
 - [ ] Tier 2 (local): report every branch's ahead/behind state, branches with no
   upstream, and last-commit staleness.
   - Curiosity poke: an unconfigured upstream is distinct from a configured

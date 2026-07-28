@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+
+# Nightly unit and safe installer contract for fleet-status.
+
+set -u
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+installer="$repo_root/bin/install-fleet-status-timer"
+service="$repo_root/systemd/user/fleet-status.service"
+timer="$repo_root/systemd/user/fleet-status.timer"
+docs="$repo_root/docs/fleet-status.md"
+scratch="$(mktemp -d "${TMPDIR:-/tmp}/fleet-status-nightly.XXXXXX")" || exit 1
+trap 'rm -rf "$scratch"' EXIT
+unit_dir="$scratch/systemd/user"
+systemctl_log="$scratch/systemctl.log"
+fake_systemctl="$scratch/systemctl"
+
+cat >"$fake_systemctl" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$FLEET_STATUS_SYSTEMCTL_LOG"
+EOF
+chmod +x "$fake_systemctl"
+
+fails=0
+tests=0
+expect_eq() {
+	local label="$1" expected="$2" actual="$3"
+	((tests++))
+	if [[ "$expected" == "$actual" ]]; then
+		return 0
+	fi
+	printf 'FAIL %s\nexpected: %s\nactual:   %s\n' "$label" "$expected" "$actual" >&2
+	((fails++))
+}
+
+expect_eq "service runs the independent Tier 1 boundary" "true" \
+	"$(test -f "$service" && rg -q '^ExecStart=%h/dotfiles/bin/fleet-status --tier 1$' "$service" && printf true || printf false)"
+expect_eq "timer is nightly and catches missed runs" "true" \
+	"$(test -f "$timer" && rg -q '^OnCalendar=' "$timer" && rg -q '^Persistent=true$' "$timer" && printf true || printf false)"
+expect_eq "documentation names the macOS scheduler equivalent" "true" \
+	"$(test -f "$docs" && rg -q 'launchd' "$docs" && printf true || printf false)"
+expect_eq "documentation names both persisted artifacts" "true" \
+	"$(test -f "$docs" && rg -q 'current\.json' "$docs" && rg -q 'report\.md' "$docs" && printf true || printf false)"
+
+FLEET_STATUS_SYSTEMD_USER_DIR="$unit_dir" \
+FLEET_STATUS_SYSTEMCTL="$fake_systemctl" \
+FLEET_STATUS_SYSTEMCTL_LOG="$systemctl_log" \
+	"$installer" >"$scratch/install.out" 2>"$scratch/install.err"
+first_status=$?
+expect_eq "installer succeeds" "0" "$first_status"
+expect_eq "installer stderr is clean" "" "$(cat "$scratch/install.err")"
+expect_eq "service symlink targets the committed unit" "$service" "$(readlink "$unit_dir/fleet-status.service" 2>/dev/null)"
+expect_eq "timer symlink targets the committed unit" "$timer" "$(readlink "$unit_dir/fleet-status.timer" 2>/dev/null)"
+expect_eq "installer reloads and enables the timer" \
+	$'--user daemon-reload\n--user enable --now fleet-status.timer' \
+	"$(cat "$systemctl_log" 2>/dev/null)"
+
+FLEET_STATUS_SYSTEMD_USER_DIR="$unit_dir" \
+FLEET_STATUS_SYSTEMCTL="$fake_systemctl" \
+FLEET_STATUS_SYSTEMCTL_LOG="$systemctl_log" \
+	"$installer" >"$scratch/reinstall.out" 2>"$scratch/reinstall.err"
+expect_eq "reinstall is idempotent" "0" "$?"
+expect_eq "idempotent reinstall keeps stderr clean" "" "$(cat "$scratch/reinstall.err")"
+expect_eq "idempotent reinstall keeps exact service target" "$service" "$(readlink "$unit_dir/fleet-status.service" 2>/dev/null)"
+
+conflict_dir="$scratch/conflict/systemd/user"
+mkdir -p "$conflict_dir"
+printf 'hands off\n' >"$conflict_dir/fleet-status.service"
+FLEET_STATUS_SYSTEMD_USER_DIR="$conflict_dir" \
+FLEET_STATUS_SYSTEMCTL="$fake_systemctl" \
+FLEET_STATUS_SYSTEMCTL_LOG="$systemctl_log" \
+	"$installer" >"$scratch/conflict.out" 2>"$scratch/conflict.err"
+expect_eq "installer refuses to overwrite a conflicting file" "1" "$?"
+expect_eq "conflicting file remains intact" "hands off" "$(cat "$conflict_dir/fleet-status.service")"
+
+if (( fails == 0 )); then
+	printf 'All %d fleet-status nightly tests passed\n' "$tests"
+fi
+exit "$fails"

@@ -1,0 +1,78 @@
+{
+	"schema_version": 1,
+	"collected_at": "2026-07-28T15:40:00Z",
+	"roots": ["/fleet"],
+	"repos": [
+		{
+			"name": "alpha",
+			"path": "/fleet/alpha",
+			"dirty": {"staged": 0, "modified": 2, "untracked": 1},
+			"detached_head": false,
+			"orphaned_commits": [],
+			"no_remote": false,
+			"stash_count": 0,
+			"branch": "main",
+			"head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			"last_commit_date": "2026-07-27T12:00:00-04:00",
+			"branches": [
+				{"name": "main", "upstream": "origin/main", "ahead": 2, "behind": 1}
+			]
+		},
+		{
+			"name": "beta",
+			"path": "/fleet/beta",
+			"dirty": {"staged": 1, "modified": 0, "untracked": 0},
+			"detached_head": true,
+			"orphaned_commits": ["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "cccccccccccccccccccccccccccccccccccccccc"],
+			"no_remote": true,
+			"stash_count": 2,
+			"branch": null,
+			"head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+			"last_commit_date": "2026-07-26T12:00:00-04:00",
+			"branches": []
+		},
+		{
+			"name": "delta",
+			"path": "/fleet/delta",
+			"dirty": {"staged": 0, "modified": 0, "untracked": 0},
+			"detached_head": false,
+			"orphaned_commits": [],
+			"no_remote": false,
+			"stash_count": 0,
+			"branch": "yolo",
+			"head_sha": "dddddddddddddddddddddddddddddddddddddddd",
+			"last_commit_date": "2026-07-25T12:00:00-04:00",
+			"branches": [
+				{"name": "yolo", "upstream": "origin/yolo", "ahead": 1, "behind": 0}
+			]
+		},
+		{
+			"name": "epsilon",
+			"path": "/fleet/epsilon",
+			"dirty": {"staged": 0, "modified": 0, "untracked": 0},
+			"detached_head": false,
+			"orphaned_commits": [],
+			"no_remote": false,
+			"stash_count": 0,
+			"branch": "main",
+			"head_sha": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+			"last_commit_date": "2026-07-24T12:00:00-04:00",
+			"branches": []
+		},
+		{
+			"name": "gamma",
+			"path": "/fleet/gamma",
+			"dirty": {"staged": 0, "modified": 0, "untracked": 0},
+			"detached_head": true,
+			"orphaned_commits": [],
+			"no_remote": false,
+			"stash_count": 0,
+			"branch": null,
+			"head_sha": "ffffffffffffffffffffffffffffffffffffffff",
+			"last_commit_date": "2026-07-23T12:00:00-04:00",
+			"branches": [
+				{"name": "main", "upstream": "origin/main", "ahead": 0, "behind": 3}
+			]
+		}
+	]
+}

@@ -1,0 +1,34 @@
+#!/usr/bin/env luajit
+
+-- Exact golden output approved by Peter on 2026-07-28.
+
+local script = arg[0]
+local repo_root = script:match("^(.*)/bin/test/[^/]+$") or "."
+package.path = repo_root .. "/lib/?.lua;" .. package.path
+
+local cjson = require("cjson")
+local fleet = require("fleet_status")
+local fixture_dir = repo_root .. "/bin/test/fixtures/fleet-status"
+
+local function read_json(path)
+	local file = assert(io.open(path, "rb"))
+	local value = cjson.decode(assert(file:read("*a")))
+	file:close()
+	return value
+end
+
+local current = read_json(fixture_dir .. "/current.json")
+local previous = read_json(fixture_dir .. "/previous.json")
+local expected_file = assert(io.open(fixture_dir .. "/expected.md", "rb"))
+local expected = assert(expected_file:read("*a"))
+expected_file:close()
+expected = expected:gsub("\n$", "")
+
+local actual = fleet.render_markdown(current, previous)
+if actual ~= expected then
+	io.stderr:write("FAIL: fleet-status Markdown diverged from Peter's approved rendering.\n")
+	io.stderr:write("--- expected ---\n", expected, "\n--- actual ---\n", actual, "\n")
+	os.exit(1)
+end
+
+io.write("fleet-status Markdown matches Peter's approved rendering\n")

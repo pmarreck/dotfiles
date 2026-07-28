@@ -19,7 +19,8 @@
           bash coreutils gnused gnugrep gawk findutils diffutils
           jq ripgrep fd tmux expect git openssh
           gzip gnutar zip unzip xz bc file which
-          luajit perl
+          (luajit.withPackages (luaPackages: [ luaPackages.lua-cjson ]))
+          perl
           util-linux   # hexdump
           xxd
           imagemagick  # magick

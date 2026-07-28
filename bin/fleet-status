@@ -1,0 +1,149 @@
+#!/usr/bin/env luajit
+
+local function script_dir()
+	return (arg[0]:match("^(.*)/[^/]+$") or ".")
+end
+
+local home = os.getenv("HOME") or ""
+package.path = script_dir() .. "/../lib/?.lua;"
+	.. home .. "/dotfiles/lib/?.lua;"
+	.. package.path
+
+local ok, fleet = pcall(require, "fleet_status")
+if not ok then
+	io.stderr:write("Error: fleet-status requires Lua CJSON and lib/fleet_status.lua: " .. tostring(fleet) .. "\n")
+	os.exit(2)
+end
+
+local function help()
+	io.write([[Usage: fleet-status [OPTIONS]
+
+Collect Git fleet status as JSON and render an action-focused report.
+
+Options:
+  --root ROOT       Scan ROOT; repeatable (default: ~/Code).
+  --tier 1          Run the local, network-free Tier 1 collector.
+  --format FORMAT   Output one-line, markdown, or json (default: one-line).
+  --full            Render full state instead of the default delta.
+  --max-names N     Names shown per one-line category before +N more (default: 4).
+  --state-dir DIR   Persist snapshots in DIR (default: $XDG_STATE_HOME/fleet-status).
+  --no-save         Do not update persisted current/previous snapshots.
+  -h, --help        Show this help.
+  --about           Print a one-line description.
+]])
+end
+
+local roots = {}
+local tier = "1"
+local format = "one-line"
+local full = false
+local max_names = 4
+local no_save = false
+local state_home = os.getenv("XDG_STATE_HOME")
+if not state_home or state_home == "" then state_home = home .. "/.local/state" end
+local state_dir = state_home .. "/fleet-status"
+local index = 1
+while index <= #arg do
+	local value = arg[index]
+	if value == "--root" then
+		if not arg[index + 1] then
+			io.stderr:write("Error: --root requires a directory.\n")
+			os.exit(2)
+		end
+		roots[#roots + 1] = arg[index + 1]
+		index = index + 2
+	elseif value:match("^%-%-root=") then
+		roots[#roots + 1] = value:sub(#"--root=" + 1)
+		index = index + 1
+	elseif value == "--tier" then
+		tier = arg[index + 1]
+		if not tier then
+			io.stderr:write("Error: --tier requires a number.\n")
+			os.exit(2)
+		end
+		index = index + 2
+	elseif value == "--format" then
+		format = arg[index + 1]
+		if not format then
+			io.stderr:write("Error: --format requires one-line, markdown, or json.\n")
+			os.exit(2)
+		end
+		index = index + 2
+	elseif value == "--full" then
+		full = true
+		index = index + 1
+	elseif value == "--max-names" then
+		max_names = tonumber(arg[index + 1])
+		if not max_names or max_names < 1 then
+			io.stderr:write("Error: --max-names requires a positive integer.\n")
+			os.exit(2)
+		end
+		index = index + 2
+	elseif value == "--state-dir" then
+		state_dir = arg[index + 1]
+		if not state_dir or state_dir == "" then
+			io.stderr:write("Error: --state-dir requires a directory.\n")
+			os.exit(2)
+		end
+		index = index + 2
+	elseif value == "--no-save" then
+		no_save = true
+		index = index + 1
+	elseif value == "-h" or value == "--help" then
+		help()
+		os.exit(0)
+	elseif value == "--about" then
+		io.write("fleet-status — report actionable Git fleet risk and drift\n")
+		os.exit(0)
+	else
+		io.stderr:write("Error: unknown option: " .. value .. "\n")
+		help()
+		os.exit(2)
+	end
+end
+
+if tier ~= "1" then
+	io.stderr:write("Error: only --tier 1 is implemented in this release boundary.\n")
+	os.exit(2)
+end
+if format ~= "one-line" and format ~= "markdown" and format ~= "json" then
+	io.stderr:write("Error: --format must be one-line, markdown, or json.\n")
+	os.exit(2)
+end
+if #roots == 0 then roots[1] = home .. "/Code" end
+
+local snapshot, err = fleet.collect_roots(roots)
+if not snapshot then
+	io.stderr:write("Error: " .. err .. "\n")
+	os.exit(1)
+end
+
+local previous, load_err = fleet.load_json_file(state_dir .. "/current.json")
+if load_err then
+	io.stderr:write("Error: " .. load_err .. "\n")
+	os.exit(1)
+end
+if not no_save then
+	local persisted_previous, persist_err = fleet.persist_snapshot(state_dir, snapshot)
+	if persist_err then
+		io.stderr:write("Error: " .. persist_err .. "\n")
+		os.exit(1)
+	end
+	previous = persisted_previous
+	local report_ok, report_err = fleet.write_atomic(
+		state_dir .. "/report.md",
+		fleet.render_markdown(snapshot, previous) .. "\n"
+	)
+	if not report_ok then
+		io.stderr:write("Error: " .. report_err .. "\n")
+		os.exit(1)
+	end
+end
+
+if format == "json" then
+	io.write(fleet.encode_json(snapshot), "\n")
+elseif format == "markdown" then
+	io.write(fleet.render_markdown(snapshot, previous), "\n")
+else
+	io.write(fleet.render_one_line(snapshot, previous, { full = full, max_names = max_names }), "\n")
+end
