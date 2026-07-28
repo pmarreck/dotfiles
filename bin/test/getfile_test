@@ -150,7 +150,7 @@ chmod +x "$integration_bin/curl" "$integration_bin/wget"
 # Test 3: --unzip extracts zip contents
 ((tests++))
 echo "hello from getfile test" > "$tmpdir/testfile.txt"
-(cd "$tmpdir" && zip -q "$fixture_dir/test.zip" testfile.txt)
+(cd "$tmpdir" && bsdtar --format zip -cf "$fixture_dir/test.zip" testfile.txt)
 mkdir -p "$tmpdir/out_unzip"
 if (cd "$tmpdir/out_unzip" && PATH="$integration_bin:$PATH" \
 	GETFILE_FIXTURE_DIR="$fixture_dir" getfile --unzip "fixture://test.zip" 2>/dev/null); then
@@ -186,7 +186,9 @@ fi
 ((tests++))
 echo "file_a" > "$tmpdir/a.txt"
 echo "file_b" > "$tmpdir/b.txt"
-(cd "$tmpdir" && zip -q "$fixture_dir/a.zip" a.txt && zip -q "$fixture_dir/b.zip" b.txt)
+(cd "$tmpdir" &&
+	bsdtar --format zip -cf "$fixture_dir/a.zip" a.txt &&
+	bsdtar --format zip -cf "$fixture_dir/b.zip" b.txt)
 mkdir -p "$tmpdir/out_multi"
 if (cd "$tmpdir/out_multi" && PATH="$integration_bin:$PATH" \
 	GETFILE_FIXTURE_DIR="$fixture_dir" getfile --unzip \
