@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+
+_get_all_git_stati_help() {
+	cat <<'EOF'
+Usage: get-all-git-stati [--root ROOT]...
+
+Find Git working trees under each root and print their current status.
+
+Options:
+  --root ROOT  Scan ROOT instead of the default ~/Code; repeatable.
+  -h, --help   Show this help.
+  --about      Print a one-line description.
+EOF
+}
+
+get_all_git_stati() {
+	[[ -n "${EDIT:-}" ]] && unset EDIT && edit_function "${FUNCNAME[0]}" "${BASH_SOURCE[0]}" && return
+	local roots=()
+	local fd_bin
+	local root
+	local status=0
+
+	while (( $# > 0 )); do
+		case "$1" in
+			--root)
+				if (( $# < 2 )); then
+					printf 'Error: --root requires a directory.\n' >&2
+					return 2
+				fi
+				roots+=("$2")
+				shift 2
+				;;
+			--root=*)
+				roots+=("${1#--root=}")
+				shift
+				;;
+			-h | --help)
+				_get_all_git_stati_help
+				return 0
+				;;
+			--about)
+				printf '%s\n' 'get-all-git-stati — show Git working-tree status beneath one or more roots'
+				return 0
+				;;
+			*)
+				printf 'Error: unknown argument: %s\n' "$1" >&2
+				_get_all_git_stati_help >&2
+				return 2
+				;;
+		esac
+	done
+
+	if (( ${#roots[@]} == 0 )); then
+		roots=("$HOME/Code")
+	fi
+	fd_bin="$(type -P fd)"
+	if [[ -z "$fd_bin" ]]; then
+		printf 'Error: get-all-git-stati requires fd (fd-find).\n' >&2
+		return 2
+	fi
+	if ! command -v get_git_status >/dev/null 2>&1; then
+		printf 'Error: get-all-git-stati requires get_git_status on PATH.\n' >&2
+		return 2
+	fi
+
+	for root in "${roots[@]}"; do
+		if [[ ! -d "$root" ]]; then
+			printf 'Warning: root is not a directory: %s\n' "$root" >&2
+			status=1
+			continue
+		fi
+		"$fd_bin" '.git' "$root" --base-directory "$root" \
+			--glob --type d --one-file-system --show-errors --absolute-path \
+			--hidden --threads 4 --no-follow --prune --max-depth 12 --min-depth 0 \
+			--exclude '*com~apple~CloudDocs*' --exclude '*/Library/CloudStorage*' \
+			--exec get_git_status || status=1
+	done
+
+	return "$status"
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+	get_all_git_stati "$@"
+	exit $?
+fi

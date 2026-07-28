@@ -40,11 +40,11 @@ ask_test
 
 # ── Requires the user's live system configuration or account layout ──────────
 # pathconfig asserts NixOS wrapper ordering under /run/wrappers, executables and
-# overview enumerate the real PATH, get_all_git_stati walks real checkouts.
+# overview enumerate the real PATH, get-all-git-stati walks real checkouts.
 pathconfig_bash_prepend_test
 executables_test
 overview_test
-get_all_git_stati_test
+get-all-git-stati_test
 
 # ── Requires sibling tools from ~/Code that are not part of this repository ───
 # printable-binary, rm-safe, capture, gstat and friends live in their own repos.

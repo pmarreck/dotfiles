@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+
+# Enforce hyphens for top-level executable command names. The exact allowlist
+# freezes legacy exceptions so the convention cannot silently regress again.
+
+set -u
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+bin_dir="$repo_root/bin"
+allowlist="$bin_dir/executable-name-underscore-allowlist"
+scratch="$(mktemp -d "${TMPDIR:-/tmp}/executable-names.XXXXXX")" || exit 1
+trap 'rm -rf "$scratch"' EXIT
+
+fails=0
+
+if [[ ! -f "$allowlist" ]]; then
+	printf 'FAIL: missing executable-name allowlist: %s\n' "$allowlist" >&2
+	exit 1
+fi
+
+awk '!/^#/ && NF { print }' "$allowlist" >"$scratch/allowed"
+if ! LC_ALL=C sort -c "$scratch/allowed" 2>/dev/null; then
+	printf 'FAIL: executable-name allowlist must be sorted in byte order.\n' >&2
+	((fails++))
+fi
+if [[ "$(LC_ALL=C sort "$scratch/allowed" | uniq -d)" != "" ]]; then
+	printf 'FAIL: executable-name allowlist contains duplicate entries.\n' >&2
+	((fails++))
+fi
+
+(
+	set +f
+	shopt -s nullglob
+	for path in "$bin_dir"/*; do
+		name="${path##*/}"
+		if [[ -f "$path" && -x "$path" && "$name" == *_* ]]; then
+			printf '%s\n' "$name"
+		fi
+	done
+) | LC_ALL=C sort >"$scratch/actual"
+
+if ! diff -u "$scratch/allowed" "$scratch/actual" >"$scratch/diff"; then
+	printf 'FAIL: top-level executable underscore exceptions changed.\n' >&2
+	printf 'Use hyphens for new executables. Audit compatibility before editing the legacy allowlist.\n' >&2
+	cat "$scratch/diff" >&2
+	((fails++))
+fi
+
+exit "$fails"

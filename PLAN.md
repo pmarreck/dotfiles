@@ -1,9 +1,76 @@
 # dotfiles — TODO / Plans
 
+## Active — nightly fleet status report, all tiers (2026-07-28)
+
+- [ ] Ship Tier 1 first and independently: build `bin/fleet-status` in LuaJIT
+  with collector → JSON → pure-renderer architecture, defaulting to `~/Code`
+  with repeatable `--root`.
+  - Curiosity poke: JSON must remain extensible for later network-backed tiers
+    without making current local-only consumers depend on absent fields.
+- [ ] TDD the one-line renderer first: name guilty repositories, truncate with
+  `+N more`, support full state, and emit the delta from the previous run by
+  default; add terminal-readable Markdown rendering.
+  - Curiosity poke: distinguish newly risky, resolved, and materially changed
+    risks so a delta cannot hide a repo merely because the category count stayed
+    constant.
+- [ ] TDD the collector over sets of temporary Git repositories: separate
+  staged/modified/untracked counts; distinguish cosmetic detached HEAD from
+  commits reachable from HEAD but no branch; collect per-branch ahead/behind,
+  no-remote, stash count, branch, HEAD SHA, and last-commit date.
+  - Curiosity poke: orphan detection must consider every local branch, including
+    a branch whose tip is a descendant of detached HEAD, without mistaking tags
+    or remote-tracking refs for local branches.
+- [ ] Persist current/previous JSON and rendered Markdown idempotently at a
+  documented path; keep `--tier 1` fast.
+  - Curiosity poke: interrupted collection must not overwrite the last known-good
+    snapshot used as the next run's comparison oracle.
+- [x] Rename `bin/get_all_git_stati` to `bin/get-all-git-stati`, preserving a
+  compatibility route only if repository/fleet references require it; add
+  `--root` with `~/Code` default.
+  Completed 2026-07-28 11:34 EDT: no callers existed outside the command's own
+  dotfiles tests, so no violation-preserving shim was needed; repeatable roots,
+  spaced paths, default scope, help, and about are covered 8/8.
+- [x] Add a set-classifier test enforcing hyphenated executable names across
+  `bin/`, backed by a committed, reasoned allowlist for deliberate legacy
+  exceptions.
+  Completed 2026-07-28 11:34 EDT: the exact set gate failed first on only
+  `get_all_git_stati`, then passed after its rename; the frozen legacy baseline
+  prevents new underscore-named top-level executables.
+  - Curiosity poke: test executable files, not every sourced identifier/helper;
+    the existing tree has many underscore-named legacy executables, so migration
+    scope and explicit grandfathering must be mechanically visible.
+- [ ] Run focused tests after every red/green slice, then the complete
+  `bin/run_test_suite`; keep the suite floor at least 160, update docs/dirtree
+  notes, inspect stray files, and commit the known-good Tier 1 unit on `master`
+  before beginning network tiers.
+- [ ] Tier 2 (local): report every branch's ahead/behind state, branches with no
+  upstream, and last-commit staleness.
+  - Curiosity poke: an unconfigured upstream is distinct from a configured
+    upstream whose ref is unavailable; preserve both states in JSON.
+- [ ] Tier 3 (network): discover fork parents with `gh repo view ... --json
+  parent`, compare default branches, and distinguish merely behind from
+  diverged; fixture the `ollama` yolo/main stale-branch failure class.
+  - Curiosity poke: many forks have no `upstream` remote, and GitHub API
+    reachability must not be mistaken for Git object availability locally.
+- [ ] Tier 4 (network): report pinned-input drift separately from fork drift;
+  cover every `flake.lock` input first, then `build.zig.zon`, Cargo, npm, and
+  pnpm locks where present, retaining commits-stale and days-stale separately.
+  - Curiosity poke: lock formats identify sources differently and may pin
+    immutable archives without a meaningful moving head; return `unknown`
+    instead of inventing comparability.
+- [ ] Tier 5: record the last Mechatron Prime result per repo and explicitly
+  flag missing `.mechatron-prime/targets` manifests.
+- [ ] Make network failures/rate limits healthy `unknown` values, add TTL
+  caching and configurable bounded concurrency, then make `--all` the nightly
+  default while keeping the one-liner limited to immediate human action.
+- [ ] Wire the Linux systemd user timer for the all-tier nightly run and
+  document the macOS `launchd` equivalent; run the complete suite and live fleet
+  report, audit artifacts, commit, and reply to Einstein with green SHA(s).
+
 ## Active — shell helper argument correctness (2026-07-27)
 
 - [x] Remove inbox notes whose work is already landed using `rm-safe`; retain the
-  unresolved PageUp/PageDown and `session` notes until their work is handled.
+  then-unresolved PageUp/PageDown and `session` notes until their work is handled.
   Completed 2026-07-27 16:15 EDT; eight handled/superseded notes moved to the
   recoverable trash.
   - Curiosity poke: both assignment and completion notes for the same landed unit
@@ -19,9 +86,12 @@
   - Curiosity poke: directory/file/function/script classification should inspect
     only the first argument, but the eventual editor invocation must not discard
     or split any later arguments.
-- [ ] Repair the pending `session` regression reported 2026-07-26: outside tmux,
+- [x] Repair the pending `session` regression reported 2026-07-26: outside tmux,
   `new-session -A` must create-and-attach (`-AD`, not detached `-Ad`), with a
   persistent attach-contract regression test before implementation.
+  Completed 2026-07-27 19:59 EDT in `c9daedf`: the three attach-contract
+  assertions failed first against lowercase `-d`, then all 160 test files
+  passed with uppercase `-D`.
 
 ## Active — suite gating (2026-07-25)
 
@@ -262,8 +332,11 @@ Additive to the already-shipped fun_intro/rg/sessions work; established goals st
   Completed 2026-07-24. (uncommitted)
   - Curiosity poke: a cd-helper MUST be a sourced function; and `${EDIT:-}` (not
     `${EDIT}`) keeps the self-edit hook `set -u`-safe for the test harness.
-- [ ] dirtree inbox (2026-07-23): plain PageUp/PageDown scroll WezTerm viewport
-  instead of jumping shell history — find the readline/shell mapping responsible.
+- [x] dirtree inbox (2026-07-23): plain PageUp/PageDown scroll WezTerm viewport
+  instead of jumping shell history. Completed 2026-07-24 11:09 EDT in the
+  separate `~/.config` repo at `3f7d0c2`: neither dotfiles `.inputrc` nor
+  `.bashrc` mapped PageUp/PageDown (only arrows); WezTerm now intercepts the
+  plain keys with `ScrollByPage`, while Shift+Page passes through to the app.
 
 ### BIG idea (new, additive) — `collation_mf_do_you_speak_it` (Zig lib + C FFI)
 Repo `pmarreck/collation_mf_do_you_speak_it` at `~/Code/`. Delegated to a
