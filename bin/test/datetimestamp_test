@@ -1,77 +1,215 @@
 #!/usr/bin/env bash
 
-test_datetimestamp() {
-	local fails=0
-	local tests=0
+# Deterministic CLI contract for the LuaJIT nanosecond timestamp adapter.
 
-	echo "Testing datetimestamp output stability..."
+set -u
 
-	(( tests++ ))
-	echo "Ensuring single-line output and deterministic timestamp when TIME_SOURCE is provided..."
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+cli="$repo_root/bin/datetimestamp"
+bash_fallback="$repo_root/bin/datetimestamp-bash"
+scratch="$(mktemp -d "${TMPDIR:-/tmp}/datetimestamp-test.XXXXXX")" || exit 1
+trap 'rm -rf "$scratch"' EXIT
 
-	local fake_time_source
-	fake_time_source=$(mktemp --tmpdir)
-	cat >"$fake_time_source" <<'EOF'
-#!/usr/bin/env bash
-printf '%s\n' "19990101000000.000"
-EOF
-	chmod +x "$fake_time_source"
+fails=0
+tests=0
 
-	local output exit_code
-	output=$(TIME_SOURCE="$fake_time_source" datetimestamp 2>&1)
-	exit_code=$?
-
-	rm -f "$fake_time_source"
-
-	if [ "$exit_code" -eq 0 ] && [ "$output" = "19990101000000.000" ]; then
-		echo "✓ datetimestamp respects TIME_SOURCE override with single output line"
-	else
-		echo "✗ datetimestamp TIME_SOURCE override failed" >&2
-		echo "  exit code: $exit_code (expected 0)" >&2
-		echo "  output: '$output' (expected '19990101000000.000')" >&2
-		(( fails++ ))
-	fi
-
-	(( tests++ ))
-	echo "Checking --date handling produces expected timestamp..."
-
-	output=$(datetimestamp --date='@2147483640' 2>&1)
-	exit_code=$?
-
-	if [ "$exit_code" -eq 0 ] && [ "$output" = "20380118221400.000" ]; then
-		echo "✓ datetimestamp --date formats epoch properly with zero padding"
-	else
-		echo "✗ datetimestamp --date formatting failed" >&2
-		echo "  exit code: $exit_code (expected 0)" >&2
-		echo "  output: '$output' (expected '20380118221400.000')" >&2
-		(( fails++ ))
-	fi
-
-	(( tests++ ))
-	echo "Checking DATETIMESTAMPFORMAT overrides output layout..."
-
-	output=$(DATETIMESTAMPFORMAT='+%Y-%m-%d %H:%M:%S' datetimestamp --date='@2147483640' 2>&1)
-	exit_code=$?
-
-	if [ "$exit_code" -eq 0 ] && [ "$output" = "2038-01-18 22:14:00" ]; then
-		echo "✓ datetimestamp respects DATETIMESTAMPFORMAT with spaces"
-	else
-		echo "✗ datetimestamp format override failed" >&2
-		echo "  exit code: $exit_code (expected 0)" >&2
-		echo "  output: '$output' (expected '2038-01-18 22:14:00')" >&2
-		(( fails++ ))
-	fi
-
-	if [ "$fails" -gt 0 ]; then
-		echo "" >&2
-		echo "datetimestamp test FAILED: $fails of $tests tests failed" >&2
-		return "$fails"
-	else
-		echo ""
-		echo "datetimestamp test PASSED: All $tests tests passed"
-		return 0
-	fi
+expect_eq() {
+	local label="$1" expected="$2" actual="$3"
+	((tests++))
+	if [[ "$expected" == "$actual" ]]; then return 0; fi
+	printf 'FAIL %s\nexpected: %s\nactual:   %s\n' \
+		"$label" "$expected" "$actual" >&2
+	((fails++))
 }
 
-	test_datetimestamp
-	exit $?
+expect_match() {
+	local label="$1" pattern="$2" actual="$3"
+	((tests++))
+	if [[ "$actual" =~ $pattern ]]; then return 0; fi
+	printf 'FAIL %s\npattern: %s\nactual:  %s\n' \
+		"$label" "$pattern" "$actual" >&2
+	((fails++))
+}
+
+expect_match "executable uses a LuaJIT shebang" \
+	'^#!(/usr/bin/env luajit|.*/luajit)$' \
+	"$(head -n 1 "$cli")"
+expect_eq "FFI is the executable's only required module" 'require("ffi")' \
+	"$(rg -o 'require\("[^"]+"\)' "$cli" | sort -u)"
+expect_eq "source covers the complete POSIX and Windows native clock set" \
+	$'GetSystemTimePreciseAsFileTime\nclock_gettime' \
+	"$(rg -o 'GetSystemTimePreciseAsFileTime|clock_gettime' "$cli" | sort -u)"
+expect_eq "LuaJIT implementation has no project-library import path" "false" \
+	"$(rg -Fq 'package.path' "$cli" && printf true || printf false)"
+expect_eq "former Bash implementation remains executable under its new name" \
+	"true" "$([[ -x "$bash_fallback" ]] && printf true || printf false)"
+fake_time_source="$scratch/time-source"
+printf '#!%s\nprintf "19990101000000.000\\n"\n' "$BASH" >"$fake_time_source"
+chmod +x "$fake_time_source"
+bash_fallback_output="$(
+	TIME_SOURCE="$fake_time_source" "$bash_fallback" --date='@0' \
+		2>"$scratch/bash-fallback.err"
+)"
+expect_eq "renamed Bash fallback remains directly runnable" \
+	"19990101000000.000" "$bash_fallback_output"
+expect_eq "renamed Bash fallback keeps successful stderr clean" "" \
+	"$(cat "$scratch/bash-fallback.err")"
+
+local_timestamp="$(
+	TZ=EST5 "$cli" --date='@2147483640.123456789' \
+		2>"$scratch/local.err"
+)"
+local_status=$?
+expect_eq "local epoch fixture exits successfully" "0" "$local_status"
+expect_eq "local time renders all nine fractional digits" \
+	"20380118221400.123456789" "$local_timestamp"
+expect_eq "successful local rendering keeps stderr clean" "" \
+	"$(cat "$scratch/local.err")"
+
+utc_timestamp="$(
+	TZ=EST5 "$cli" --utc --date '@2147483640.123456789' \
+		2>"$scratch/utc.err"
+)"
+utc_status=$?
+expect_eq "UTC epoch fixture exits successfully" "0" "$utc_status"
+expect_eq "UTC conversion appends the standard Z designator" \
+	"20380119031400.123456789Z" "$utc_timestamp"
+if utc_oracle="$(date -u -r 2147483640 '+%Y%m%d%H%M%S' 2>/dev/null)"; then
+	:
+else
+	utc_oracle="$(date -u --date='@2147483640' '+%Y%m%d%H%M%S')"
+fi
+expect_eq "UTC calendar fields agree with the independent system-date oracle" \
+	"${utc_oracle}.123456789Z" "$utc_timestamp"
+expect_eq "successful UTC rendering keeps stderr clean" "" \
+	"$(cat "$scratch/utc.err")"
+
+utc_late="$(
+	TZ=EST5 "$cli" --date='@2147483640.000000007' --utc
+)"
+expect_eq "named options parse in either order" \
+	"20380119031400.000000007Z" "$utc_late"
+
+precision_outputs="$(
+	for precision in \
+		seconds millis milliseconds micros microseconds nanos nanoseconds; do
+		printf '%s=' "$precision"
+		TZ=EST5 "$cli" --date='@2147483640.123456789' "--$precision" \
+			2>>"$scratch/resolution.err"
+	done
+)"
+expect_eq "calendar resolution aliases classify as one complete set" \
+	$'seconds=20380118221400\nmillis=20380118221400.123\nmilliseconds=20380118221400.123\nmicros=20380118221400.123456\nmicroseconds=20380118221400.123456\nnanos=20380118221400.123456789\nnanoseconds=20380118221400.123456789' \
+	"$precision_outputs"
+expect_eq "later precision options override earlier ones" \
+	"20380118221400.123" \
+	"$(TZ=EST5 "$cli" --date='@2147483640.123456789' --seconds --millis \
+		2>>"$scratch/resolution.err")"
+expect_eq "seconds last removes the complete fractional field" \
+	"20380118221400" \
+	"$(TZ=EST5 "$cli" --date='@2147483640.123456789' --millis --seconds \
+		2>>"$scratch/resolution.err")"
+expect_eq "no-decimal joins seconds directly to nanoseconds" \
+	"20380118221400123456789" \
+	"$(TZ=EST5 "$cli" --date='@2147483640.123456789' --no-decimal \
+		2>>"$scratch/resolution.err")"
+expect_eq "no-decimal composes with reduced precision and UTC" \
+	"20380119031400123Z" \
+	"$(TZ=EST5 "$cli" --utc --millis --no-decimal \
+		--date='@2147483640.123456789' 2>>"$scratch/resolution.err")"
+
+epoch_nanoseconds="$(
+	"$cli" --date='@2147483640.123456789' --nanoseconds-since-epoch \
+		2>"$scratch/epoch-ns.err"
+)"
+epoch_nanoseconds_status=$?
+expect_eq "epoch nanoseconds exits successfully" "0" "$epoch_nanoseconds_status"
+expect_eq "epoch nanoseconds is an exact large integer" \
+	"2147483640123456789" "$epoch_nanoseconds"
+expect_eq "epoch nanoseconds keeps stderr clean" "" \
+	"$(cat "$scratch/epoch-ns.err")"
+
+utc_epoch_nanoseconds="$(
+	TZ=EST5 "$cli" -n --utc --date '@2147483640.000000007'
+)"
+expect_eq "UTC has no effect on timezone-independent epoch nanoseconds" \
+	"2147483640000000007" "$utc_epoch_nanoseconds"
+expect_eq "negative subsecond epochs remain exact integers" "-1" \
+	"$("$cli" --date='@-0.000000001' -n)"
+expect_eq "calendar resolution switches do not rename epoch nanoseconds" \
+	"2147483640123456789" \
+	"$("$cli" --date='@2147483640.123456789' -n --seconds --no-decimal \
+		2>>"$scratch/resolution.err")"
+expect_eq "resolution modes keep successful stderr clean" "" \
+	"$(cat "$scratch/resolution.err")"
+
+formatted="$(
+	TZ=EST5 \
+	DATETIMESTAMPFORMAT='+%Y-%m-%d %H:%M:%S.%9N' \
+		"$cli" --date='@2147483640.987654321'
+)"
+expect_eq "legacy format override receives native fractional digits" \
+	"2038-01-18 22:14:00.987654321" "$formatted"
+
+live_local="$("$cli" 2>"$scratch/live-local.err")"
+live_local_status=$?
+expect_eq "live local clock exits successfully" "0" "$live_local_status"
+expect_match "live local output has exactly nanosecond precision" \
+	'^[0-9]{14}\.[0-9]{9}$' "$live_local"
+expect_eq "live local clock keeps stderr clean" "" \
+	"$(cat "$scratch/live-local.err")"
+
+live_utc="$("$cli" --utc 2>"$scratch/live-utc.err")"
+live_utc_status=$?
+expect_eq "live UTC clock exits successfully" "0" "$live_utc_status"
+expect_match "live UTC output has nine digits and a terminal Z" \
+	'^[0-9]{14}\.[0-9]{9}Z$' "$live_utc"
+expect_eq "live UTC clock keeps stderr clean" "" \
+	"$(cat "$scratch/live-utc.err")"
+
+live_epoch_nanoseconds="$("$cli" -n 2>"$scratch/live-epoch-ns.err")"
+live_epoch_nanoseconds_status=$?
+expect_eq "live epoch nanoseconds exits successfully" "0" \
+	"$live_epoch_nanoseconds_status"
+expect_match "live epoch nanoseconds is one unsigned integer" \
+	'^[0-9]{19}$' "$live_epoch_nanoseconds"
+expect_eq "live epoch nanoseconds keeps stderr clean" "" \
+	"$(cat "$scratch/live-epoch-ns.err")"
+
+help="$("$cli" --help 2>"$scratch/help.err")"
+expect_match "help documents UTC and deterministic epoch input" \
+	'--utc.*--date' "$(tr '\n' ' ' <<<"$help")"
+expect_match "help documents timezone-independent nanosecond integers" \
+	'--nanoseconds-since-epoch.*timezone-independent' \
+	"$(tr '\n' ' ' <<<"$help")"
+expect_match "help documents every calendar resolution and decimal suppression" \
+	'--seconds.*--millis.*--micros.*--nanos.*--no-decimal' \
+	"$(tr '\n' ' ' <<<"$help")"
+expect_eq "help keeps stderr clean" "" "$(cat "$scratch/help.err")"
+
+about="$("$cli" --about 2>"$scratch/about.err")"
+expect_match "about is a one-line description" '^datetimestamp - .+$' "$about"
+expect_eq "about contains exactly one line" "1" \
+	"$(printf '%s\n' "$about" | wc -l | tr -d ' ')"
+expect_eq "about keeps stderr clean" "" "$(cat "$scratch/about.err")"
+
+"$cli" --date='@1.1234567890' >"$scratch/invalid.out" 2>"$scratch/invalid.err"
+invalid_status=$?
+expect_eq "more than nine fractional digits is a usage error" "2" "$invalid_status"
+expect_eq "invalid fractional precision keeps stdout clean" "" \
+	"$(cat "$scratch/invalid.out")"
+expect_match "invalid precision diagnostic names nanoseconds" \
+	'nine fractional digits' "$(cat "$scratch/invalid.err")"
+
+"$cli" --not-an-option >"$scratch/unknown.out" 2>"$scratch/unknown.err"
+unknown_status=$?
+expect_eq "unknown option is a usage error" "2" "$unknown_status"
+expect_eq "unknown option keeps stdout clean" "$(printf '')" \
+	"$(cat "$scratch/unknown.out")"
+expect_match "unknown option is named" \
+	'Unknown option: --not-an-option' "$(cat "$scratch/unknown.err")"
+
+if ((fails == 0)); then
+	printf 'All %d datetimestamp tests passed\n' "$tests"
+fi
+exit "$fails"

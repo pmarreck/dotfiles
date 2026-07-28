@@ -1,56 +1,237 @@
-#!/usr/bin/env bash
+#!/usr/bin/env luajit
 
-. "$HOME/dotfiles/bin/src/truthy.sh"
+local ffi = require("ffi")
 
-datetimestamp() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-	# set the date bin to gdate (or one that recognizes --resolution) if available unless TIME_SOURCE overrides
-	local datebin="date"
-	local time_source
-	if [ -n "$TIME_SOURCE" ]; then
-		time_source="$TIME_SOURCE"
+local VERSION = "1.0.0"
+local DEFAULT_FORMAT = "+%Y%m%d%H%M%S.%9N"
+local NANOSECONDS_PER_SECOND = 1000000000
+
+--- Parse deterministic @EPOCH input into normalized integral seconds and
+--- nanoseconds without losing the fractional digits through floating point.
+local function parse_epoch(value)
+	local sign, whole, fraction =
+		tostring(value or ""):match("^@([+-]?)(%d+)%.?(%d*)$")
+	if not whole then
+		return nil, "--date expects @EPOCH with up to nine fractional digits"
+	end
+	if #fraction > 9 then
+		return nil, "--date accepts at most nine fractional digits"
+	end
+	local seconds = tonumber(whole)
+	if not seconds then return nil, "--date epoch is outside the numeric range" end
+	local nanoseconds = tonumber(fraction .. string.rep("0", 9 - #fraction)) or 0
+	if sign == "-" then
+		if nanoseconds > 0 then
+			seconds = -seconds - 1
+			nanoseconds = NANOSECONDS_PER_SECOND - nanoseconds
+		else
+			seconds = -seconds
+		end
+	end
+	return seconds, nanoseconds
+end
+
+--- Serialize a normalized timestamp as an exact decimal Unix-nanosecond
+--- integer, avoiding precision loss from multiplying through a Lua number.
+local function epoch_nanoseconds(seconds, nanoseconds)
+	local negative = seconds < 0
+	local whole_seconds = negative and -seconds or seconds
+	local fraction = nanoseconds
+	if negative and fraction > 0 then
+		whole_seconds = whole_seconds - 1
+		fraction = NANOSECONDS_PER_SECOND - fraction
+	end
+	local digits = (whole_seconds > 0 and string.format("%.0f", whole_seconds) or "")
+		.. string.format("%09d", fraction)
+	digits = digits:gsub("^0+", "")
+	if digits == "" then digits = "0" end
+	return negative and digits ~= "0" and ("-" .. digits) or digits
+end
+
+--- Render strftime calendar fields plus %N nanoseconds through an injected
+--- calendar port, keeping formatting deterministic.
+local function render(seconds, nanoseconds, format, utc, calendar)
+	local replacements = {}
+	local tokenized = tostring(format):gsub("%%([1-9]?)N", function(width)
+		width = tonumber(width) or 9
+		local token = "__DATETIMESTAMP_NANOSECONDS_" .. tostring(#replacements + 1) .. "__"
+		replacements[#replacements + 1] = {
+			token = token,
+			value = string.format("%09d", nanoseconds):sub(1, width),
+		}
+		return token
+	end)
+	local rendered = calendar(tokenized, seconds, utc)
+	if not rendered then return nil, "calendar conversion failed" end
+	for _, replacement in ipairs(replacements) do
+		rendered = rendered:gsub(replacement.token, replacement.value)
+	end
+	return rendered
+end
+
+local function help()
+	io.write([[Usage: datetimestamp [OPTIONS]
+
+Print a compact local or UTC timestamp with nine fractional digits.
+
+Options:
+  --utc             Render Coordinated Universal Time and append Z.
+  -n, --nanoseconds-since-epoch
+                    Emit one timezone-independent Unix epoch integer; --utc
+                    and calendar-resolution switches have no effect in this mode.
+  --seconds         Render no fractional digits.
+  --millis, --milliseconds
+                    Render three fractional digits.
+  --micros, --microseconds
+                    Render six fractional digits.
+  --nanos, --nanoseconds
+                    Render nine fractional digits (default).
+  --no-decimal      Omit the decimal separator before fractional digits.
+  --date @EPOCH     Render an injected Unix epoch with up to nine fractional
+                    digits instead of reading the native realtime clock.
+  -d @EPOCH         Alias for --date; =VALUE forms are also accepted.
+  -h, --help        Show this help.
+  --about           Print a one-line description.
+]])
+end
+
+--- Read Unix seconds plus nanoseconds from the platform's native realtime
+--- clock: POSIX clock_gettime or Windows precise FILETIME.
+local function native_realtime()
+	if ffi.os == "Windows" then
+		ffi.cdef[[
+			typedef unsigned long datetimestamp_DWORD;
+			typedef struct {
+				datetimestamp_DWORD dwLowDateTime;
+				datetimestamp_DWORD dwHighDateTime;
+			} datetimestamp_FILETIME;
+			void GetSystemTimePreciseAsFileTime(datetimestamp_FILETIME *);
+		]]
+		local value = ffi.new("datetimestamp_FILETIME[1]")
+		ffi.C.GetSystemTimePreciseAsFileTime(value)
+		local ticks = ffi.new("uint64_t", value[0].dwHighDateTime)
+			* 4294967296ULL
+			+ ffi.new("uint64_t", value[0].dwLowDateTime)
+		local unix_ticks = ticks - 116444736000000000ULL
+		local seconds = unix_ticks / 10000000ULL
+		local nanoseconds = (unix_ticks % 10000000ULL) * 100ULL
+		return tonumber(seconds), tonumber(nanoseconds)
+	end
+
+	ffi.cdef[[
+		typedef long datetimestamp_time_t;
+		typedef struct {
+			datetimestamp_time_t tv_sec;
+			long tv_nsec;
+		} datetimestamp_timespec;
+		int clock_gettime(int clock_id, datetimestamp_timespec *value);
+	]]
+	local value = ffi.new("datetimestamp_timespec[1]")
+	-- POSIX and Darwin both assign zero to CLOCK_REALTIME.
+	if ffi.C.clock_gettime(0, value) ~= 0 then
+		return nil, "native clock_gettime failed"
+	end
+	return tonumber(value[0].tv_sec), tonumber(value[0].tv_nsec)
+end
+
+local utc = false
+local epoch
+local nanoseconds_since_epoch = false
+local precision = 9
+local precision_explicit = false
+local no_decimal = false
+local index = 1
+while index <= #arg do
+	local value = arg[index]
+	if value == "--utc" then
+		utc = true
+	elseif value == "--nanoseconds-since-epoch" or value == "-n" then
+		nanoseconds_since_epoch = true
+	elseif value == "--seconds" then
+		precision = 0
+		precision_explicit = true
+	elseif value == "--millis" or value == "--milliseconds" then
+		precision = 3
+		precision_explicit = true
+	elseif value == "--micros" or value == "--microseconds" then
+		precision = 6
+		precision_explicit = true
+	elseif value == "--nanos" or value == "--nanoseconds" then
+		precision = 9
+		precision_explicit = true
+	elseif value == "--no-decimal" then
+		no_decimal = true
+	elseif value == "--date" or value == "-d" then
+		if not arg[index + 1] then
+			io.stderr:write("datetimestamp: " .. value .. " requires @EPOCH\n")
+			os.exit(2)
+		end
+		index = index + 1
+		epoch = arg[index]
+	elseif value:match("^%-%-date=") or value:match("^%-d=") then
+		epoch = value:match("^[^=]+=(.*)$")
+	elseif value == "--help" or value == "-h" then
+		help()
+		os.exit(0)
+	elseif value == "--about" then
+		io.write(string.format(
+			"datetimestamp - native nanosecond timestamp %s for %s/%s\n",
+			VERSION,
+			jit.os,
+			jit.arch
+		))
+		os.exit(0)
 	else
-		$datebin --resolution >/dev/null 2>&1 || datebin="gdate"
-		$datebin --resolution >/dev/null 2>&1 || datebin="date"
-		time_source="$datebin"
-	fi
-	local format=${DATETIMESTAMPFORMAT:-'+%Y%m%d%H%M%S.%3N'}
-	# if there is a --date argument
-	case "$1" in
-		--date=*|-d=*)
-			"$time_source" --date="${1#*=}" "$format"
-			;;
-		--date|-d)
-			"$time_source" --date="$2" "$format"
-			;;
-		--help|-h)
-			echo "Usage: datetimestamp [--date|-d[=| ]'date']"
-			echo "  --date|-d [date]  date to use, defaults to now, see man date for format details"
-			echo "  --help|-h         show this help"
-			return 0
-			;;
-		-*)
-			echo "Unknown option: $1" >&2
-			datetimestamp -h
-			return 2
-			;;
-		*)
-			"$time_source" "$format"
-			;;
-	esac
-}
+		io.stderr:write("Unknown option: " .. value .. "\n")
+		os.exit(2)
+	end
+	index = index + 1
+end
 
-# Export the function so it can be used by find -exec
+local seconds, nanoseconds
+if epoch then
+	seconds, nanoseconds = parse_epoch(epoch)
+	if not seconds then
+		io.stderr:write("datetimestamp: " .. nanoseconds .. "\n")
+		os.exit(2)
+	end
+else
+	seconds, nanoseconds = native_realtime()
+	if not seconds then
+		io.stderr:write("datetimestamp: " .. nanoseconds .. "\n")
+		os.exit(1)
+	end
+end
 
-# Run the function if this script is executed directly
-if ! (return 0 2>/dev/null); then
-	# Check if we are running tests
-	if [ "$1" = "--test" ]; then
-		# Run tests from the test file
-		_test_file="$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
-		if [ -f "$_test_file" ]; then . "$_test_file" > /dev/null; fi
-	else
-		# If called directly, pass all arguments to the function
-		$(basename "${0##\-}") "$@"
-	fi
-fi
+local format = os.getenv("DATETIMESTAMPFORMAT") or DEFAULT_FORMAT
+if nanoseconds_since_epoch then
+	io.write(epoch_nanoseconds(seconds, nanoseconds), "\n")
+	os.exit(0)
+end
+if format:sub(1, 1) == "+" then format = format:sub(2) end
+if precision_explicit or no_decimal then
+	format = format:gsub("([.]?)%%([1-9]?)N", function(separator, width)
+		if precision_explicit and precision == 0 then return "" end
+		local rendered_width = precision_explicit and precision
+			or tonumber(width)
+			or 9
+		return (no_decimal and "" or separator)
+			.. "%"
+			.. tostring(rendered_width)
+			.. "N"
+	end)
+end
+local rendered, render_error = render(
+	seconds,
+	nanoseconds,
+	format,
+	utc,
+	function(date_format, epoch_seconds, use_utc)
+		return os.date((use_utc and "!" or "") .. date_format, epoch_seconds)
+	end
+)
+if not rendered then
+	io.stderr:write("datetimestamp: " .. render_error .. "\n")
+	os.exit(1)
+end
+io.write(rendered, utc and "Z\n" or "\n")

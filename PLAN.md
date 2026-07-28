@@ -2,6 +2,25 @@
 
 ## Active — nightly fleet status report, all tiers (2026-07-28)
 
+- [x] Port `bin/datetimestamp` from Bash to LuaJIT with a native FFI
+  (completed 2026-07-28 07:20 PM EDT):
+  high-resolution clock, exactly nine fractional digits, local time by default,
+  an explicit `--utc` form carrying a `Z` UTC designator, and
+  `-n`/`--nanoseconds-since-epoch` exact-integer output. Epoch integers are
+  timezone-independent, so `--utc` intentionally has no effect in `-n` mode.
+  Calendar precision is selectable with `--seconds`, `--millis`, `--micros`,
+  and `--nanos` (plus their unabbreviated aliases); `--no-decimal` removes the
+  fractional separator. These calendar-only switches intentionally do not
+  change the explicitly nanosecond epoch-integer mode.
+  Preserve existing formatting switches and add deterministic
+  CLI/timezone/error-path coverage; rerun focused, raw-host, hermetic, push,
+  and exact-CI gates.
+  Keep the LuaJIT executable entirely self-contained at `bin/datetimestamp`
+  (no project-library imports), and retain the executable former implementation
+  as `bin/datetimestamp-bash` during migration.
+  - Curiosity poke: POSIX `timespec`, Windows `FILETIME`, timezone conversion,
+    fractional truncation, and second rollover must not leak platform-specific
+    assumptions into the pure formatter.
 - [x] Refactor `fleet-status` into a bold hexagonal design selected by Peter
   (completed 2026-07-28 05:00 PM EDT):
   keep `fleet_status` as the stable facade/schema while extracting pure

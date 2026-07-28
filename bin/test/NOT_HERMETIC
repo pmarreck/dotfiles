@@ -61,7 +61,6 @@ rule30_test
 warhammer_quote_test
 date_test
 date_difference_days_test
-datetimestamp_test
 stat_test
 sed_test
 glob_test
