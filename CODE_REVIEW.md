@@ -192,18 +192,16 @@ the all-tier implementation.
 - Exact scheduler fields, executable naming, CLI integer/about contracts, and
   both local/hermetic full-suite gates are enforced.
 
-### Deliberately deferred design choice
+### Design choice resolved: bold hexagonal split
 
-`lib/fleet_status.lua` is now a large facade containing pure rendering, local
-Git collection, persistence, lock parsers, provider adapters, and orchestration.
-Splitting it is a maintainability refactor, not a release-correctness fix, and
-project rules require Peter to choose before refactoring:
+Peter selected the bold option. `lib/fleet_status.lua` is now a thin, stable
+composition root wiring pure renderers and lock parsers to constructor-injected
+local Git, state, provider, runtime, and network-orchestration modules. Network
+orchestration has no direct host I/O; those effects cross the runtime port.
 
-- **Safe:** extract pure renderers and lock parsers first, preserving every
-  public function and JSON byte-for-byte. Low risk; several small commits.
-- **Bold:** define explicit local/network adapter ports and split all six
-  layers in one branch. Cleaner boundary, but larger review and rollback
-  surface.
-
-The current module remains fully covered through end-to-end behavior tests;
-this decision does not waive either full-suite gate.
+An architecture contract enforces the exact dependency graph, facade size,
+pure-domain boundaries, host-I/O boundary, complete public API, and actual
+adapter substitution with fake ports. Existing collector, renderer, state,
+nightly, and network suites continue to enforce behavioral and byte-level
+compatibility. The completed split passed all 168 raw-host tests and all 119
+hermetic Nix tests.

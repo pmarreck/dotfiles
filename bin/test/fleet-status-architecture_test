@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+
+# Hexagonal dependency-direction contract for fleet-status modules.
+
+set -u
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+module_root="$repo_root/lib/fleet_status"
+scratch="$(mktemp -d "${TMPDIR:-/tmp}/fleet-status-architecture.XXXXXX")" || exit 1
+trap 'rm -rf "$scratch"' EXIT
+
+fails=0
+tests=0
+expect_eq() {
+	local label="$1" expected="$2" actual="$3"
+	((tests++))
+	if [[ "$expected" == "$actual" ]]; then return 0; fi
+	printf 'FAIL %s\nexpected: %s\nactual:   %s\n' "$label" "$expected" "$actual" >&2
+	((fails++))
+}
+
+expected_modules=$'local_collector.lua\nlock_parsers.lua\nnetwork.lua\nproviders.lua\nrenderers.lua\nruntime.lua\nstate.lua'
+actual_modules="$(
+	if [[ -d "$module_root" ]]; then
+		find "$module_root" ! -path "$module_root" -prune \
+			-type f -name '*.lua' \
+			-exec basename '{}' \; | sort
+	fi
+)"
+expect_eq "hexagonal module set is exact" "$expected_modules" "$actual_modules"
+
+facade_lines="$(wc -l <"$repo_root/lib/fleet_status.lua" | tr -d ' ')"
+expect_eq "facade contains wiring rather than implementation" "true" \
+	"$([[ "$facade_lines" -le 100 ]] && printf true || printf false)"
+
+first_party_edges="$(
+	{
+		rg -n --no-filename -o 'require\("fleet_status\.[^"]+' \
+			"$repo_root/lib/fleet_status.lua" "$module_root" 2>/dev/null || true
+	} | sed 's/.*require("//' | sort -u
+)"
+expected_edges=$'fleet_status.local_collector\nfleet_status.lock_parsers\nfleet_status.network\nfleet_status.providers\nfleet_status.renderers\nfleet_status.runtime\nfleet_status.state'
+expect_eq "only the composition root imports first-party modules" \
+	"$expected_edges" "$first_party_edges"
+
+impure_pure_modules="$(
+	for module in renderers lock_parsers; do
+		path="$module_root/$module.lua"
+		[[ -f "$path" ]] || continue
+		if rg -q 'io\.|os\.|popen|run_command|run_git|read_file|write_atomic' "$path"; then
+			printf '%s\n' "$module"
+		fi
+	done
+)"
+expect_eq "domain renderers and lock parsers have no I/O vocabulary" "" "$impure_pure_modules"
+
+network_host_io="$(
+	rg -n 'io\.|os\.' "$module_root/network.lua" 2>/dev/null || true
+)"
+expect_eq "network orchestration reaches the host only through injected ports" \
+	"" "$network_host_io"
+
+if [[ -d "$module_root" ]]; then
+	PACKAGE_PATH="$repo_root/lib/?.lua;$repo_root/lib/?/init.lua;;" \
+	luajit -e '
+		package.path = assert(os.getenv("PACKAGE_PATH"))
+		local fleet = require("fleet_status")
+		local expected = {
+			"acquire_state_lock", "collect_network_repo", "collect_roots",
+			"configure_provider_cache", "decode_json", "encode_json",
+			"enrich_network", "load_json_file", "persist_snapshot",
+			"release_state_lock", "render_markdown", "render_one_line",
+			"write_atomic",
+		}
+		local actual = {}
+		for name, value in pairs(fleet) do
+			if type(value) == "function" then actual[#actual + 1] = name end
+		end
+		table.sort(actual)
+		table.sort(expected)
+		assert(table.concat(actual, "\n") == table.concat(expected, "\n"))
+		assert(type(fleet.VERSION) == "string")
+		assert(type(fleet.NETWORK_CACHE_VERSION) == "number")
+	' >"$scratch/api.out" 2>"$scratch/api.err"
+	api_status=$?
+else
+	api_status=1
+fi
+expect_eq "stable facade exports the complete existing function API" "0" "$api_status"
+expect_eq "facade API probe stderr is clean" "" "$(cat "$scratch/api.err" 2>/dev/null)"
+
+PACKAGE_PATH="$repo_root/lib/?.lua;$repo_root/lib/?/init.lua;;" \
+luajit -e '
+	package.path = assert(os.getenv("PACKAGE_PATH"))
+	local commands = {}
+	local runtime = {
+		read_file = function(path)
+			assert(path == "/state/current.json")
+			return "{\"answer\":42}"
+		end,
+		run_command = function(command)
+			commands[#commands + 1] = command
+			if command == "provider-query" then return "{\"ok\":true}", true end
+			return "", true
+		end,
+		shell_quote = function(value) return "<" .. value .. ">" end,
+		write_atomic = function() error("unexpected filesystem write") end,
+	}
+	local state = require("fleet_status.state").new(runtime)
+	local decoded = assert(state.load_json_file("/state/current.json"))
+	assert(decoded.answer == 42)
+	local providers = require("fleet_status.providers").new(runtime, state, 2)
+	local response = assert(providers.decode_json("provider-query"))
+	assert(response.ok == true)
+	assert(#commands == 1 and commands[1] == "provider-query")
+' >"$scratch/injection.out" 2>"$scratch/injection.err"
+injection_status=$?
+expect_eq "state and provider adapters accept substituted runtime ports" \
+	"0" "$injection_status"
+expect_eq "substituted adapter probe stderr is clean" "" \
+	"$(cat "$scratch/injection.err" 2>/dev/null)"
+
+if (( fails == 0 )); then
+	printf 'All %d fleet-status architecture tests passed\n' "$tests"
+fi
+exit "$fails"

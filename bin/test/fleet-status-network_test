@@ -439,7 +439,10 @@ expect_eq "changed local network inputs invalidate a warm repo cache" "true" \
 	"$(if (( $(wc -l <"$provider_log") > before_local_change )); then printf true; else printf false; fi)"
 expect_eq "local-input cache refresh remains healthy" "" "$(cat "$scratch/local-change.err")"
 
-shape_cache="$(find "$state/network-cache" -maxdepth 1 -name '*.json' -print | head -n 1)"
+shape_cache="$(
+	find "$state/network-cache" ! -path "$state/network-cache" -prune \
+		-type f -name '*.json' -print | head -n 1
+)"
 jq 'del(.fork_drift)' "$shape_cache" >"$scratch/shape-cache.json"
 mv "$scratch/shape-cache.json" "$shape_cache"
 before_shape_refresh="$(wc -l <"$provider_log" | tr -d ' ')"

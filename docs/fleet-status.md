@@ -81,6 +81,26 @@ Collection uses Git plumbing and porcelain v2. It performs no fetch and uses no
 Linux-only `/proc` paths or LuaJIT FFI syscall constants, so the same collector
 works on Linux and macOS.
 
+## Architecture
+
+`lib/fleet_status.lua` is the stable composition root. It wires a small
+hexagonal core whose dependencies point inward through constructor-injected
+ports:
+
+- `renderers.lua` and `lock_parsers.lua` are pure domain functions;
+- `network.lua` orchestrates Tier 3–5 collection only through injected runtime,
+  state, parser, and provider ports;
+- `local_collector.lua` adapts local Git plumbing into the canonical snapshot;
+- `state.lua` adapts canonical JSON and atomic snapshot persistence;
+- `providers.lua` adapts deadline-bounded external provider commands and their
+  response cache;
+- `runtime.lua` is the sole general-purpose process/filesystem host adapter.
+
+The facade preserves the original function API and canonical output bytes.
+`fleet-status-architecture_test` enforces the exact module graph, pure-module
+boundaries, absence of direct host I/O in network orchestration, facade size,
+and substitution of fake runtime ports.
+
 ## State
 
 The default state directory is

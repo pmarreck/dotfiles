@@ -2,6 +2,16 @@
 
 ## Active — nightly fleet status report, all tiers (2026-07-28)
 
+- [x] Refactor `fleet-status` into a bold hexagonal design selected by Peter
+  (completed 2026-07-28 05:00 PM EDT):
+  keep `fleet_status` as the stable facade/schema while extracting pure
+  rendering, local Git collection, JSON/state persistence, pure lock parsers,
+  provider adapters, and network/cache orchestration behind explicit ports.
+  Preserve CLI behavior, public functions, canonical JSON, and approved
+  rendered bytes; rerun focused, raw-host, hermetic, push, and exact-CI gates.
+  - Curiosity poke: Lua module boundaries can accidentally turn dependency
+    injection into globals or create require cycles; boundary tests must prove
+    dependency direction and adapter substitution before moving behavior.
 - [x] Restore a completely green repository suite: independently reproduce and
   resolve `executables_test`, `getfile_test`, and `shadows_test`, regardless of
   whether the fleet-status changes caused them; 164/167 is not releasable.

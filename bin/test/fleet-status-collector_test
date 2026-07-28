@@ -137,8 +137,11 @@ expect_eq "successful collection keeps stderr clean" "" "$(cat "$stderr")"
 expect_eq "discovers the exact working-tree set" \
 	'["dirty repo","dirty-check-fails","no-remote","orphan-check-fails","orphaned","safe-detached","tracked"]' \
 	"$(jq -c '[.repos[].name] | sort' "$json" 2>/dev/null)"
-expect_eq "discovery never descends below direct fleet children" "true" \
-	"$(rg -q -- '-maxdepth 2' "$find_log" && printf true || printf false)"
+expect_eq "discovery avoids GNU-only depth flags" "false" \
+	"$(rg -q -- '-maxdepth|-mindepth' "$find_log" && printf true || printf false)"
+expect_eq "portable discovery prunes each direct fleet child" "true" \
+	"$(rg -q -- '! -path .* -prune -type d -print0' "$find_log" \
+		&& printf true || printf false)"
 expect_eq "partitions dirty state exactly" \
 	'{"modified":1,"staged":1,"status":"known","untracked":1}' \
 	"$(jq -cS '.repos[] | select(.name == "dirty repo") | .dirty' "$json" 2>/dev/null)"
