@@ -1,0 +1,25 @@
+#!/usr/bin/env luajit
+
+local function script_dir()
+	return (arg[0]:match("^(.*)/[^/]+$") or ".")
+end
+
+local home = os.getenv("HOME") or ""
+package.path = script_dir() .. "/../lib/?.lua;"
+	.. home .. "/dotfiles/lib/?.lua;"
+	.. package.path
+
+local fleet = require("fleet_status")
+local job_path = arg[1]
+if not job_path then os.exit(2) end
+local job = fleet.load_json_file(job_path)
+if not job then os.exit(2) end
+fleet.configure_provider_cache(job.provider_cache)
+
+local payload = fleet.collect_network_repo(job.repo, tonumber(job.now_epoch) or os.time())
+payload.repo_path = job.repo.path
+payload.cached_at_epoch = tonumber(job.now_epoch) or os.time()
+payload.network_cache_version = fleet.NETWORK_CACHE_VERSION
+payload.network_fingerprint = job.network_fingerprint
+local ok = fleet.write_atomic(job.output, fleet.encode_json(payload) .. "\n")
+os.exit(ok and 0 or 1)

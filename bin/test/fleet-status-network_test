@@ -1,0 +1,479 @@
+#!/usr/bin/env bash
+
+# Offline contract for Tier 3-5 provider isolation, drift semantics, and cache.
+
+set -u
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+fleet="$repo_root/bin/fleet-status"
+scratch="$(mktemp -d "${TMPDIR:-/tmp}/fleet-status-network.XXXXXX")" || exit 1
+trap 'rm -rf "$scratch"' EXIT
+scan_root="$scratch/fleet root"
+state="$scratch/state"
+provider_log="$scratch/provider.log"
+mkdir -p "$scan_root/forked/.mechatron-prime" "$scan_root/unavailable" "$scan_root/legacy-npm" "$scan_root/malformed-compare"
+
+init_repo() {
+	local repo="$1"
+	git -C "$repo" init -q -b main || exit 1
+	printf 'initial\n' >"$repo/tracked"
+	git -C "$repo" add tracked
+	git -C "$repo" -c user.name=FleetTest -c user.email=fleet@example.invalid \
+		commit -q -m initial || exit 1
+}
+
+init_repo "$scan_root/forked"
+init_repo "$scan_root/unavailable"
+init_repo "$scan_root/legacy-npm"
+init_repo "$scan_root/malformed-compare"
+git -C "$scan_root/forked" remote add origin git@github.com:pmarreck/forked.git
+git -C "$scan_root/unavailable" remote add origin https://github.com/pmarreck/unavailable.git
+git -C "$scan_root/malformed-compare" remote add origin https://github.com/other/malformed-compare.git
+printf 'packages.default\nchecks.test\n' >"$scan_root/forked/.mechatron-prime/targets"
+printf '{invalid lock\n' >"$scan_root/unavailable/flake.lock"
+cat >"$scan_root/forked/flake.lock" <<'EOF'
+{
+	"nodes": {
+		"currentdep": {
+			"locked": {
+				"lastModified": 1753444800,
+				"owner": "acme",
+				"repo": "currentdep",
+				"rev": "9999999999999999999999999999999999999999",
+				"type": "github"
+			},
+			"original": {"owner": "acme", "ref": "stable", "repo": "currentdep", "type": "github"}
+		},
+		"currentdep-copy": {
+			"locked": {
+				"lastModified": 1753444800,
+				"owner": "acme",
+				"repo": "currentdep",
+				"rev": "9999999999999999999999999999999999999999",
+				"type": "github"
+			},
+			"original": {"owner": "acme", "ref": "stable", "repo": "currentdep", "type": "github"}
+		},
+		"git-input": {
+			"locked": {
+				"lastModified": 1753444800,
+				"rev": "1212121212121212121212121212121212121212",
+				"type": "git",
+				"url": "https://github.com/acme/git-input.git"
+			},
+			"original": {"ref": "main", "type": "git", "url": "https://github.com/acme/git-input.git"}
+		},
+		"nixpkgs": {
+			"locked": {
+				"lastModified": 1753444800,
+				"owner": "NixOS",
+				"repo": "nixpkgs",
+				"rev": "1111111111111111111111111111111111111111",
+				"type": "github"
+			},
+			"original": {"owner": "NixOS", "ref": "nixos-unstable", "repo": "nixpkgs", "type": "github"}
+		},
+		"unavailable-dep-a": {
+			"locked": {
+				"owner": "acme",
+				"repo": "unavailable-dep",
+				"rev": "5656565656565656565656565656565656565656",
+				"type": "github"
+			},
+			"original": {"ref": "main", "type": "github"}
+		},
+		"unavailable-dep-b": {
+			"locked": {
+				"owner": "acme",
+				"repo": "unavailable-dep",
+				"rev": "5656565656565656565656565656565656565656",
+				"type": "github"
+			},
+			"original": {"ref": "main", "type": "github"}
+		},
+		"root": {"inputs": {"nixpkgs": "nixpkgs"}}
+	},
+	"root": "root",
+	"version": 7
+}
+EOF
+cat >"$scan_root/forked/build.zig.zon" <<'EOF'
+.{
+	.name = .fixture,
+	.version = "0.0.0",
+	.dependencies = .{
+		.zigdep = .{
+			.url = "git+https://github.com/acme/zigdep?ref=main#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			.hash = "zigdep-fixture",
+		},
+		.archive_dep = .{
+			.url = "https://github.com/acme/archive-dep/archive/cccccccccccccccccccccccccccccccccccccccc.tar.gz",
+			.hash = "archive-fixture",
+		},
+		.@"short-dep" = .{
+			.url = "git+https://github.com/acme/short-dep?ref=main#abc1234",
+			.hash = "short-fixture",
+		},
+		.archive_only = .{
+			.url = "https://downloads.example.invalid/tool-1.0.tar.gz",
+			.hash = "archive-only-fixture",
+		},
+	},
+}
+EOF
+cat >"$scan_root/forked/Cargo.toml" <<'EOF'
+[package]
+name = "fixture"
+version = "0.0.0"
+
+[dependencies]
+crate-dep = "1"
+git-dep = { git = "https://github.com/acme/git-dep" }
+
+[dependencies.table-crate]
+version = "2"
+EOF
+cat >"$scan_root/forked/Cargo.lock" <<'EOF'
+version = 4
+
+[[package]]
+name = "crate-dep"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fixture"
+
+[[package]]
+name = "git-dep"
+version = "0.1.0"
+source = "git+https://github.com/acme/git-dep?branch=main#dddddddddddddddddddddddddddddddddddddddd"
+
+[[package]]
+name = "table-crate"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+EOF
+cat >"$scan_root/forked/package-lock.json" <<'EOF'
+{
+	"lockfileVersion": 3,
+	"packages": {
+		"": {"dependencies": {"npm-dep": "^1.0.0"}},
+		"packages/app": {"dependencies": {"workspace-npm": "^4.0.0"}},
+		"node_modules/npm-dep": {
+			"version": "1.0.0",
+			"dependencies": {"transitive-npm": "^9.0.0"}
+		},
+		"node_modules/transitive-npm": {"version": "9.0.0"},
+		"node_modules/workspace-npm": {"version": "4.0.0"}
+	}
+}
+EOF
+cat >"$scan_root/legacy-npm/package-lock.json" <<'EOF'
+{
+	"lockfileVersion": 1,
+	"dependencies": {
+		"legacy-direct": {
+			"version": "6.0.0",
+			"dependencies": {
+				"legacy-transitive": {"version": "7.0.0"}
+			}
+		}
+	}
+}
+EOF
+cat >"$scan_root/forked/pnpm-lock.yaml" <<'EOF'
+lockfileVersion: '9.0'
+
+importers:
+
+  .:
+    devDependencies:
+      pnpm-dep:
+        specifier: ^3.0.0
+        version: 3.0.0
+
+  packages/widget:
+    dependencies:
+      workspace-pnpm:
+        specifier: ^5.0.0
+        version: 5.0.0
+EOF
+
+fake_gh="$scratch/gh"
+printf '#!%s\n' "$BASH" >"$fake_gh"
+cat >>"$fake_gh" <<'EOF'
+printf 'gh %s\n' "$*" >>"$FLEET_STATUS_PROVIDER_LOG"
+case "$*" in
+	"repo view pmarreck/forked --json nameWithOwner,parent,defaultBranchRef,isFork")
+		printf '%s\n' '{"nameWithOwner":"pmarreck/forked","isFork":true,"defaultBranchRef":{"name":"main"},"parent":{"name":"core","owner":{"login":"upstream"}}}'
+		;;
+	"repo view upstream/core --json nameWithOwner,defaultBranchRef")
+		printf '%s\n' '{"nameWithOwner":"upstream/core","defaultBranchRef":{"name":"main"}}'
+		;;
+	"repo view pmarreck/unavailable --json nameWithOwner,parent,defaultBranchRef,isFork")
+		printf '%s\n' '{}'
+		;;
+	"repo view other/malformed-compare --json nameWithOwner,parent,defaultBranchRef,isFork")
+		printf '%s\n' '{"nameWithOwner":"other/malformed-compare","isFork":true,"defaultBranchRef":{"name":"main"},"parent":{"name":"core","owner":{"login":"upstream"}}}'
+		;;
+	"api repos/upstream/core/compare/main...other:main")
+		printf '%s\n' '{}'
+		;;
+	"api repos/upstream/core/compare/main...pmarreck:main")
+		printf '%s\n' '{"ahead_by":2,"behind_by":5,"status":"diverged"}'
+		;;
+	"api repos/NixOS/nixpkgs/commits/nixos-unstable")
+		printf '%s\n' '{"sha":"2222222222222222222222222222222222222222","commit":{"author":{"date":"2026-07-27T12:00:00Z"}}}'
+		;;
+	"api repos/NixOS/nixpkgs/compare/1111111111111111111111111111111111111111...2222222222222222222222222222222222222222")
+		printf '%s\n' '{"ahead_by":7,"behind_by":0,"status":"ahead"}'
+		;;
+	"api repos/acme/currentdep/commits/stable")
+		printf '%s\n' '{"sha":"9999999999999999999999999999999999999999","commit":{"author":{"date":"2025-07-25T12:00:00Z"}}}'
+		;;
+	"api repos/acme/git-input/commits/main")
+		printf '%s\n' '{"sha":"3434343434343434343434343434343434343434"}'
+		;;
+	"api repos/acme/git-input/compare/1212121212121212121212121212121212121212...3434343434343434343434343434343434343434")
+		printf '%s\n' '{"ahead_by":8,"behind_by":0,"status":"ahead"}'
+		;;
+	"api repos/acme/zigdep/commits/main")
+		printf '%s\n' '{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","commit":{"author":{"date":"2026-07-27T12:00:00Z"}}}'
+		;;
+	"api repos/acme/zigdep/compare/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+		printf '%s\n' '{"ahead_by":3,"behind_by":0,"status":"ahead"}'
+		;;
+	"api repos/acme/archive-dep/commits/HEAD")
+		printf '%s\n' '{"sha":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","commit":{"author":{"date":"2026-07-27T12:00:00Z"}}}'
+		;;
+	"api repos/acme/archive-dep/compare/cccccccccccccccccccccccccccccccccccccccc...eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee")
+		printf '%s\n' '{"ahead_by":4,"behind_by":0,"status":"ahead"}'
+		;;
+	"api repos/acme/short-dep/commits/main")
+		printf '%s\n' '{"sha":"ffffffffffffffffffffffffffffffffffffffff"}'
+		;;
+	"api repos/acme/short-dep/compare/abc1234...ffffffffffffffffffffffffffffffffffffffff")
+		printf '%s\n' '{"ahead_by":2,"behind_by":0,"status":"ahead"}'
+		;;
+	"api repos/acme/git-dep/commits/main")
+		printf '%s\n' '{"sha":"ffffffffffffffffffffffffffffffffffffffff","commit":{"author":{"date":"2026-07-27T12:00:00Z"}}}'
+		;;
+	"api repos/acme/git-dep/compare/dddddddddddddddddddddddddddddddddddddddd...ffffffffffffffffffffffffffffffffffffffff")
+		printf '%s\n' '{"ahead_by":6,"behind_by":0,"status":"ahead"}'
+		;;
+	*)
+		exit 44
+		;;
+esac
+EOF
+chmod +x "$fake_gh"
+
+fake_mechatron="$scratch/mechatron-ci"
+printf '#!%s\n' "$BASH" >"$fake_mechatron"
+cat >>"$fake_mechatron" <<'EOF'
+printf 'mechatron %s\n' "$*" >>"$FLEET_STATUS_PROVIDER_LOG"
+case "$*" in
+	"log --project forked --json --limit 1")
+		printf '%s\n' '{"generated_at":"2026-07-28T12:00:00Z","results":[{"status":"success","commit_sha":"3333333333333333333333333333333333333333","finished_at":"2026-07-28T11:59:00Z","duration_seconds":42}]}'
+		;;
+	"log --project unavailable --json --limit 1")
+		printf '%s\n' '{}'
+		;;
+	*)
+		exit 45
+		;;
+esac
+EOF
+chmod +x "$fake_mechatron"
+
+fake_curl="$scratch/curl"
+printf '#!%s\n' "$BASH" >"$fake_curl"
+cat >>"$fake_curl" <<'EOF'
+printf 'curl %s\n' "$*" >>"$FLEET_STATUS_PROVIDER_LOG"
+case "${*: -1}" in
+	"https://crates.io/api/v1/crates/crate-dep")
+		printf '%s\n' '{"crate":{"newest_version":"1.2.0"}}'
+		;;
+	"https://crates.io/api/v1/crates/table-crate")
+		printf '%s\n' '{"crate":{"newest_version":"2.1.0"}}'
+		;;
+	"https://registry.npmjs.org/npm-dep/latest")
+		printf '%s\n' '{"version":"2.0.0"}'
+		;;
+	"https://registry.npmjs.org/pnpm-dep/latest")
+		printf '%s\n' '{"version":"3.0.0"}'
+		;;
+	"https://registry.npmjs.org/workspace-npm/latest")
+		printf '%s\n' '{"version":"4.1.0"}'
+		;;
+	"https://registry.npmjs.org/workspace-pnpm/latest")
+		printf '%s\n' '{"version":"5.0.0"}'
+		;;
+	"https://registry.npmjs.org/legacy-direct/latest")
+		printf '%s\n' '{"version":"6.1.0"}'
+		;;
+	*)
+		exit 46
+		;;
+esac
+EOF
+chmod +x "$fake_curl"
+
+fake_xargs="$scratch/xargs"
+printf '#!%s\n' "$BASH" >"$fake_xargs"
+cat >>"$fake_xargs" <<'EOF'
+printf 'xargs %s\n' "$*" >>"$FLEET_STATUS_PROVIDER_LOG"
+exec "$FLEET_STATUS_REAL_XARGS" "$@"
+EOF
+chmod +x "$fake_xargs"
+
+fake_timeout="$scratch/timeout"
+printf '#!%s\n' "$BASH" >"$fake_timeout"
+cat >>"$fake_timeout" <<'EOF'
+printf 'timeout %s\n' "$*" >>"$FLEET_STATUS_PROVIDER_LOG"
+shift
+exec "$@"
+EOF
+chmod +x "$fake_timeout"
+
+run_fleet() {
+	FLEET_STATUS_GH="$fake_gh" \
+	FLEET_STATUS_MECHATRON_CI="$fake_mechatron" \
+	FLEET_STATUS_CURL="$fake_curl" \
+	FLEET_STATUS_XARGS="$fake_xargs" \
+	FLEET_STATUS_REAL_XARGS="$(command -v xargs)" \
+	FLEET_STATUS_TIMEOUT="$fake_timeout" \
+	FLEET_STATUS_PROVIDER_TIMEOUT_SECONDS=30 \
+	FLEET_STATUS_NOW_EPOCH=1785240000 \
+	FLEET_STATUS_PROVIDER_LOG="$provider_log" \
+		"$fleet" --all --jobs 2 --cache-ttl-hours 24 --root "$scan_root" \
+			--state-dir "$state" --format json "$@"
+}
+
+first="$scratch/first.json"
+run_fleet >"$first" 2>"$scratch/first.err"
+first_status=$?
+
+fails=0
+tests=0
+expect_eq() {
+	local label="$1" expected="$2" actual="$3"
+	((tests++))
+	if [[ "$expected" == "$actual" ]]; then
+		return 0
+	fi
+	printf 'FAIL %s\nexpected: %s\nactual:   %s\n' "$label" "$expected" "$actual" >&2
+	((fails++))
+}
+
+expect_eq "all-tier collection succeeds despite a provider failure" "0" "$first_status"
+expect_eq "provider failures stay off stderr" "" "$(cat "$scratch/first.err")"
+expect_eq "all requested tiers have independent health" \
+	'{"1":"known","2":"known","3":"partial","4":"partial","5":"partial"}' \
+	"$(jq -cS '.tiers' "$first" 2>/dev/null)"
+expect_eq "configured concurrency reaches the portable worker boundary" "1" \
+	"$(rg -c '^xargs -0 -n 1 -P 2 ' "$provider_log" 2>/dev/null)"
+expect_eq "every external provider call is bounded by a timeout" \
+	"$(rg -c '^(gh|curl|mechatron) ' "$provider_log" 2>/dev/null)" \
+	"$(rg -c '^timeout 30 ' "$provider_log" 2>/dev/null)"
+expect_eq "fork divergence preserves both directions" \
+	'{"ahead":2,"behind":5,"parent":"upstream/core","relation":"diverged","status":"known"}' \
+	"$(jq -cS '.repos[] | select(.name == "forked") | .fork_drift | {status,parent,ahead,behind,relation}' "$first" 2>/dev/null)"
+expect_eq "flake drift retains commit and day staleness separately" \
+	'{"commits_stale":7,"days_stale":368,"head_sha":"2222222222222222222222222222222222222222","kind":"flake","name":"nixpkgs","status":"stale"}' \
+	"$(jq -cS '.repos[] | select(.name == "forked") | .pin_drift[] | select(.kind == "flake" and .name == "nixpkgs") | {kind,name,status,head_sha,commits_stale,days_stale}' "$first" 2>/dev/null)"
+expect_eq "a current commit pin has zero commit and day staleness" \
+	'{"commits_stale":0,"days_stale":0,"name":"currentdep","status":"current"}' \
+	"$(jq -cS '.repos[] | select(.name == "forked") | .pin_drift[] | select(.name == "currentdep") | {name,status,commits_stale,days_stale}' "$first" 2>/dev/null)"
+expect_eq "duplicate provider queries are executed once on a cold run" \
+	"1" \
+	"$(rg -c '^gh api repos/acme/currentdep/commits/stable$' "$provider_log" 2>/dev/null)"
+expect_eq "duplicate provider failures are short-cached instead of hammered" \
+	"1" \
+	"$(rg -c '^gh api repos/acme/unavailable-dep/commits/main$' "$provider_log" 2>/dev/null)"
+expect_eq "all supported lock ecosystems report direct pin drift" \
+	'[{"kind":"cargo","locked":"1.0.0","name":"crate-dep","status":"stale","upstream":"1.2.0"},{"commits_stale":6,"kind":"cargo","locked":"dddddddddddddddddddddddddddddddddddddddd","name":"git-dep","status":"stale","upstream":"ffffffffffffffffffffffffffffffffffffffff"},{"kind":"npm","locked":"1.0.0","name":"npm-dep","status":"stale","upstream":"2.0.0"},{"kind":"npm","locked":"4.0.0","name":"workspace-npm","status":"stale","upstream":"4.1.0"},{"kind":"pnpm","locked":"3.0.0","name":"pnpm-dep","status":"current","upstream":"3.0.0"},{"kind":"pnpm","locked":"5.0.0","name":"workspace-pnpm","status":"current","upstream":"5.0.0"},{"commits_stale":4,"kind":"zig","locked":"cccccccccccccccccccccccccccccccccccccccc","name":"archive_dep","status":"stale","upstream":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"},{"commits_stale":3,"kind":"zig","locked":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","name":"zigdep","status":"stale","upstream":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}]' \
+	"$(jq -cS '[.repos[] | select(.name == "forked") | .pin_drift[] | select(.name == "crate-dep" or .name == "git-dep" or .name == "npm-dep" or .name == "workspace-npm" or .name == "pnpm-dep" or .name == "workspace-pnpm" or .name == "archive_dep" or .name == "zigdep") | if has("pinned_sha") then {kind,name,status,locked:.pinned_sha,upstream:.head_sha,commits_stale} else {kind,name,status,locked:.locked_version,upstream:.upstream_version} end] | sort_by(.kind)' "$first" 2>/dev/null)"
+expect_eq "short Zig pins and quoted dependency names stay comparable" \
+	'{"commits_stale":2,"name":"short-dep","pinned_sha":"abc1234","status":"stale"}' \
+	"$(jq -cS '.repos[] | select(.name == "forked") | .pin_drift[] | select(.kind == "zig" and .name == "short-dep") | {name,status,pinned_sha,commits_stale}' "$first" 2>/dev/null)"
+expect_eq "GitHub git-type flake inputs are not silently omitted" \
+	'{"commits_stale":8,"name":"git-input","status":"stale"}' \
+	"$(jq -cS '.repos[] | select(.name == "forked") | .pin_drift[] | select(.kind == "flake" and .name == "git-input") | {name,status,commits_stale}' "$first" 2>/dev/null)"
+expect_eq "uncomparable Zig archives remain explicit unknown records" \
+	'{"name":"archive_only","reason":"uncomparable_source","status":"unknown"}' \
+	"$(jq -cS '.repos[] | select(.name == "forked") | .pin_drift[] | select(.kind == "zig" and .name == "archive_only") | {name,status,reason}' "$first" 2>/dev/null)"
+expect_eq "Cargo dependency-specific tables remain direct" \
+	'{"locked_version":"2.0.0","name":"table-crate","status":"stale","upstream_version":"2.1.0"}' \
+	"$(jq -cS '.repos[] | select(.name == "forked") | .pin_drift[] | select(.kind == "cargo" and .name == "table-crate") | {name,status,locked_version,upstream_version}' "$first" 2>/dev/null)"
+expect_eq "package-lock v1 reports only top-level direct dependencies" \
+	'[{"locked_version":"6.0.0","name":"legacy-direct","status":"stale","upstream_version":"6.1.0"}]' \
+	"$(jq -cS '[.repos[] | select(.name == "legacy-npm") | .pin_drift[] | select(.kind == "npm") | {name,status,locked_version,upstream_version}]' "$first" 2>/dev/null)"
+expect_eq "fork and pin drift remain separate fields" "true" \
+	"$(jq -r '.repos[] | select(.name == "forked") | has("fork_drift") and has("pin_drift")' "$first" 2>/dev/null)"
+expect_eq "Mechatron result is preserved" \
+	'{"commit_sha":"3333333333333333333333333333333333333333","duration_seconds":42,"finished_at":"2026-07-28T11:59:00Z","status":"success"}' \
+	"$(jq -cS '.repos[] | select(.name == "forked") | .mechatron.last_result' "$first" 2>/dev/null)"
+expect_eq "manifest absence is explicit" "true" \
+	"$(jq -r '.repos[] | select(.name == "unavailable") | .mechatron.missing_targets_manifest' "$first" 2>/dev/null)"
+expect_eq "unavailable fork provider becomes field-level unknown" "unknown" \
+	"$(jq -r '.repos[] | select(.name == "unavailable") | .fork_drift.status' "$first" 2>/dev/null)"
+expect_eq "unavailable Mechatron provider becomes field-level unknown" "unknown" \
+	"$(jq -r '.repos[] | select(.name == "unavailable") | .mechatron.status' "$first" 2>/dev/null)"
+expect_eq "malformed compare counts become unknown rather than even" "unknown" \
+	"$(jq -r '.repos[] | select(.name == "malformed-compare") | .fork_drift.status' "$first" 2>/dev/null)"
+
+call_count="$(wc -l <"$provider_log" | tr -d ' ')"
+second="$scratch/second.json"
+run_fleet --no-save >"$second" 2>"$scratch/second.err"
+expect_eq "warm-cache run succeeds cleanly" "0" "$?"
+expect_eq "warm cache makes no additional provider calls" "$call_count" \
+	"$(wc -l <"$provider_log" | tr -d ' ')"
+expect_eq "cache preserves the complete enrichment payload" \
+	"$(jq -cS '[.repos[] | {name,fork_drift,pin_drift,mechatron}]' "$first")" \
+	"$(jq -cS '[.repos[] | {name,fork_drift,pin_drift,mechatron}]' "$second")"
+
+printf '\n' >>"$scan_root/forked/flake.lock"
+before_local_change="$(wc -l <"$provider_log" | tr -d ' ')"
+run_fleet >"$scratch/local-change.json" 2>"$scratch/local-change.err"
+expect_eq "changed local network inputs invalidate a warm repo cache" "true" \
+	"$(if (( $(wc -l <"$provider_log") > before_local_change )); then printf true; else printf false; fi)"
+expect_eq "local-input cache refresh remains healthy" "" "$(cat "$scratch/local-change.err")"
+
+shape_cache="$(find "$state/network-cache" -maxdepth 1 -name '*.json' -print | head -n 1)"
+jq 'del(.fork_drift)' "$shape_cache" >"$scratch/shape-cache.json"
+mv "$scratch/shape-cache.json" "$shape_cache"
+before_shape_refresh="$(wc -l <"$provider_log" | tr -d ' ')"
+run_fleet --no-save >"$scratch/shape-refresh.json" 2>"$scratch/shape-refresh.err"
+expect_eq "incomplete cache shape refreshes instead of crashing tier health" "true" \
+	"$(if (( $(wc -l <"$provider_log") > before_shape_refresh )); then printf true; else printf false; fi)"
+expect_eq "cache-shape refresh remains healthy" "" "$(cat "$scratch/shape-refresh.err")"
+
+legacy_cache="$shape_cache"
+jq 'del(.network_cache_version)' "$legacy_cache" >"$scratch/legacy-cache.json"
+mv "$scratch/legacy-cache.json" "$legacy_cache"
+legacy_cache_hash="$(git hash-object "$legacy_cache")"
+before_legacy_cache="$(wc -l <"$provider_log" | tr -d ' ')"
+run_fleet --no-save >"$scratch/legacy-refresh.json" 2>"$scratch/legacy-refresh.err"
+expect_eq "unversioned cache payload triggers fresh providers" "true" \
+	"$(if (( $(wc -l <"$provider_log") > before_legacy_cache )); then printf true; else printf false; fi)"
+expect_eq "--no-save does not replace an invalid cache payload" "$legacy_cache_hash" \
+	"$(git hash-object "$legacy_cache")"
+expect_eq "cache schema refresh remains healthy" "" "$(cat "$scratch/legacy-refresh.err")"
+
+before_disabled_cache="$(wc -l <"$provider_log" | tr -d ' ')"
+run_fleet --cache-ttl-hours 0 --no-save >"$scratch/no-cache.json" 2>"$scratch/no-cache.err"
+expect_eq "zero TTL explicitly disables the network cache" "true" \
+	"$(if (( $(wc -l <"$provider_log") > before_disabled_cache )); then printf true; else printf false; fi)"
+expect_eq "disabled-cache provider run remains healthy" "" "$(cat "$scratch/no-cache.err")"
+
+before_tier_override="$(wc -l <"$provider_log" | tr -d ' ')"
+run_fleet --tier 1 --no-save >"$scratch/tier-override.json" 2>"$scratch/tier-override.err"
+expect_eq "later --tier 1 overrides an earlier --all" '{"1":"known"}' \
+	"$(jq -cS '.tiers' "$scratch/tier-override.json" 2>/dev/null)"
+expect_eq "Tier 1 override performs no provider calls" "$before_tier_override" \
+	"$(wc -l <"$provider_log" | tr -d ' ')"
+
+if (( fails == 0 )); then
+	printf 'All %d fleet-status network tests passed\n' "$tests"
+fi
+exit "$fails"

@@ -23,6 +23,10 @@ Collect Git fleet status as JSON and render an action-focused report.
 Options:
   --root ROOT       Scan ROOT; repeatable (default: ~/Code).
   --tier 1|2        Run through the selected local, network-free tier.
+  --all             Run all five tiers, using cached network providers.
+  --jobs N          Bound all-tier provider concurrency (default: 4).
+  --cache-ttl-hours HOURS
+                    Reuse network results for HOURS (default: 24).
   --format FORMAT   Output one-line, markdown, or json (default: one-line).
   --full            Render full state instead of the default delta.
   --max-names N     Names shown per one-line category before +N more (default: 4).
@@ -35,6 +39,9 @@ end
 
 local roots = {}
 local tier = "1"
+local all_tiers = false
+local jobs = 4
+local cache_ttl_hours = 24
 local format = "one-line"
 local full = false
 local max_names = 4
@@ -61,6 +68,25 @@ while index <= #arg do
 			io.stderr:write("Error: --tier requires a number.\n")
 			os.exit(2)
 		end
+		all_tiers = false
+		index = index + 2
+	elseif value == "--all" then
+		all_tiers = true
+		tier = "5"
+		index = index + 1
+	elseif value == "--jobs" then
+		jobs = tonumber(arg[index + 1])
+		if not jobs or jobs < 1 or jobs % 1 ~= 0 then
+			io.stderr:write("Error: --jobs requires a positive integer.\n")
+			os.exit(2)
+		end
+		index = index + 2
+	elseif value == "--cache-ttl-hours" then
+		cache_ttl_hours = tonumber(arg[index + 1])
+		if not cache_ttl_hours or cache_ttl_hours < 0 then
+			io.stderr:write("Error: --cache-ttl-hours requires a nonnegative number.\n")
+			os.exit(2)
+		end
 		index = index + 2
 	elseif value == "--format" then
 		format = arg[index + 1]
@@ -74,7 +100,7 @@ while index <= #arg do
 		index = index + 1
 	elseif value == "--max-names" then
 		max_names = tonumber(arg[index + 1])
-		if not max_names or max_names < 1 then
+		if not max_names or max_names < 1 or max_names % 1 ~= 0 then
 			io.stderr:write("Error: --max-names requires a positive integer.\n")
 			os.exit(2)
 		end
@@ -93,7 +119,11 @@ while index <= #arg do
 		help()
 		os.exit(0)
 	elseif value == "--about" then
-		io.write("fleet-status — report actionable Git fleet risk and drift\n")
+		io.write(
+			"fleet-status ", fleet.VERSION,
+			" — report actionable Git fleet risk and drift on ",
+			jit.os, "/", jit.arch, "\n"
+		)
 		os.exit(0)
 	else
 		io.stderr:write("Error: unknown option: " .. value .. "\n")
@@ -102,8 +132,8 @@ while index <= #arg do
 	end
 end
 
-if tier ~= "1" and tier ~= "2" then
-	io.stderr:write("Error: --tier must currently be 1 or 2.\n")
+if tier ~= "1" and tier ~= "2" and not all_tiers then
+	io.stderr:write("Error: --tier must be 1 or 2; use --all for network tiers.\n")
 	os.exit(2)
 end
 if format ~= "one-line" and format ~= "markdown" and format ~= "json" then
@@ -112,20 +142,38 @@ if format ~= "one-line" and format ~= "markdown" and format ~= "json" then
 end
 if #roots == 0 then roots[1] = home .. "/Code" end
 
-local snapshot, err = fleet.collect_roots(roots, { max_tier = tonumber(tier) })
+local snapshot, err = fleet.collect_roots(roots, {
+	max_tier = tonumber(tier),
+	now_epoch = tonumber(os.getenv("FLEET_STATUS_NOW_EPOCH")),
+})
 if not snapshot then
 	io.stderr:write("Error: " .. err .. "\n")
 	os.exit(1)
 end
-
-local previous, load_err = fleet.load_json_file(state_dir .. "/current.json")
-if load_err then
-	io.stderr:write("Error: " .. load_err .. "\n")
-	os.exit(1)
+if all_tiers then
+	local enriched, enrich_err = fleet.enrich_network(snapshot, {
+		state_dir = state_dir,
+		jobs = jobs,
+		ttl_seconds = cache_ttl_hours * 3600,
+		bin_dir = script_dir(),
+		save_cache = not no_save,
+	})
+	if not enriched then
+		io.stderr:write("Error: " .. enrich_err .. "\n")
+		os.exit(1)
+	end
 end
+
+local previous
 if not no_save then
+	local lock, lock_err = fleet.acquire_state_lock(state_dir)
+	if not lock then
+		io.stderr:write("Error: " .. lock_err .. "\n")
+		os.exit(1)
+	end
 	local persisted_previous, persist_err = fleet.persist_snapshot(state_dir, snapshot)
 	if persist_err then
+		fleet.release_state_lock(lock)
 		io.stderr:write("Error: " .. persist_err .. "\n")
 		os.exit(1)
 	end
@@ -135,7 +183,20 @@ if not no_save then
 		fleet.render_markdown(snapshot, previous) .. "\n"
 	)
 	if not report_ok then
+		fleet.release_state_lock(lock)
 		io.stderr:write("Error: " .. report_err .. "\n")
+		os.exit(1)
+	end
+	local released, release_err = fleet.release_state_lock(lock)
+	if not released then
+		io.stderr:write("Error: " .. release_err .. "\n")
+		os.exit(1)
+	end
+elseif format ~= "json" then
+	local load_err
+	previous, load_err = fleet.load_json_file(state_dir .. "/current.json")
+	if load_err then
+		io.stderr:write("Error: " .. load_err .. "\n")
 		os.exit(1)
 	end
 end

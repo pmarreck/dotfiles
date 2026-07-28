@@ -29,7 +29,9 @@ init_repo() {
 }
 
 init_repo "$scan_root/safe-detached"
-git_in "$scan_root/safe-detached" switch -q --detach HEAD || exit 1
+printf 'descendant\n' >>"$scan_root/safe-detached/tracked"
+git_in "$scan_root/safe-detached" commit -q -am descendant || exit 1
+git_in "$scan_root/safe-detached" switch -q --detach HEAD~1 || exit 1
 
 init_repo "$scan_root/orphaned"
 git_in "$scan_root/orphaned" switch -q --detach HEAD || exit 1
@@ -37,11 +39,20 @@ printf 'orphan\n' >>"$scan_root/orphaned/tracked"
 git_in "$scan_root/orphaned" commit -q -am orphan || exit 1
 orphan_sha="$(git_in "$scan_root/orphaned" rev-parse HEAD)"
 
+init_repo "$scan_root/orphan-check-fails"
+git_in "$scan_root/orphan-check-fails" switch -q --detach HEAD || exit 1
+printf 'at risk\n' >>"$scan_root/orphan-check-fails/tracked"
+git_in "$scan_root/orphan-check-fails" commit -q -am "at risk" || exit 1
+git_in "$scan_root/orphan-check-fails" remote add origin https://example.invalid/orphan.git
+
 init_repo "$scan_root/dirty repo"
 printf 'modified\n' >>"$scan_root/dirty repo/tracked"
 printf 'staged\n' >"$scan_root/dirty repo/staged"
 git_in "$scan_root/dirty repo" add staged
 printf 'untracked\n' >"$scan_root/dirty repo/untracked"
+
+init_repo "$scan_root/dirty-check-fails"
+git_in "$scan_root/dirty-check-fails" remote add origin https://example.invalid/dirty.git
 
 init_repo "$scan_root/no-remote"
 
@@ -72,7 +83,40 @@ git_in "$tracked" stash push -q -m fleet-test || exit 1
 
 json="$scratch/current.json"
 stderr="$scratch/stderr"
-"$fleet" --tier 2 --root "$scan_root" --format json --no-save >"$json" 2>"$stderr"
+find_log="$scratch/find.log"
+fake_find="$scratch/find"
+printf '#!%s\n' "$BASH" >"$fake_find"
+cat >>"$fake_find" <<'EOF'
+printf '%s\n' "$*" >>"$FLEET_STATUS_FIND_LOG"
+exec "$FLEET_STATUS_REAL_FIND" "$@"
+EOF
+chmod +x "$fake_find"
+fake_git="$scratch/git"
+printf '#!%s\n' "$BASH" >"$fake_git"
+cat >>"$fake_git" <<'EOF'
+if [[ "$2" == "$FLEET_STATUS_DIRTY_FAILURE_REPO" && "$3" == "status" ]]; then
+	exit 41
+fi
+if [[ "$2" == "$FLEET_STATUS_DIRTY_FAILURE_REPO" &&
+	( "$3" == "for-each-ref" || "$3" == "remote" ||
+	( "$3" == "rev-list" && "$*" == *"refs/stash"* ) ) ]]; then
+	exit 43
+fi
+if [[ "$2" == "$FLEET_STATUS_ORPHAN_FAILURE_REPO" && "$3" == "rev-list" &&
+	"$*" == *"HEAD --not --branches"* ]]; then
+	exit 42
+fi
+exec "$FLEET_STATUS_REAL_GIT" "$@"
+EOF
+chmod +x "$fake_git"
+FLEET_STATUS_FIND="$fake_find" \
+FLEET_STATUS_REAL_FIND="$(type -P find)" \
+FLEET_STATUS_FIND_LOG="$find_log" \
+FLEET_STATUS_GIT="$fake_git" \
+FLEET_STATUS_REAL_GIT="$(type -P git)" \
+FLEET_STATUS_DIRTY_FAILURE_REPO="$scan_root/dirty-check-fails" \
+FLEET_STATUS_ORPHAN_FAILURE_REPO="$scan_root/orphan-check-fails" \
+	"$fleet" --tier 2 --root "$scan_root" --format json --no-save >"$json" 2>"$stderr"
 command_status=$?
 
 fails=0
@@ -91,17 +135,25 @@ expect_eq() {
 expect_eq "collector exits successfully" "0" "$command_status"
 expect_eq "successful collection keeps stderr clean" "" "$(cat "$stderr")"
 expect_eq "discovers the exact working-tree set" \
-	'["dirty repo","no-remote","orphaned","safe-detached","tracked"]' \
+	'["dirty repo","dirty-check-fails","no-remote","orphan-check-fails","orphaned","safe-detached","tracked"]' \
 	"$(jq -c '[.repos[].name] | sort' "$json" 2>/dev/null)"
+expect_eq "discovery never descends below direct fleet children" "true" \
+	"$(rg -q -- '-maxdepth 2' "$find_log" && printf true || printf false)"
 expect_eq "partitions dirty state exactly" \
-	'{"modified":1,"staged":1,"untracked":1}' \
+	'{"modified":1,"staged":1,"status":"known","untracked":1}' \
 	"$(jq -cS '.repos[] | select(.name == "dirty repo") | .dirty' "$json" 2>/dev/null)"
 expect_eq "classifies detached HEADs over the full safe/risky set" \
-	'[{"name":"orphaned","orphaned":1},{"name":"safe-detached","orphaned":0}]' \
-	"$(jq -c '[.repos[] | select(.detached_head) | {name, orphaned: (.orphaned_commits | length)}] | sort_by(.name)' "$json" 2>/dev/null)"
+	'[{"name":"orphan-check-fails","orphaned":0,"status":"unknown"},{"name":"orphaned","orphaned":1,"status":"known"},{"name":"safe-detached","orphaned":0,"status":"known"}]' \
+	"$(jq -c '[.repos[] | select(.detached_head) | {name, orphaned: (.orphaned_commits | length), status: .orphaned_status}] | sort_by(.name)' "$json" 2>/dev/null)"
 expect_eq "reports the exact orphaned commit" \
 	"[\"$orphan_sha\"]" \
 	"$(jq -c '.repos[] | select(.name == "orphaned") | .orphaned_commits' "$json" 2>/dev/null)"
+expect_eq "failed dirty plumbing is unknown rather than falsely clean" \
+	'{"modified":null,"staged":null,"status":"unknown","untracked":null}' \
+	"$(jq -cS '.repos[] | select(.name == "dirty-check-fails") | .dirty' "$json" 2>/dev/null)"
+expect_eq "other failed Tier 1 plumbing is field-level unknown" \
+	'{"branches_status":"unknown","no_remote":null,"remote_status":"unknown","stash_count":null,"stash_status":"unknown"}' \
+	"$(jq -cS '.repos[] | select(.name == "dirty-check-fails") | {branches_status,remote_status,no_remote,stash_status,stash_count}' "$json" 2>/dev/null)"
 expect_eq "classifies the complete no-remote set" \
 	'["dirty repo","no-remote","orphaned","safe-detached"]' \
 	"$(jq -c '[.repos[] | select(.no_remote) | .name] | sort' "$json" 2>/dev/null)"
@@ -117,15 +169,18 @@ expect_eq "detached records use null branch" \
 expect_eq "all records carry SHA and ISO commit date" \
 	"true" \
 	"$(jq -r '[.repos[] | ((.head_sha | test("^[0-9a-f]{40}$")) and (.last_commit_date | test("^[0-9]{4}-")))] | all' "$json" 2>/dev/null)"
-expect_eq "Tier 2 is independently marked known" \
-	"known" \
+expect_eq "Tier 2 is independently marked partial on branch-plumbing failure" \
+	"partial" \
 	"$(jq -r '.tiers["2"]' "$json" 2>/dev/null)"
 expect_eq "classifies the exact branch set with no configured upstream" \
-	'[{"repo":"dirty repo","branch":"main"},{"repo":"no-remote","branch":"main"},{"repo":"orphaned","branch":"main"},{"repo":"safe-detached","branch":"main"}]' \
+	'[{"repo":"dirty repo","branch":"main"},{"repo":"no-remote","branch":"main"},{"repo":"orphan-check-fails","branch":"main"},{"repo":"orphaned","branch":"main"},{"repo":"safe-detached","branch":"main"}]' \
 	"$(jq -c '[.repos[] as $repo | $repo.branches[] | select(.upstream_configured == false) | {repo: $repo.name, branch: .name}] | sort_by(.repo, .branch)' "$json" 2>/dev/null)"
 expect_eq "repo and branch staleness are nonnegative integer days" \
 	"true" \
 	"$(jq -r '[.repos[] | ((.last_commit_age_days | type) == "number"), (.branches[] | ((.last_commit_age_days | type) == "number"))] | all' "$json" 2>/dev/null)"
+expect_eq "Tier 1 becomes partial when local risk plumbing is unknown" \
+	"partial" \
+	"$(jq -r '.tiers["1"]' "$json" 2>/dev/null)"
 
 if (( fails == 0 )); then
 	printf 'All %d fleet-status collector tests passed\n' "$tests"

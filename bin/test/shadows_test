@@ -15,7 +15,7 @@ hash -r 2>/dev/null
 
 shadows_type=$(type -t shadows 2>/dev/null)
 if [ "$shadows_type" != "function" ]; then
-	# shellcheck disable=SC1090
+	# shellcheck disable=SC1091
 	. "$script_dir/bin/src/shadows.bash" 2>/dev/null || true
 	shadows_type=$(type -t shadows 2>/dev/null)
 fi
@@ -25,11 +25,10 @@ if ! command -v shadows >/dev/null 2>&1; then
 	exit 1
 fi
 
-baseline_output="$(shadows)"
-baseline_count=$?
 ((tests++))
 echo "Testing: shadows does not report itself..."
-if echo "$baseline_output" | grep -q "shadows shadows"; then
+baseline_output="$(shadows shadows)"
+if [[ "$baseline_output" != "Nothing shadows shadows" ]]; then
 	echo "✗ Test failed: shadows reported itself" >&2
 	echo "  Output: $baseline_output" >&2
 	((fails++))
@@ -37,6 +36,7 @@ else
 	echo "✓ Test passed: shadows does not self-report"
 fi
 
+# shellcheck disable=SC2329 # Invoked by the EXIT trap.
 cleanup() {
 	unalias cd 2>/dev/null
 	unalias ls 2>/dev/null
@@ -75,14 +75,14 @@ fi
 alias cd='echo alias-cd'
 ((tests++))
 echo "Testing: alias shadowing builtin is detected..."
-output="$(shadows)"
+output="$(shadows cd)"
 status=$?
-if echo "$output" | grep -q "alias cd" && echo "$output" | grep -qi "builtin" && (( status == baseline_count + 1 )); then
+if echo "$output" | grep -q "alias cd" && echo "$output" | grep -qi "builtin" && (( status == 1 )); then
 	echo "✓ Test passed: alias shadowing builtin detected"
 else
 	echo "✗ Test failed: alias shadowing builtin not detected" >&2
 	echo "  Output: $output" >&2
-	echo "  Exit: $status (expected $((baseline_count + 1)))" >&2
+	echo "  Exit: $status (expected 1)" >&2
 	((fails++))
 fi
 unalias cd
@@ -91,29 +91,31 @@ unalias cd
 alias ls='echo alias-ls'
 ((tests++))
 echo "Testing: alias shadowing PATH executable is detected..."
-output="$(shadows)"
+output="$(shadows ls)"
 status=$?
-if echo "$output" | grep -q "alias ls" && echo "$output" | grep -q "/ls" && (( status == baseline_count + 1 )); then
+output_count=$(printf '%s\n' "$output" | wc -l)
+if echo "$output" | grep -q "alias ls" && echo "$output" | grep -q "/ls" && (( status == output_count )); then
 	echo "✓ Test passed: alias shadowing PATH executable detected"
 else
 	echo "✗ Test failed: alias shadowing PATH executable not detected" >&2
 	echo "  Output: $output" >&2
-	echo "  Exit: $status (expected $((baseline_count + 1)))" >&2
+	echo "  Exit: $status (expected $output_count)" >&2
 	((fails++))
 fi
 unalias ls
 
 # Alias that doesn't shadow anything should not be reported
 unique_alias="shadowstest_alias_no_shadow"
+# shellcheck disable=SC2139 # Expansion now is the intended dynamic alias name.
 alias "$unique_alias"='echo just-an-alias'
 ((tests++))
 echo "Testing: alias without matching command is ignored..."
-output="$(shadows)"
+output="$(shadows "$unique_alias")"
 status=$?
-if echo "$output" | grep -q "alias $unique_alias" || (( status != baseline_count )); then
+if echo "$output" | grep -q "alias $unique_alias" || (( status != 0 )); then
 	echo "✗ Test failed: non-shadowing alias was reported" >&2
 	echo "  Output: $output" >&2
-	echo "  Exit: $status (expected $baseline_count)" >&2
+	echo "  Exit: $status (expected 0)" >&2
 	((fails++))
 else
 	echo "✓ Test passed: non-shadowing alias not reported"
@@ -121,17 +123,18 @@ fi
 unalias "$unique_alias"
 
 # Function shadowing a builtin is reported
+# shellcheck disable=SC2329 # Inspected and invoked indirectly by shadows.
 hash() { echo "fake hash"; }
 ((tests++))
 echo "Testing: function shadowing builtin is detected..."
-output="$(shadows)"
+output="$(shadows hash)"
 status=$?
-if echo "$output" | grep -q "function hash" && echo "$output" | grep -qi "builtin" && (( status == baseline_count + 1 )); then
+if echo "$output" | grep -q "function hash" && echo "$output" | grep -qi "builtin" && (( status == 1 )); then
 	echo "✓ Test passed: function shadowing builtin detected"
 else
 	echo "✗ Test failed: function shadowing builtin not detected" >&2
 	echo "  Output: $output" >&2
-	echo "  Exit: $status (expected $((baseline_count + 1)))" >&2
+	echo "  Exit: $status (expected 1)" >&2
 	((fails++))
 fi
 unset -f hash
@@ -141,18 +144,19 @@ printf '#!/usr/bin/env bash\nprintf "real shadowexec\\n"\n' > "$tmpdir/shadowexe
 chmod +x "$tmpdir/shadowexec"
 OLDPATH="$PATH"
 PATH="$tmpdir:$PATH"
+# shellcheck disable=SC2329 # Inspected and invoked indirectly by shadows.
 shadowexec() { printf "function shadowexec\n"; }
 export -f shadowexec
 ((tests++))
 echo "Testing: function shadowing PATH executable is detected..."
-output="$(PATH=$PATH shadows)"
+output="$(PATH=$PATH shadows shadowexec)"
 status=$?
-if echo "$output" | grep -q "function shadowexec" && echo "$output" | grep -q "$tmpdir/shadowexec" && (( status == baseline_count + 1 )); then
+if echo "$output" | grep -q "function shadowexec" && echo "$output" | grep -q "$tmpdir/shadowexec" && (( status == 1 )); then
 	echo "✓ Test passed: function shadowing PATH executable detected"
 else
 	echo "✗ Test failed: function shadowing PATH executable not detected" >&2
 	echo "  Output: $output" >&2
-	echo "  Exit: $status (expected $((baseline_count + 1)))" >&2
+	echo "  Exit: $status (expected 1)" >&2
 	((fails++))
 fi
 PATH="$OLDPATH"
@@ -196,14 +200,14 @@ PATH="$dir_early:$dir_late:$PATH"
 hash -r 2>/dev/null
 ((tests++))
 echo "Testing: binary shadowing another binary on PATH is detected..."
-output="$(shadows)"
+output="$(shadows shadowbin)"
 status=$?
-if echo "$output" | grep -q "$dir_early/shadowbin" && echo "$output" | grep -q "$dir_late/shadowbin" && echo "$output" | grep -qi "shadows" && (( status == baseline_count + 1 )); then
+if echo "$output" | grep -q "$dir_early/shadowbin" && echo "$output" | grep -q "$dir_late/shadowbin" && echo "$output" | grep -qi "shadows" && (( status == 1 )); then
 	echo "✓ Test passed: binary shadowing binary detected"
 else
 	echo "✗ Test failed: binary shadowing binary not detected" >&2
 	echo "  Output: $output" >&2
-	echo "  Exit: $status (expected $((baseline_count + 1)))" >&2
+	echo "  Exit: $status (expected 1)" >&2
 	((fails++))
 fi
 

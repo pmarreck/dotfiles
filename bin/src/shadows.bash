@@ -187,7 +187,9 @@ shadows() {
 		done
 		results=("${filtered[@]}")
 		if ((${#results[@]} == 0)); then
-			if command -v -- "$filter" > /dev/null 2>&1; then
+			if alias "$filter" >/dev/null 2>&1 ||
+				declare -F "$filter" >/dev/null 2>&1 ||
+				command -v -- "$filter" >/dev/null 2>&1; then
 				echo "Nothing shadows $filter"
 				return 0
 			else

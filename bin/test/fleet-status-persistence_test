@@ -73,6 +73,28 @@ expect_eq "Markdown format stderr is clean" "" "$(cat "$scratch/markdown.err")"
 expect_eq "Markdown --no-save still leaves state unchanged" "$before_hash" \
 	"$(git hash-object "$state/current.json")"
 
+lock_probe="$(luajit -e "
+	package.path = '$repo_root/lib/?.lua;' .. package.path
+	local fleet = require('fleet_status')
+	local first = assert(fleet.acquire_state_lock('$scratch/lock-state'))
+	local second, second_error = fleet.acquire_state_lock('$scratch/lock-state')
+	assert(fleet.release_state_lock(first))
+	local third = assert(fleet.acquire_state_lock('$scratch/lock-state'))
+	assert(fleet.release_state_lock(third))
+	io.write(tostring(second), '|', tostring(second_error), '|reacquired')
+" 2>"$scratch/lock.err")"
+expect_eq "state publication lock excludes a concurrent writer and is reusable" \
+	"nil|fleet-status state is locked by another run|reacquired" "$lock_probe"
+expect_eq "state lock probe stderr is clean" "" "$(cat "$scratch/lock.err")"
+
+printf '{broken\n' >"$state/current.json"
+"$fleet" --tier 1 --root "$scan_root" --state-dir "$state" --format json --no-save \
+	>"$scratch/rescue.json" 2>"$scratch/rescue.err"
+expect_eq "read-only JSON collection ignores malformed prior rendering state" "0" "$?"
+expect_eq "read-only JSON rescue output remains parseable" "true" \
+	"$(jq -e '.repos | length == 1' "$scratch/rescue.json" >/dev/null 2>&1 && printf true || printf false)"
+expect_eq "read-only JSON rescue stderr is clean" "" "$(cat "$scratch/rescue.err")"
+
 if (( fails == 0 )); then
 	printf 'All %d fleet-status persistence tests passed\n' "$tests"
 fi

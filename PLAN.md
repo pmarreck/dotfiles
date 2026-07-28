@@ -2,6 +2,15 @@
 
 ## Active — nightly fleet status report, all tiers (2026-07-28)
 
+- [x] Restore a completely green repository suite: independently reproduce and
+  resolve `executables_test`, `getfile_test`, and `shadows_test`, regardless of
+  whether the fleet-status changes caused them; 164/167 is not releasable.
+  - Curiosity poke: parallel full-suite execution may reveal shared environment
+    or fixture coupling that an independently green test hides, so verify both
+    focused and canonical parallel runs.
+  Completed 2026-07-28 13:27 EDT: deterministic fixtures and the real shadows
+  alias fix restored 167/167 locally; the independent hermetic Nix gate passes
+  all 118 in-sandbox tests.
 - [x] Ship Tier 1 first and independently: build `bin/fleet-status` in LuaJIT
   with collector → JSON → pure-renderer architecture, defaulting to `~/Code`
   with repeatable `--root`.
@@ -70,25 +79,50 @@
   Completed 2026-07-28 12:34 EDT: `--tier 2` marks the tier independently and
   records configured/missing/unknown upstream state plus Git-derived epoch,
   ISO timestamp, and integer age-in-days for every repository and branch.
-- [ ] Tier 3 (network): discover fork parents with `gh repo view ... --json
+- [x] Tier 3 (network): discover fork parents with `gh repo view ... --json
   parent`, compare default branches, and distinguish merely behind from
   diverged; fixture the `ollama` yolo/main stale-branch failure class.
   - Curiosity poke: many forks have no `upstream` remote, and GitHub API
     reachability must not be mistaken for Git object availability locally.
-- [ ] Tier 4 (network): report pinned-input drift separately from fork drift;
+  Completed 2026-07-28 12:40 EDT: the injected `gh` fixture discovers the
+  parent independently of local remotes and preserves both ahead and behind
+  counts as a distinct `diverged` relation.
+- [x] Tier 4 (network): report pinned-input drift separately from fork drift;
   cover every `flake.lock` input first, then `build.zig.zon`, Cargo, npm, and
   pnpm locks where present, retaining commits-stale and days-stale separately.
   - Curiosity poke: lock formats identify sources differently and may pin
     immutable archives without a meaningful moving head; return `unknown`
     instead of inventing comparability.
-- [ ] Tier 5: record the last Mechatron Prime result per repo and explicitly
+  Completed 2026-07-28 12:40 EDT: offline fixtures cover every requested lock
+  ecosystem; direct registry versions and GitHub commits use separate
+  comparators, and unrecognized/invalid sources remain `unknown`.
+- [x] Tier 5: record the last Mechatron Prime result per repo and explicitly
   flag missing `.mechatron-prime/targets` manifests.
-- [ ] Make network failures/rate limits healthy `unknown` values, add TTL
+  Completed 2026-07-28 12:40 EDT: read-only `mechatron-ci log --json` results
+  and manifest presence are independent JSON values.
+- [x] Make network failures/rate limits healthy `unknown` values, add TTL
   caching and configurable bounded concurrency, then make `--all` the nightly
   default while keeping the one-liner limited to immediate human action.
-- [ ] Wire the Linux systemd user timer for the all-tier nightly run and
+  Completed 2026-07-28 12:40 EDT: 17 offline assertions cover partial tier
+  health, clean provider failures, warm/disabled TTL behavior, per-repository
+  cache identity, and exact `xargs -P` concurrency propagation. The nightly
+  service now invokes `--all`; explicit `--tier 1` remains fast.
+- [x] Remediate the independent fleet-status milestone review before release.
+  Completed 2026-07-28 13:26 EDT: local Git failure states, local-input cache
+  fingerprints, positive/short-negative provider query
+  deduplication/deadlines/schema validation,
+  real-fleet lock variants, terminal sanitization, and publication locking all
+  failed first in regression tests and now pass. The remaining module split is
+  recorded in `CODE_REVIEW.md` as a Peter-choice refactor, not a correctness
+  waiver.
+- [x] Wire the Linux systemd user timer for the all-tier nightly run and
   document the macOS `launchd` equivalent; run the complete suite and live fleet
   report, audit artifacts, commit, and reply to Einstein with green SHA(s).
+  Completed 2026-07-28 13:36 EDT: timer enabled/active for the next 03:16 EDT
+  run; the live 156-repository refresh completed in 2m42s and named 13
+  unpushed, 2 orphaned, 5 no-remote, 70 modified, 5 staged, 139 untracked, and
+  6 stashed repositories. Final gates are 167/167 local and 118/118 hermetic;
+  durable Einstein reply follows the known-green commit.
 
 ## Active — shell helper argument correctness (2026-07-27)
 

@@ -64,6 +64,58 @@ expect(
 	fleet.encode_json({ z = 1, a = { true, false }, m = "x" })
 )
 
+current.repos[1].fork_drift = {
+	status = "known",
+	relation = "diverged",
+	parent = "upstream/example",
+	ahead = 2,
+	behind = 5,
+}
+current.repos[1].pin_drift = {
+	{ kind = "flake", name = "nixpkgs", status = "stale" },
+}
+expect(
+	"slow drift never contaminates the Tier 1 one-liner",
+	"2 unpushed (alpha, delta) · 1 orphaned (beta) · 1 no-remote (beta) · 1 modified (alpha) · 1 staged (beta) · 1 untracked (alpha) · 1 stashed (beta)",
+	fleet.render_one_line(current, nil, { full = true })
+)
+
+local null_markdown = fleet.render_markdown({
+	collected_at = "2026-07-28T12:00:00Z",
+	roots = { "/fleet" },
+	repos = {
+		{
+			name = "empty",
+			path = "/fleet/empty",
+			dirty = { staged = 0, modified = 1, untracked = 0 },
+			orphaned_commits = {},
+			branches = {},
+			last_commit_date = cjson.null,
+		},
+	},
+}, nil)
+expect(
+	"JSON null renders as an em dash rather than a Lua userdata address",
+	"| empty | 1 modified | — | — |",
+	null_markdown:match("| empty |[^\n]+")
+)
+
+local hostile = fleet.render_one_line({
+	repos = {
+		{
+			name = "bad\n\27[31m<html>",
+			dirty = { status = "known", modified = 1, staged = 0, untracked = 0 },
+			orphaned_commits = {},
+			branches = {},
+		},
+	},
+}, nil, { full = true })
+expect(
+	"repository-controlled names cannot inject terminal lines or controls",
+	"true",
+	(not hostile:find("[%c]") and not hostile:find("<html>", 1, true)) and "true" or "false"
+)
+
 if failures == 0 then
 	io.write(string.format("All %d fleet-status renderer tests passed\n", tests))
 end

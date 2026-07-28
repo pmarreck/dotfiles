@@ -6,7 +6,8 @@ test_executables() {
   echo "Testing executables..."
   
   # Create a test directory with some test files
-  local test_dir="/tmp/executables_test_$$_$(date +%s)"
+  local test_dir
+  test_dir="/tmp/executables_test_$$_$(date +%s)"
   mkdir -p "$test_dir/bin1" "$test_dir/bin2"
   
   # Create test files
@@ -70,10 +71,15 @@ echo "bin2"' > "$test_dir/bin2/bin2_only"
   echo "Testing actual search functionality..."
   # Build limited PATH with test dirs plus directories containing essential utilities
   local limited_path="$test_dir/bin1:$test_dir/bin2"
-  local bash_dir=$(dirname "$(which bash)")
-  local fd_dir=$(dirname "$(which fd)")
-  [[ -n "$bash_dir" ]] && limited_path="$limited_path:$bash_dir"
-  [[ -n "$fd_dir" && "$fd_dir" != "$bash_dir" ]] && limited_path="$limited_path:$fd_dir"
+  local tool tool_path tool_dir
+  for tool in bash fd sort awk readlink file xargs grep; do
+    tool_path="$(type -P "$tool")"
+    tool_dir="$(dirname "$tool_path")"
+    case ":$limited_path:" in
+      *":$tool_dir:"*) ;;
+      *) limited_path="$limited_path:$tool_dir" ;;
+    esac
+  done
   if ! search_output=$(PATH="$limited_path" "$HOME/dotfiles/bin/executables" 2>&1); then
     echo "FAIL: Search command failed"
     echo "Debug: Error was: $search_output"
@@ -98,7 +104,7 @@ echo "bin2"' > "$test_dir/bin2/bin2_only"
   
   # Test --scripts flag
   echo "Testing --scripts flag..."
-  if ! scripts_output=$(PATH="$limited_path" "$HOME/dotfiles/bin/executables" --scripts 2>/dev/null); then
+  if ! PATH="$limited_path" "$HOME/dotfiles/bin/executables" --scripts >/dev/null 2>&1; then
     echo "FAIL: --scripts flag failed"
     return 1
   fi

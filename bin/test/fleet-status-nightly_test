@@ -9,14 +9,15 @@ installer="$repo_root/bin/install-fleet-status-timer"
 service="$repo_root/systemd/user/fleet-status.service"
 timer="$repo_root/systemd/user/fleet-status.timer"
 docs="$repo_root/docs/fleet-status.md"
+fleet="$repo_root/bin/fleet-status"
 scratch="$(mktemp -d "${TMPDIR:-/tmp}/fleet-status-nightly.XXXXXX")" || exit 1
 trap 'rm -rf "$scratch"' EXIT
 unit_dir="$scratch/systemd/user"
 systemctl_log="$scratch/systemctl.log"
 fake_systemctl="$scratch/systemctl"
 
-cat >"$fake_systemctl" <<'EOF'
-#!/usr/bin/env bash
+printf '#!%s\n' "$BASH" >"$fake_systemctl"
+cat >>"$fake_systemctl" <<'EOF'
 printf '%s\n' "$*" >>"$FLEET_STATUS_SYSTEMCTL_LOG"
 EOF
 chmod +x "$fake_systemctl"
@@ -33,14 +34,30 @@ expect_eq() {
 	((fails++))
 }
 
-expect_eq "service runs the independent Tier 1 boundary" "true" \
-	"$(test -f "$service" && rg -q '^ExecStart=%h/dotfiles/bin/fleet-status --tier 1$' "$service" && printf true || printf false)"
+expect_eq "nightly service runs the cached all-tier report" "true" \
+	"$(test -f "$service" && rg -q '^ExecStart=%h/dotfiles/bin/fleet-status --all$' "$service" && printf true || printf false)"
 expect_eq "timer is nightly and catches missed runs" "true" \
-	"$(test -f "$timer" && rg -q '^OnCalendar=' "$timer" && rg -q '^Persistent=true$' "$timer" && printf true || printf false)"
+	"$(test -f "$timer" &&
+		rg -Fxq 'OnCalendar=*-*-* 03:15:00' "$timer" &&
+		rg -Fxq 'RandomizedDelaySec=15m' "$timer" &&
+		rg -Fxq 'Persistent=true' "$timer" && printf true || printf false)"
 expect_eq "documentation names the macOS scheduler equivalent" "true" \
-	"$(test -f "$docs" && rg -q 'launchd' "$docs" && printf true || printf false)"
+	"$(test -f "$docs" && rg -q 'launchd' "$docs" &&
+		rg -q '<key>Hour</key><integer>3</integer>' "$docs" &&
+		rg -q '<key>Minute</key><integer>15</integer>' "$docs" &&
+		rg -q 'separate `ProgramArguments` entries' "$docs" && printf true || printf false)"
 expect_eq "documentation names both persisted artifacts" "true" \
 	"$(test -f "$docs" && rg -q 'current\.json' "$docs" && rg -q 'report\.md' "$docs" && printf true || printf false)"
+expect_eq "fractional max-names is rejected by the integer contract" "2" \
+	"$("$fleet" --max-names 1.5 --no-save >"$scratch/fractional.out" 2>"$scratch/fractional.err"; printf '%s' "$?")"
+expect_eq "fractional max-names diagnostic is cleanly captured" \
+	"Error: --max-names requires a positive integer." \
+	"$(cat "$scratch/fractional.err")"
+about="$("$fleet" --about)"
+expect_eq "about is one line with version, platform, and architecture" "true" \
+	"$(if [[ "$(wc -l <<<"$about" | tr -d ' ')" == 1 ]] &&
+		printf '%s\n' "$about" |
+			rg -q '^fleet-status [0-9]+\.[0-9]+\.[0-9]+ — .* on [A-Za-z0-9_-]+/[A-Za-z0-9_-]+$'; then printf true; else printf false; fi)"
 
 FLEET_STATUS_SYSTEMD_USER_DIR="$unit_dir" \
 FLEET_STATUS_SYSTEMCTL="$fake_systemctl" \

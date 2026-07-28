@@ -162,3 +162,48 @@ No precmd/preexec double-registration on re-source (clean-slate + guarded harves
 9. **`.shellenv`** — finish-and-wire (then delete duplicates) OR delete. §headline.
 
 **New tests to add:** `source_relative_test`, interactivity-gating test, `prepend_path_test`/`expand_glob_test`; move `shell_startup_time_test` out of the pass/fail lane.
+
+---
+
+## 2026-07-28 milestone review — `fleet-status`
+
+Three independent read-only passes reviewed correctness/test quality,
+macOS/Linux portability/security/cache behavior, and code organization after
+the all-tier implementation.
+
+### Resolved before release
+
+- Git status, orphan reachability, branch enumeration, remote enumeration, and
+  stash failures now become named `unknown` risks and `partial` tier health;
+  none can masquerade as clean/safe/zero.
+- Repository cache identity now fingerprints origin, HEAD/branch, every
+  supported lockfile, and the Mechatron target manifest. Provider answers are
+  separately cached by exact command, removing repeated dependency queries.
+- Every external provider call has a configurable 30-second process deadline.
+- Provider and cache JSON shapes are validated and collectors are isolated, so
+  malformed data degrades only the affected field.
+- Real-fleet parser omissions now have fixtures: abbreviated and quoted Zig
+  pins, non-comparable Zig archives, GitHub `type=git` flake inputs, Cargo
+  dependency tables, npm v1 locks, and npm/pnpm workspaces.
+- Direct-child discovery is bounded at depth two, avoiding recursive vendor
+  traversal; Apple and Linux `find` both support the used primitives.
+- Snapshot/report publication is serialized with an atomic state lock.
+  Repository-controlled terminal/Markdown control characters are escaped.
+- Exact scheduler fields, executable naming, CLI integer/about contracts, and
+  both local/hermetic full-suite gates are enforced.
+
+### Deliberately deferred design choice
+
+`lib/fleet_status.lua` is now a large facade containing pure rendering, local
+Git collection, persistence, lock parsers, provider adapters, and orchestration.
+Splitting it is a maintainability refactor, not a release-correctness fix, and
+project rules require Peter to choose before refactoring:
+
+- **Safe:** extract pure renderers and lock parsers first, preserving every
+  public function and JSON byte-for-byte. Low risk; several small commits.
+- **Bold:** define explicit local/network adapter ports and split all six
+  layers in one branch. Cleaner boundary, but larger review and rollback
+  surface.
+
+The current module remains fully covered through end-to-end behavior tests;
+this decision does not waive either full-suite gate.
