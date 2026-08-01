@@ -99,7 +99,18 @@ if [ "$check_only" -eq 0 ] && [ ! -t 0 ]; then
 fi
 
 report="$(mktemp --tmpdir pre_push_gate.XXXXXX)"
-trap 'rm -f "$report"' EXIT
+# The report is the only explanation of WHY a push was refused, and a refusal is
+# exactly when that explanation is needed and cannot be regenerated on demand —
+# an intermittent failure is gone by the time you re-run. So the default is to
+# KEEP it, and only the green path discards. Defaulting the other way also means
+# an unexpected death (signal, syntax error) preserves the evidence rather than
+# tidying it away.
+_gate_report_disposition=keep
+_gate_report_cleanup() {
+	[ "$_gate_report_disposition" = discard ] && rm -f "$report"
+	return 0
+}
+trap _gate_report_cleanup EXIT
 
 echo "pre-push-gate: running the suite (floor: $min_tests tests)…" >&2
 # stdin from /dev/null: a git hook runs off a pipe, so ANY test that reads the
@@ -157,8 +168,10 @@ if grep -q 'SKIPPED (asserted nothing)' "$report"; then
 fi
 
 if [ "$verdict" -eq 0 ]; then
+	_gate_report_disposition=discard
 	echo "pre-push-gate: valid pass — $pass_count tests ran, none skipped without approval." >&2
 else
 	echo "pre-push-gate: PUSH REFUSED." >&2
+	echo "pre-push-gate: full suite output kept at $report" >&2
 fi
 exit "$verdict"

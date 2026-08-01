@@ -101,6 +101,48 @@ r=$(make_runner 0 155 '⊘ SKIPPED (asserted nothing): some brand new hole nobod
 [ "$(run_gate "$r")" != 0 ] && ok "an unlisted skip fails the gate" \
 	|| bad "a skip that is not on the allowlist must fail the push"
 
+# ── A refusal must leave the evidence behind ─────────────────────────────────
+# The gate captures the whole run into a report and then deleted it on exit, so
+# a refusal told the operator only "FAIL foo_test (exit 1)" and destroyed the
+# one artifact explaining why. That is the worst possible trade for a rare or
+# intermittent failure: the cheapest moment to diagnose it is the moment it
+# happened, and by then the report is gone. (Cost a real investigation on
+# 2026-08-01.) Both directions are asserted — a gate that simply never cleaned
+# up would pass the first of these and fail the second.
+#
+# TMPDIR is pointed at a private directory so the assertions can count what the
+# gate left behind without racing any other gate run.
+gate_into_tmpdir() { # $1=private tmpdir  $2=runner  $3=stderr file ; echoes exit code
+	TMPDIR="$1" PRE_PUSH_GATE_RUNNER="$2" PRE_PUSH_GATE_MIN_TESTS=155 \
+		"$GATE" --check-only >/dev/null 2>"$3"
+	printf '%s' "$?"
+}
+
+((tests++))
+priv="$WORK/report_kept"; mkdir -p "$priv"
+gate_err="$WORK/gate_refuse_stderr"
+rc=$(gate_into_tmpdir "$priv" "$(make_runner 1 155)" "$gate_err")
+kept=$(ls -1 "$priv" 2>/dev/null | wc -l)
+kept_path=$(grep -oE "$priv/[^[:space:]]+" "$gate_err" | head -1)
+if [ "$rc" != 0 ] && [ "$kept" -eq 1 ] && [ -n "$kept_path" ] && [ -s "$kept_path" ] \
+	&& grep -q 'PASS fake_0_test' "$kept_path"; then
+	ok "a refused push keeps the report and prints where it is"
+else
+	bad "the report was destroyed on refusal — nothing left to diagnose" \
+		"exit=$rc  files_kept=$kept  path_printed='$kept_path'" \
+		"stderr: $(tr '\n' ' ' < "$gate_err")"
+fi
+
+((tests++))
+priv_ok="$WORK/report_cleaned"; mkdir -p "$priv_ok"
+rc=$(gate_into_tmpdir "$priv_ok" "$(make_runner 0 155)" "$WORK/gate_pass_stderr")
+left=$(ls -1 "$priv_ok" 2>/dev/null | wc -l)
+if [ "$rc" = 0 ] && [ "$left" -eq 0 ]; then
+	ok "a green run cleans its report up"
+else
+	bad "a passing gate littered TMPDIR" "exit=$rc  left behind: $(ls -1 "$priv_ok" | tr '\n' ' ')"
+fi
+
 
 # ── "Nothing to push" must not run the suite ──────────────────────────────────
 # Running 160 tests to push zero commits is not just slow, it is a meaningless
