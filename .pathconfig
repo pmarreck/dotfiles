@@ -129,15 +129,35 @@ PATH_ADDITIONS+=(
 # stays canonical for CI/release; `nix profile install` / systemPackages for installs.
 # Use inline native globbing (noglob is on globally via set -f) — avoids subprocess fork
 # AND avoids #!/usr/bin/env bash resolving to /bin/bash 3.2 during early bootstrap.
+#
+# Projects whose bin/ must NOT join the global PATH. The auto-discovery above is
+# a convenience for LIVE personal tools; it becomes a hazard the moment a
+# dormant project ships generic names, because it captures those names for the
+# whole machine. mpnetwork's bin/ holds `yarn`, `mocha`, `s`, `scale`, `secret`,
+# `predeps`, `dbup`/`dbdown` and `version.bump` — 2023-era deploy helpers for one
+# Elixir app. `yarn` was not even shadowing a real yarn; it WAS the only yarn on
+# PATH, so `yarn <anything>` anywhere on the system ran that wrapper.
+# Denied by project name, matched exactly, and applied before the entry is ever
+# added rather than excluded afterwards.
+CODE_BIN_DENYLIST=(
+	mpnetwork
+)
 _saved_f=$-
 set +f
 shopt -s nullglob
 for _dir in "$CODE"/*/result/bin "$CODE"/*/zig-out/bin "$CODE"/*/bin; do
+	_proj=${_dir#"$CODE"/}
+	_proj=${_proj%%/*}
+	_denied=0
+	for _deny in "${CODE_BIN_DENYLIST[@]}"; do
+		if [ "$_proj" = "$_deny" ]; then _denied=1; break; fi
+	done
+	[ "$_denied" -eq 1 ] && continue
 	PATH_ADDITIONS+=("$_dir")
 done
 shopt -u nullglob
 [[ "$_saved_f" == *f* ]] && set -f
-unset _saved_f _dir
+unset _saved_f _dir _proj _denied _deny
 
 # Declarative list of PATH exclusions (mostly macOS cruft that keeps reinserting itself).
 # https://support.apple.com/guide/deployment/rapid-security-responses-dep93ff7ea78/web
@@ -218,6 +238,26 @@ export IGNORE_EXCLUDE_PATH_WARNINGS
 for _excl in "${PATH_EXCLUSIONS[@]}"; do
 	exclude_path "$_excl"
 done
+
+# Strip anything leading into a denylisted project, whatever put it there.
+# Skipping it during auto-discovery above is necessary but NOT sufficient: a
+# shell started before the denial existed still carries the directory, every
+# child inherits it, and the foreign-entry classification further up
+# deliberately preserves externally injected entries and re-hoists them to the
+# FRONT — precisely the wrong move for a denied one. Denial is a property of
+# the destination, not of how the entry arrived.
+_OLD_IFS=$IFS
+IFS=:
+for _path in $PATH; do
+	for _deny in "${CODE_BIN_DENYLIST[@]}"; do
+		case "$_path" in
+			"$CODE/$_deny"|"$CODE/$_deny"/*) exclude_path "$_path"; break ;;
+		esac
+	done
+done
+IFS=$_OLD_IFS
+unset _OLD_IFS _path _deny
+
 unset IGNORE_EXCLUDE_PATH_WARNINGS _excl
 
 # Filter out any path entries that don't actually exist as directories

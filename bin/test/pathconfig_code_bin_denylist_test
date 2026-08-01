@@ -1,0 +1,122 @@
+#!/usr/bin/env bash
+
+# .pathconfig auto-discovers every $CODE/*/bin and puts it on the global PATH.
+# That is a convenience for live personal tools and a hazard for dormant ones:
+# a project whose bin/ ships generic names captures those names system-wide.
+# mpnetwork's bin/ holds `yarn`, `mocha`, `s`, `scale`, `secret`, `predeps`,
+# `dbup`/`dbdown` and `version.bump` — so typing `yarn` in any directory on the
+# machine ran a 2023-era deploy helper for one Elixir app. It was in fact the
+# ONLY `yarn` on PATH, so it was not shadowing a real one, it *was* the one.
+#
+# Asserted as a classifier over sets, in both directions. A "fix" that simply
+# deleted the auto-discovery would satisfy the denial and fail the retention.
+#
+# Hermetic: HOME points at a fixture tree, so the assertions never depend on
+# what is actually checked out under Peter's ~/Code.
+
+set -u
+
+tests=0
+fails=0
+
+repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+BOOTSTRAP_BASH="/run/current-system/sw/bin/bash"
+[ -x "$BOOTSTRAP_BASH" ] || BOOTSTRAP_BASH="$BASH"
+
+FAKE_HOME="$(mktemp -d "${TMPDIR:-/tmp}/pathconfig_denylist.XXXXXX")"
+trap 'rm -rf "$FAKE_HOME"' EXIT
+
+ln -s "$repo_dir" "$FAKE_HOME/dotfiles"
+ln -s "$repo_dir/.pathconfig" "$FAKE_HOME/.pathconfig"
+
+# A denied project and a kept one, each with a real bin/ holding a real
+# executable — .pathconfig drops entries that are not existing directories, so
+# an empty fixture would make the retention assertion pass for the wrong reason.
+for proj in mpnetwork keepme; do
+	mkdir -p "$FAKE_HOME/Code/$proj/bin"
+	printf '#!%s\ntrue\n' "$BOOTSTRAP_BASH" > "$FAKE_HOME/Code/$proj/bin/fixture-$proj"
+	chmod +x "$FAKE_HOME/Code/$proj/bin/fixture-$proj"
+done
+
+# The fixture PATH must carry a real coreutils/awk, because prepend_path shells
+# out to awk: starting from a bare /usr/bin:/bin on NixOS makes .pathconfig
+# collapse to an empty PATH and every assertion below becomes meaningless. HOME
+# is the only thing being faked here — that is what isolates the test from
+# whatever is actually checked out under ~/Code.
+BASE_PATH="/run/current-system/sw/bin:/usr/bin:/bin"
+[ -d /run/current-system/sw/bin ] || BASE_PATH="$PATH"
+
+built_path="$(
+	env -i HOME="$FAKE_HOME" OSTYPE="${OSTYPE:-linux-gnu}" PATH="$BASE_PATH" \
+		"$BOOTSTRAP_BASH" --noprofile --norc -c '. "$HOME/.pathconfig" >/dev/null 2>&1; printf "%s" "$PATH"'
+)"
+
+path_has() { # $1 = exact directory
+	case ":$built_path:" in *":$1:"*) return 0 ;; *) return 1 ;; esac
+}
+
+# Guard against a vacuous pass: if .pathconfig failed to run at all, $built_path
+# would be empty or stock and every denial assertion below would "pass".
+((tests++))
+echo "Testing: the fixture .pathconfig actually built a PATH..."
+if [ -n "$built_path" ] && [ "$built_path" != "$BASE_PATH" ]; then
+	echo "✓ Test passed: .pathconfig ran and produced a rebuilt PATH"
+else
+	echo "✗ Test failed: .pathconfig did not build a PATH; every assertion below is vacuous" >&2
+	echo "  PATH was: '$built_path'" >&2
+	((fails++))
+fi
+
+((tests++))
+echo "Testing: a denylisted project's bin never reaches PATH..."
+denied=""
+for entry in $(printf '%s' "$built_path" | tr ':' '\n'); do
+	case "$entry" in "$FAKE_HOME/Code/mpnetwork"*) denied="$denied $entry" ;; esac
+done
+if [ -z "$denied" ]; then
+	echo "✓ Test passed: no PATH entry leads into the denylisted project"
+else
+	echo "✗ Test failed: denylisted project still on PATH:$denied" >&2
+	((fails++))
+fi
+
+((tests++))
+echo "Testing: a non-denylisted project's bin is still auto-discovered..."
+if path_has "$FAKE_HOME/Code/keepme/bin"; then
+	echo "✓ Test passed: ordinary project bin dirs are still added"
+else
+	echo "✗ Test failed: auto-discovery stopped working entirely" >&2
+	echo "  PATH was: $built_path" >&2
+	((fails++))
+fi
+
+# Skipping the entry at discovery time is not sufficient. A shell started before
+# the denial existed already has the directory in its PATH, and every child it
+# spawns inherits it — and .pathconfig's foreign-entry classification
+# deliberately PRESERVES externally injected entries and re-hoists them to the
+# front, which is exactly the wrong behaviour for a denied one. Denial is a
+# property of the destination, not of how the entry got there.
+((tests++))
+echo "Testing: an inherited denylisted entry is stripped, not preserved..."
+inherited_path="$(
+	env -i HOME="$FAKE_HOME" OSTYPE="${OSTYPE:-linux-gnu}" \
+		PATH="$FAKE_HOME/Code/mpnetwork/bin:$BASE_PATH" \
+		"$BOOTSTRAP_BASH" --noprofile --norc -c '. "$HOME/.pathconfig" >/dev/null 2>&1; printf "%s" "$PATH"'
+)"
+survived=""
+for entry in $(printf '%s' "$inherited_path" | tr ':' '\n'); do
+	case "$entry" in "$FAKE_HOME/Code/mpnetwork"*) survived="$survived $entry" ;; esac
+done
+if [ -z "$survived" ] && [ -n "$inherited_path" ]; then
+	echo "✓ Test passed: an inherited denylisted entry does not survive the rebuild"
+else
+	echo "✗ Test failed: inherited denylisted entry survived:$survived" >&2
+	((fails++))
+fi
+echo
+if [ "$fails" -eq 0 ]; then
+	echo "pathconfig_code_bin_denylist_test PASSED: all $tests tests passed"
+else
+	echo "pathconfig_code_bin_denylist_test FAILED: $fails of $tests tests failed" >&2
+fi
+exit "$fails"
