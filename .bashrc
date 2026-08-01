@@ -339,6 +339,11 @@ set +H
 # Tab completion for show/what/d commands
 . "$HOME/dotfiles/completions/show_completion.bash"
 
+# Tab completion for grok. The PATH half of what the grok installer appended
+# lives in .pathconfig with the other AI agent CLIs; only the completion
+# sourcing belongs here, alongside the rest of the completions.
+[[ -r "$HOME/.grok/completions/bash/grok.bash" ]] && . "$HOME/.grok/completions/bash/grok.bash"
+
 # Hook and unhook functions for wrapping commands with logging
 . "$HOME/dotfiles/bin/src/hook.sh"
 . "$HOME/dotfiles/bin/src/unhook.sh"

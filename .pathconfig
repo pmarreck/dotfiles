@@ -106,7 +106,12 @@ fi
 
 PATH_ADDITIONS+=(
 	"$HOME/bin"
+	# Vendor-installed AI agent CLIs, each with its own ~/.<tool>/bin. Declared
+	# here rather than left where their installers put them: they append a raw
+	# `export PATH=...:$PATH` to .bashrc, which lands AFTER this file has built
+	# PATH declaratively and so escapes the ordering and dedup rules entirely.
 	"$HOME/.antigravity/antigravity/bin"
+	"$HOME/.grok/bin"
 	# Non-Zig personal projects
 	"$CODE/ixnay/bin"
 	"$CODE/jumpscript/bin"
