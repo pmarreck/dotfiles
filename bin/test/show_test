@@ -136,6 +136,132 @@ fi
 
 rm -rf "$node_tmp_dir"
 
+# ── Local paths must outrank the URL interpretation ──────────────────────────
+# `show README.md` used to launch a web browser: is_web_url matched the string
+# because ".md" is Moldova's ccTLD, and the regex never asked the filesystem.
+# The same trap swallows ".sh" (Saint Helena), ".pl" (Poland), ".ai" (Anguilla),
+# ".io", ".it" — a large share of the filenames anyone would ever actually type.
+#
+# The routing decision is exercised as a classifier over SETS in BOTH
+# directions: the identical string must reach the file branch when a path of
+# that name exists and the browser when it does not. A "fix" that merely
+# stopped recognizing bare domains would sail through the specificity set and
+# get caught by the sensitivity set.
+
+((tests++))
+echo "Testing: the URL-vs-path routing decision is its own callable function..."
+if declare -F should_open_as_web_url >/dev/null; then
+	echo "[PASS] should_open_as_web_url is defined"
+else
+	echo "[FAIL] should_open_as_web_url is undefined; routing is not unit-testable" >&2
+	((fails++))
+fi
+
+# Strings that are at once plausible filenames and syntactically valid domains.
+# Every extension here is a real ccTLD, which is precisely why the string alone
+# cannot settle the question.
+url_shaped_filenames=(README.md notes.md test.sh script.pl photo.ai data.io CHANGELOG.md)
+# Genuine schemeless URLs. Nothing of these names exists on disk.
+bare_domains=(example.com www.example.com github.com/user/repo sub.domain.co.uk)
+# An explicit scheme is an unambiguous declaration of intent and always wins.
+scheme_urls=(https://example.com http://example.com https://example.com/a/b)
+
+((tests++))
+echo "Testing: an existing path is never routed to the browser..."
+misrouted=()
+for candidate in "${url_shaped_filenames[@]}"; do
+	should_open_as_web_url "$candidate" exists; rc=$?
+	[ "$rc" -eq 0 ] && misrouted+=("$candidate")
+	[ "$rc" -gt 1 ] && misrouted+=("$candidate(rc=$rc)")
+done
+if ((${#misrouted[@]} == 0)); then
+	echo "[PASS] all ${#url_shaped_filenames[@]} url-shaped filenames stayed local when present on disk"
+else
+	echo "[FAIL] would have opened a browser for existing paths: ${misrouted[*]}" >&2
+	((fails++))
+fi
+
+((tests++))
+echo "Testing: the same strings ARE urls when no such path exists..."
+lost=()
+for candidate in "${url_shaped_filenames[@]}" "${bare_domains[@]}"; do
+	should_open_as_web_url "$candidate" absent; rc=$?
+	[ "$rc" -eq 0 ] || lost+=("$candidate(rc=$rc)")
+done
+if ((${#lost[@]} == 0)); then
+	echo "[PASS] every domain-shaped string still resolves as a url when absent from disk"
+else
+	echo "[FAIL] no longer recognized as urls: ${lost[*]}" >&2
+	((fails++))
+fi
+
+((tests++))
+echo "Testing: an explicit http(s):// scheme outranks even an existing path..."
+shadowed=()
+for candidate in "${scheme_urls[@]}"; do
+	should_open_as_web_url "$candidate" exists; rc=$?
+	[ "$rc" -eq 0 ] || shadowed+=("$candidate(rc=$rc)")
+done
+if ((${#shadowed[@]} == 0)); then
+	echo "[PASS] scheme-qualified urls are unaffected by the filesystem"
+else
+	echo "[FAIL] a local path suppressed an explicit url: ${shadowed[*]}" >&2
+	((fails++))
+fi
+
+# ── End to end: the predicate above is worthless if show ignores it ───────────
+route_dir="$(mktemp --tmpdir -d show_route.XXXXXX)"
+route_bin="$route_dir/bin"
+mkdir -p "$route_bin"
+export BROWSER_LOG="$route_dir/browser.log" RENDER_LOG="$route_dir/render.log"
+
+# Every browser show knows how to launch, faked. Any one of them firing on a
+# local file is the bug. $BASH rather than /usr/bin/env: these are written at
+# run time, so no shebang patching ever sees them.
+for _b in clx reader links browsh; do
+	{
+		printf '#!%s\n' "$BASH"
+		printf 'printf "%%s %%s\\n" %q "$*" >> "$BROWSER_LOG"\n' "$_b"
+	} > "$route_bin/$_b"
+	chmod +x "$route_bin/$_b"
+done
+# glow is how show renders markdown: record the call, then emit the content.
+{
+	printf '#!%s\n' "$BASH"
+	printf 'printf "glow %%s\\n" "$*" >> "$RENDER_LOG"\n'
+	printf 'cat "$@"\n'
+} > "$route_bin/glow"
+chmod +x "$route_bin/glow"
+
+printf 'the-canary-line\n' > "$route_dir/README.md"
+
+((tests++))
+echo "Testing: show README.md renders the file and launches no browser..."
+: > "$BROWSER_LOG"
+route_out=$(cd "$route_dir" && PATH="$route_bin:$repo_dir/bin:$PATH" \
+	bash -c 'source "'"$show_script"'"; show README.md' 2>"$route_dir/stderr")
+if [ ! -s "$BROWSER_LOG" ] && printf '%s' "$route_out" | grep -q 'the-canary-line'; then
+	echo "[PASS] show README.md rendered the local file, no browser launched"
+else
+	echo "[FAIL] show README.md was misrouted" >&2
+	echo "  browsers launched: $(tr '\n' ' ' < "$BROWSER_LOG")" >&2
+	echo "  stdout: $route_out" >&2
+	((fails++))
+fi
+
+((tests++))
+echo "Testing: show <bare domain> still opens a browser when no such file exists..."
+: > "$BROWSER_LOG"
+(cd "$route_dir" && PATH="$route_bin:$repo_dir/bin:$PATH" \
+	bash -c 'source "'"$show_script"'"; show example.com' >/dev/null 2>&1)
+if [ -s "$BROWSER_LOG" ]; then
+	echo "[PASS] a bare domain with no local file still reaches the browser"
+else
+	echo "[FAIL] bare domains no longer open a browser; the url path is dead" >&2
+	((fails++))
+fi
+
+rm -rf "$route_dir"
 if (( fails == 0 )); then
 	echo "show_test PASSED: all $tests tests passed"
 else

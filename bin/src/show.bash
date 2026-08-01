@@ -227,6 +227,36 @@ is_web_url() {
 	return 1
 }
 
+# Decides whether an argument should be fetched as a web page or read off disk.
+# Split out from is_web_url, and kept pure — the caller supplies the existence
+# fact rather than the function probing for it — so both branches are testable
+# without a filesystem.
+#
+# The tie-break has to exist because syntax alone cannot settle the question:
+# "README.md", "test.sh" and "photo.ai" are all syntactically valid domains
+# (Moldova, Saint Helena, Anguilla), yet essentially every time one is typed it
+# means the file sitting right there in the directory. So a local path wins —
+# EXCEPT against an explicit http(s):// scheme, which is an unambiguous
+# declaration of intent and cannot be shadowed by anything on disk.
+#
+# $1 = the argument as typed; $2 = "exists" or "absent" for a path of that name.
+# Any other second argument returns 2, which callers read as false: misuse must
+# fail toward the local file, never toward silently launching a browser.
+should_open_as_web_url() {
+	local input="$1" path_state="${2:-}"
+	case "$path_state" in
+		exists|absent) ;;
+		*)
+			err "should_open_as_web_url: second argument must be 'exists' or 'absent', got '${path_state}'"
+			return 2
+			;;
+	esac
+	is_web_url "$input" || return 1
+	[[ "$input" =~ ^https?:// ]] && return 0
+	[ "$path_state" = "exists" ] && return 1
+	return 0
+}
+
 # Help function for show command
 show_help() {
 	cat <<'EOF' | trim_leading_heredoc_whitespace
@@ -397,7 +427,12 @@ show() {
 		return 0
 	fi
 	# if it's a web URL, open it with selected browser
-	if is_web_url "$word"; then
+	# A path on disk outranks the web reading of the same string. -L as well as
+	# -e, because a dangling symlink named notes.md is still emphatically not a
+	# website.
+	local path_state=absent
+	if [ -e "$word" ] || [ -L "$word" ]; then path_state=exists; fi
+	if should_open_as_web_url "$word" "$path_state"; then
 		echo "$word"
 		# All browsers need explicit protocol, add https:// if missing
 		local full_url="$word"
