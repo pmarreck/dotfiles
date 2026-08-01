@@ -89,6 +89,7 @@ annotate=[
 	bin/test/kill-steam-proton-pids_test = Killing layer with injected enumerator+kill cmd: dry-run signals nothing, normal run does, order, escalation, pid guards
 	bin/test/nas_ps1_test = static-content validation for bin/nas.ps1 (no pwsh required locally); checks param block, both protocol branches, safety helpers, mojibake hygiene; opportunistic pwsh parse if available
 	bin/test/nas_test = TDD coverage for bin/nas: pure helpers (_nas_fstab_line, _nas_nixos_snippet, _nas_auto_nfs_line), platform override, --help, --dry-run for all three OS branches
+	bin/test/npmrc_project_config_test = guards that no repo .npmrc sets prefix, and that npmrc still installs as ~/.npmrc
 	bin/test/pathconfig_code_bin_denylist_test = tests that denylisted $CODE project bin dirs never reach PATH, by discovery or inheritance
 	bin/test/pathconfig_foreign_path_test = regression tests: .pathconfig must preserve FOREIGN PATH injections (nix shell/develop, direnv) across its ORIG_PATH rebuild; set-based classifier with paired specificity case + e2e that forces on-the-fly nix instantiation of a run-unique derivation and asserts it resolves in the new interactive shell
 	bin/test/rg_test = Regression suite for rg/find/fd root classification, sudo provenance, whole-home/Nix-store refusal, stdin filtering, and shell-function enforcement.
@@ -108,6 +109,7 @@ annotate=[
 	lib/fleet_status/renderers.lua = Pure one-line and Markdown fleet report renderers
 	lib/fleet_status/runtime.lua = Process, filesystem, clock, and environment host adapter for fleet-status
 	lib/fleet_status/state.lua = Canonical JSON, atomic snapshot persistence, and state-lock adapter
+	npmrc = npm user config (dotless on purpose: a repo-root .npmrc would be npm's PROJECT config)
 	systemd/user/fleet-status.service = Nightly cached all-tier fleet-status systemd user service
 	systemd/user/fleet-status.timer = Persistent randomized 03:15 systemd user schedule for fleet-status.
 ]

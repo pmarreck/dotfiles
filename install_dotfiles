@@ -17,7 +17,7 @@ declare -a dotfiles=(
     .gitignore
     .inputrc
     .netrc.gpg
-    .npmrc
+    # .npmrc is NOT here on purpose — see renamed_dotfiles below.
     .pathconfig
     .pre-oh-my-bash.bashrc
     .profile
@@ -53,6 +53,31 @@ for dotfile in ${dotfiles[@]}; do
         fi
     fi
     ln -sfv "dotfiles/$dotfile"
+done
+
+# Files that must be installed under a DIFFERENT name than they carry in the
+# repo, keyed repo-name -> installed-name.
+#
+# npm looks for a file named exactly `.npmrc`, walking UP from the current
+# directory. A tracked `.npmrc` at the repo root therefore becomes the PROJECT
+# config for this very repo, and npm 11 rejects `prefix` in a project config —
+# so every npm command run from anywhere inside ~/dotfiles failed with
+# "config prefix cannot be changed from project config", while npm worked fine
+# one directory up. The symlink-into-$HOME install method is not the problem;
+# the collision is that one file was serving as user config and project config
+# at once. Keeping the repo-side name dotless makes it invisible to npm while
+# still being the source for ~/.npmrc.
+declare -A renamed_dotfiles=(
+    [npmrc]=.npmrc
+)
+
+for renamed_src in "${!renamed_dotfiles[@]}"; do
+    renamed_dest="${renamed_dotfiles[$renamed_src]}"
+    if [[ ! -L $renamed_dest ]] && [ -f "$renamed_dest" ]; then
+        echo "$renamed_dest already exists; renaming to $renamed_dest.old"
+        mv -v "$renamed_dest" "$renamed_dest.old"
+    fi
+    ln -sfv "dotfiles/$renamed_src" "$renamed_dest"
 done
 
 # make a Scripts directory if it doesn't exist

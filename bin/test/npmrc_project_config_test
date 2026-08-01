@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+
+# npm 11 refuses `prefix` in a PROJECT-level .npmrc ("config prefix cannot be
+# changed from project config"). It is perfectly legal in the USER config.
+#
+# ~/.npmrc was a symlink to dotfiles/.npmrc, so a single file played both roles:
+# correct as the user config, illegal as the project config of the dotfiles repo
+# itself. The result was that every npm command run from anywhere inside
+# ~/dotfiles failed outright, while npm worked fine one directory up.
+#
+# The fix is to stop the repo from shipping a file NAMED .npmrc — npm only ever
+# looks for that exact name walking up from cwd, so a dotless `npmrc` is
+# invisible to it while still being the source for the ~/.npmrc symlink.
+#
+# Asserted in both directions: no project .npmrc may set prefix (the bug), AND
+# the setting must still be shipped and installed (otherwise simply deleting the
+# file would satisfy the first assertion and silently drop the user's config).
+
+set -u
+
+tests=0
+fails=0
+
+repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+
+((tests++))
+echo "Testing: no .npmrc inside the repo declares a prefix..."
+offenders="$(
+	find "$repo" -name .npmrc -not -path '*/node_modules/*' -not -path '*/.git/*' 2>/dev/null \
+		| xargs -r grep -l '^[[:space:]]*prefix[[:space:]]*=' 2>/dev/null
+)"
+if [ -z "$offenders" ]; then
+	echo "✓ Test passed: no project-level .npmrc sets prefix"
+else
+	echo "✗ Test failed: these would break npm for any cwd beneath them:" >&2
+	printf '    %s\n' $offenders >&2
+	((fails++))
+fi
+
+((tests++))
+echo "Testing: the prefix setting is still shipped as a user config..."
+if [ -f "$repo/npmrc" ] && grep -q '^[[:space:]]*prefix[[:space:]]*=' "$repo/npmrc"; then
+	echo "✓ Test passed: repo ships a dotless npmrc carrying the prefix"
+else
+	echo "✗ Test failed: the prefix setting was dropped rather than relocated" >&2
+	((fails++))
+fi
+
+((tests++))
+echo "Testing: install_dotfiles installs it as ~/.npmrc..."
+if grep -qE '^[[:space:]]*\[npmrc\]=\.npmrc' "$repo/install_dotfiles"; then
+	echo "✓ Test passed: install_dotfiles maps npmrc to ~/.npmrc"
+else
+	echo "✗ Test failed: nothing installs npmrc as ~/.npmrc, so the user config is lost" >&2
+	((fails++))
+fi
+
+# The behavioural proof. Everything above is structural and would still pass if
+# npm's rules changed underneath us; this is the assertion that actually fails
+# when the bug is present.
+((tests++))
+if command -v npm >/dev/null 2>&1; then
+	echo "Testing: npm runs from inside the repo without a config error..."
+	npm_err="$(cd "$repo" && timeout 60 npm config get prefix 2>&1 >/dev/null)"
+	npm_rc=$?
+	if [ "$npm_rc" -eq 0 ] && [ -z "$npm_err" ]; then
+		echo "✓ Test passed: npm works with cwd inside the dotfiles repo"
+	else
+		echo "✗ Test failed: npm still errors inside the repo (rc=$npm_rc)" >&2
+		printf '    %s\n' "$npm_err" >&2
+		((fails++))
+	fi
+else
+	((tests--))
+	echo "⊘ SKIPPED (asserted nothing): npm runs from inside the repo without a config error" >&2
+	echo "    why:  npm is not on PATH in this environment" >&2
+	echo "    when: decision made 2026-08-01" >&2
+fi
+
+echo
+if [ "$fails" -eq 0 ]; then
+	echo "npmrc_project_config_test PASSED: all $tests tests passed"
+else
+	echo "npmrc_project_config_test FAILED: $fails of $tests tests failed" >&2
+fi
+exit "$fails"
