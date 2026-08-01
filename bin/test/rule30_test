@@ -6,6 +6,17 @@ PATH="$HOME/dotfiles/bin:$PATH"
 tests=0
 fails=0
 
+# Count codepoints without depending on the caller's locale. awk's length() and
+# `wc -m` both count BYTES under LC_ALL=C, so rule30's block glyphs measure as
+# three times their width and the assertion fails on any C-locale host while
+# passing on the author's. Every UTF-8 codepoint has exactly one lead byte, so
+# deleting the continuation bytes (0x80-0xBF) and counting what remains is
+# exact and needs no locale to be installed — C.UTF-8 is glibc-only, and these
+# dotfiles run on macOS too.
+utf8_len() {
+	printf '%s' "$1" | LC_ALL=C tr -d '\200-\277' | LC_ALL=C wc -c | tr -d ' '
+}
+
 expect_eq() {
 	local desc=$1 expected=$2 actual=$3
 	((tests++))
@@ -30,12 +41,38 @@ else
 	((fails++))
 fi
 
+first_bad_width_line() { # $1=output $2=required width; echoes line number or ""
+	local out="$1" want="$2" n=0 line
+	while IFS= read -r line; do
+		n=$((n + 1))
+		if [[ "$(utf8_len "$line")" -ne "$want" ]]; then
+			printf '%s' "$n"
+			return
+		fi
+	done <<<"$out"
+}
+
 ((tests++))
-bad_width_line=$(printf '%s\n' "$output" | awk '{ if (length($0) != 7) print NR }' | head -1)
+bad_width_line=$(first_bad_width_line "$output" 7)
 if [[ -z "$bad_width_line" ]]; then
 	echo "✓ Test passed: every line is exactly 7 characters wide"
 else
 	echo "✗ Test failed: line $bad_width_line is not 7 characters wide" >&2
+	((fails++))
+fi
+
+# Row width must not depend on the caller's locale. Bash slices ${s:i:1} and
+# ${s::n} by CHARACTER under a UTF-8 locale but by BYTE under LC_ALL=C, so an
+# implementation that indexes a string containing the three-byte █ chops it
+# into invalid fragments and emits short rows on any C-locale host — a Nix
+# sandbox, a cron job, a CI runner. Run explicitly under C rather than trusting
+# whatever locale the suite happens to inherit.
+((tests++))
+c_locale_bad=$(first_bad_width_line "$(LC_ALL=C WIDTH=7 LINES=3 rule30)" 7)
+if [[ -z "$c_locale_bad" ]]; then
+	echo "✓ Test passed: rows stay 7 characters wide under LC_ALL=C"
+else
+	echo "✗ Test failed: under LC_ALL=C, line $c_locale_bad is not 7 characters wide" >&2
 	((fails++))
 fi
 
