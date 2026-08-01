@@ -86,6 +86,68 @@ o9="$(run 1000000400 sessB)"
 expect_contains     "$o9" "$WD"               "different session is independent -> LONG"
 expect_eq "$([ -f "$TMP/state-sessB" ] && echo yes)" "yes" "separate state file per session"
 
+# ---- PURE CORE: sleep advice ----
+# time-awareness-hook --sleep-decide NOW_EPOCH HOUR LAST_SLEEP_EPOCH
+#   -> "<none|wind_down|refuse> <new_sleep_epoch>"
+#
+# Peter asked (2026-08-01) that EVERY agent notice the hour, not just whichever
+# one he happens to be talking to, and stop feeding him work overnight. Window is
+# 22:00-04:59 local; 05:00 ends it. Separate 8-minute debounce so it does not
+# repeat on every interaction.
+sadv()   { "$HOOK" --sleep-decide "$@" | cut -d' ' -f1; }
+sstate() { "$HOOK" --sleep-decide "$@" | cut -d' ' -f2; }
+
+# Tested as a classifier over the WHOLE hour domain, not a couple of examples:
+# every hour must land in exactly the right bucket.
+day_noise=""
+for h in 5 6 7 9 12 15 18 20 21; do
+	r="$(sadv 1000000000 "$h" 0)"
+	[ "$r" = none ] || day_noise="$day_noise $h:$r"
+done
+expect_eq "$day_noise" "" "hours 05-21 never nag"
+
+night_wrong=""
+for h in 23 0 1 2 3 4; do
+	r="$(sadv 1000000000 "$h" 0)"
+	[ "$r" = refuse ] || night_wrong="$night_wrong $h:$r"
+done
+expect_eq "$night_wrong" "" "hours 23-04 all say refuse"
+
+expect_eq "$(sadv 1000000000 22 0)" "wind_down" "22:00 -> wind down, not refuse"
+expect_eq "$(sadv 1000000000 21 0)" "none"      "21:59 side of the boundary is silent"
+expect_eq "$(sadv 1000000000 5 0)"  "none"      "05:00 ends the window"
+
+# 8-minute debounce (480s), measured strictly
+expect_eq "$(sadv 1000000000 23 999999600)" "none"   "within 8 min of last nag -> silent"
+expect_eq "$(sadv 1000000000 23 999999520)" "refuse" "more than 8 min -> nags again"
+expect_eq "$(sadv 1000000000 23 999999521)" "none"   "just under 8 min is not yet due"
+
+# state stamping
+expect_eq "$(sstate 1000000000 23 999999520)" "1000000000" "a nag stamps the new time"
+expect_eq "$(sstate 1000000000 23 999999600)" "999999600"  "a debounced turn leaves the stamp alone"
+expect_eq "$(sstate 1000000000 12 999999520)" "999999520"  "daytime never stamps"
+
+# ---- ADAPTER: the nudge must reach context even when the timestamp is silent ----
+# The timestamp core rate-limits to 5 min. A sleep nudge that could only ride along
+# with a timestamp would be silently swallowed, so the adapter must emit on either.
+TMP2="$(mktemp -d --tmpdir time-awareness-hook.XXXXXX)"
+runh() { # now session hour_override
+	printf '{"hook_event_name":"UserPromptSubmit","session_id":"%s"}' "$2" \
+		| TIMESTAMP_HOOK_NOW="$1" TIMESTAMP_HOOK_STATE_DIR="$TMP2" \
+		  TIMESTAMP_HOOK_HOUR="$3" "$HOOK"
+}
+n1="$(runh 1000000000 nite 23)"
+expect_contains "$n1" "additionalContext" "overnight turn emits"
+expect_contains "$n1" "sleep"             "overnight emit mentions sleep"
+# 2 minutes later the timestamp is rate-limited AND the nudge is debounced -> silent
+expect_eq "$(runh 1000000120 nite 23)" "" "2 min later, both rate limits hold -> silent"
+# 9 minutes later: timestamp still within its own hour but nudge is due again
+n3="$(runh 1000000560 nite 23)"
+expect_contains "$n3" "sleep" "9 min later the nudge returns even mid-hour"
+# daytime never mentions sleep
+d1="$(runh 1000003600 dayt 14)"
+expect_not_contains "$d1" "sleep" "daytime emit says nothing about sleep"
+
 # ---- summary ----
 if [ "$fails" -gt 0 ]; then
 	echo "$fails of $tests tests FAILED" >&2

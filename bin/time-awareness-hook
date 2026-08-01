@@ -47,6 +47,14 @@ set -u
 
 SHORT_INTERVAL=300   # seconds; "more than 5 minutes" => strict > this
 
+# Sleep-hours nudge (Peter, 2026-08-01). Knowing the time is not the same as
+# acting on it, and Peter works with many agents at once -- relying on whichever
+# one he happens to be talking to to notice the hour does not scale. This puts
+# the reminder in the one place every agent already reads.
+SLEEP_DEBOUNCE=480   # seconds between nudges; >= this is due
+SLEEP_START_HOUR=22  # nudging begins at 22:00 local
+SLEEP_END_HOUR=5     # and ends at 05:00 local (Peter: "warnings should stop at 5 AM")
+
 # --- pure core -------------------------------------------------------------
 # decide NOW_EPOCH NOW_HOURKEY LAST_HOURKEY LAST_SHORT_EPOCH
 # prints: "<emit> <new_hourkey> <new_short_epoch>"  (emit in none|short|long)
@@ -59,6 +67,36 @@ _decide() {
 	else
 		printf 'none %s %s\n' "$last_hourkey" "$last_short"        # too soon; state unchanged
 	fi
+}
+
+# sleep_decide NOW_EPOCH HOUR LAST_SLEEP_EPOCH
+# prints: "<none|wind_down|refuse> <new_sleep_epoch>"
+# Pure: no clock, no state file. The window wraps midnight, so it is expressed as
+# "NOT the daytime range" rather than a single comparison.
+_sleep_decide() {
+	local now="$1" hour="$2" last="${3:-0}"
+	hour=$((10#$hour))                      # tolerate a leading zero from %H
+	if [ "$hour" -ge "$SLEEP_END_HOUR" ] && [ "$hour" -lt "$SLEEP_START_HOUR" ]; then
+		printf 'none %s\n' "$last"; return   # daytime: silent, and never stamps
+	fi
+	if [ $(( now - last )) -lt "$SLEEP_DEBOUNCE" ]; then
+		printf 'none %s\n' "$last"; return   # debounced: leave the stamp alone
+	fi
+	if [ "$hour" -eq "$SLEEP_START_HOUR" ]; then
+		printf 'wind_down %s\n' "$now"
+	else
+		printf 'refuse %s\n' "$now"
+	fi
+}
+
+# advice keyword -> the text injected into every agent's context
+_sleep_text() {
+	case "$1" in
+		wind_down)
+			printf '%s' "🌙 It is after 10 PM for Peter. Tell him to start wrapping up and heading toward sleep. Do not begin anything long-running or open-ended; prefer finishing or checkpointing what is already in flight." ;;
+		refuse)
+			printf '%s' "🌙 It is after 11 PM for Peter. Strongly discourage new work: decline to start new tasks unless he has already given explicit overnight instructions, say plainly that it can wait until morning, and recommend he go to sleep. Finishing or safely parking in-flight work is fine." ;;
+	esac
 }
 
 # --- adapter helpers -------------------------------------------------------
@@ -122,38 +160,54 @@ _hook_main() {
 	mkdir -p "$state_dir" 2>/dev/null || true
 	state_file="$state_dir/state-$(_safe "$session")"
 
-	local now_hourkey last_hourkey="" last_short="0"
+	local now_hourkey last_hourkey="" last_short="0" last_sleep="0"
 	now_hourkey="$(_fmt "$now" '%Y%m%d%H')"
 	if [ -f "$state_file" ]; then
-		{ read -r last_hourkey; read -r last_short; } < "$state_file" 2>/dev/null || true
+		{ read -r last_hourkey; read -r last_short; read -r last_sleep; } < "$state_file" 2>/dev/null || true
 		[ -n "$last_short" ] || last_short="0"
+		[ -n "$last_sleep" ] || last_sleep="0"
 	fi
 
 	local emit new_hourkey new_short
 	read -r emit new_hourkey new_short < <(_decide "$now" "$now_hourkey" "$last_hourkey" "$last_short")
 
-	[ "$emit" = "none" ] && return 0
+	# The sleep nudge carries its OWN debounce and must not be swallowed by the
+	# timestamp's 5-minute rate limit, so it is decided independently and either
+	# one is reason enough to emit.
+	local now_hour advice new_sleep
+	now_hour="${TIMESTAMP_HOOK_HOUR:-$(_fmt "$now" '%H')}"
+	read -r advice new_sleep < <(_sleep_decide "$now" "$now_hour" "$last_sleep")
+
+	[ "$emit" = "none" ] && [ "$advice" = "none" ] && return 0
 
 	# persist new state atomically (only on an actual emit)
 	local tmp="$state_file.tmp.$$"
-	printf '%s\n%s\n' "$new_hourkey" "$new_short" > "$tmp" 2>/dev/null && mv -f "$tmp" "$state_file" 2>/dev/null
+	printf '%s\n%s\n%s\n' "$new_hourkey" "$new_short" "$new_sleep" > "$tmp" 2>/dev/null && mv -f "$tmp" "$state_file" 2>/dev/null
 
 	# hourly housekeeping: drop state files older than a day (cheap, runs ~once/hour)
 	[ "$emit" = "long" ] && find "$state_dir" -maxdepth 1 -type f -name 'state-*' -mtime +0 -delete 2>/dev/null
 
-	local stamp
+	local stamp="" msg=""
 	case "$emit" in
 		long)  stamp="$(_fmt "$now" '⏱ %A, %B %d, %Y %I:%M %p %Z')" ;;
 		short) stamp="$(_fmt "$now" '⏱ %I:%M %p %Z')" ;;
 	esac
-	printf '{"hookSpecificOutput":{"hookEventName":"%s","additionalContext":"%s"}}\n' "$event" "$stamp"
+	msg="$stamp"
+	if [ "$advice" != "none" ]; then
+		# literal backslash-n: a JSON string escape, not a raw newline (which
+		# would produce invalid JSON here)
+		[ -n "$msg" ] && msg="$msg\\n"
+		msg="$msg$(_sleep_text "$advice")"
+	fi
+	printf '{"hookSpecificOutput":{"hookEventName":"%s","additionalContext":"%s"}}\n' "$event" "$msg"
 }
 
 # --- dispatch --------------------------------------------------------------
 case "${1:-}" in
 	-h|--help)   _usage; exit 0 ;;
 	--about)     echo "time-awareness-hook: rate-limited timestamp injection for Claude Code ($(uname -s) $(uname -m))"; exit 0 ;;
-	--decide)    shift; _decide "$@"; exit 0 ;;
+	--decide)       shift; _decide "$@"; exit 0 ;;
+	--sleep-decide) shift; _sleep_decide "$@"; exit 0 ;;
 	--test)
 		_tf="$HOME/dotfiles/bin/test/time-awareness-hook_test"
 		if [ -f "$_tf" ]; then exec bash "$_tf" >/dev/null; fi

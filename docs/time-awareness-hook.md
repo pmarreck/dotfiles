@@ -76,6 +76,40 @@ decide(now_epoch, now_hourkey, last_hourkey, last_short_epoch):
 `hourkey` is `date +%Y%m%d%H` — so a new hour, a new day, or "24h later, same
 hour" all register as a new hour.
 
+### The sleep-hours nudge (added 2026-08-01)
+
+Knowing the time is not the same as acting on it. Peter runs many agents at
+once, so relying on whichever one he happens to be talking to to notice that it
+is 2 AM does not scale — one agent remembering is not a rule, it is luck. The
+nudge rides the hook every agent already reads, so all of them see it.
+
+```
+sleep_decide(now_epoch, hour, last_sleep_epoch):
+  if   5 <= hour < 22                       -> none      (state unchanged; daytime never stamps)
+  elif (now_epoch - last_sleep) < 480       -> none      (debounced; state unchanged)
+  elif hour == 22                           -> wind_down (new state: now_epoch)
+  else                                      -> refuse    (new state: now_epoch)
+```
+
+- **wind_down** (22:00–22:59) — tell Peter to start wrapping up; don't begin
+  anything long-running or open-ended.
+- **refuse** (23:00–04:59) — strongly discourage new work; decline new tasks
+  unless he has already given explicit overnight instructions. Finishing or
+  safely parking in-flight work is still fine.
+- **05:00 ends the window.** Peter's call: the warnings stop at 5 AM.
+
+Two details that are easy to get wrong:
+
+1. **The window wraps midnight**, so it is expressed as "NOT the daytime range"
+   rather than one comparison.
+2. **The nudge has its own 8-minute debounce and is decided independently of the
+   timestamp.** If it could only ride along with a timestamp emit it would be
+   swallowed by that 5-minute rate limit; either decision alone is enough to
+   emit. There is a regression test for exactly this.
+
+Test seam: `TIMESTAMP_HOOK_HOUR` overrides the hour, so the overnight paths are
+testable at any real wall-clock time.
+
 ## 4. Where the parts live
 
 | Part | Path |
@@ -86,8 +120,15 @@ hour" all register as a new hour.
 | Per-session state | `${XDG_STATE_HOME:-~/.local/state}/claude-time-awareness/state-<session_id>` |
 
 State is **per session** (keyed on the hook's `session_id`), so concurrent
-sessions don't interfere; the state file is two lines (`hourkey` then
-`last_short_epoch`). Stale state files (>1 day) are pruned on each long emit.
+sessions don't interfere; the state file is three lines (`hourkey`,
+`last_short_epoch`, then `last_sleep_epoch`). A two-line file written by an older
+version still reads fine — the missing third line defaults to 0. Stale state
+files (>1 day) are pruned on each long emit.
+
+Codex uses the same script through `~/.codex/hooks/time-awareness.sh`, which
+normalizes Codex's field names and points `TIMESTAMP_HOOK_STATE_DIR` at a
+separate directory so the two agents' cadences don't interfere. One change to the
+script therefore reaches every agent.
 
 ## 5. Implement it (3 steps)
 
