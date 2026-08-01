@@ -155,6 +155,47 @@
 
 ## Active — shell helper argument correctness (2026-07-27)
 
+- [ ] DECISION NEEDED — `~/.local/share/Trash` holds 40,208 entries and wedged
+  `gvfsd-trash` hard enough that every `rm` on the machine blocked forever
+  (`rm` → `rm_safe` → `gio trash`, which has no timeout at `rm-safe:1025`).
+  Killing `gvfsd-trash` unblocked it; `gio trash` now fails fast and rm-safe
+  falls back to its manual path. Two things to decide, neither of them mine:
+  - Pruning the trash destroys recoverability, so it needs Peter's say-so.
+  - The test suite trashes its own `$TMPDIR` scratch dirs, which is both the
+    source of the 40k entries and a cross-filesystem copy (/tmp → /home) of
+    data that was created seconds earlier. Tests deleting their own scratch
+    dirs arguably want real `rm`.
+  - Upstream fix regardless: `rm_safe` should bound the `gio trash` call
+    (`timeout 5 gio trash …`) so a wedged desktop daemon can never hang every
+    `rm` on the box. Lives in `~/Code/rm_safe`, not here.
+- [x] Stop `show <url>` from then reporting the url as undefined. After handing
+  the word to a browser, `show` fell through to the name lookups, warned
+  `'example.com' is undefined` and returned 1 for a command that had done
+  exactly what was asked. Completed 2026-08-01 02:05 EDT.
+  - Curiosity poke (kept): the obvious fix — an early `return` from the url
+    branch — would silently swallow every argument after the url, so the
+    regression asserts `show <url> <name>` still handles the trailing name.
+- [x] Make `rule30` locale-independent. Under `LC_ALL=C` it emitted rows a third
+  of the requested width (WIDTH=7 gave 7 *bytes* = 5 glyphs), because bash
+  slices `${s:i:1}` by character under UTF-8 and by byte under C, and the live
+  automaton state was held as the three-byte `█`. Now the automaton runs on
+  one-byte ASCII and the glyph is substituted only at the output boundary.
+  Completed 2026-08-01 02:07 EDT.
+  - This is the interesting one: the old width assertion used awk's `length()`,
+    which *also* counts bytes under C, so the test and the code shared the same
+    wrong assumption and the two errors cancelled. The bug was invisible until
+    the measurement was made locale-independent.
+- [x] Measure characters rather than bytes in `hr_test` (`wc -m` counts bytes
+  under `LC_ALL=C`). Counting codepoints by deleting UTF-8 continuation bytes
+  needs no locale to be installed — `C.UTF-8` is glibc-only and these dotfiles
+  run on macOS too. Completed 2026-08-01 02:04 EDT.
+- [x] Sweep the suite for locale-dependent tests by running the whole thing
+  under `LC_ALL=C` as well as the ambient UTF-8 locale, rather than grepping for
+  `sort`. The grep would have missed both `hr_test` and `rule30_test`, neither
+  of which sorts anything. 168/168 under both. Completed 2026-08-01 02:09 EDT.
+  - Worth keeping: a periodic two-locale run is a cheap metamorphic control
+    over the whole suite. Not wired into CI — the Nix sandbox already runs
+    under C, so hermetic tests get that half for free.
 - [x] Stop `show README.md` from launching a web browser. `is_web_url` matched the
   bare string and `.md` is Moldova's ccTLD; `.sh` (Saint Helena), `.pl` (Poland),
   `.ai` (Anguilla), `.io` and `.it` are the same trap, covering a large share of
