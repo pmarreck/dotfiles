@@ -155,6 +155,30 @@
 
 ## Active — shell helper argument correctness (2026-07-27)
 
+- [x] Stop `show README.md` from launching a web browser. `is_web_url` matched the
+  bare string and `.md` is Moldova's ccTLD; `.sh` (Saint Helena), `.pl` (Poland),
+  `.ai` (Anguilla), `.io` and `.it` are the same trap, covering a large share of
+  the filenames anyone actually types. Added `should_open_as_web_url`, split from
+  `is_web_url` and kept pure — the caller supplies the existence fact — so both
+  branches are testable without a filesystem. Completed 2026-07-31 21:40 EDT.
+  - Curiosity poke (kept): an explicit `http(s)://` scheme must outrank the
+    filesystem, or a stray directory named `https:` could shadow a real URL.
+    Also probes with `-L` as well as `-e`: a dangling symlink named `notes.md`
+    is still not a website.
+  - Curiosity poke (rejected): probing the disk inside `is_web_url` itself. It
+    is shorter, but it makes the predicate impure and untestable without
+    fixtures, and `is_web_url` answers a question about syntax — not about
+    which of two readings the user meant.
+  - Anti-vacuity control: the identical strings must still route to the browser
+    when absent from disk, so a "fix" that merely stopped recognizing bare
+    domains fails the sensitivity set.
+- [x] Pin `LC_ALL=C` on the `sort -u` assertions in `datetimestamp_test`. glibc's
+  `en_US.UTF-8` collation ignores case and orders `clock_gettime` first, C
+  collation orders `GetSystemTimePreciseAsFileTime` first, so the file passed in
+  the Nix sandbox (no `LANG`) and failed on every interactive host — which is how
+  it reached master red. Completed 2026-07-31 21:36 EDT.
+  - Curiosity poke: worth sweeping the suite for other `sort` calls compared
+    against hardcoded literals; this one was found only by tripping over it.
 - [x] Remove inbox notes whose work is already landed using `rm-safe`; retain the
   then-unresolved PageUp/PageDown and `session` notes until their work is handled.
   Completed 2026-07-27 16:15 EDT; eight handled/superseded notes moved to the
