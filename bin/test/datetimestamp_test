@@ -34,11 +34,17 @@ expect_match() {
 expect_match "executable uses a LuaJIT shebang" \
 	'^#!(/usr/bin/env luajit|.*/luajit)$' \
 	"$(head -n 1 "$cli")"
+# LC_ALL=C on both sorts: glibc's en_US.UTF-8 collation ignores case, so
+# `sort -u` emits clock_gettime before GetSystemTimePreciseAsFileTime, while C
+# collation orders by byte and emits them the other way round. Pinning the
+# collation removes an invisible dependency on the caller's environment — the
+# reason this file passed in the Nix sandbox (no LANG set) and failed on a
+# normal interactive host.
 expect_eq "FFI is the executable's only required module" 'require("ffi")' \
-	"$(rg -o 'require\("[^"]+"\)' "$cli" | sort -u)"
+	"$(rg -o 'require\("[^"]+"\)' "$cli" | LC_ALL=C sort -u)"
 expect_eq "source covers the complete POSIX and Windows native clock set" \
 	$'GetSystemTimePreciseAsFileTime\nclock_gettime' \
-	"$(rg -o 'GetSystemTimePreciseAsFileTime|clock_gettime' "$cli" | sort -u)"
+	"$(rg -o 'GetSystemTimePreciseAsFileTime|clock_gettime' "$cli" | LC_ALL=C sort -u)"
 expect_eq "LuaJIT implementation has no project-library import path" "false" \
 	"$(rg -Fq 'package.path' "$cli" && printf true || printf false)"
 expect_eq "former Bash implementation remains executable under its new name" \
