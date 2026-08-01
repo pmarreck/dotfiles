@@ -5,6 +5,17 @@ set -uo pipefail
 fails=0
 tests=0
 
+# Count codepoints without depending on the caller's locale. `wc -m` and awk's
+# length() both count BYTES under LC_ALL=C, so hr's five box-drawing glyphs
+# measure as fifteen and the width assertions fail on any C-locale host while
+# passing on the author's. Every UTF-8 codepoint has exactly one lead byte, so
+# deleting the continuation bytes (0x80-0xBF) and counting what remains is
+# exact and needs no locale to be installed — C.UTF-8 is glibc-only, and these
+# dotfiles run on macOS too.
+utf8_len() {
+	printf '%s' "$1" | LC_ALL=C tr -d '\200-\277' | LC_ALL=C wc -c | tr -d ' '
+}
+
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 hr_cmd=${HR_BIN:-"$script_dir/../hr"}
 if [[ ! -x "$hr_cmd" ]]; then
@@ -30,7 +41,7 @@ fi
 echo "Testing: hr honors HR_WIDTH for output length..."
 output=$(HR_WIDTH=5 "$hr_cmd")
 strip=$(printf '%s' "$output" | tr -d '\n')
-count=$(printf '%s' "$strip" | wc -m | tr -d ' ')
+count=$(utf8_len "$strip")
 if [[ "$count" == "5" ]]; then
 	if [[ "$strip" == "─────" ]]; then
 		echo "✓ Test passed: width and fill match"
@@ -56,7 +67,7 @@ if [[ -r /dev/tty ]]; then
 fi
 if [[ -n "$tty_width" && "$tty_width" =~ ^[0-9]+$ && "$tty_width" -gt 0 ]]; then
 	tty_line=$("$hr_cmd")
-	tty_count=$(printf '%s' "$tty_line" | wc -m | tr -d ' ')
+	tty_count=$(utf8_len "$tty_line")
 	if [[ "$tty_count" == "$tty_width" ]]; then
 		echo "✓ Test passed: terminal width respected"
 	else
