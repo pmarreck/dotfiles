@@ -155,6 +155,38 @@
 
 ## Active — shell helper argument correctness (2026-07-27)
 
+- [ ] OPEN — `compare_dirs_test` refused a push once (2026-08-01 02:38 EDT) and
+  has not reproduced since: 40 runs in isolation, 64 under 8-way concurrency,
+  and 4 full suites, all green. Its scratch dirs are `mktemp -d` (no collision)
+  and its mtime assertions use fixed `touch -t` stamps (not load-sensitive), so
+  neither obvious mechanism fits. Left open deliberately rather than dismissed
+  as flake. The gate now preserves its report, so the next occurrence arrives
+  with evidence attached — that was the actual blocker, and it is fixed.
+- [ ] `~/.local/share/Trash/rm-safe-log` is a DIRECTORY of 34,844 files (178M),
+  one per deletion, and only grows. It was the real source of the "40,208
+  entries" count — the trash proper held 4,922. Not deleted: it is rm_safe's
+  record, not trash, and removing it is Peter's call. Unbounded per-item log
+  growth looks like an rm_safe design issue (rotation or a single append-only
+  log), and lives in `~/Code/rm_safe`.
+- [x] Empty the trash (Peter, 2026-08-01 02:34 EDT). 4,922 entries: 4,908 from
+  `/tmp` (test scratch dirs) and 14 from `~/Code`, all of them `nix build`
+  result symlinks or files inside git repos. Manifest written to
+  `~/trash-manifest-20260801-023249.txt` before deleting. `gio trash` returns 0
+  again on a supported mount; killing `gvfsd-trash` had already stopped the
+  hang.
+- [x] Move the Grok Build installer's `export PATH=...:$PATH` out of `.bashrc`
+  and into `.pathconfig`'s `PATH_ADDITIONS`, next to the other vendor-installed
+  AI agent CLI; the completion sourcing stays in `.bashrc` alongside the other
+  completions. Installer-appended PATH lines run *after* `.pathconfig` has built
+  PATH declaratively, so they escape its ordering and dedup rules entirely.
+  Completed 2026-08-01 02:40 EDT.
+  - Same pattern still present for volta: `.bashrc` exports `$VOLTA_HOME/bin`
+    onto PATH while `.pathconfig` already declares `$HOME/.volta/bin`, so it is
+    the one genuine duplicate entry in the built PATH. `VOLTA_HOME` itself is a
+    real env var and must stay. Not touched — separate from the grok request.
+- [x] Keep the pre-push-gate report when the push is refused. It was deleted on
+  exit, so a refusal destroyed the only explanation of why. Completed
+  2026-08-01 02:46 EDT.
 - [ ] DECISION NEEDED — `~/.local/share/Trash` holds 40,208 entries and wedged
   `gvfsd-trash` hard enough that every `rm` on the machine blocked forever
   (`rm` → `rm_safe` → `gio trash`, which has no timeout at `rm-safe:1025`).
