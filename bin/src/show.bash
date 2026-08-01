@@ -418,6 +418,9 @@ show() {
 	$batless || export BAT_STYLE=${BAT_STYLE:-"grid,snip"}
 	local word="$1"
 	local found_undefined=0
+	# Set once a browser has been handed the word, so the name lookups below
+	# know it was already resolved and must not call it undefined.
+	local handled_as_url=0
 	shift
 	if [ -z "$word" ] && [ -z "$1" ]; then
 		echo "Usage: show <function or alias or variable or builtin or executable-in-PATH name or URL> [...function|alias] ..."
@@ -477,6 +480,11 @@ show() {
 				fi
 				;;
 		esac
+		# The word is resolved — by the loudest means available, a browser.
+		# Without this the name lookups below would find no function, alias,
+		# builtin or file called "example.com", warn that it is undefined, and
+		# poison the exit status of a command that did exactly what was asked.
+		handled_as_url=1
 	fi
 	# if it's a file, syntax-colorize it with bat or less, or display it via kitty/sixel if it's an image
 	if [ -f "$word" ]; then
@@ -538,8 +546,9 @@ show() {
 		note "'${word}' is $(a_or_an "${traits[0]}") ${traits[*]} variable"
 		echo "$declare_str"
 	fi
-	# Only check for types if it's not a file (files are already handled above)
-	if ! [ -f "$word" ]; then
+	# Only check for types if the word was not already resolved: files are
+	# handled above, and so are URLs handed off to a browser.
+	if [ "$handled_as_url" -eq 0 ] && ! [ -f "$word" ]; then
 		local types_found=$(type -a -t "$word" | uniq)
 		if [ -z "$types_found" ]; then
 			# Not a file, not a type, check if it was already found as a variable

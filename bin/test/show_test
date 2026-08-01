@@ -9,6 +9,15 @@ PATH="$repo_dir/bin:$PATH"
 show_script="$repo_dir/bin/src/show.bash"
 completion_script="$repo_dir/completions/show_completion.bash"
 
+# defined_helpers supplies var_defined, which show calls but which is not on
+# PATH as an executable. Without it every `show` invocation here emitted
+# "var_defined: command not found" and silently skipped its variable branch, so
+# the tests ran against a shell less capable than the real one.
+source "$repo_dir/bin/src/defined_helpers.sh"
+# Exported so the `bash -c` subshells below inherit them too; they source only
+# show.bash, and would otherwise reintroduce the same missing-helper noise out
+# of sight, inside captured output that is printed only when a test fails.
+export -f var_defined in_bash
 source "$show_script"
 
 # Completion suite: ensure shell completion script loads cleanly in supported shells
@@ -261,6 +270,47 @@ else
 	((fails++))
 fi
 
+# ── A url that was handled is not an "undefined" name ────────────────────────
+# After opening the browser, show fell through to the type lookup, found that
+# "example.com" is not a function/alias/builtin/file, warned that it was
+# undefined and returned 1. Every one of those is wrong: the word was resolved,
+# and by the loudest possible means — a browser.
+
+((tests++))
+echo "Testing: a handled url is not then reported as undefined..."
+: > "$BROWSER_LOG"
+url_out=$(cd "$route_dir" && PATH="$route_bin:$repo_dir/bin:$PATH" \
+	bash -c 'source "'"$show_script"'"; show example.com' 2>&1)
+url_rc=$?
+if [ "$url_rc" -eq 0 ] && ! printf '%s' "$url_out" | grep -q "'example.com' is undefined"; then
+	echo "[PASS] a handled url exits 0 and is not called undefined"
+else
+	echo "[FAIL] a handled url was reported undefined and/or failed" >&2
+	echo "  exit: $url_rc" >&2
+	echo "  output: $url_out" >&2
+	((fails++))
+fi
+
+# The obvious wrong fix is an early `return 0` from the url branch, which would
+# silently swallow every argument after the url. `cd` is used as the trailing
+# probe because it resolves through `type -t` alone, with no dependency on the
+# var_defined helper that is not on PATH here.
+((tests++))
+echo "Testing: arguments after a url are still processed..."
+: > "$BROWSER_LOG"
+multi_out=$(cd "$route_dir" && PATH="$route_bin:$repo_dir/bin:$PATH" \
+	bash -c 'source "'"$show_script"'"; show example.com cd' 2>&1)
+multi_rc=$?
+if [ "$multi_rc" -eq 0 ] && printf '%s' "$multi_out" | grep -q "'cd' is a builtin" \
+	&& [ -s "$BROWSER_LOG" ]; then
+	echo "[PASS] show <url> <name> handles both the url and the trailing name"
+else
+	echo "[FAIL] arguments following a url were dropped" >&2
+	echo "  exit: $multi_rc" >&2
+	echo "  browsers launched: $(tr '\n' ' ' < "$BROWSER_LOG")" >&2
+	echo "  output: $multi_out" >&2
+	((fails++))
+fi
 rm -rf "$route_dir"
 if (( fails == 0 )); then
 	echo "show_test PASSED: all $tests tests passed"
