@@ -155,6 +155,37 @@
 
 ## Active — shell helper argument correctness (2026-07-27)
 
+- [ ] ACTION REQUIRED (Peter) — `nixos-rebuild switch` on thelio to actually
+  drop volta. The config edit is made and evaluates clean, but I deliberately
+  did NOT rebuild: `/etc/nixos` has uncommitted in-flight changes to
+  `configuration.nix`, `hardware-configuration.nix`, `flake.lock` and several
+  `mechatron-prime/` files from other work, and a switch would apply all of them
+  together. My edit is two lines in
+  `system76_thelio_nixos/configuration.nix`: drop `volta`, and `nodejs_24` →
+  `nodejs` (unversioned, so it rides nixpkgs' default forward instead of sitting
+  at 24 forever; `nodejs_latest` is 26.5.0 if the bleeding edge is wanted).
+  Backup of the pre-edit file is in this session's scratchpad.
+- [x] CCBC — Peter named the "Country/Community Boundary Conflict": Nix is the
+  country, language communities value ease-of-use over strict determinism, and
+  the treaty is that Nix owns everything up to the project boundary while the
+  community owns dependency resolution inside it. Decided 2026-08-01 15:40 EDT.
+  - Resolution in one line: **Nix replaces the version managers; the
+    community's package managers stay.** nvm/volta/rustup/asdf/pyenv all work by
+    global shim name capture; pnpm/cargo/mix/uv all work project-local from a
+    hash-pinned lock.
+  - Node policy (Peter's call): Nix supplies one global node, ride the current
+    default; pnpm owns `node_modules`; `pnpm add -g` is acceptable for global
+    CLIs with project-specific overrides where they conflict; bun stays as a
+    runtime and `bun build --compile` target, not as the package manager.
+  - Rust policy (proposed, not yet applied anywhere): drop rustup, take the
+    toolchain from `fenix`/`rust-overlay` honoring `rust-toolchain.toml`; cargo
+    owns resolution; nixpkgs first for Rust CLIs since it tracks them well, so
+    `cargo install` is rarely justified; `crane` for release/CI builds.
+  - Falsification flags that make a procedural reproduction script real rather
+    than aspirational: `cargo build --locked`, `pnpm install --frozen-lockfile`,
+    `mix deps.get --check-locked`, each run from a clean checkout in CI.
+  - Recorded as a shared memory: "Language ecosystem tools may cache globally
+    but must never capture global command names".
 - [ ] OPEN — `compare_dirs_test` refused a push once (2026-08-01 02:38 EDT) and
   has not reproduced since: 40 runs in isolation, 64 under 8-way concurrency,
   and 4 full suites, all green. Its scratch dirs are `mktemp -d` (no collision)
