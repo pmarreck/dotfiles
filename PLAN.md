@@ -17,10 +17,11 @@
   Keep timestamp selection based on transcript records rather than file mtime.
   Completed 2026-08-03 14:57 EDT with 17 deterministic assertions, including
   renamed-session reuse so `Einstein` is not duplicated as `Code`.
-- [ ] Run focused red/green tests, the complete suite, update dirtree notes,
+- [x] Run focused red/green tests, the complete suite, update dirtree notes,
   commit and push the known-good unit.
-  Tests and notes completed 2026-08-03 14:57 EDT; commit/push follows the
-  hermetic Nix gate.
+  Completed 2026-08-03 15:03 EDT: raw suite 171/171, hermetic Nix suite
+  123/123, implementation commit `016a02e` pushed and independently matched to
+  `origin/master`, and exact-commit Mechatron CI passed in 17 seconds.
 
 ## Active — nightly fleet status report, all tiers (2026-07-28)
 
