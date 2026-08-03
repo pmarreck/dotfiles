@@ -1,0 +1,233 @@
+#!/usr/bin/env bash
+
+# Restore the newest main Claude or Codex conversation per project directory.
+# Transcript timestamps decide recency; mtimes only bound the default scan.
+
+_eras_help() {
+	cat <<'EOF'
+Usage: erect-recent-agent-stacks [OPTIONS]
+
+Resume the newest main Claude or Codex conversation per project directory.
+The default window is the previous 72 hours. Subagent conversations are
+excluded, missing directories are reported, and the existing idempotent
+erect-agent-stack command performs each launch.
+
+Options:
+	--days N       Look back N calendar-length 24-hour periods (default: 3)
+	--since TIME   Use an explicit UTC ISO-8601 cutoff, YYYY-MM-DDTHH:MM:SSZ
+	--jobs N       Launch at most N sessions concurrently (default: 4)
+	--dry-run      Print the selected backend, timestamp, and directory only
+	--json         Emit one JSON array; launch mode is serialized for stable JSON
+	--simple       Plain output (currently the default; reserved for consistency)
+	-h, --help     Show this help
+	--about        Show one-line program information
+
+Later --days/--since arguments override earlier ones.
+EOF
+}
+
+_eras_about() {
+	printf "erect-recent-agent-stacks: resume each recent project's newest Claude or Codex conversation.\n"
+}
+
+_eras_cutoff() {
+	local days="$1"
+	if date -u -d '1 day ago' '+%Y-%m-%dT%H:%M:%SZ' >/dev/null 2>&1; then
+		date -u -d "$days days ago" '+%Y-%m-%dT%H:%M:%SZ'
+	elif command -v gdate >/dev/null 2>&1; then
+		gdate -u -d "$days days ago" '+%Y-%m-%dT%H:%M:%SZ'
+	else
+		date -u -v-"${days}"d '+%Y-%m-%dT%H:%M:%SZ'
+	fi
+}
+
+_eras_at_or_after() {
+	local timestamp="$1" cutoff="$2" second
+	second=${timestamp%%.*}
+	second=${second%Z}Z
+	[[ "$second" > "$cutoff" || "$second" == "$cutoff" ]]
+}
+
+_eras_candidate_files() {
+	local root="$1" max_depth="$2" scan_age="$3"
+	local args=(-H -t f -e jsonl)
+	[[ -n "$max_depth" ]] && args+=(--max-depth "$max_depth")
+	[[ -n "$scan_age" ]] && args+=(--changed-within "$scan_age")
+	fd "${args[@]}" . "$root"
+}
+
+_eras_records() {
+	local claude_root="$1" codex_root="$2" cutoff="$3" scan_age="$4"
+	local file cwd last meta canonical
+
+	if [[ -d "$codex_root" ]]; then
+		while IFS= read -r file; do
+			meta=$(jq -r 'select(.type == "session_meta" and .payload.thread_source != "subagent") | [(.payload.cwd // ""), (.payload.id // .payload.session_id // "")] | @tsv' "$file" | head -n 1)
+			[[ -n "$meta" ]] || continue
+			cwd=${meta%%$'\t'*}
+			[[ -n "$cwd" ]] || continue
+			last=$(jq -r '.timestamp // empty' "$file" | tail -n 1)
+			[[ -n "$last" ]] || continue
+			_eras_at_or_after "$last" "$cutoff" || continue
+			if [[ -d "$cwd" ]]; then canonical=$(cd "$cwd" && pwd -P); else canonical="$cwd"; fi
+			printf 'codex\t%s\t%s\n' "$last" "$canonical"
+		done < <(_eras_candidate_files "$codex_root" '' "$scan_age")
+	else
+		printf 'erect-recent-agent-stacks: Codex history root is missing: %s\n' "$codex_root" >&2
+	fi
+
+	if [[ -d "$claude_root" ]]; then
+		while IFS= read -r file; do
+			cwd=$(jq -r 'select(.cwd? != null) | .cwd' "$file" | head -n 1)
+			[[ -n "$cwd" ]] || continue
+			last=$(jq -r '.timestamp // empty' "$file" | tail -n 1)
+			[[ -n "$last" ]] || continue
+			_eras_at_or_after "$last" "$cutoff" || continue
+			if [[ -d "$cwd" ]]; then canonical=$(cd "$cwd" && pwd -P); else canonical="$cwd"; fi
+			printf 'claude\t%s\t%s\n' "$last" "$canonical"
+		done < <(_eras_candidate_files "$claude_root" 2 "$scan_age")
+	else
+		printf 'erect-recent-agent-stacks: Claude history root is missing: %s\n' "$claude_root" >&2
+	fi
+}
+
+_eras_selected() {
+	local claude_root="$1" codex_root="$2" cutoff="$3" scan_age="$4"
+	_eras_records "$claude_root" "$codex_root" "$cutoff" "$scan_age" |
+		sort -t $'\t' -k3,3 -k2,2r -k1,1 |
+		awk -F '\t' '!seen[$3]++' |
+		sort -t $'\t' -k3,3
+}
+
+_eras_live_session_for_directory() {
+	local directory="$1" tmux_bin="${ERECT_TMUX_BIN:-tmux}"
+	local session pane_directory pane_command
+	command -v "$tmux_bin" >/dev/null 2>&1 || return 1
+	while IFS=$'\t' read -r session pane_directory pane_command; do
+		[[ "$pane_directory" == "$directory" ]] || continue
+		case "$pane_command" in
+			claude | node | codex | gemini | grok)
+				printf '%s\n' "$session"
+				return 0
+				;;
+		esac
+	done < <("$tmux_bin" list-panes -a -F $'#{session_name}\t#{pane_current_path}\t#{pane_current_command}' 2>/dev/null)
+	return 1
+}
+
+erect_recent_agent_stacks() {
+	local days=3 since='' jobs=4 dry_run=0 json=0 scan_age
+	local claude_root="${ERECT_CLAUDE_PROJECTS_DIR:-$HOME/.claude/projects}"
+	local codex_root="${ERECT_CODEX_SESSIONS_DIR:-$HOME/.codex/sessions}"
+	local launcher="${ERECT_AGENT_STACK_BIN:-erect-agent-stack}"
+	local backend timestamp directory output status failures=0 result_file input_file live_session
+
+	while (( $# > 0 )); do
+		case "$1" in
+			-h | --help) _eras_help; return 0 ;;
+			--about) _eras_about; return 0 ;;
+			--days)
+				[[ $# -ge 2 && "$2" =~ ^[1-9][0-9]*$ ]] || { printf 'erect-recent-agent-stacks: --days requires a positive integer.\n' >&2; return 64; }
+				days="$2"; since=''; shift 2 ;;
+			--since)
+				[[ $# -ge 2 && "$2" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || { printf 'erect-recent-agent-stacks: --since requires UTC ISO-8601: YYYY-MM-DDTHH:MM:SSZ.\n' >&2; return 64; }
+				since="$2"; shift 2 ;;
+			--jobs)
+				[[ $# -ge 2 && "$2" =~ ^[1-9][0-9]*$ ]] || { printf 'erect-recent-agent-stacks: --jobs requires a positive integer.\n' >&2; return 64; }
+				jobs="$2"; shift 2 ;;
+			--dry-run) dry_run=1; shift ;;
+			--json) json=1; shift ;;
+			--simple) shift ;;
+			*) printf 'erect-recent-agent-stacks: unknown option: %s\n' "$1" >&2; return 64 ;;
+		esac
+	done
+
+	if [[ -n "$since" ]]; then
+		scan_age=''
+	else
+		since=$(_eras_cutoff "$days") || return 70
+		scan_age="$((days + 1))d"
+	fi
+
+	command -v fd >/dev/null 2>&1 || { printf 'erect-recent-agent-stacks: fd is required.\n' >&2; return 69; }
+	command -v jq >/dev/null 2>&1 || { printf 'erect-recent-agent-stacks: jq is required.\n' >&2; return 69; }
+
+	if (( dry_run )); then
+		if (( json )); then
+			_eras_selected "$claude_root" "$codex_root" "$since" "$scan_age" |
+				while IFS=$'\t' read -r backend timestamp directory; do
+					if [[ -d "$directory" ]]; then
+						printf '%s\t%s\t%s\n' "$backend" "$timestamp" "$directory"
+					else
+						printf 'erect-recent-agent-stacks: skipping missing project directory: %s\n' "$directory" >&2
+					fi
+				done |
+				jq -Rn '[inputs | split("\t") | {backend: .[0], timestamp: .[1], directory: .[2]}]'
+		else
+			_eras_selected "$claude_root" "$codex_root" "$since" "$scan_age" |
+				while IFS=$'\t' read -r backend timestamp directory; do
+					if [[ -d "$directory" ]]; then
+						printf '%s\t%s\t%s\n' "$backend" "$timestamp" "$directory"
+					else
+						printf 'erect-recent-agent-stacks: skipping missing project directory: %s\n' "$directory" >&2
+					fi
+				done
+		fi
+		return 0
+	fi
+
+	command -v "$launcher" >/dev/null 2>&1 || { printf 'erect-recent-agent-stacks: launcher not found: %s\n' "$launcher" >&2; return 69; }
+
+	if (( json )); then
+		result_file=$(mktemp "${TMPDIR:-/tmp}/erect_recent_agent_stacks.XXXXXX") || return 70
+		while IFS=$'\t' read -r backend timestamp directory; do
+			if [[ ! -d "$directory" ]]; then
+				printf 'erect-recent-agent-stacks: skipping missing project directory: %s\n' "$directory" >&2
+				continue
+			fi
+			if live_session=$(_eras_live_session_for_directory "$directory"); then
+				output="joined-running: $live_session @ $directory"
+				status=0
+			else
+				output=$("$launcher" --agent "$backend" --no-attach "$directory" 2>&1)
+				status=$?
+			fi
+			(( status == 0 )) || failures=$((failures + 1))
+			jq -cn --arg backend "$backend" --arg timestamp "$timestamp" --arg directory "$directory" --arg output "$output" --argjson status "$status" \
+				'{backend: $backend, timestamp: $timestamp, directory: $directory, status: $status, output: $output}' >>"$result_file"
+		done < <(_eras_selected "$claude_root" "$codex_root" "$since" "$scan_age")
+		jq -s . "$result_file"
+		rm -f "$result_file"
+		(( failures == 0 ))
+		return $?
+	fi
+
+	input_file=$(mktemp "${TMPDIR:-/tmp}/erect_recent_agent_stacks.XXXXXX") || return 70
+	: >"$input_file"
+	while IFS=$'\t' read -r backend timestamp directory; do
+		if [[ -d "$directory" ]]; then
+			if live_session=$(_eras_live_session_for_directory "$directory"); then
+				printf 'joined-running: %s @ %s\n' "$live_session" "$directory"
+			else
+				printf '%s\0%s\0' "$backend" "$directory" >>"$input_file"
+			fi
+		else
+			printf 'erect-recent-agent-stacks: skipping missing project directory: %s\n' "$directory" >&2
+		fi
+	done < <(_eras_selected "$claude_root" "$codex_root" "$since" "$scan_age")
+	if [[ ! -s "$input_file" ]]; then
+		rm -f "$input_file"
+		return 0
+	fi
+	export ERECT_AGENT_STACK_BIN="$launcher"
+	# shellcheck disable=SC2016 # expansion belongs to each xargs child shell
+	xargs -0 -n 2 -P "$jobs" bash -c '"$ERECT_AGENT_STACK_BIN" --agent "$1" --no-attach "$2"' _ <"$input_file"
+	status=$?
+	rm -f "$input_file"
+	return "$status"
+}
+
+if ! (return 0 2>/dev/null); then
+	erect_recent_agent_stacks "$@"
+	exit $?
+fi

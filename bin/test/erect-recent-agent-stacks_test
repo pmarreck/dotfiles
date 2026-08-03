@@ -1,0 +1,134 @@
+#!/usr/bin/env bash
+
+set -u
+
+# shellcheck disable=SC1091 # repository-local helper is present in every test environment
+. "$HOME/dotfiles/bin/src/capture.bash"
+
+tests=0
+fails=0
+work=$(mktemp -d --tmpdir erect_recent_agent_stacks_test.XXXXXX)
+trap 'rm -rf "$work"' EXIT
+
+check() {
+	((tests++)) || :
+	assert "$@"
+	((fails += $?)) || :
+}
+
+root="$work/projects"
+claude_root="$work/claude"
+codex_root="$work/codex"
+mkdir -p "$root/alpha" "$root/beta" "$root/gamma spaced" "$root/old"
+mkdir -p "$claude_root/alpha" "$claude_root/beta" "$claude_root/missing"
+mkdir -p "$claude_root/alpha/session/subagents"
+mkdir -p "$claude_root/old"
+mkdir -p "$codex_root/2026/08/01"
+
+printf '%s\n' \
+	'{"timestamp":"2026-08-01T10:00:00.000Z","cwd":"'"$root"'/alpha"}' \
+	'{"timestamp":"2026-08-01T11:00:00.000Z","cwd":"'"$root"'/alpha"}' \
+	>"$claude_root/alpha/old.jsonl"
+printf '%s\n' \
+	'{"timestamp":"2026-08-01T12:00:00.000Z","cwd":"'"$root"'/alpha"}' \
+	>"$claude_root/alpha/new.jsonl"
+printf '%s\n' \
+	'{"timestamp":"2026-08-01T23:59:00.000Z","cwd":"'"$root"'/alpha"}' \
+	>"$claude_root/alpha/session/subagents/agent-ignore.jsonl"
+printf '%s\n' \
+	'{"timestamp":"2026-08-01T15:00:00.000Z","cwd":"'"$root"'/beta"}' \
+	>"$claude_root/beta/main.jsonl"
+printf '%s\n' \
+	'{"timestamp":"2026-08-01T17:00:00.000Z","cwd":"'"$root"'/gone"}' \
+	>"$claude_root/missing/main.jsonl"
+printf '%s\n' \
+	'{"timestamp":"2026-07-31T23:59:59.000Z","cwd":"'"$root"'/old"}' \
+	>"$claude_root/old/main.jsonl"
+
+printf '%s\n' \
+	'{"timestamp":"2026-08-01T13:00:00.000Z","type":"session_meta","payload":{"thread_source":"user","cwd":"'"$root"'/alpha","id":"codex-alpha"}}' \
+	'{"timestamp":"2026-08-01T13:30:00.000Z","type":"event_msg","payload":{}}' \
+	>"$codex_root/2026/08/01/alpha.jsonl"
+printf '%s\n' \
+	'{"timestamp":"2026-08-01T14:00:00.000Z","type":"session_meta","payload":{"thread_source":"user","cwd":"'"$root"'/beta","id":"codex-beta"}}' \
+	>"$codex_root/2026/08/01/beta.jsonl"
+printf '%s\n' \
+	'{"timestamp":"2026-08-01T16:00:00.000Z","type":"session_meta","payload":{"thread_source":"user","cwd":"'"$root"'/gamma spaced","id":"codex-gamma"}}' \
+	>"$codex_root/2026/08/01/gamma.jsonl"
+printf '%s\n' \
+	'{"timestamp":"2026-08-01T23:58:00.000Z","type":"session_meta","payload":{"thread_source":"subagent","cwd":"'"$root"'/gamma spaced","id":"ignore-subagent"}}' \
+	>"$codex_root/2026/08/01/gamma-subagent.jsonl"
+
+tool="$HOME/dotfiles/bin/erect-recent-agent-stacks"
+local_bin="$work/bin"
+mkdir -p "$local_bin"
+launcher_log="$work/launcher.log"
+# shellcheck disable=SC2016 # these lines are the literal fake-launcher program
+printf '%s\n' \
+	"#!$BASH" \
+	'printf "%s\t%s\t%s\t%s\n" "$1" "$2" "$3" "$4" >>"$LAUNCHER_LOG"' \
+	'printf "created: %s\n" "$4"' \
+	>"$local_bin/fake-launcher"
+chmod +x "$local_bin/fake-launcher"
+# shellcheck disable=SC2016 # these lines are the literal fake-tmux program
+printf '%s\n' \
+	"#!$BASH" \
+	'if [[ "$1" == list-panes ]]; then' \
+	'  [[ "$4" == *$'"'"'\t'"'"'* ]] || exit 75' \
+	'  printf "Einstein\t'"$root"'/alpha\tnode\n"' \
+	'fi' \
+	>"$local_bin/fake-tmux"
+chmod +x "$local_bin/fake-tmux"
+
+# shellcheck disable=SC2329 # capture invokes this function indirectly
+run_tool() {
+	ERECT_CLAUDE_PROJECTS_DIR="$claude_root" \
+	ERECT_CODEX_SESSIONS_DIR="$codex_root" \
+	ERECT_AGENT_STACK_BIN="$local_bin/fake-launcher" \
+	LAUNCHER_LOG="$launcher_log" \
+	"$tool" "$@"
+}
+
+out='' err='' rc=0
+capture "$tool" --help
+check "$rc" == 0 '--help succeeds'
+if [[ "$out" == *'72 hours'* ]]; then status=0; else status=1; fi
+check "$status" == 0 '--help documents the 72-hour default'
+capture "$tool" --about
+check "$rc" == 0 '--about succeeds'
+check "$(wc -l <<<"$out")" == 1 '--about is one line'
+
+capture run_tool --since 2026-08-01T00:00:00Z --dry-run --simple
+check "$rc" == 0 'dry-run succeeds'
+expected=$'codex\t2026-08-01T13:30:00.000Z\t'"$root"$'/alpha\nclaude\t2026-08-01T15:00:00.000Z\t'"$root"$'/beta\ncodex\t2026-08-01T16:00:00.000Z\t'"$root"'/gamma spaced'
+check "$out" == "$expected" 'selection is a classifier over main sessions, directories, and backends'
+if [[ "$err" == *"$root/gone"* ]]; then status=0; else status=1; fi
+check "$status" == 0 'missing directories are reported separately'
+if [[ ! -e "$launcher_log" ]]; then status=0; else status=1; fi
+check "$status" == 0 'pure dry-run never invokes the launcher'
+
+capture run_tool --since 2026-08-01T00:00:00Z --jobs 1 --simple
+check "$rc" == 0 'launch mode succeeds'
+expected_calls=$'--agent\tcodex\t--no-attach\t'"$root"$'/alpha\n--agent\tclaude\t--no-attach\t'"$root"$'/beta\n--agent\tcodex\t--no-attach\t'"$root"'/gamma spaced'
+check "$(<"$launcher_log")" == "$expected_calls" 'each selected directory resumes through the existing idempotent launcher'
+
+: >"$launcher_log"
+ERECT_TMUX_BIN="$local_bin/fake-tmux" capture run_tool --since 2026-08-01T00:00:00Z --jobs 1 --simple
+check "$rc" == 0 'launch mode accepts an injected tmux inventory'
+expected_calls=$'--agent\tclaude\t--no-attach\t'"$root"$'/beta\n--agent\tcodex\t--no-attach\t'"$root"'/gamma spaced'
+check "$(<"$launcher_log")" == "$expected_calls" 'a live differently named session in the same directory is not duplicated'
+if [[ "$out" == *"joined-running: Einstein @ $root/alpha"* ]]; then status=0; else status=1; fi
+check "$status" == 0 'the reused alternate session name is reported'
+
+capture run_tool --since 2026-08-01T00:00:00Z --dry-run --json
+check "$rc" == 0 '--json succeeds'
+jq -e 'length == 3 and .[0].backend == "codex" and (.[2].directory | endswith("gamma spaced"))' <<<"$out" >/dev/null; status=$?
+check "$status" == 0 '--json emits one valid array with all selected records'
+
+capture run_tool --since yesterday --dry-run
+check "$rc" == 64 'invalid --since values fail with usage status'
+[[ "$err" == *'UTC ISO-8601'* ]]; status=$?
+check "$status" == 0 'invalid --since diagnostics stay on stderr'
+
+printf '%s tests, %s failures\n' "$tests" "$fails"
+exit "$fails"

@@ -158,6 +158,26 @@ erect_agent_stack_test() {
   assert "$status" == "0" "Codex persistent chrome satisfies resumed-session readiness"
   ((fails+=$?))
 
+  # Codex 0.146's idle footer no longer contains the older startup/context
+  # markers. Once the foreground process has become Codex's node wrapper, it is
+  # live and must not time out and paste a fallback launch into its input box.
+  (
+    # shellcheck source=bin/erect-agent-stack
+    . "$HOME/dotfiles/bin/erect-agent-stack"
+    # shellcheck disable=SC2329 # invoked indirectly by _eas_bootwait
+    _eas_tmux() {
+      case "$1" in
+        capture-pane) printf 'prior conversation\n› Improve documentation in @filename\n\ngpt-5.6-sol high · ~/Code/project · yolo\n' ;;
+        display-message) printf 'node\n' ;;
+        send-keys) return 74 ;;
+      esac
+    }
+    ERECT_BOOT_TIMEOUT=1 _eas_bootwait current-codex codex
+  )
+  status=$?
+  assert "$status" == "0" "Codex node process satisfies current 0.146 readiness"
+  ((fails+=$?))
+
   # Codex's paste-burst protection needs an explicit bracketed paste boundary;
   # the following plain Enter must remain a distinct submit key.
   local capture="$tmproot/codex-ping.bin"

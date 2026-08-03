@@ -61,18 +61,19 @@ _eas_running() {
 _eas_bootwait() {
 	# 120s default: direnv `use flake` projects evaluate nix before the shell
 	# accepts the queued launch line (observed live on entropy_shield, 2026-06-12).
-	local n="$1" agent="$2" t="${ERECT_BOOT_TIMEOUT:-120}" i=0 pane pane_lower
+	local n="$1" agent="$2" t="${ERECT_BOOT_TIMEOUT:-120}" i=0 pane pane_lower pane_cmd
 	while [ "$i" -lt "$t" ]; do
 		pane=$(_eas_tmux capture-pane -pt "$n" 2>/dev/null)
 		if [ "$agent" = "codex" ]; then
 			pane_lower=${pane,,}
+			pane_cmd=$(_eas_tmux display-message -pt "$n" '#{pane_current_command}' 2>/dev/null | head -1)
 			if [[ "$pane_lower" == *"do you trust"* ]] && ! grep -qiE 'context left|esc to interrupt|OpenAI Codex' <<<"$pane"; then
 				# Broad fallback for Codex versions whose trust gate predates or ignores
 				# the explicit per-project trust override. Normal agent chrome guards
 				# against matching the same words inside conversation text.
 				_eas_tmux send-keys -t "$n" y
 				_eas_tmux send-keys -t "$n" Enter
-			elif grep -qiE 'context left|esc to interrupt|OpenAI Codex' <<<"$pane" && [[ "$pane" != *"Booting MCP server"* ]]; then
+			elif { [[ "$pane_cmd" =~ ^(node|codex)$ ]] || grep -qiE 'context left|esc to interrupt|OpenAI Codex' <<<"$pane"; } && [[ "$pane" != *"Booting MCP server"* ]]; then
 				return 0
 			fi
 		elif grep -qE '❯|esc to interrupt|bypass permissions' <<<"$pane"; then

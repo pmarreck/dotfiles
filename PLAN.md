@@ -1,5 +1,27 @@
 # dotfiles — TODO / Plans
 
+## Active — recent agent fleet resurrection (2026-08-03)
+
+- [x] Reproduce and fix `erect-agent-stack` timing out on a live Codex 0.146
+  pane whose current chrome no longer contains the older readiness strings.
+  The trust prompt must still take precedence over process-based readiness.
+  Completed 2026-08-03 14:57 EDT with process-aware readiness after a failing
+  regression reproduced the 120-second false timeout and fallback paste.
+- [x] Add `erect-recent-agent-stacks`, defaulting to conversations active in
+  the previous 72 hours. Select the newest main Claude/Codex conversation per
+  canonical project directory, exclude subagents, skip missing directories,
+  and invoke the existing idempotent launcher with bounded concurrency.
+  Completed 2026-08-03 14:57 EDT; the live run restored or reused 20 sessions.
+- [x] Provide deterministic `--since`, pure `--dry-run`, `--json`, help/about,
+  spaced-path, duplicate-session, cross-backend, and missing-directory tests.
+  Keep timestamp selection based on transcript records rather than file mtime.
+  Completed 2026-08-03 14:57 EDT with 17 deterministic assertions, including
+  renamed-session reuse so `Einstein` is not duplicated as `Code`.
+- [ ] Run focused red/green tests, the complete suite, update dirtree notes,
+  commit and push the known-good unit.
+  Tests and notes completed 2026-08-03 14:57 EDT; commit/push follows the
+  hermetic Nix gate.
+
 ## Active — nightly fleet status report, all tiers (2026-07-28)
 
 - [x] Port `bin/datetimestamp` from Bash to LuaJIT with a native FFI
