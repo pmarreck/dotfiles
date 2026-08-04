@@ -1,5 +1,22 @@
 # dotfiles — TODO / Plans
 
+## Active — current-directory tmux session shorthand (2026-08-04)
+
+- [x] Make `session .` resolve `.` to the current directory basename for both
+  creating and rejoining a tmux session; preserve literal names and the
+  no-argument `default` behavior.
+  Curiosity poke: a directory basename containing spaces must remain one exact
+  tmux session name in both the inside- and outside-tmux paths.
+  Completed 2026-08-04 17:27 EDT using the logical `$PWD` basename, with
+  deterministic coverage for both tmux contexts and a basename containing
+  spaces.
+- [x] Prove the missing behavior with a failing focused regression, implement
+  the smallest fix, run the focused and complete suites, update dirtree notes,
+  and commit the known-good unit.
+  Completed 2026-08-04 17:27 EDT: the focused test failed on both literal-dot
+  calls before the fix, then passed; the host suite passed 171/171 and the Nix
+  sandbox suite passed 123/123.
+
 ## Active — cryptographically sound `randompassdict` (2026-08-04)
 
 - [x] Reproduce the pool-cardinality, transformed-output, exact-count, and

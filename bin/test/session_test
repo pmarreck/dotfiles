@@ -20,6 +20,9 @@
 set -u
 
 _here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+fixture_dir="$(mktemp -d "${TMPDIR:?}/session_test.XXXXXX")"
+mkdir -p "$fixture_dir/work tree"
+trap 'rm -rf -- "$fixture_dir"' EXIT
 fails=0
 check() { # check <label> <expected> <actual>
 	if [ "$2" = "$3" ]; then return 0; fi
@@ -28,7 +31,16 @@ check() { # check <label> <expected> <actual>
 }
 
 # Mock tmux: echo the invocation; has-session honors MOCK_HAS (0=exists).
-tmux() { if [ "$1" = has-session ]; then return "${MOCK_HAS:-0}"; fi; echo "tmux $*"; }
+tmux() {
+	if [ "$1" = has-session ]; then return "${MOCK_HAS:-0}"; fi
+	if [ "${MOCK_EXACT_ARGS:-0}" = 1 ]; then
+		printf 'argc=%s' "$#"
+		printf ' <%s>' "$@"
+		printf '\n'
+		return
+	fi
+	echo "tmux $*"
+}
 export -f tmux # so the bin/session subprocess (last check) sees the mock too
 
 # Function under test.
@@ -49,6 +61,14 @@ check "inside tmux, session absent → create detached then switch" \
 check "no arg → default session (preserved)" \
 	"tmux new-session -AD -s default" \
 	"$(unset TMUX; session)"
+
+check "dot arg outside tmux → current directory basename" \
+	"argc=4 <new-session> <-AD> <-s> <work tree>" \
+	"$(cd "$fixture_dir/work tree" && unset TMUX; MOCK_EXACT_ARGS=1 session .)"
+
+check "dot arg inside tmux → rejoin current directory basename" \
+	"argc=3 <switch-client> <-t> <=work tree>" \
+	"$(cd "$fixture_dir/work tree" && TMUX=fake MOCK_HAS=0 MOCK_EXACT_ARGS=1 session .)"
 
 # The executable must forward its arg (not collapse to default).
 check "bin/session forwards its arg through to the function" \
