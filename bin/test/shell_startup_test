@@ -33,9 +33,12 @@ clean_run() {
 	local -a envextra=()
 	while [ "$1" != "--" ]; do envextra+=("$1"); shift; done
 	shift
-	# `timeout` bounds any hang/regression (see the BASH_ENV fork-bomb note in ~/.shellenv).
-	# Generous: the full interactive .bashrc startup is heavy, and may be slow under load.
-	timeout 20 env -i \
+	# Interactive Bash needs the terminal's foreground process group. GNU
+	# timeout creates a background process group unless --foreground is set,
+	# which stops `bash -i` under a concurrent test runner. The kill-after
+	# deadline also prevents a TERM-resistant regression from hanging the gate.
+	# Twenty seconds remains generous for the full interactive .bashrc startup.
+	timeout --foreground --kill-after=5 20 env -i \
 		HOME="$HOME" USER="$ME" LOGNAME="$ME" TERM=xterm \
 		SHELL="$BASH_BIN" PATH="$BASE_PATH" \
 		"${envextra[@]}" \

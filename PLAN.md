@@ -1,5 +1,26 @@
 # dotfiles — TODO / Plans
 
+## Active — cryptographically sound `randompassdict` (2026-08-04)
+
+- [x] Reproduce the pool-cardinality, transformed-output, exact-count, and
+  invalid-argument defects with failing CLI tests before changing behavior.
+  Curiosity poke: dictionary-line identities are not password outcomes when
+  duplicate entries or shell text transformations collapse them.
+  Completed 2026-08-04 13:38 EDT with seven independently failing security
+  regressions plus a failing help/about contract.
+- [x] Make selection uniform over unique, unambiguous dictionary words using a
+  cryptographically secure OS random source; report exact combinations and
+  entropy bits without floating-point integer conversion.
+  Curiosity poke: dependency injection for deterministic tests must not create
+  a quiet production switch to predictable randomness.
+  Completed 2026-08-04 13:40 EDT with fixed `/dev/urandom`, no ambient entropy
+  override, literal output joining, deduplication, and exact `bc` arithmetic.
+- [x] Run the focused test red/green, then the complete raw and Nix suites;
+  update `dirtree` notes and commit only a fully green unit.
+  Completed 2026-08-04 13:47 EDT: Bash syntax and ShellCheck clean, focused
+  16/16, raw-host 171/171, and hermetic Nix 123/123. The PTY run also exposed
+  and fixed `shell_startup_test`'s stopped-process timeout hang.
+
 ## Active — recent agent fleet resurrection (2026-08-03)
 
 - [x] Reproduce and fix `erect-agent-stack` timing out on a live Codex 0.146
