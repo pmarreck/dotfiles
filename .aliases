@@ -202,7 +202,10 @@ alias hi="echo \"Hello, ${USER}!\""
 # letter count
 alias lc='wc -l'
 
-alias upgrade_codex='npm install -g --prefix "$HOME/.local" @openai/codex@latest'
+# Codex Remote Control launches CODEX_HOME/packages/standalone/current. Keep the
+# PATH CLI on that same installation so foreground and daemon versions cannot
+# split. The official standalone release supports this native self-updater.
+alias upgrade_codex='command codex update'
 alias update_codex=upgrade_codex
 # Claude Code is a NATIVE install (binary in ~/.local/share/claude/versions/<ver>,
 # launcher symlinked at ~/.local/bin/claude) and self-updates. Do NOT switch this back

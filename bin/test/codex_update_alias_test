@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+
+# Guards the Codex updater aliases and their single-install architecture.
+# Remote Control launches CODEX_HOME/packages/standalone/current, so the PATH
+# CLI must use that same standalone installation and its native self-updater.
+
+set -u
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+aliases_file="$repo_root/.aliases"
+failures=0
+
+pass() {
+	printf 'ok - %s\n' "$1"
+}
+
+fail() {
+	printf 'not ok - %s\n' "$1" >&2
+	failures=$((failures + 1))
+}
+
+upgrade_line="$(rg '^alias upgrade_codex=' "$aliases_file")"
+update_line="$(rg '^alias update_codex=' "$aliases_file")"
+
+if [[ "$upgrade_line" != *'npm install'* ]]; then
+	pass 'Codex updater does not create a second npm-managed installation'
+else
+	fail 'Codex updater must not use npm; Remote Control uses the standalone package store'
+fi
+
+if [[ "$upgrade_line" == *'command codex update'* ]]; then
+	pass 'Codex updater drives the standalone native self-updater'
+else
+	fail 'Codex updater must run command codex update'
+fi
+
+if [[ "$update_line" == *'upgrade_codex'* ]]; then
+	pass 'update_codex resolves to the same updater as upgrade_codex'
+else
+	fail 'update_codex must alias upgrade_codex so both names update identically'
+fi
+
+exit "$failures"
