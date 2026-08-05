@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 
+# Repeat argv commands directly; after --, isolate one Bash command string per iteration.
 repeat() {
 	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-	# add --help option
-	case "$1" in
+	case "${1:-}" in
 		-h|--help)
-			echo "Usage: repeat <count:integer> [--] <command>" >&2
+			printf '%s\n' \
+				'Usage: repeat <count> <command> [argument ...]' \
+				"       repeat <count> -- 'shell command'" >&2
 			return 0
 			;;
 		*)
@@ -19,13 +21,28 @@ repeat() {
 	fi
 
 	shift
-	if [ "$1" = "--" ]; then shift; fi
-
-	local cmd=("$@")
+	local shell_command=''
+	local shell_mode=false
+	local cmd=()
+	if [ "${1:-}" = "--" ]; then
+		shift
+		if [ "$#" -ne 1 ]; then
+			echo "Usage: repeat <count> -- 'shell command'" >&2
+			return 1
+		fi
+		shell_command="$1"
+		shell_mode=true
+	else
+		cmd=("$@")
+	fi
 	local retcodes=0
 
 	for ((i = 0; i < count; i++)); do
-		"${cmd[@]}" || ((retcodes+=$?))
+		if "$shell_mode"; then
+			"$BASH" -c "$shell_command" || ((retcodes+=$?))
+		else
+			"${cmd[@]}" || ((retcodes+=$?))
+		fi
 	done
 
 	return $retcodes

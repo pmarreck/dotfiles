@@ -1,26 +1,40 @@
 #!/usr/bin/env bash
 
+. "$HOME/dotfiles/bin/repeat"
+
 # Test the repeat function
 test_repeat() {
-  local fails=0
-  local tests=0
+	local fails=0
+	local tests=0
 
-  # Test repeating a command multiple times (args passed separately, not as one quoted string)
-  (( tests++ ))
-  assert "$(repeat 3 echo -n "hi ")" == 'hi hi hi '
-  (( fails += $? ))
+	# Test repeating a command multiple times (args passed separately, not as one quoted string)
+	(( tests++ ))
+	assert "$(repeat 3 echo -n "hi ")" == 'hi hi hi '
+	(( fails += $? ))
 
-  # Return code is summed up from failed commands
-  (( tests++ ))
-  assert "$(repeat 3 false; echo $?)" == "3"
-  (( fails += $? ))
+	# A quoted command after -- is shell syntax, so the whole pipeline repeats.
+	(( tests++ ))
+	assert "$(repeat 3 -- 'printf "a\nb\n" | tail -n 1')" == $'b\nb\nb'
+	(( fails += $? ))
 
-  if [ $fails -gt 0 ]; then
-    red_text "$fails of $tests repeat tests failed!\n" >&2
-  else
-    green_text "All $tests repeat tests passed!\n" >&2
-  fi
-  return $fails
+	# Shell strings run in isolated Bash processes and cannot mutate the caller.
+	(( tests++ ))
+	local caller_dir="$PWD"
+	repeat 1 -- 'cd /'
+	assert "$PWD" == "$caller_dir"
+	(( fails += $? ))
+
+	# Return code is summed up from failed commands
+	(( tests++ ))
+	assert "$(repeat 3 false; echo $?)" == "3"
+	(( fails += $? ))
+
+	if [ $fails -gt 0 ]; then
+		red_text "$fails of $tests repeat tests failed!\n" >&2
+	else
+		green_text "All $tests repeat tests passed!\n" >&2
+	fi
+	return $fails
 }
 
 test_repeat

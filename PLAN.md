@@ -1,5 +1,34 @@
 # dotfiles — TODO / Plans
 
+## Active — repeat compound commands and shorten the push gate (2026-08-04)
+
+- [x] Reproduce `repeat 10 -- 'echo ... | randomz --choose'` running only once,
+  then make the quoted compound command execute exactly once per requested
+  iteration while preserving existing argv-style repetition.
+  Curiosity poke: `--` must distinguish one shell command string from a literal
+  executable argument without silently changing quoting, exit, or stdin rules.
+  Completed 2026-08-04 22:04 EDT: the regression first failed by treating the
+  pipeline as an executable name three times; `--` now selects an isolated Bash
+  command string, while calls without `--` preserve exact argv execution. The
+  supplied `randomz` pipeline produced ten output lines in a live check.
+- [ ] Measure the current pre-push suite by per-test wall time, test Peter's
+  disk-I/O and parallelism hypotheses, and shorten the gate without reducing
+  the 171-test count, weakening skip detection, or hiding failures.
+  Curiosity poke: the runner already defaults to eight jobs, so total latency
+  may be a longest-test critical path or shared-resource contention rather than
+  missing parallel execution.
+  Checkpoint 2026-08-04 22:04 EDT: eight-worker profiling measured 59.27s wall
+  and 391.21s summed worker time; 58 tests exceeded one second under contention.
+  Sixteen workers passed 171/171 in 36.35s but did not beat an earlier
+  eight-worker run near 34s. `histogram_test` dominates at 26.07s even alone;
+  `shell_startup_time_test` adds eleven tmux/login-shell launches without a
+  performance threshold and belongs in the benchmark path rather than every
+  push. Next step: TDD a deterministic, process-light histogram classifier
+  fixture and reclassify the startup timing benchmark while retaining a single
+  startup correctness smoke test.
+- [ ] Run focused red/green tests and final complete host and Nix suites, update
+  documentation and dirtree notes, then commit each known-good unit.
+
 ## Active — current-directory tmux session shorthand (2026-08-04)
 
 - [x] Make `session .` resolve `.` to the current directory basename for both
