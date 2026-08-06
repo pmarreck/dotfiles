@@ -1,10 +1,12 @@
 -- truthy.lua
--- Lightweight truthiness helper for Lua scripts (mirrors shell truthy semantics)
+-- Lightweight truthiness helper for Lua scripts. String inputs mirror the
+-- shell truthy/falsey presence-flag contract.
 --
 -- Rules:
---   nil / empty string => false
+--   nil => false (analogous to an unset shell variable)
+--   Empty string => true (set without a payload is still set)
 --   Numeric 0 => false, any other number => true
---   Strings (case-insensitive) treated as false: "0", "false", "f", "no", "n", "off", "disable", "disabled", "none"
+--   Strings (case-insensitive) treated as false: "0", "false", "f", "no", "n", "off", "disable", "disabled"
 --   Everything else => true
 
 local function truthy(val)
@@ -26,15 +28,10 @@ local function truthy(val)
 		return true
 	end
 
-	if val == "" then
-		return false
-	end
-
 	local lower = string.lower(val)
 	if lower == "0" or lower == "false" or lower == "f"
 		or lower == "no" or lower == "n" or lower == "off"
 		or lower == "disable" or lower == "disabled"
-		or lower == "none"
 	then
 		return false
 	end

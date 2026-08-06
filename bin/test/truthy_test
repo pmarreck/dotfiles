@@ -5,6 +5,7 @@
 NULL=${NULL:-/dev/null}
 # define silently function here because it needs to know vars in the current namespace
 . "$HOME/dotfiles/bin/src/silently.sh"
+. "$HOME/dotfiles/bin/src/capture.bash"
 
 . "$HOME/dotfiles/bin/src/truthy.sh"
 
@@ -52,17 +53,90 @@ truthy_test() {
   _empty=""; t="empty string is truthy"; silently truthy _empty; [ "$?" = 0 ] && test_success "$t" || test_fail "$t" 0 $? 
   t="empty string is not falsey"; silently falsey _empty; [ "$?" = 1 ] && test_success "$t" || test_fail "$t" 1 $?
 
-  # Invalid variable name
-  t="invalid var name is error"; silently truthy '1bad'; [ "$?" = 2 ] && test_success "$t" || test_fail "$t" 2 $?
+	# Invalid identifiers violate the Bash-variable-name contract. Keep the
+	# syntax guard ahead of eval, and require both predicates to fail loudly.
+	invalid_name_fails=0
+	invalid_name_details=""
+	for invalid_name in '' '1bad' 'bad-name' 'bad name' 'bad;name'; do
+		local out err rc
+		capture falsey "$invalid_name"
+		falsey_out=$out falsey_err=$err falsey_rc=$rc
+		capture truthy "$invalid_name"
+		truthy_out=$out truthy_err=$err truthy_rc=$rc
+		if [ "$falsey_rc" != 2 ] || [ "$truthy_rc" != 2 ] \
+			|| [ -n "$falsey_out" ] || [ -n "$truthy_out" ] \
+			|| [ -z "$falsey_err" ] || [ -z "$truthy_err" ]; then
+			invalid_name_fails=$((invalid_name_fails + 1))
+			invalid_name_details="${invalid_name_details}${invalid_name:-<empty>}:falsey=$falsey_rc,truthy=$truthy_rc;"
+		fi
+	done
+	t="invalid variable names loudly return contract error from both predicates"
+	if [ "$invalid_name_fails" = 0 ]; then
+		test_success "$t"
+	else
+		test_fail "$t" "all invalid names: falsey=2, truthy=2, stderr present" \
+			"$invalid_name_fails failures ($invalid_name_details)"
+	fi
+
+	# Lua classifier set: shell-representable strings must match truthy/falsey,
+	# while Lua-only Boolean and numeric values retain typed behavior.
+	lua_output=$(
+		TRUTHY_LUA_MODULE="$HOME/dotfiles/bin/src/truthy.lua" luajit - 2>&1 <<'LUA'
+local truthy = assert(dofile(assert(os.getenv("TRUTHY_LUA_MODULE"))).truthy)
+local cases = {
+	{ "nil", nil, false },
+	{ "boolean false", false, false },
+	{ "boolean true", true, true },
+	{ "numeric zero", 0, false },
+	{ "numeric one", 1, true },
+	{ "empty string", "", true },
+	{ "0", "0", false },
+	{ "f", "f", false },
+	{ "false", "false", false },
+	{ "off", "off", false },
+	{ "n", "n", false },
+	{ "no", "no", false },
+	{ "disable", "disable", false },
+	{ "disabled", "disabled", false },
+	{ "uppercase FALSE", "FALSE", false },
+	{ "1", "1", true },
+	{ "true", "true", true },
+	{ "yes", "yes", true },
+	{ "on", "on", true },
+	{ "y", "y", true },
+	{ "enable", "enable", true },
+	{ "enabled", "enabled", true },
+	{ "none", "none", true },
+}
+
+local failures = 0
+for _, case in ipairs(cases) do
+	local actual = truthy(case[2])
+	if actual ~= case[3] then
+		io.write(string.format("%s: expected %s, got %s\n",
+			case[1], tostring(case[3]), tostring(actual)))
+		failures = failures + 1
+	end
+end
+os.exit(failures)
+LUA
+	)
+	lua_rc=$?
+	t="Lua truthiness classifier set"
+	if [ "$lua_rc" = 0 ]; then
+		test_success "$t"
+	else
+		test_fail "$t: $lua_output" 0 "$lua_rc"
+	fi
 
   # END TEST CASES
 
   if [ $test_fail_count -gt 0 ]; then
     echo -e "$test_output"
-    puts --red "Test of truthy failed: $test_fail_count failures"
+    puts --red "Test of truthy/falsey failed: $test_fail_count failures"
   else
     echo -e "$test_output"
-    puts --green "Test of truthy passed!"
+    puts --green "Test of truthy/falsey passed!"
   fi
   return $test_fail_count
 }

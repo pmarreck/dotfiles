@@ -1,5 +1,31 @@
 # dotfiles — TODO / Plans
 
+## Active — align Bash and Lua truthiness semantics (2026-08-06)
+
+- [x] Add a failing Lua classifier-set regression proving that unset/`nil` and
+  the documented explicit opt-out tokens are falsey, while every other string,
+  including `""` and `"none"`, is truthy. Keep Lua Boolean and numeric inputs
+  typed rather than forcing them through string rules.
+  Curiosity poke: cross-language parity applies to representable shell strings;
+  Lua's `false` and numeric `0` have no distinct Bash-variable types.
+  Completed 2026-08-06 12:04 EDT: the 23-case Lua set first failed on `""` and
+  `"none"`, then passed after Lua adopted Bash's string rules while preserving
+  typed Boolean and numeric behavior.
+- [x] Align `truthy.lua`, clarify the set-empty versus unset contract in Bash
+  and Lua documentation, run focused and complete host/Nix gates, update
+  dirtree notes, and commit without touching concurrent worktree changes.
+  Completed 2026-08-06 12:04 EDT: help now separates legal-name validation
+  from the Boolean domain and maps valid setness, falsey tokens, and predicate
+  statuses. A five-member invalid-name set first failed after an incorrect
+  silent-falsey implementation, then proved both predicates loudly return 2
+  without evaluating malformed identifiers. Final host and Nix gates pass
+  173/173 and 125/125.
+- [x] Draft Peter a tweet-sized explanation of why set-empty is truthy for
+  delivery after the implementation is committed.
+  Curiosity poke: explain the useful Bash state distinction without implying
+  that ordinary empty-string comparison can distinguish unset from set-empty.
+  Completed 2026-08-06 12:04 EDT with a 257-character draft.
+
 ## Active — repeat compound commands and shorten the push gate (2026-08-04)
 
 - [x] Reproduce `repeat 10 -- 'echo ... | randomz --choose'` running only once,

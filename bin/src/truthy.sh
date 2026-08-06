@@ -30,10 +30,25 @@ falsey() {
 	truthy_help() {
 		cat <<EOF
 Usage: truthy VARIABLE_NAME
-Returns 0 (success) if VARIABLE_NAME is not falsey. Returns 1 otherwise.
+Returns 0 (success) if VARIABLE_NAME is set to anything except an explicit
+falsey token. A set empty string is truthy; an unset variable is falsey.
+VARIABLE_NAME itself must be a legal Bash identifier.
 
 Usage: falsey VARIABLE_NAME
-Returns 0 (success) if VARIABLE_NAME is unset, or is set to a "falsey" value (0, false, off, n, no, disable, disabled). Returns 1 otherwise.
+Returns 0 (success) if VARIABLE_NAME is unset, or is set to a falsey token:
+0, f, false, off, n, no, disable, or disabled. Returns 1 otherwise.
+
+This distinction permits presence flags such as FLAG= while preserving
+unset FLAG as the unambiguous false state.
+
+The functions align three Bash concepts:
+  Variable state                         truthy status   falsey status
+  unset or set to a falsey token         1               0
+  any other set value, including empty   0               1
+  invalid variable name                  2               2
+
+Status 0 means the predicate named by the function holds. Status 1 means its
+complement holds; status 2 is a variable-name contract error.
 
 Options:
   --help    Show this help message
@@ -53,16 +68,17 @@ EOF
 
 	var_name="$1"
 
-	# 1. Validate the variable name (POSIX regex emulation with `case`)
+	# 1. Reject invalid identifiers before eval. They violate the function's
+	# Bash-variable-name contract and are outside the truthy/falsey domain.
 	case "$var_name" in
-		[!a-zA-Z_]*|*[!a-zA-Z0-9_]*)
+		''|[!a-zA-Z_]*|*[!a-zA-Z0-9_]*)
 			err "Error from truthy/falsey: '$var_name' is not a valid shell variable name"
 			return 2
 			;;
 	esac
 
-	# 2. Check if the variable exists; if not, return true immediately
-	# (nonexistent variables are falsey)
+	# 2. Check setness before value. Empty means intentionally present and is
+	# truthy; only an unset variable reaches this falsey return.
 	if ! eval "[ \"\${$var_name+set}\" = set ]"; then
 	  # _truthy_free_debug "Variable \"$var_name\" is not set and thus falsey"
 	  return 0
