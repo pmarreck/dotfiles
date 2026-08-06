@@ -39,14 +39,22 @@
 
 ## Queued — `show` Markdown classification regression (2026-08-05)
 
-- [ ] Reproduce `show zig-build-pattern.md` being classified as Bash with a
+- [x] Reproduce `show zig-build-pattern.md` being classified as Bash with a
   failing classifier/CLI regression, then make Markdown files route to the
   Markdown renderer without weakening shebang-based detection for extensionless
   scripts.
   Curiosity poke: extension, MIME/type output, shebang, and content heuristics
   need an explicit precedence so Markdown fenced Bash cannot become a script.
-- [ ] Run focused and complete suites, update documentation and dirtree notes,
+  Completed 2026-08-05 22:02 EDT: the classifier set first reported the fenced
+  executable fixture as `bash`, then passed with explicit final-extension
+  precedence for `.md`, `.MD`, multi-dot `.md`, and `.markdown`; extensionless
+  Bash and POSIX scripts remain `bash` and `sh` controls. Peter's actual file
+  now reports `md` and "Markdown document".
+- [x] Run focused and complete suites, update documentation and dirtree notes,
   then commit the known-good classifier fix.
+  Completed 2026-08-05 22:02 EDT: Bash syntax and the focused 15-test suite
+  pass; the host suite passes 172/172 in 35.07s and the hermetic Nix suite
+  passes 124/124.
 
 ## Active — current-directory tmux session shorthand (2026-08-04)
 

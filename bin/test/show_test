@@ -20,6 +20,66 @@ source "$repo_dir/bin/src/defined_helpers.sh"
 export -f var_defined in_bash
 source "$show_script"
 
+# Markdown's explicit extension must outrank file(1)'s content scan. Executable
+# documentation containing fenced shell examples can otherwise look like a script.
+markdown_tmp_dir="$(mktemp --tmpdir -d show_markdown.XXXXXX)"
+cat > "$markdown_tmp_dir/zig-build-pattern.md" <<'EOF'
+# Zig + Nix Unified Build Pattern
+
+```bash
+#!/usr/bin/env bash
+run nix build
+```
+EOF
+cat > "$markdown_tmp_dir/deploy-notes.md" <<'EOF'
+# Deployment Notes
+
+    #!/bin/sh
+    exec deploy "$@"
+EOF
+printf '# Versioned guide\n' > "$markdown_tmp_dir/guide.v2.md"
+printf '# Uppercase suffix\n' > "$markdown_tmp_dir/README.MD"
+printf '# Long suffix\n' > "$markdown_tmp_dir/notes.markdown"
+cat > "$markdown_tmp_dir/build" <<'EOF'
+#!/usr/bin/env bash
+printf 'build\n'
+EOF
+cat > "$markdown_tmp_dir/deploy" <<'EOF'
+#!/bin/sh
+printf 'deploy\n'
+EOF
+chmod +x "$markdown_tmp_dir/zig-build-pattern.md" \
+	"$markdown_tmp_dir/deploy-notes.md" "$markdown_tmp_dir/guide.v2.md" \
+	"$markdown_tmp_dir/README.MD" "$markdown_tmp_dir/notes.markdown" \
+	"$markdown_tmp_dir/build" "$markdown_tmp_dir/deploy"
+
+((tests++))
+echo "Testing: language detection classifies Markdown and extensionless shell files as a set..."
+language_fails=()
+for language_case in \
+	"zig-build-pattern.md|md" \
+	"deploy-notes.md|md" \
+	"guide.v2.md|md" \
+	"README.MD|md" \
+	"notes.markdown|md" \
+	"build|bash" \
+	"deploy|sh"
+do
+	IFS='|' read -r language_file expected_language <<< "$language_case"
+	actual_language=$(determine_language_from_source \
+		"$markdown_tmp_dir/$language_file" 2>"$markdown_tmp_dir/stderr")
+	if [[ "$actual_language" != "$expected_language" ]]; then
+		language_fails+=("$language_file=$actual_language (expected $expected_language)")
+	fi
+done
+if ((${#language_fails[@]} == 0)); then
+	echo "[PASS] Markdown extensions outrank shell-like content without weakening extensionless scripts"
+else
+	echo "[FAIL] language classifier errors: ${language_fails[*]}" >&2
+	((fails++))
+fi
+rm -rf "$markdown_tmp_dir"
+
 # Completion suite: ensure shell completion script loads cleanly in supported shells
 if command -v zsh >/dev/null 2>&1; then
 	((tests++))
@@ -242,14 +302,25 @@ done
 } > "$route_bin/glow"
 chmod +x "$route_bin/glow"
 
-printf 'the-canary-line\n' > "$route_dir/README.md"
+cat > "$route_dir/README.md" <<'EOF'
+# The canary
+
+```bash
+#!/usr/bin/env bash
+printf 'the-canary-line\n'
+```
+EOF
+chmod +x "$route_dir/README.md"
 
 ((tests++))
 echo "Testing: show README.md renders the file and launches no browser..."
 : > "$BROWSER_LOG"
 route_out=$(cd "$route_dir" && PATH="$route_bin:$repo_dir/bin:$PATH" \
 	bash -c 'source "'"$show_script"'"; show README.md' 2>"$route_dir/stderr")
-if [ ! -s "$BROWSER_LOG" ] && printf '%s' "$route_out" | grep -q 'the-canary-line'; then
+if [ ! -s "$BROWSER_LOG" ] \
+	&& printf '%s' "$route_out" | grep -q 'the-canary-line' \
+	&& grep -q 'Markdown document' "$route_dir/stderr" \
+	&& ! grep -qi 'bash.*file' "$route_dir/stderr"; then
 	echo "[PASS] show README.md rendered the local file, no browser launched"
 else
 	echo "[FAIL] show README.md was misrouted" >&2

@@ -16,10 +16,31 @@ restore_console_settings() {
 	unset __oldstate
 }
 
+# Return the normalized final suffix so explicit document formats can outrank
+# content heuristics without misreading names such as guide.v2.md.
+file_extension() {
+	local filename extension
+	filename=${1##*/}
+	if [[ "$filename" != *.* || "$filename" == *. ]]; then
+		return 0
+	fi
+	extension=${filename##*.}
+	printf '%s\n' "${extension,,}"
+}
+
 function determine_language_from_source() {
 	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	local file="$1"
 	if [ -f "$file" ]; then
+		local file_ext
+		file_ext=$(file_extension "$file")
+		debug "file_ext: '$file_ext'"
+		if [[ "$file_ext" == "md" || "$file_ext" == "markdown" ]]; then
+			note "file '$file' is a Markdown document (detected from extension)"
+			echo "md"
+			return 0
+		fi
+
 		# Check shebang first for accurate Lua/LuaJIT detection
 		local shebang=$(head -1 "$file" 2>/dev/null)
 		if [[ "$shebang" =~ ^#!/.*lua(jit)?$ ]] || [[ "$shebang" =~ ^#!/usr/bin/env[[:space:]]+(lua|luajit)$ ]]; then
@@ -33,12 +54,6 @@ function determine_language_from_source() {
 			return 0
 		fi
 		
-		local filename=$(basename "$file")
-		local file_ext=""
-		if [[ "$filename" == *.* ]]; then
-			file_ext=${filename#*.}
-		fi
-		debug "file_ext: '$file_ext'"
 		# handle answers from file like "/nix/store/9gj9d5acy05q70z6gqfz834qz1vqvjbi-p7zip-17.06/bin/7z: a /nix/store/xhcgnphdwfg81j79nhspm0876cxglyj3-bash-5.2p37/bin/sh script text executable" properly
 		local file_cmd_output=$(file -b "$file")
 		debug "file_cmd_output: '$file_cmd_output'"
@@ -130,9 +145,6 @@ function determine_language_from_source() {
 				if [ "$file_ext" = "" ]; then
 					lang_orig="ASCII text"
 					lang="txt"
-				elif [ "$file_ext" = "md" ]; then
-					lang_orig="Markdown document"
-					lang="md"
 				else
 					lang_orig="ASCII text, with extension '$file_ext'"
 					lang="$file_ext"
@@ -488,7 +500,8 @@ show() {
 	fi
 	# if it's a file, syntax-colorize it with bat or less, or display it via kitty/sixel if it's an image
 	if [ -f "$word" ]; then
-		local file_ext=$(basename "$word" | cut -d. -f2-)
+		local file_ext
+		file_ext=$(file_extension "$word")
 		# if it's an image file, display it
 		if file "$word" | grep -q image; then
 			echo "$word"
@@ -500,7 +513,7 @@ show() {
 			if [ -n "$lang" ]; then
 				local highlight_lang=$(map_highlight_language "$lang")
 				note "'${word}' is $(a_or_an "$lang") $lang file on disk:"
-				if [ "$file_ext" = "md" ] && needs glow "please install glow"; then
+				if [[ "$file_ext" == "md" || "$file_ext" == "markdown" ]] && needs glow "please install glow"; then
 					glow "$word"
 				else
 					$batless && less "$word" || bat "$word" -l "$highlight_lang" $bat_opts 2>/dev/null
