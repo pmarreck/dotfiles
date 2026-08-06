@@ -11,23 +11,42 @@
   pipeline as an executable name three times; `--` now selects an isolated Bash
   command string, while calls without `--` preserve exact argv execution. The
   supplied `randomz` pipeline produced ten output lines in a live check.
-- [ ] Measure the current pre-push suite by per-test wall time, test Peter's
+- [x] Measure the current pre-push suite by per-test wall time, test Peter's
   disk-I/O and parallelism hypotheses, and shorten the gate without reducing
   the 171-test count, weakening skip detection, or hiding failures.
   Curiosity poke: the runner already defaults to eight jobs, so total latency
   may be a longest-test critical path or shared-resource contention rather than
   missing parallel execution.
-  Checkpoint 2026-08-04 22:04 EDT: eight-worker profiling measured 59.27s wall
-  and 391.21s summed worker time; 58 tests exceeded one second under contention.
-  Sixteen workers passed 171/171 in 36.35s but did not beat an earlier
-  eight-worker run near 34s. `histogram_test` dominates at 26.07s even alone;
-  `shell_startup_time_test` adds eleven tmux/login-shell launches without a
-  performance threshold and belongs in the benchmark path rather than every
-  push. Next step: TDD a deterministic, process-light histogram classifier
-  fixture and reclassify the startup timing benchmark while retaining a single
-  startup correctness smoke test.
-- [ ] Run focused red/green tests and final complete host and Nix suites, update
+  Completed 2026-08-05 21:54 EDT: deterministic classifier fixtures and
+  in-process trimming reduced `histogram_test` from 27.59s to 3.85s alone;
+  `shell_startup_time_test` now keeps one real tmux/login-shell smoke by default
+  while retaining explicit multi-sample mode. A same-worktree comparison
+  measured 32.96s at 16 workers versus 41.05s at 8, so the bounded default is
+  now 16. Two final 172-test host gates passed in 34.58s and 34.80s, 21.6–22.1%
+  below Peter's 44.396s push measurement without reducing the test count.
+- [x] Repair the deterministic `warhammer_quote_test` blocker exposed by the
+  faster parallel gate: inject endpoint selections, assert the current
+  `random` range contract, and reject the formerly accepted `nil!` output.
+  Curiosity poke: both endpoints must remain reachable when the quote corpus
+  grows, without a probabilistic uniqueness assertion or shared `/tmp` file.
+  Completed 2026-08-05 21:54 EDT: the new endpoint regression first observed
+  two invalid `random 1 193` calls and two `nil!` outputs, then passed after the
+  executable adopted the current single-range syntax, `random 1-193`.
+- [x] Run focused red/green tests and final complete host and Nix suites, update
   documentation and dirtree notes, then commit each known-good unit.
+  Completed 2026-08-05 21:54 EDT: Bash syntax and all focused suites pass; the
+  host suite passes 172/172 and the hermetic Nix suite passes 124/124.
+
+## Queued — `show` Markdown classification regression (2026-08-05)
+
+- [ ] Reproduce `show zig-build-pattern.md` being classified as Bash with a
+  failing classifier/CLI regression, then make Markdown files route to the
+  Markdown renderer without weakening shebang-based detection for extensionless
+  scripts.
+  Curiosity poke: extension, MIME/type output, shebang, and content heuristics
+  need an explicit precedence so Markdown fenced Bash cannot become a script.
+- [ ] Run focused and complete suites, update documentation and dirtree notes,
+  then commit the known-good classifier fix.
 
 ## Active — current-directory tmux session shorthand (2026-08-04)
 

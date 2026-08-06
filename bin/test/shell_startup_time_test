@@ -13,20 +13,21 @@
 # tmux-quickref still fires once per session (it's deterministic and is a
 # legitimate part of "tmux session startup cost"), so it stays in the number.
 #
-# Usage:
-#   bin/test/shell_startup_time_test               # default: 10 iterations
-#   ITERATIONS=20 bin/test/shell_startup_time_test
+# The full suite uses one real startup as a bounded correctness smoke test.
+# Request repeated samples explicitly when investigating startup performance:
+#   ITERATIONS=10 WARMUP_ITERATIONS=1 bin/test/shell_startup_time_test
+#   ITERATIONS=20 WARMUP_ITERATIONS=1 bin/test/shell_startup_time_test
 #   SHELL_STARTUP_TIMEOUT=10 bin/test/shell_startup_time_test
 
 set -u
 
-ITERATIONS="${ITERATIONS:-10}"
+ITERATIONS="${ITERATIONS:-1}"
 SHELL_STARTUP_TIMEOUT="${SHELL_STARTUP_TIMEOUT:-5}"
 SESSION_PREFIX="shell-startup-test-$$"
 
 # Discard one warmup pass to absorb cold filesystem caches (tmux binary load,
 # bash binary load, fs metadata for dotfiles). The warmup is *not* counted.
-WARMUP_ITERATIONS=1
+WARMUP_ITERATIONS="${WARMUP_ITERATIONS:-0}"
 
 # Sanity: bash 5+ required for $EPOCHREALTIME
 if [[ -z "${EPOCHREALTIME:-}" ]]; then
@@ -95,7 +96,7 @@ stats() {
 
 	# Sort ascending using sort(1) on a newline-joined input
 	local sorted
-	sorted=( $(printf '%s\n' "${nums[@]}" | sort -g) )
+	mapfile -t sorted < <(printf '%s\n' "${nums[@]}" | sort -g)
 
 	local min="${sorted[0]}"
 	local max="${sorted[$((n-1))]}"

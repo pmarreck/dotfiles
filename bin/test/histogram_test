@@ -5,6 +5,10 @@
 
 test_count=0
 fail_count=0
+histogram_test_dir=$(mktemp -d --tmpdir histogram_test.XXXXXX)
+trap 'rm -rf "$histogram_test_dir"' EXIT
+# shellcheck source=../src/histogram_classify.bash
+. "$HOME/dotfiles/bin/src/histogram_classify.bash"
 
 # Helper function to run a test
 run_test() {
@@ -54,6 +58,72 @@ run_exit_test() {
 	fi
 }
 
+# Classify a set containing positive and negative controls. The frequency rows
+# deliberately arrive in production's count-descending order, so the classifier
+# must restore category order before judging distribution shape.
+run_distribution_classifier_set_test() {
+	local normal_file="$histogram_test_dir/normal.freq"
+	local skewed_file="$histogram_test_dir/skewed.freq"
+	local uniform_file="$histogram_test_dir/uniform.freq"
+	local classifier_fails=0
+	local label expected actual fixture
+
+	printf '%s\n' \
+		'25 F' '20 E' '20 G' '10 D' '10 H' '5 C' '5 I' \
+		'2 B' '2 J' '1 A' '1 K' > "$normal_file"
+	printf '%s\n' \
+		'25 A' '20 B' '20 C' '10 D' '10 E' '5 F' '5 G' \
+		'2 H' '2 I' '1 J' '1 K' > "$skewed_file"
+	printf '%s\n' \
+		'10 A' '10 B' '10 C' '10 D' '10 E' '10 F' \
+		'10 G' '10 H' '10 I' '10 J' '10 K' > "$uniform_file"
+
+	for fixture in \
+		"bell-shaped|0|$normal_file" \
+		"one-sided skew|1|$skewed_file" \
+		"uniform|1|$uniform_file"
+	do
+		IFS='|' read -r label expected fixture_file <<< "$fixture"
+		is_normally_distributed "$fixture_file"
+		actual=$?
+		if [ "$actual" -ne "$expected" ]; then
+			echo "✗ Distribution classifier misclassified $label fixture: expected $expected, got $actual" >&2
+			classifier_fails=$((classifier_fails + 1))
+		fi
+	done
+
+	test_count=$((test_count + 1))
+	if [ "$classifier_fails" -eq 0 ]; then
+		echo "✓ Test $test_count passed: distribution classifier set"
+		return 0
+	fi
+
+	fail_count=$((fail_count + 1))
+	return 1
+}
+
+numeric_sample_stream() {
+	local i
+	for ((i = 0; i < 20; i++)); do
+		printf '%s\n' "$((i % 3 + 1))"
+	done
+}
+
+mixed_sample_stream() {
+	printf '%s\n' text 42 text 42 text 42 text 42 text 42
+}
+
+normal_sample_stream() {
+	local labels=(A B C D E F G H I J K)
+	local counts=(1 1 2 3 5 7 5 3 2 1 1)
+	local label_index sample
+	for ((label_index = 0; label_index < ${#labels[@]}; label_index++)); do
+		for ((sample = 0; sample < counts[label_index]; sample++)); do
+			printf '%s\n' "${labels[label_index]}"
+		done
+	done
+}
+
 # Test 1: Help flag
 run_test "help flag shows usage" "histogram --help" "Usage:"
 
@@ -67,7 +137,9 @@ run_exit_test "invalid arguments fail" "histogram" 1
 run_test "numeric command creates histogram" "histogram -n 10 'echo 1'" "1.*│"
 
 # Test 5: Multiple numeric values
-run_test "multiple numeric values" "histogram -n 20 'echo \$((RANDOM % 3 + 1))'" "│"
+exec 7< <(numeric_sample_stream)
+run_test "multiple numeric values" "histogram -n 20 'IFS= read -r sample <&7; printf \"%s\\n\" \"\$sample\"'" "│"
+exec 7<&-
 
 # Test 6: Non-numeric command creates histogram with letters
 run_test "non-numeric command uses letters" "histogram -n 10 'echo hello'" "│"
@@ -82,13 +154,17 @@ run_test "custom run count works" "histogram -n 5 'echo test'" "│"
 run_test "command with spaces" "histogram -n 5 'echo \"hello world\"'" "│"
 
 # Test 10: Mixed numeric/non-numeric should be treated as non-numeric
-run_test "mixed output treated as non-numeric" "histogram -n 10 'if (( RANDOM % 2 == 0 )); then echo \"text\"; else echo 42; fi'" "Legend:"
+exec 8< <(mixed_sample_stream)
+run_test "mixed output treated as non-numeric" "histogram -n 10 'IFS= read -r sample <&8; printf \"%s\\n\" \"\$sample\"'" "Legend:"
+exec 8<&-
 
-# Test 11: Normal distribution ordering should follow correct alphabet pattern
-run_test "normal distribution ordering" "histogram -n 260 'letters=\"ABCDEFGHIJKLMNOPQRSTUVWXYZ\"; val=\$(nrandom 0 25); echo \"\${letters:\$val:1}\"'" "Normal distribution detected."
+# Test 11: deterministic positive and negative distribution controls
+run_distribution_classifier_set_test
 
-# Test 12: Uniform random data produces numeric output (numeric ordering, not normal distribution)
-run_test "uniform random data shows numeric ordering" "histogram -n 100 'random'" "[0-9]"
+# Test 12: the deterministic bell-shaped stream reaches the normal rendering path
+exec 9< <(normal_sample_stream)
+run_test "normal distribution rendering" "histogram -n 31 'IFS= read -r sample <&9; printf \"%s\\n\" \"\$sample\"'" "Normal distribution detected."
+exec 9<&-
 
 # Summary
 echo

@@ -28,7 +28,8 @@ test_warhammer_quote() {
 	(( tests++ ))
 	echo "Testing output format..."
 	
-	local quote=$(warhammer_quote 2>/dev/null)
+	local quote
+	quote=$(warhammer_quote 2>/dev/null)
 	
 	if [[ "$quote" == *"!" ]]; then
 		echo "✓ Output format test passed: quote ends with !"
@@ -38,34 +39,48 @@ test_warhammer_quote() {
 		(( fails++ ))
 	fi
 	
-	# Test 3: Randomness check (5 invocations shouldn't all be the same)
+	# Test 3: The random selector receives one inclusive range and both endpoints work
 	(( tests++ ))
-	echo "Testing randomness (5 invocations)..."
-	
-	local quotes=()
-	local unique_quotes=0
-	
-	# Generate 5 quotes
-	for ((i=0; i<5; i++)); do
-		quotes[i]=$(warhammer_quote 2>/dev/null)
-	done
-	
-	# Count unique quotes
-	printf '%s\n' "${quotes[@]}" | sort -u > /tmp/unique_warhammer_quotes.txt
-	unique_quotes=$(cat /tmp/unique_warhammer_quotes.txt | wc -l)
-	rm -f /tmp/unique_warhammer_quotes.txt
-	
-	# We expect at least 2 different quotes out of 5 (very lenient randomness check)
-	if [ "$unique_quotes" -ge 2 ]; then
-		echo "✓ Randomness test passed: $unique_quotes/5 unique quotes"
+	echo "Testing deterministic random range endpoints..."
+
+	local tmpdir quotes_file quote_count expected_range first_quote last_quote first_output last_output
+	local -a quotes
+	tmpdir=$(mktemp -d "${TMPDIR:?}/warhammer-quote-test.XXXXXX")
+	quotes_file="$HOME/dotfiles/bin/data/warhammer_quotes.txt"
+	mapfile -t quotes < "$quotes_file"
+	quote_count=${#quotes[@]}
+	expected_range="1-$quote_count"
+	first_quote=${quotes[0]}
+	last_quote=${quotes[quote_count - 1]}
+
+	cat > "$tmpdir/random" <<'RANDOM_STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${WARHAMMER_RANDOM_ARGS:?}"
+[[ "$#" -eq 1 && "$1" == "${WARHAMMER_EXPECTED_RANGE:?}" ]] || exit 64
+printf '%s\n' "${WARHAMMER_PICK:?}"
+RANDOM_STUB
+	chmod +x "$tmpdir/random"
+
+	first_output=$(PATH="$tmpdir:$PATH" WARHAMMER_RANDOM_ARGS="$tmpdir/args" \
+		WARHAMMER_EXPECTED_RANGE="$expected_range" WARHAMMER_PICK=1 \
+		warhammer_quote 2>/dev/null)
+	last_output=$(PATH="$tmpdir:$PATH" WARHAMMER_RANDOM_ARGS="$tmpdir/args" \
+		WARHAMMER_EXPECTED_RANGE="$expected_range" WARHAMMER_PICK="$quote_count" \
+		warhammer_quote 2>/dev/null)
+	local observed_args
+	observed_args=$(<"$tmpdir/args")
+
+	if [[ "$first_output" == "$first_quote!" && "$last_output" == "$last_quote!" &&
+		"$observed_args" == "$expected_range"$'\n'"$expected_range" ]]; then
+		echo "✓ Deterministic endpoint test passed"
 	else
-		echo "✗ Randomness test failed: only $unique_quotes/5 unique quotes" >&2
-		echo "  Quotes:" >&2
-		for ((i=0; i<5; i++)); do
-			echo "    Quote $((i+1)): ${quotes[i]}" >&2
-		done
+		echo "✗ Deterministic endpoint test failed" >&2
+		echo "  Random args: '$observed_args' (expected two '$expected_range' calls)" >&2
+		echo "  First output: '$first_output'" >&2
+		echo "  Last output: '$last_output'" >&2
 		(( fails++ ))
 	fi
+	rm -rf "$tmpdir"
 	
 	# Final results
 	if [ $fails -gt 0 ]; then

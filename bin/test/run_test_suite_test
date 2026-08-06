@@ -49,6 +49,16 @@ test_run_test_suite() {
 	fi
 
 	(( tests++ ))
+	output=$(env -u RUN_TEST_SUITE_JOBS HOME="$tmpdir/home" "$runner" --test-dir "$tmpdir/passing" 2>&1)
+	actual=$?
+	if [[ "$actual" == 0 && "$output" == *'(jobs: 16)'* ]]; then
+		printf '✓ run_test_suite uses the measured 16-worker default\n'
+	else
+		printf '✗ default run should report 16 workers\nStatus: %s\nOutput: %q\n' "$actual" "$output" >&2
+		(( fails++ ))
+	fi
+
+	(( tests++ ))
 	output=$(HOME="$tmpdir/home" "$runner" --test-dir "$tmpdir/empty" 2>&1)
 	actual=$?
 	if [[ "$actual" == 2 && "$output" == *'No test files found'* ]]; then

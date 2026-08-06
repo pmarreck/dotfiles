@@ -23,7 +23,7 @@ warhammer_quote = ->
 	quotes = load_quotes!
 
 	-- Use our high-quality random utility to select quote
-	random_index = tonumber(io.popen("random 1 #{#quotes}")\read("*a")\match("%d+"))
+	random_index = tonumber(io.popen("random 1-#{#quotes}")\read("*a")\match("%d+"))
 	selected_quote = quotes[random_index]
 
 	print("#{selected_quote}!")
