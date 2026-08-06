@@ -6,7 +6,7 @@
 if [[ -z "$DOTFILES_DIR" ]]; then
 	DOTFILES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 fi
-export PATH="$DOTFILES_DIR/bin:$PATH"
+PATH="$DOTFILES_DIR/bin:$PATH"
 
 # Source the library file under test
 source "$DOTFILES_DIR/bin/src/capture.bash"
@@ -148,12 +148,12 @@ EOF
     chmod +x "$temp_dir/-p"
 
     local old_path="$PATH"
-    export PATH="$temp_dir:$PATH"
+    PATH="$temp_dir:$PATH"
 
     capture -- -p
     assert "$out" "==" "this is the -p script" "Test 7.1: out was '$out'" || test_fail=1
 
-    export PATH="$old_path"
+    PATH="$old_path"
     return "$test_fail"
 }
 

@@ -28,7 +28,7 @@ echo "bin2"' > "$test_dir/bin2/bin2_only"
   
   # Test with our test PATH
   local old_path="$PATH"
-  export PATH="$test_dir/bin1:$test_dir/bin2:$PATH"
+  PATH="$test_dir/bin1:$test_dir/bin2:$PATH"
   
   # Test basic functionality (just verify the script works)
   echo "Testing basic functionality..."
@@ -229,7 +229,7 @@ echo "bin2"' > "$test_dir/bin2/bin2_only"
   fi
 
   # Clean up
-  export PATH="$old_path"
+  PATH="$old_path"
   rm -rf "$test_dir"
 
   echo "All tests passed!"

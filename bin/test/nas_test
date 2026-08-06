@@ -12,7 +12,7 @@
 
 set -u
 
-export PATH="$HOME/dotfiles/bin:$PATH"
+PATH="$HOME/dotfiles/bin:$PATH"
 NAS_SCRIPT="$HOME/dotfiles/bin/nas"
 
 tests=0

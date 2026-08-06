@@ -5,7 +5,7 @@ set -o pipefail
 fails=0
 tests=0
 
-export PATH="$HOME/bin:$PATH"
+PATH="$HOME/bin:$PATH"
 
 temp_dir=$(mktemp -d --tmpdir counted_test.XXXXXX)
 trap 'rm -rf "$temp_dir"' EXIT

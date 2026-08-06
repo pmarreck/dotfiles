@@ -73,7 +73,6 @@ export OPENAI_PATH="/api/chat"
 export OPENAI_PROTOCOL="http"
 
 PATH="$stub_bin:$HOME/dotfiles/bin:$PATH"
-export PATH
 run_status=0
 (
 	cd "$temp_dir" || exit 1

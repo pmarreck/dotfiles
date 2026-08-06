@@ -9,7 +9,7 @@ fi
 fails=0
 tests=0
 
-export PATH="$HOME/bin:$PATH"
+PATH="$HOME/bin:$PATH"
 
 temp_dir=$(mktemp -d --tmpdir to_embedded_image_test.XXXXXX)
 trap 'rm -rf "$temp_dir"' EXIT

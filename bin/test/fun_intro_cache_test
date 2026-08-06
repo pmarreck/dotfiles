@@ -32,7 +32,6 @@ if ! command -v expect >/dev/null 2>&1; then
 	_expect_store=$(nix build --offline --no-link --print-out-paths nixpkgs#expect 2>/dev/null)
 	if [ -n "$_expect_store" ] && [ -x "$_expect_store/bin/expect" ]; then
 		PATH="$_expect_store/bin:$PATH"
-		export PATH
 	fi
 	unset _expect_store
 fi

@@ -10,7 +10,7 @@
 
 set -u
 
-export PATH="$HOME/dotfiles/bin:$PATH"
+PATH="$HOME/dotfiles/bin:$PATH"
 
 tests=0
 fails=0

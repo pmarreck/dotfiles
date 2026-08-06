@@ -371,5 +371,3 @@ export DRANDOM_CONTEXT=$$
 
 # peon-ping quick controls
 [ -f ~/.claude/hooks/peon-ping/completions.bash ] && source ~/.claude/hooks/peon-ping/completions.bash
-export VOLTA_HOME="$HOME/.volta"
-export PATH="$VOLTA_HOME/bin:$PATH"

@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+# Reject tracked shell commands that export PATH outside .pathconfig's one
+# canonical declaration. PATH construction must stay centralized and deduplicated.
+
+set -u
+
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+repo_root=$(cd "$script_dir/../.." && pwd -P)
+pattern='(^|[;&|()])[[:space:]]*export[[:space:]]+([^#;&|()]*[[:space:]]+)?PATH([+]?=|[[:space:];&|()]|$)'
+tests=0
+fails=0
+
+pass() {
+	printf 'PASS: %s\n' "$1"
+}
+
+fail() {
+	printf 'FAIL: %s\n' "$1" >&2
+	((fails++))
+}
+
+matches_path_export() {
+	[[ "$1" =~ $pattern ]]
+}
+
+# Keep the gate non-vacuous. Build examples in pieces so this test's source is
+# itself subject to the same policy without embedding a forbidden command.
+export_word='ex''port'
+positive_cases=(
+	"$export_word PATH=/tmp:\$PATH"
+	"$export_word PATH+=:/tmp"
+	"PATH=/tmp; $export_word PATH"
+	"$export_word EDITOR=nano PATH=/tmp:\$PATH"
+)
+negative_cases=(
+	"# $export_word PATH=/tmp:\$PATH"
+	"PATH=/tmp:\$PATH"
+	"$export_word PATHOLOGICAL=/tmp"
+	"printf '%s' '$export_word PATH=/tmp'"
+)
+
+((tests++))
+positive_misses=0
+for source_line in "${positive_cases[@]}"; do
+	matches_path_export "$source_line" || ((positive_misses++))
+done
+if (( positive_misses == 0 )); then
+	pass 'classifier rejects assignment, bare, and grouped PATH exports'
+else
+	fail "classifier missed $positive_misses forbidden command(s)"
+fi
+
+((tests++))
+negative_matches=0
+for source_line in "${negative_cases[@]}"; do
+	matches_path_export "$source_line" && ((negative_matches++))
+done
+if (( negative_matches == 0 )); then
+	pass 'classifier ignores comments, assignments, and quoted prose'
+else
+	fail "classifier falsely rejected $negative_matches safe line(s)"
+fi
+
+cd "$repo_root" || exit 2
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+	matches=$(git grep -n -E "$pattern")
+	scan_status=$?
+	scanner='git grep'
+else
+	# Nix flake sources deliberately omit .git. They contain only the tracked
+	# source snapshot, so scanning that tree is equivalent to git grep locally.
+	matches=$(rg --hidden --with-filename -n -g '!.git/**' "$pattern" .)
+	scan_status=$?
+	scanner='ripgrep source-tree fallback'
+fi
+if (( scan_status > 1 )); then
+	printf 'FAIL: %s failed with status %s\n' "$scanner" "$scan_status" >&2
+	exit 2
+fi
+
+violations=()
+allowed_count=0
+while IFS= read -r hit; do
+	[ -n "$hit" ] || continue
+	path=${hit%%:*}
+	path=${path#./}
+	remainder=${hit#*:}
+	line_number=${remainder%%:*}
+	source_line=${remainder#*:}
+	if [[ "$path" == '.pathconfig' && "$source_line" =~ ^[[:space:]]*export[[:space:]]+PATH[[:space:]]*(#.*)?$ ]]; then
+		((allowed_count++))
+	else
+		violations+=("$path:$line_number:$source_line")
+	fi
+done <<< "$matches"
+
+((tests++))
+if (( allowed_count <= 1 )); then
+	pass ".pathconfig has at most one canonical PATH export ($allowed_count found)"
+else
+	fail ".pathconfig has $allowed_count canonical PATH exports; at most one is allowed"
+fi
+
+((tests++))
+if (( ${#violations[@]} == 0 )); then
+	pass 'tracked sources contain no PATH exports outside .pathconfig'
+else
+	fail "tracked sources contain ${#violations[@]} forbidden PATH export(s):"
+	printf '  %s\n' "${violations[@]}" >&2
+fi
+
+if (( fails == 0 )); then
+	printf 'All %s PATH export policy checks passed.\n' "$tests"
+else
+	printf '%s of %s PATH export policy checks failed.\n' "$fails" "$tests" >&2
+fi
+exit "$fails"

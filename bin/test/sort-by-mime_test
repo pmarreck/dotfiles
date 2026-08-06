@@ -5,7 +5,7 @@
 if [[ -z "$DOTFILES_DIR" ]]; then
 	DOTFILES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 fi
-export PATH="$DOTFILES_DIR/bin:$PATH"
+PATH="$DOTFILES_DIR/bin:$PATH"
 
 # Ensure assert is available
 if ! command -v assert &> /dev/null; then

@@ -91,7 +91,6 @@ PATH_ADDITIONS=(
 	"$HOME/.cargo/bin"
 	"$HOME/.cache/lm-studio/bin"
 	"$HOME/.npm-global/bin"
-	"$HOME/.volta/bin"
 	"$HOME/.local/share/pnpm/bin"
 )
 

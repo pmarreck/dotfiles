@@ -5,7 +5,7 @@ set -o pipefail
 fails=0
 tests=0
 
-export PATH="$HOME/bin:$PATH"
+PATH="$HOME/bin:$PATH"
 
 pass() {
 	printf "PASS: %s\n" "$1"

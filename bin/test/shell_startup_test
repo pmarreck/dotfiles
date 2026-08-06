@@ -2,7 +2,7 @@
 # shell_startup_test — assert the "env bucket" loads across bash's startup
 # quadrants. The env bucket = everything a *script* needs regardless of
 # interactivity: ~/bin on PATH (so `needs` & friends resolve), $EDITOR/$VISUAL,
-# $VOLTA_HOME, pnpm. Interactive-only decoration (prompt/aliases) is NOT tested.
+# and pnpm. Interactive-only decoration (prompt/aliases) is NOT tested.
 #
 # Direct run:  bin/test/shell_startup_test   (progress -> stdout, fails -> stderr)
 # Exit code  = number of failed quadrants.
@@ -23,7 +23,7 @@ BASE_PATH="/run/current-system/sw/bin:/usr/bin:/bin"
 ME="$(id -un)"
 
 # One-line probe emitting the env facts we assert on.
-PROBE='printf "needs=%s editor=%s volta=%s hasbin=%s pnpm=%s\n" "$(command -v needs >/dev/null 2>&1 && echo ok || echo MISSING)" "${EDITOR:-UNSET}" "${VOLTA_HOME:-UNSET}" "$(case ":$PATH:" in *":$HOME/bin:"*) echo yes ;; *) echo no ;; esac)" "$(command -v pnpm >/dev/null 2>&1 && echo ok || echo MISSING)"'
+PROBE='printf "needs=%s editor=%s hasbin=%s pnpm=%s\n" "$(command -v needs >/dev/null 2>&1 && echo ok || echo MISSING)" "${EDITOR:-UNSET}" "$(case ":$PATH:" in *":$HOME/bin:"*) echo yes ;; *) echo no ;; esac)" "$(command -v pnpm >/dev/null 2>&1 && echo ok || echo MISSING)"'
 
 fails=0
 

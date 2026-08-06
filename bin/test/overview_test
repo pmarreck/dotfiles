@@ -10,7 +10,7 @@ fails=0
 TEST_DIR="$(mktemp -d --tmpdir test_overview.XXXXXX)"
 # cleanup handled at end of script
 mkdir -p "$TEST_DIR/bin"
-export PATH="$TEST_DIR/bin:$PATH"
+PATH="$TEST_DIR/bin:$PATH"
 
 # Setup mocks
 # 1. executables: mock command to list our test subjects
