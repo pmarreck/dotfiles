@@ -85,7 +85,7 @@ run_test "command with spaces" "histogram -n 5 'echo \"hello world\"'" "│"
 run_test "mixed output treated as non-numeric" "histogram -n 10 'if (( RANDOM % 2 == 0 )); then echo \"text\"; else echo 42; fi'" "Legend:"
 
 # Test 11: Normal distribution ordering should follow correct alphabet pattern
-run_test "normal distribution ordering" "histogram -n 260 'letters=\"ABCDEFGHIJKLMNOPQRSTUVWXYZ\"; val=\$(nrandom 0 25); echo \"\${letters:\$val:1}\"'" "Normal distribution detected."
+run_test "normal distribution ordering" "histogram -n 260 'letters=\"ABCDEFGHIJKLMNOPQRSTUVWXYZ\"; val=\$(nrandom 0-25); echo \"\${letters:\$val:1}\"'" "Normal distribution detected."
 
 # Test 12: Uniform random data produces numeric output (numeric ordering, not normal distribution)
 run_test "uniform random data shows numeric ordering" "histogram -n 100 'random'" "[0-9]"

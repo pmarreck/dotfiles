@@ -20,7 +20,7 @@ end
 local warhammer_quote
 warhammer_quote = function()
 	local quotes = load_quotes()
-	local random_index = tonumber(io.popen("random 1 " .. tostring(#quotes)):read("*a"):match("%d+"))
+	local random_index = tonumber(io.popen("random 1-" .. tostring(#quotes)):read("*a"):match("%d+"))
 	local selected_quote = quotes[random_index]
 	return print(tostring(selected_quote) .. "!")
 end
