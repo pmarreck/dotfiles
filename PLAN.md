@@ -1,5 +1,22 @@
 # dotfiles — TODO / Plans
 
+## Active — guarded public collaboration ledger (2026-08-13)
+
+- [x] Preserve the existing public gist as a normal local Git clone on `yolo`
+  at `$HOME/Code/global_pmarreck_llm_memories`; keep unreviewed candidates
+  outside its object graph. Completed 2026-08-13 11:23 EDT.
+- [x] Add failing classifier and state-transition tests for absolute home-path
+  rejection, full-diff review, exact-digest confirmation, publish retry, and
+  allowed-file enforcement. Curiosity poke: an interrupted push can leave one
+  reviewed local commit ahead of the gist and must be safely retryable.
+  Completed 2026-08-13 11:38 EDT: 32 focused cases pass, including a forced
+  pre-push failure and retry of the preserved reviewed commit.
+- [x] Add one cross-platform `collaboration-ledger publish` command that validates,
+  shows the complete diff, requires the exact SHA-256, commits, and pushes. No
+  hook, watcher, timer, daemon, or persistent candidate is warranted. Completed
+  2026-08-13 11:38 EDT: all 174 host test files and the hermetic Nix flake check
+  pass; the real ledger and clean gist clone pass non-publishing preflight.
+
 ## Active — align Bash and Lua truthiness semantics (2026-08-06)
 
 - [x] Add a failing Lua classifier-set regression proving that unset/`nil` and

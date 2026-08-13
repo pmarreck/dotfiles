@@ -1,0 +1,145 @@
+#!/usr/bin/env bash
+
+set -u
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+cli="$repo_root/bin/collaboration-ledger"
+source "$repo_root/bin/src/capture.bash"
+
+scratch="$(mktemp -d "${TMPDIR:-/tmp}/collaboration-ledger-test.XXXXXX")" || exit 1
+trap 'rm -rf "$scratch"' EXIT
+source_file="$scratch/MEMORIES/Evidence of agent-human collaboration superior to either alone.frontmatter.md"
+gist_dir="$scratch/gist"
+remote_dir="$scratch/remote.git"
+filename="Evidence of agent-human collaboration superior to either alone.frontmatter.md"
+
+mkdir -p "$(dirname "$source_file")" "$gist_dir"
+git init --quiet --bare "$remote_dir"
+git -C "$gist_dir" init --quiet --initial-branch=yolo
+git -C "$gist_dir" config user.name 'Ledger Test'
+git -C "$gist_dir" config user.email 'ledger-test@example.invalid'
+git -C "$gist_dir" remote add origin "$remote_dir"
+
+write_record() {
+	local destination="$1" body="$2"
+	printf '%s\n' \
+		'---' \
+		'description: "Public collaboration evidence"' \
+		'datetime: 2026-08-13T11:00:00-04:00 # America/New_York (EDT)' \
+		'tags: [collaboration, evidence]' \
+		'---' \
+		'' \
+		'# Evidence ledger' \
+		'' \
+		"$body" >"$destination"
+}
+
+write_record "$gist_dir/$filename" 'Already public.'
+git -C "$gist_dir" add -- "$filename"
+git -C "$gist_dir" commit --quiet -m 'Initial public ledger'
+git -C "$gist_dir" push --quiet --set-upstream origin yolo
+write_record "$source_file" 'Candidate references `$HOME/Code/example`.'
+
+out='' err='' rc=0
+run_publish() {
+	local confirmation="${1-}"
+	printf '%s\n' "$confirmation" | env \
+		GIT_TERMINAL_PROMPT=0 \
+		COLLAB_LEDGER_SOURCE="$source_file" \
+		COLLAB_LEDGER_GIST_DIR="$gist_dir" \
+		COLLAB_LEDGER_GIT_BRANCH=yolo \
+		"$cli" publish
+}
+
+sha256_file() {
+	if command -v sha256sum >/dev/null 2>&1; then
+		sha256sum "$1" | awk '{print $1}'
+	else
+		shasum -a 256 "$1" | awk '{print $1}'
+	fi
+}
+
+fails=0
+tests=0
+expect_eq() {
+	local label="$1" expected="$2" actual="$3"
+	((tests++))
+	if [[ "$expected" == "$actual" ]]; then return 0; fi
+	printf 'FAIL %s\nexpected: %q\nactual:   %q\n' "$label" "$expected" "$actual" >&2
+	((fails++))
+}
+expect_contains() {
+	local label="$1" needle="$2" haystack="$3"
+	((tests++))
+	if [[ "$haystack" == *"$needle"* ]]; then return 0; fi
+	printf 'FAIL %s\nmissing: %q\nfrom:    %q\n' "$label" "$needle" "$haystack" >&2
+	((fails++))
+}
+
+public_before="$(sha256_file "$gist_dir/$filename")"
+source_digest="$(sha256_file "$source_file")"
+
+capture run_publish wrong-digest
+expect_eq 'wrong confirmation rejects publication' 1 "$rc"
+expect_contains 'review includes removed public line' '-Already public.' "$out"
+expect_contains 'review includes added candidate line' '+Candidate references `$HOME/Code/example`.' "$out"
+expect_contains 'review prints exact candidate digest' "$source_digest" "$out$err"
+expect_contains 'mismatch diagnostic refuses publication' 'confirmation did not match' "$err"
+expect_eq 'failed confirmation leaves public bytes untouched' "$public_before" "$(sha256_file "$gist_dir/$filename")"
+expect_eq 'failed confirmation creates no commit' 1 "$(git -C "$gist_dir" rev-list --count HEAD)"
+
+for forbidden in '/home/pmarreck/Code/private' '/Users/pmarreck/Code/private'; do
+	write_record "$source_file" "Private path: \`$forbidden\`."
+	capture run_publish "$source_digest"
+	expect_eq "publish rejects $forbidden" 1 "$rc"
+	expect_contains "diagnostic identifies absolute home path for $forbidden" 'absolute home path' "$err"
+	expect_eq "rejected $forbidden leaves public bytes untouched" "$public_before" "$(sha256_file "$gist_dir/$filename")"
+done
+
+write_record "$source_file" 'Candidate references `$HOME/Code/example`.'
+source_digest="$(sha256_file "$source_file")"
+printf 'unrelated\n' >"$gist_dir/should-never-publish.txt"
+capture run_publish "$source_digest"
+expect_eq 'publish rejects a worktree containing an extra path' 1 "$rc"
+expect_contains 'extra-path diagnostic identifies allowed-file gate' 'only the ledger file may exist' "$err"
+mv "$gist_dir/should-never-publish.txt" "$scratch/rejected-extra.txt"
+
+capture run_publish "$source_digest"
+expect_eq 'exact digest publishes' 0 "$rc"
+expect_eq 'successful publication stderr is clean except for prompt' true \
+	"$(if [[ "$err" == *'Type the full SHA-256 to publish:'* ]] && [[ "$err" != *'Error:'* ]]; then printf true; else printf false; fi)"
+expect_eq 'published bytes equal reviewed source' "$source_digest" "$(sha256_file "$gist_dir/$filename")"
+expect_eq 'remote received the reviewed commit' 0 "$(git -C "$gist_dir" rev-list --count origin/yolo..HEAD)"
+expect_eq 'only the ledger is tracked' "$filename" "$(git -C "$gist_dir" ls-files)"
+
+write_record "$source_file" 'Retry candidate references `$HOME/Code/retry`.'
+source_digest="$(sha256_file "$source_file")"
+hook="$gist_dir/.git/hooks/pre-push"
+printf '#!/usr/bin/env bash\nexit 23\n' >"$hook"
+chmod +x "$hook"
+capture run_publish "$source_digest"
+expect_eq 'push failure is reported' 1 "$rc"
+expect_contains 'push failure preserves a retryable commit' 'preserved for a safe retry' "$err"
+expect_eq 'reviewed commit remains one ahead after push failure' 1 "$(git -C "$gist_dir" rev-list --count origin/yolo..HEAD)"
+mv "$hook" "$scratch/disabled-pre-push"
+
+capture run_publish "$source_digest"
+expect_eq 'retry pushes the existing reviewed commit' 0 "$rc"
+expect_eq 'retry does not create a duplicate commit' 0 "$(git -C "$gist_dir" rev-list --count origin/yolo..HEAD)"
+remote_digest="$(git --git-dir="$remote_dir" show "yolo:$filename" | sha256_file /dev/stdin)"
+expect_eq 'retry publishes reviewed bytes remotely' "$source_digest" "$remote_digest"
+
+capture "$cli" --about
+expect_eq '--about succeeds' 0 "$rc"
+expect_eq '--about is one line' 1 "$(printf '%s\n' "$out" | wc -l | tr -d ' ')"
+expect_contains '--about names the command' 'collaboration-ledger ' "$out"
+
+capture "$cli" --help
+expect_eq '--help succeeds' 0 "$rc"
+expect_contains '--help documents publish' 'publish' "$out"
+expect_contains '--help documents the no-background architecture' 'No watcher, timer, or daemon' "$out"
+
+if (( fails == 0 )); then
+	printf 'All %d collaboration-ledger tests passed\n' "$tests"
+fi
+exit "$fails"

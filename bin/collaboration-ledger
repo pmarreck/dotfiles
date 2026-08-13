@@ -1,0 +1,268 @@
+#!/usr/bin/env bash
+
+# Review and publish one exact collaboration-evidence ledger revision.
+# Nothing runs in the background; every public change begins here.
+set -u
+
+version='0.2.0'
+ledger_filename='Evidence of agent-human collaboration superior to either alone.frontmatter.md'
+source_file="${COLLAB_LEDGER_SOURCE:-$HOME/MEMORIES/$ledger_filename}"
+gist_dir="${COLLAB_LEDGER_GIST_DIR:-$HOME/Code/global_pmarreck_llm_memories}"
+git_branch="${COLLAB_LEDGER_GIT_BRANCH:-yolo}"
+published_file="$gist_dir/$ledger_filename"
+snapshot_file=''
+
+cleanup_snapshot() {
+	if [[ -n "$snapshot_file" && -f "$snapshot_file" ]]; then
+		rm -f "$snapshot_file"
+	fi
+}
+trap cleanup_snapshot EXIT
+
+_help() {
+	cat <<'EOF'
+Usage: collaboration-ledger publish
+
+Validate the current collaboration ledger, fetch its public gist, display the
+complete public-to-current diff and SHA-256, require that exact digest as typed
+confirmation, then commit and push the reviewed bytes.
+
+No watcher, timer, or daemon is installed or required.
+
+Commands:
+  publish       Review, confirm, commit, and push the current ledger
+
+Options:
+  -h, --help    Show this help
+  -a, --about   Show version, platform, and architecture
+  --test        Run the associated test
+EOF
+}
+
+fail() {
+	printf 'Error: %s\n' "$*" >&2
+	return 1
+}
+
+sha256_file() {
+	local path="$1"
+	if command -v sha256sum >/dev/null 2>&1; then
+		sha256sum "$path" | awk '{print $1}'
+	elif command -v shasum >/dev/null 2>&1; then
+		shasum -a 256 "$path" | awk '{print $1}'
+	else
+		fail 'sha256sum or shasum is required.'
+		return 1
+	fi
+}
+
+validate_frontmatter() {
+	local path="$1"
+	awk '
+		NR == 1 { if ($0 != "---") exit 1; next }
+		$0 == "---" { closed = 1; exit }
+		/^description:[[:space:]]+/ { description = 1 }
+		/^datetime:[[:space:]]+/ { datetime = 1 }
+		/^tags:[[:space:]]+/ { tags = 1 }
+		END { if (!(closed && description && datetime && tags)) exit 1 }
+	' "$path"
+}
+
+reject_private_material() {
+	local path="$1" prefix
+	local prefixes=(
+		'/home/pmarreck'
+		'/Users/pmarreck'
+		"$HOME"
+	)
+	for prefix in "${prefixes[@]}"; do
+		[[ -n "$prefix" ]] || continue
+		if LC_ALL=C grep -Fq -- "$prefix" "$path"; then
+			fail "absolute home path is forbidden in the public ledger: $prefix"
+			return 1
+		fi
+	done
+	if LC_ALL=C grep -Eq -- '-----BEGIN ([A-Z0-9 ]+ )?PRIVATE KEY-----' "$path"; then
+		fail 'a PEM private-key block is forbidden in the public ledger.'
+		return 1
+	fi
+}
+
+validate_source() {
+	local path="$1"
+	if [[ ! -f "$path" ]]; then
+		fail "ledger file not found: $path"
+		return 1
+	fi
+	if ! validate_frontmatter "$path"; then
+		fail "invalid collaboration-ledger frontmatter: $path"
+		return 1
+	fi
+	reject_private_material "$path"
+}
+
+require_clean_single_file_clone() {
+	local tracked status
+	if ! git -C "$gist_dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+		fail "gist clone is not a Git worktree: $gist_dir"
+		return 1
+	fi
+	if [[ "$(git -C "$gist_dir" branch --show-current)" != "$git_branch" ]]; then
+		fail "gist clone must be on branch $git_branch"
+		return 1
+	fi
+	tracked="$(git -C "$gist_dir" ls-files)"
+	status="$(git -C "$gist_dir" status --porcelain --untracked-files=all)"
+	if [[ "$tracked" != "$ledger_filename" || -n "$status" ]]; then
+		fail 'only the ledger file may exist in a clean public gist worktree.'
+		return 1
+	fi
+}
+
+fetch_public_branch() {
+	if ! git -C "$gist_dir" fetch --quiet origin "$git_branch"; then
+		fail 'could not fetch the public gist.'
+		return 1
+	fi
+	if git -C "$gist_dir" merge-base --is-ancestor HEAD "origin/$git_branch"; then
+		git -C "$gist_dir" merge --quiet --ff-only "origin/$git_branch" || return 1
+	elif ! git -C "$gist_dir" merge-base --is-ancestor "origin/$git_branch" HEAD; then
+		fail 'local gist history has diverged from its public branch.'
+		return 1
+	fi
+}
+
+review_and_confirm() {
+	local digest="$1" reviewed_file="$2" status confirmation
+	git -C "$gist_dir" diff --no-index -- \
+		<(git -C "$gist_dir" show "origin/$git_branch:$ledger_filename") \
+		"$reviewed_file"
+	status=$?
+	if (( status > 1 )); then return "$status"; fi
+	printf '\nCandidate SHA-256: %s\n' "$digest"
+	printf 'Type the full SHA-256 to publish: ' >&2
+	if ! IFS= read -r confirmation; then
+		printf '\n' >&2
+		fail 'confirmation input ended before a digest was supplied.'
+		return 1
+	fi
+	if [[ "$confirmation" != "$digest" ]]; then
+		fail 'confirmation did not match; nothing was committed or pushed.'
+		return 1
+	fi
+}
+
+verify_retry_commit() {
+	local digest="$1" ahead changed published_digest
+	ahead="$(git -C "$gist_dir" rev-list --count "origin/$git_branch..HEAD")" || return 1
+	if (( ahead != 1 )); then
+		fail "reviewed retry requires exactly one local commit ahead; found: $ahead"
+		return 1
+	fi
+	changed="$(git -C "$gist_dir" diff --name-only "origin/$git_branch..HEAD")"
+	if [[ "$changed" != "$ledger_filename" ]]; then
+		fail 'the unpushed commit changes a path other than the reviewed ledger.'
+		return 1
+	fi
+	published_digest="$(sha256_file "$published_file")" || return 1
+	if [[ "$published_digest" != "$digest" ]]; then
+		fail 'the unpushed commit does not contain the reviewed ledger bytes.'
+		return 1
+	fi
+}
+
+push_reviewed_head() {
+	local digest="$1"
+	if ! git -C "$gist_dir" push --quiet origin "HEAD:$git_branch"; then
+		fail 'push failed; the reviewed local commit is preserved for a safe retry.'
+		return 1
+	fi
+	printf 'Published collaboration ledger SHA-256: %s\n' "$digest"
+}
+
+install_reviewed_source() {
+	local digest="$1" reviewed_file="$2" temporary staged_paths
+	temporary="$(mktemp "$gist_dir/.reviewed-ledger.XXXXXX")" || return 1
+	if ! cp "$reviewed_file" "$temporary"; then
+		fail "could not copy reviewed ledger: $temporary"
+		return 1
+	fi
+	chmod 0644 "$temporary" 2>/dev/null || true
+	if ! mv "$temporary" "$published_file"; then
+		fail "could not install reviewed ledger: $published_file"
+		return 1
+	fi
+	if [[ "$(sha256_file "$published_file")" != "$digest" ]]; then
+		fail 'worktree copy differs from the reviewed source.'
+		return 1
+	fi
+	git -C "$gist_dir" add -- "$ledger_filename" || return 1
+	staged_paths="$(git -C "$gist_dir" diff --cached --name-only)"
+	if [[ "$staged_paths" != "$ledger_filename" ]]; then
+		fail 'the publication index contains a path other than the reviewed ledger.'
+		return 1
+	fi
+	git -C "$gist_dir" commit --quiet \
+		-m "Publish collaboration evidence ${digest:0:12}" -- "$ledger_filename"
+}
+
+publish_ledger() {
+	local digest ahead public_digest
+	if [[ ! -f "$source_file" ]]; then
+		fail "ledger file not found: $source_file"
+		return 1
+	fi
+	snapshot_file="$(mktemp "${TMPDIR:-/tmp}/collaboration-ledger-review.XXXXXX")" || return 1
+	cp "$source_file" "$snapshot_file" || return 1
+	chmod 0600 "$snapshot_file" 2>/dev/null || true
+	validate_source "$snapshot_file" || return 1
+	require_clean_single_file_clone || return 1
+	fetch_public_branch || return 1
+	digest="$(sha256_file "$snapshot_file")" || return 1
+	review_and_confirm "$digest" "$snapshot_file" || return 1
+	if [[ "$(sha256_file "$source_file")" != "$digest" ]]; then
+		fail 'the canonical ledger changed during review; rerun to review its new bytes.'
+		return 1
+	fi
+
+	ahead="$(git -C "$gist_dir" rev-list --count "origin/$git_branch..HEAD")" || return 1
+	if (( ahead > 0 )); then
+		verify_retry_commit "$digest" || return 1
+		push_reviewed_head "$digest"
+		return $?
+	fi
+
+	public_digest="$(git -C "$gist_dir" show "origin/$git_branch:$ledger_filename" | sha256_file /dev/stdin)" || return 1
+	if [[ "$public_digest" == "$digest" ]]; then
+		printf 'The public gist already contains SHA-256: %s\n' "$digest"
+		return 0
+	fi
+	install_reviewed_source "$digest" "$snapshot_file" || return 1
+	push_reviewed_head "$digest"
+}
+
+case "${1:-}" in
+	-h | --help)
+		_help
+		;;
+	-a | --about)
+		printf 'collaboration-ledger %s — deliberate public gist publishing on %s/%s\n' \
+			"$version" "$(uname -s)" "$(uname -m)"
+		;;
+	--test)
+		test_file="$(dirname "${BASH_SOURCE[0]}")/test/collaboration-ledger_test"
+		"$test_file" >/dev/null
+		;;
+	publish)
+		publish_ledger
+		;;
+	'')
+		_help >&2
+		exit 2
+		;;
+	*)
+		fail "unknown command: $1"
+		_help >&2
+		exit 2
+		;;
+esac
