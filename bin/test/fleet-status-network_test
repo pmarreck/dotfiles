@@ -11,13 +11,16 @@ trap 'rm -rf "$scratch"' EXIT
 scan_root="$scratch/fleet root"
 state="$scratch/state"
 provider_log="$scratch/provider.log"
-mkdir -p "$scan_root/forked/.mechatron-prime" "$scan_root/unavailable" "$scan_root/legacy-npm" "$scan_root/malformed-compare"
+mkdir -p "$scan_root/forked/.mechatron-prime" "$scan_root/unavailable" \
+	"$scan_root/legacy-npm" "$scan_root/malformed-compare" "$scan_root/quiet-fork"
 
 init_repo() {
 	local repo="$1"
 	git -C "$repo" init -q -b main || exit 1
 	printf 'initial\n' >"$repo/tracked"
 	git -C "$repo" add tracked
+	GIT_AUTHOR_DATE='2026-06-01T12:00:00Z' \
+	GIT_COMMITTER_DATE='2026-06-01T12:00:00Z' \
 	git -C "$repo" -c user.name=FleetTest -c user.email=fleet@example.invalid \
 		commit -q -m initial || exit 1
 }
@@ -26,9 +29,11 @@ init_repo "$scan_root/forked"
 init_repo "$scan_root/unavailable"
 init_repo "$scan_root/legacy-npm"
 init_repo "$scan_root/malformed-compare"
+init_repo "$scan_root/quiet-fork"
 git -C "$scan_root/forked" remote add origin git@github.com:pmarreck/forked.git
 git -C "$scan_root/unavailable" remote add origin https://github.com/pmarreck/unavailable.git
 git -C "$scan_root/malformed-compare" remote add origin https://github.com/other/malformed-compare.git
+git -C "$scan_root/quiet-fork" remote add origin https://github.com/pmarreck/quiet-fork.git
 printf 'packages.default\nchecks.test\n' >"$scan_root/forked/.mechatron-prime/targets"
 printf '{invalid lock\n' >"$scan_root/unavailable/flake.lock"
 cat >"$scan_root/forked/flake.lock" <<'EOF'
@@ -206,8 +211,14 @@ case "$*" in
 	"repo view pmarreck/forked --json nameWithOwner,parent,defaultBranchRef,isFork")
 		printf '%s\n' '{"nameWithOwner":"pmarreck/forked","isFork":true,"defaultBranchRef":{"name":"main"},"parent":{"name":"core","owner":{"login":"upstream"}}}'
 		;;
-	"repo view upstream/core --json nameWithOwner,defaultBranchRef")
-		printf '%s\n' '{"nameWithOwner":"upstream/core","defaultBranchRef":{"name":"main"}}'
+	"repo view upstream/core --json nameWithOwner,defaultBranchRef,pushedAt")
+		printf '%s\n' '{"nameWithOwner":"upstream/core","defaultBranchRef":{"name":"main"},"pushedAt":"2026-07-27T12:00:00Z"}'
+		;;
+	"repo view pmarreck/quiet-fork --json nameWithOwner,parent,defaultBranchRef,isFork")
+		printf '%s\n' '{"nameWithOwner":"pmarreck/quiet-fork","isFork":true,"defaultBranchRef":{"name":"main"},"parent":{"name":"quiet-core","owner":{"login":"upstream"}}}'
+		;;
+	"repo view upstream/quiet-core --json nameWithOwner,defaultBranchRef,pushedAt")
+		printf '{"nameWithOwner":"upstream/quiet-core","defaultBranchRef":{"name":"main"},"pushedAt":"%s"}\n' "$FLEET_STATUS_QUIET_PARENT_PUSHED_AT"
 		;;
 	"repo view pmarreck/unavailable --json nameWithOwner,parent,defaultBranchRef,isFork")
 		printf '%s\n' '{}'
@@ -219,7 +230,10 @@ case "$*" in
 		printf '%s\n' '{}'
 		;;
 	"api repos/upstream/core/compare/main...pmarreck:main")
-		printf '%s\n' '{"ahead_by":2,"behind_by":5,"status":"diverged"}'
+		printf '%s\n' '{"ahead_by":2,"behind_by":5,"status":"diverged","merge_base_commit":{"commit":{"committer":{"date":"2026-04-01T12:00:00Z"}}}}'
+		;;
+	"api repos/upstream/quiet-core/compare/main...pmarreck:main")
+		printf '%s\n' '{"ahead_by":0,"behind_by":0,"status":"identical"}'
 		;;
 	"api repos/NixOS/nixpkgs/commits/nixos-unstable")
 		printf '%s\n' '{"sha":"2222222222222222222222222222222222222222","commit":{"author":{"date":"2026-07-27T12:00:00Z"}}}'
@@ -322,6 +336,9 @@ fake_xargs="$scratch/xargs"
 printf '#!%s\n' "$BASH" >"$fake_xargs"
 cat >>"$fake_xargs" <<'EOF'
 printf 'xargs %s\n' "$*" >>"$FLEET_STATUS_PROVIDER_LOG"
+if [[ "${FLEET_STATUS_TEST_DROP_WORKER_OUTPUT:-}" == "1" ]]; then
+	exit 0
+fi
 exec "$FLEET_STATUS_REAL_XARGS" "$@"
 EOF
 chmod +x "$fake_xargs"
@@ -343,7 +360,8 @@ run_fleet() {
 	FLEET_STATUS_REAL_XARGS="$(command -v xargs)" \
 	FLEET_STATUS_TIMEOUT="$fake_timeout" \
 	FLEET_STATUS_PROVIDER_TIMEOUT_SECONDS=30 \
-	FLEET_STATUS_NOW_EPOCH=1785240000 \
+	FLEET_STATUS_NOW_EPOCH="${FLEET_STATUS_TEST_NOW_EPOCH:-1785240000}" \
+	FLEET_STATUS_QUIET_PARENT_PUSHED_AT="${FLEET_STATUS_TEST_QUIET_PARENT_PUSHED_AT:-2026-06-01T12:00:00Z}" \
 	FLEET_STATUS_PROVIDER_LOG="$provider_log" \
 		"$fleet" --all --jobs 2 --cache-ttl-hours 24 --root "$scan_root" \
 			--state-dir "$state" --format json "$@"
@@ -378,6 +396,9 @@ expect_eq "every external provider call is bounded by a timeout" \
 expect_eq "fork divergence preserves both directions" \
 	'{"ahead":2,"behind":5,"parent":"upstream/core","relation":"diverged","status":"known"}' \
 	"$(jq -cS '.repos[] | select(.name == "forked") | .fork_drift | {status,parent,ahead,behind,relation}' "$first" 2>/dev/null)"
+expect_eq "fork cache records upstream activity and independent observation times" \
+	'{"checked":1785240000,"common_at":"2026-04-01T12:00:00Z","common_epoch":1775044800,"probed":1785240000,"pushed_at":"2026-07-27T12:00:00Z"}' \
+	"$(jq -cS '.repos[] | select(.name == "forked") | {checked:.network_checked_at_epoch,probed:.upstream_probed_at_epoch,pushed_at:.fork_drift.parent_pushed_at,common_at:.fork_drift.last_common_commit_at,common_epoch:.fork_drift.last_common_commit_epoch}' "$first" 2>/dev/null)"
 expect_eq "flake drift retains commit and day staleness separately" \
 	'{"commits_stale":7,"days_stale":368,"head_sha":"2222222222222222222222222222222222222222","kind":"flake","name":"nixpkgs","status":"stale"}' \
 	"$(jq -cS '.repos[] | select(.name == "forked") | .pin_drift[] | select(.kind == "flake" and .name == "nixpkgs") | {kind,name,status,head_sha,commits_stale,days_stale}' "$first" 2>/dev/null)"
@@ -431,6 +452,52 @@ expect_eq "warm cache makes no additional provider calls" "$call_count" \
 expect_eq "cache preserves the complete enrichment payload" \
 	"$(jq -cS '[.repos[] | {name,fork_drift,pin_drift,mechatron}]' "$first")" \
 	"$(jq -cS '[.repos[] | {name,fork_drift,pin_drift,mechatron}]' "$second")"
+
+failed_refresh="$scratch/failed-refresh.json"
+FLEET_STATUS_TEST_NOW_EPOCH=$((1785240000 + 86400)) \
+FLEET_STATUS_TEST_DROP_WORKER_OUTPUT=1 \
+	run_fleet --no-save >"$failed_refresh" 2>"$scratch/failed-refresh.err"
+expect_eq "failed scheduled refresh carries the last complete observation" \
+	"$(jq -cS '.repos[] | select(.name == "forked") | {network_checked_at_epoch,fork_drift,pin_drift,mechatron}' "$first")" \
+	"$(jq -cS '.repos[] | select(.name == "forked") | {network_checked_at_epoch,fork_drift,pin_drift,mechatron}' "$failed_refresh")"
+expect_eq "failed scheduled refresh stderr is clean" "" \
+	"$(cat "$scratch/failed-refresh.err")"
+
+day_later="$scratch/day-later.json"
+before_quiet_daily_probe="$(rg -c '^gh repo view upstream/quiet-core ' "$provider_log" 2>/dev/null)"
+FLEET_STATUS_TEST_NOW_EPOCH=$((1785240000 + 86400)) \
+	run_fleet --no-save >"$day_later" 2>"$scratch/day-later.err"
+expect_eq "hot fork receives a full daily refresh" "1785326400" \
+	"$(jq -r '.repos[] | select(.name == "forked") | .network_checked_at_epoch' "$day_later")"
+expect_eq "quiet fork carries its full observation forward on the daily run" "1785240000" \
+	"$(jq -r '.repos[] | select(.name == "quiet-fork") | .network_checked_at_epoch' "$day_later")"
+expect_eq "quiet fork performs no premature daily upstream probe" "$before_quiet_daily_probe" \
+	"$(rg -c '^gh repo view upstream/quiet-core ' "$provider_log" 2>/dev/null)"
+expect_eq "adaptive daily refresh stderr is clean" "" "$(cat "$scratch/day-later.err")"
+
+week_later="$scratch/week-later.json"
+FLEET_STATUS_TEST_NOW_EPOCH=$((1785240000 + 604800)) \
+	run_fleet --no-save >"$week_later" 2>"$scratch/week-later.err"
+expect_eq "quiet fork gets one lightweight weekly parent probe" "$((before_quiet_daily_probe + 1))" \
+	"$(rg -c '^gh repo view upstream/quiet-core ' "$provider_log" 2>/dev/null)"
+expect_eq "unchanged weekly probe carries the full metadata observation forward" \
+	'{"checked":1785240000,"probed":1785844800}' \
+	"$(jq -cS '.repos[] | select(.name == "quiet-fork") | {checked:.network_checked_at_epoch,probed:.upstream_probed_at_epoch}' "$week_later")"
+expect_eq "weekly quiet-fork probe does not repeat fork classification" "1" \
+	"$(rg -c '^gh repo view pmarreck/quiet-fork ' "$provider_log" 2>/dev/null)"
+expect_eq "weekly adaptive refresh stderr is clean" "" "$(cat "$scratch/week-later.err")"
+
+changed_parent="$scratch/changed-parent.json"
+FLEET_STATUS_TEST_NOW_EPOCH=$((1785240000 + 604800)) \
+FLEET_STATUS_TEST_QUIET_PARENT_PUSHED_AT='2026-08-04T12:00:00Z' \
+	run_fleet --no-save >"$changed_parent" 2>"$scratch/changed-parent.err"
+expect_eq "changed upstream escalates a lightweight probe into a full refresh" \
+	'{"checked":1785844800,"probed":1785844800,"pushed_at":"2026-08-04T12:00:00Z"}' \
+	"$(jq -cS '.repos[] | select(.name == "quiet-fork") | {checked:.network_checked_at_epoch,probed:.upstream_probed_at_epoch,pushed_at:.fork_drift.parent_pushed_at}' "$changed_parent")"
+expect_eq "changed-upstream refresh repeats fork classification exactly once" "2" \
+	"$(rg -c '^gh repo view pmarreck/quiet-fork ' "$provider_log" 2>/dev/null)"
+expect_eq "changed-upstream adaptive refresh stderr is clean" "" \
+	"$(cat "$scratch/changed-parent.err")"
 
 printf '\n' >>"$scan_root/forked/flake.lock"
 before_local_change="$(wc -l <"$provider_log" | tr -d ' ')"

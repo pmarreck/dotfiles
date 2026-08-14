@@ -59,6 +59,24 @@ expect(
 )
 
 expect(
+	"partially measured linked worktrees are never reported as clean",
+	"1 unknown (partial-worktrees)",
+	fleet.render_one_line({
+		repos = {
+			{
+				name = "partial-worktrees",
+				dirty = { status = "known", staged = 0, modified = 0, untracked = 0 },
+				orphaned_commits = {}, orphaned_status = "known",
+				branches = {}, branches_status = "known",
+				remote_status = "known", stash_status = "known",
+				worktrees_status = "partial",
+				inbox = { status = "known", count = 0 },
+			},
+		},
+	}, nil, { full = true })
+)
+
+expect(
 	"JSON encoding is canonical and diff-stable",
 	'{"a":[true,false],"m":"x","z":1}',
 	fleet.encode_json({ z = 1, a = { true, false }, m = "x" })
@@ -82,6 +100,7 @@ expect(
 
 local null_markdown = fleet.render_markdown({
 	collected_at = "2026-07-28T12:00:00Z",
+	collected_at_epoch = 1785240000,
 	roots = { "/fleet" },
 	repos = {
 		{

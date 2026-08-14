@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+
+# Pure adaptive-network scheduling contract with an injected clock.
+
+set -u
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+scratch="$(mktemp -d "${TMPDIR:-/tmp}/fleet-status-scheduler.XXXXXX")" || exit 1
+trap 'rm -rf "$scratch"' EXIT
+
+actual="$(PACKAGE_PATH="$repo_root/lib/?.lua;$repo_root/lib/?/init.lua;;" luajit -e '
+	package.path = assert(os.getenv("PACKAGE_PATH"))
+	local scheduler = require("fleet_status.scheduler")
+	local day, week = 86400, 604800
+	local now = 1785240000 -- 2026-07-28T12:00:00Z
+	local quiet_repo = { last_commit_epoch = now - week - 1, branches = {} }
+	local active_repo = { last_commit_epoch = now - week, branches = {} }
+	local active_branch_repo = {
+		last_commit_epoch = now - week - 1,
+		branches = { { last_commit_epoch = now - 60 } },
+	}
+	local function cache(fields)
+		local value = {
+			cached_at_epoch = now - day,
+			upstream_probed_at_epoch = now - day,
+			network_fingerprint = "same",
+			fork_drift = { status = "not_fork" },
+		}
+		for key, item in pairs(fields or {}) do value[key] = item end
+		return value
+	end
+	local cases = {
+		{ "missing", quiet_repo, nil, "same" },
+		{ "input-changed", quiet_repo, cache(), "changed" },
+		{ "local-boundary", active_repo, cache(), "same" },
+		{ "active-branch", active_branch_repo, cache(), "same" },
+		{ "hot-not-due", active_repo, cache({ cached_at_epoch = now - day + 1 }), "same" },
+		{ "upstream-boundary", quiet_repo, cache({
+			fork_drift = {
+				status = "known",
+				parent = "upstream/core",
+				parent_pushed_at = "2026-07-21T12:00:00Z",
+			},
+		}), "same" },
+		{ "quiet-fork-not-due", quiet_repo, cache({
+			cached_at_epoch = now - week,
+			upstream_probed_at_epoch = now - week + 1,
+			fork_drift = {
+				status = "known",
+				parent = "upstream/core",
+				parent_pushed_at = "2026-06-01T12:00:00Z",
+			},
+		}), "same" },
+		{ "quiet-fork-weekly", quiet_repo, cache({
+			cached_at_epoch = now - week,
+			upstream_probed_at_epoch = now - week,
+			fork_drift = {
+				status = "known",
+				parent = "upstream/core",
+				parent_pushed_at = "2026-06-01T12:00:00Z",
+			},
+		}), "same" },
+		{ "quiet-nonfork", quiet_repo, cache({ cached_at_epoch = now - (4 * week) }), "same" },
+		{ "unknown-weekly-retry", quiet_repo, cache({
+			cached_at_epoch = now - week,
+			upstream_probed_at_epoch = now - week,
+			fork_drift = { status = "unknown" },
+		}), "same" },
+		{ "future-cache", quiet_repo, cache({ cached_at_epoch = now + 1 }), "same" },
+	}
+	for _, case in ipairs(cases) do
+		local action, reason, cadence = scheduler.network_action(
+			now, case[2], case[3], case[4]
+		)
+		io.write(case[1], "=", action, ":", reason, ":", tostring(cadence), "\n")
+	end
+' 2>"$scratch/err")"
+status=$?
+
+expected=$'missing=full:missing-cache:0\ninput-changed=full:local-input-changed:0\nlocal-boundary=full:daily-local-activity:86400\nactive-branch=full:daily-local-activity:86400\nhot-not-due=carry:hot-cache-current:86400\nupstream-boundary=full:daily-upstream-activity:86400\nquiet-fork-not-due=carry:quiet-probe-current:604800\nquiet-fork-weekly=probe:weekly-upstream-probe:604800\nquiet-nonfork=carry:quiet-nonfork:604800\nunknown-weekly-retry=full:weekly-classification-retry:604800\nfuture-cache=full:clock-skew:0'
+
+if (( status != 0 )); then
+	printf 'FAIL scheduler classifier exited %s\n%s\n' "$status" "$(cat "$scratch/err")" >&2
+	exit 1
+fi
+if [[ -s "$scratch/err" ]]; then
+	printf 'FAIL scheduler classifier stderr was not clean\n%s\n' "$(cat "$scratch/err")" >&2
+	exit 1
+fi
+if [[ "$actual" != "$expected" ]]; then
+	printf 'FAIL adaptive scheduler classifier set\nexpected:\n%s\nactual:\n%s\n' \
+		"$expected" "$actual" >&2
+	exit 1
+fi
+
+printf 'All 11 fleet-status scheduler classifier cases passed\n'

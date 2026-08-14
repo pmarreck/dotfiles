@@ -32,7 +32,9 @@ local function risk_values(repo)
 			or repo.orphaned_status == "unknown"
 			or repo.branches_status == "unknown"
 			or repo.remote_status == "unknown"
-			or repo.stash_status == "unknown") and 1 or 0,
+			or repo.stash_status == "unknown"
+			or (repo.worktrees_status and repo.worktrees_status ~= "known")
+			or (repo.inbox and repo.inbox.status ~= "known")) and 1 or 0,
 		unpushed = ahead,
 		orphaned = #(repo.orphaned_commits or {}),
 		no_remote = repo.no_remote == true and 1 or 0,
@@ -358,17 +360,36 @@ end
 
 --- Render a terminal-readable daily report from a snapshot, separating urgent
 --- action from cosmetic detached/sync context so clean repositories stay quiet.
-function M.render_markdown(snapshot, previous)
+function M.render_markdown(snapshot, previous, options)
+	options = options or {}
 	local lines = {
 		"# Fleet status",
 		"",
 		"Collected: " .. tostring(snapshot.collected_at or "unknown"),
 		"Roots: " .. markdown_escape(table.concat(snapshot.roots or {}, ", ")),
-		"",
-		"## Action summary",
-		"",
-		M.render_one_line(snapshot, nil, { full = true }),
 	}
+	local attention_entries = options.classify_attention
+		and options.classify_attention(snapshot, options.attention_thresholds) or {}
+	lines[#lines + 1] = ""
+	lines[#lines + 1] = "## Repos Requiring Special Attention"
+	lines[#lines + 1] = ""
+	if #attention_entries == 0 then
+		lines[#lines + 1] = "No repositories require special attention."
+	else
+		lines[#lines + 1] = "| Repository | Measured reason |"
+		lines[#lines + 1] = "|---|---|"
+		for _, entry in ipairs(attention_entries) do
+			lines[#lines + 1] = string.format(
+				"| %s | %s |",
+				markdown_escape(entry.name),
+				markdown_escape(table.concat(entry.reasons, "; "))
+			)
+		end
+	end
+	lines[#lines + 1] = ""
+	lines[#lines + 1] = "## Action summary"
+	lines[#lines + 1] = ""
+	lines[#lines + 1] = M.render_one_line(snapshot, nil, { full = true })
 	if previous then
 		lines[#lines + 1] = ""
 		lines[#lines + 1] = "## Changes since previous run"

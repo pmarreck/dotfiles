@@ -63,6 +63,23 @@ local function new(runtime)
 		return runtime.write_atomic(path, contents)
 	end
 
+	--- Decide whether a visible report warrants a refresh without host I/O.
+	function M.publication_due(now_epoch, atime_epoch, mtime_epoch, weekly_seconds)
+		local week = weekly_seconds or (7 * 24 * 60 * 60)
+		now_epoch = tonumber(now_epoch)
+		atime_epoch = tonumber(atime_epoch)
+		mtime_epoch = tonumber(mtime_epoch)
+		if not atime_epoch or not mtime_epoch then return true, "missing" end
+		if not now_epoch or now_epoch < mtime_epoch then return true, "clock-skew" end
+		if atime_epoch > mtime_epoch then return true, "viewed" end
+		if now_epoch - mtime_epoch >= week then return true, "weekly" end
+		return false, "unread"
+	end
+
+	function M.file_times(path)
+		return runtime.file_times(path)
+	end
+
 	--- Rotate current into previous and publish the new complete snapshot.
 	function M.persist_snapshot(state_dir, snapshot)
 		local current_path = state_dir .. "/current.json"

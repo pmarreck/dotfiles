@@ -41,7 +41,7 @@ local function new(runtime, state, network_cache_version)
 				and record.network_cache_version == network_cache_version
 				and record.command == command
 				and tonumber(record.cached_at_epoch)
-				and cache.now_epoch - tonumber(record.cached_at_epoch) <= record_ttl then
+				and cache.now_epoch - tonumber(record.cached_at_epoch) < record_ttl then
 				return record.response
 			end
 		end

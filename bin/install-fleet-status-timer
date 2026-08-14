@@ -78,4 +78,4 @@ install_unit_link fleet-status.timer || exit 1
 "$systemctl_command" --user enable --now fleet-status.timer || exit 1
 
 printf 'Enabled nightly fleet-status.timer; report: %s\n' \
-	"${XDG_STATE_HOME:-$HOME/.local/state}/fleet-status/report.md"
+	"$HOME/Documents/Fleet Status.md"

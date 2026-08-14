@@ -1,0 +1,74 @@
+#!/usr/bin/env luajit
+
+-- Pure special-attention classifier over complete boundary sets.
+
+local script = arg[0]
+local repo_root = script:match("^(.*)/bin/test/[^/]+$") or "."
+package.path = repo_root .. "/lib/?.lua;" .. package.path
+
+local attention = require("fleet_status.attention")
+local day = 86400
+local now = 1785240000
+local clean = {
+	dirty = { status = "known", staged = 0, modified = 0, untracked = 0 },
+	fork_drift = { status = "not_fork" },
+	worktrees = {},
+	worktrees_status = "known",
+	inbox = { status = "known", count = 0 },
+}
+
+local function repo(name, changes)
+	local value = {}
+	for key, item in pairs(clean) do value[key] = item end
+	value.name = name
+	for key, item in pairs(changes or {}) do value[key] = item end
+	return value
+end
+
+local snapshot = {
+	collected_at_epoch = now,
+	repos = {
+		repo("clean"),
+		repo("behind-49", { fork_drift = { status = "known", behind = 49 } }),
+		repo("behind-50", { fork_drift = { status = "known", behind = 50 } }),
+		repo("common-ancestor", { fork_drift = {
+			status = "known", behind = 1,
+			last_common_commit_epoch = now - 90 * day,
+		} }),
+		repo("dirty-9", { dirty = { status = "known", staged = 3, modified = 3, untracked = 3 } }),
+		repo("dirty-10", { dirty = { status = "known", staged = 3, modified = 4, untracked = 3 } }),
+		repo("worktree-seven", { worktrees = {
+			{ branch = "boundary", path = "/tmp/boundary", last_commit_epoch = now - 7 * day },
+		} }),
+		repo("worktree-eight", { worktrees = {
+			{ branch = "feature", path = "/tmp/feature", last_commit_epoch = now - 8 * day },
+		} }),
+		repo("inbox-two", { inbox = { status = "known", count = 2, oldest_age_seconds = 60 } }),
+		repo("inbox-old", { inbox = { status = "known", count = 1, oldest_age_seconds = 2 * day } }),
+	},
+}
+
+local actual = {}
+for _, entry in ipairs(attention.classify(snapshot)) do
+	actual[#actual + 1] = entry.name .. "=" .. table.concat(entry.reasons, "; ")
+end
+local expected = {
+	"behind-50=fork: 50 commits behind",
+	"common-ancestor=fork: common ancestor 90 days old",
+	"dirty-10=dirty: 10 files (3 staged, 4 modified, 3 untracked)",
+	"inbox-old=inbox: 1 message, oldest 2 days",
+	"inbox-two=inbox: 2 messages",
+	"worktree-eight=worktree: feature idle 8 days (/tmp/feature)",
+}
+
+local actual_text = table.concat(actual, "\n")
+local expected_text = table.concat(expected, "\n")
+if actual_text ~= expected_text then
+	io.stderr:write(
+		"FAIL special-attention classifier set\nexpected:\n", expected_text,
+		"\nactual:\n", actual_text, "\n"
+	)
+	os.exit(1)
+end
+
+io.write("All special-attention classifier boundaries passed\n")

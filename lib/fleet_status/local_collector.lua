@@ -7,6 +7,7 @@ local run_git = runtime.run_git
 local run_command = runtime.run_command
 local shell_quote = runtime.shell_quote
 local trim = runtime.trim
+local file_times = runtime.file_times
 
 local function collect_dirty(repo)
 	local output, ok = run_git(repo, "status --porcelain=v2 --branch --untracked-files=all")
@@ -111,6 +112,91 @@ local function collect_stash(repo)
 	return tonumber(trim(count_output)) or 0, "known"
 end
 
+local function collect_inbox(repo, now_epoch)
+	local inbox_path = repo .. "/inbox"
+	local _, exists = run_command("test -d " .. shell_quote(inbox_path))
+	if not exists then
+		return { status = "known", count = 0, oldest_epoch = cjson.null,
+			oldest_age_seconds = cjson.null }
+	end
+	local find = os.getenv("FLEET_STATUS_FIND") or "find"
+	local output, ok = run_command(
+		shell_quote(find) .. " " .. shell_quote(inbox_path)
+			.. " ! -path " .. shell_quote(inbox_path)
+			.. " -prune -type f -name '*.md' ! -name '.*' -print0"
+	)
+	if not ok then
+		return { status = "unknown", count = cjson.null,
+			oldest_epoch = cjson.null, oldest_age_seconds = cjson.null }
+	end
+	local count, oldest, status = 0, nil, "known"
+	for path in output:gmatch("([^%z]+)%z") do
+		count = count + 1
+		local _, mtime = file_times(path)
+		if mtime then
+			if not oldest or mtime < oldest then oldest = mtime end
+		else
+			status = "unknown"
+		end
+	end
+	return {
+		status = status,
+		count = count,
+		oldest_epoch = oldest or cjson.null,
+		oldest_age_seconds = oldest and math.max(0, now_epoch - oldest) or cjson.null,
+	}
+end
+
+local function collect_worktrees(repo, now_epoch)
+	local output, ok = run_git(repo, "worktree list --porcelain -z")
+	if not ok then return {}, "unknown" end
+	local all_records, current = {}, nil
+	local function finish()
+		if not current then return end
+		if current.path and current.path ~= "" then
+			all_records[#all_records + 1] = current
+		end
+		current = nil
+	end
+	for field in (output .. "\0"):gmatch("([^%z]*)%z") do
+		if field == "" then
+			finish()
+		elseif field:sub(1, 9) == "worktree " then
+			finish()
+			current = { path = field:sub(10) }
+		elseif current and field:sub(1, 5) == "HEAD " then
+			current.head_sha = field:sub(6)
+		elseif current and field:sub(1, 7) == "branch " then
+			current.branch = field:sub(8):gsub("^refs/heads/", "")
+		elseif current and field == "detached" then
+			current.detached = true
+		elseif current and field:sub(1, 9) == "prunable " then
+			current.prunable = field:sub(10)
+		end
+	end
+	finish()
+	local scanned_path = repo:gsub("/+$", "")
+	local primary_path = all_records[1]
+		and all_records[1].path:gsub("/+$", "") or nil
+	if not primary_path then return {}, "unknown" end
+	if primary_path ~= scanned_path then return {}, "known" end
+	local records = {}
+	for index = 2, #all_records do records[#records + 1] = all_records[index] end
+	local status = "known"
+	for _, worktree in ipairs(records) do
+		local epoch, found = run_git(
+			repo,
+			"show -s --format=%ct " .. shell_quote(worktree.head_sha or "")
+		)
+		local value = found and tonumber(trim(epoch)) or nil
+		worktree.last_commit_epoch = value or cjson.null
+		worktree.last_commit_age_days = value
+			and math.max(0, math.floor((now_epoch - value) / 86400)) or cjson.null
+		if not value then status = "partial" end
+	end
+	return records, status
+end
+
 --- Collect one working tree entirely through stable Git plumbing, keeping I/O
 --- outside the pure renderers and avoiding OS-specific filesystem constants.
 local function collect_repo(repo, now_epoch)
@@ -130,6 +216,7 @@ local function collect_repo(repo, now_epoch)
 	local orphaned_commits, orphaned_status =
 		collect_orphaned_commits(repo, detached, head_sha)
 	local branches, branches_status = collect_branches(repo, now_epoch)
+	local worktrees, worktrees_status = collect_worktrees(repo, now_epoch)
 
 	return {
 		name = basename(repo),
@@ -150,6 +237,9 @@ local function collect_repo(repo, now_epoch)
 		last_commit_age_days = has_epoch and age_days(now_epoch, trim(epoch_output)) or cjson.null,
 		branches = branches,
 		branches_status = branches_status,
+		worktrees = worktrees,
+		worktrees_status = worktrees_status,
+		inbox = collect_inbox(repo, now_epoch),
 	}
 end
 
@@ -208,7 +298,9 @@ function M.collect_roots(roots, options)
 			or repo.orphaned_status == "unknown"
 			or repo.branches_status == "unknown"
 			or repo.remote_status == "unknown"
-			or repo.stash_status == "unknown" then
+			or repo.stash_status == "unknown"
+			or repo.worktrees_status ~= "known"
+			or repo.inbox.status ~= "known" then
 			tier_one_health = "partial"
 			break
 		end

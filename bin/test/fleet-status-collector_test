@@ -80,6 +80,16 @@ git_in "$other" push -q origin main || exit 1
 git_in "$tracked" fetch -q origin || exit 1
 printf 'stash\n' >>"$tracked/tracked"
 git_in "$tracked" stash push -q -m fleet-test || exit 1
+mkdir -p "$tracked/inbox"
+printf 'first\n' >"$tracked/inbox/first.md"
+printf 'second\n' >"$tracked/inbox/second.md"
+touch -t 202607250000 "$tracked/inbox/first.md"
+linked_worktree="$scratch/linked worktree"
+git_in "$tracked" worktree add -q -b stale-worktree "$linked_worktree" main || exit 1
+GIT_AUTHOR_DATE='2026-06-01T12:00:00Z' \
+GIT_COMMITTER_DATE='2026-06-01T12:00:00Z' \
+git -C "$linked_worktree" -c user.name=FleetTest -c user.email=fleet@example.invalid \
+	commit -q --allow-empty -m 'stale worktree' || exit 1
 
 json="$scratch/current.json"
 stderr="$scratch/stderr"
@@ -116,8 +126,16 @@ FLEET_STATUS_GIT="$fake_git" \
 FLEET_STATUS_REAL_GIT="$(type -P git)" \
 FLEET_STATUS_DIRTY_FAILURE_REPO="$scan_root/dirty-check-fails" \
 FLEET_STATUS_ORPHAN_FAILURE_REPO="$scan_root/orphan-check-fails" \
+	FLEET_STATUS_NOW_EPOCH=1785240000 \
 	"$fleet" --tier 2 --root "$scan_root" --format json --no-save >"$json" 2>"$stderr"
 command_status=$?
+
+linked_json="$scratch/linked-current.json"
+linked_stderr="$scratch/linked-stderr"
+FLEET_STATUS_NOW_EPOCH=1785240000 \
+	"$fleet" --tier 1 --root "$linked_worktree" --format json --no-save \
+		>"$linked_json" 2>"$linked_stderr"
+linked_status=$?
 
 fails=0
 tests=0
@@ -161,11 +179,21 @@ expect_eq "classifies the complete no-remote set" \
 	'["dirty repo","no-remote","orphaned","safe-detached"]' \
 	"$(jq -c '[.repos[] | select(.no_remote) | .name] | sort' "$json" 2>/dev/null)"
 expect_eq "collects every branch, not only the current one" \
-	'[{"name":"feature","upstream":"origin/feature","ahead":1,"behind":0},{"name":"main","upstream":"origin/main","ahead":0,"behind":1}]' \
+	'[{"name":"feature","upstream":"origin/feature","ahead":1,"behind":0},{"name":"main","upstream":"origin/main","ahead":0,"behind":1},{"name":"stale-worktree","upstream":null,"ahead":0,"behind":0}]' \
 	"$(jq -c '[.repos[] | select(.name == "tracked") | .branches[] | {name, upstream, ahead, behind}] | sort_by(.name)' "$json" 2>/dev/null)"
 expect_eq "counts stashes" \
 	"1" \
 	"$(jq -r '.repos[] | select(.name == "tracked") | .stash_count' "$json" 2>/dev/null)"
+expect_eq "collects direct inbox count and oldest age from injected now" \
+	'true' \
+	"$(jq -r '.repos[] | select(.name == "tracked") | (.inbox.status == "known" and .inbox.count == 2 and .inbox.oldest_age_seconds > 86400)' "$json" 2>/dev/null)"
+expect_eq "collects linked worktree activity without treating the main tree as stale" \
+	'[{"branch":"stale-worktree","idle_days":57,"path":"linked worktree"}]' \
+	"$(jq -c '[.repos[] | select(.name == "tracked") | .worktrees[] | {branch, idle_days: .last_commit_age_days, path: (.path | split("/") | last)}]' "$json" 2>/dev/null)"
+expect_eq "linked-worktree root collection succeeds cleanly" "0|" \
+	"$linked_status|$(cat "$linked_stderr")"
+expect_eq "only the primary checkout owns the linked-worktree inventory" "0" \
+	"$(jq '.repos[0].worktrees | length' "$linked_json" 2>/dev/null)"
 expect_eq "detached records use null branch" \
 	"null" \
 	"$(jq -c '.repos[] | select(.name == "safe-detached") | .branch' "$json" 2>/dev/null)"
@@ -176,7 +204,7 @@ expect_eq "Tier 2 is independently marked partial on branch-plumbing failure" \
 	"partial" \
 	"$(jq -r '.tiers["2"]' "$json" 2>/dev/null)"
 expect_eq "classifies the exact branch set with no configured upstream" \
-	'[{"repo":"dirty repo","branch":"main"},{"repo":"no-remote","branch":"main"},{"repo":"orphan-check-fails","branch":"main"},{"repo":"orphaned","branch":"main"},{"repo":"safe-detached","branch":"main"}]' \
+	'[{"repo":"dirty repo","branch":"main"},{"repo":"no-remote","branch":"main"},{"repo":"orphan-check-fails","branch":"main"},{"repo":"orphaned","branch":"main"},{"repo":"safe-detached","branch":"main"},{"repo":"tracked","branch":"stale-worktree"}]' \
 	"$(jq -c '[.repos[] as $repo | $repo.branches[] | select(.upstream_configured == false) | {repo: $repo.name, branch: .name}] | sort_by(.repo, .branch)' "$json" 2>/dev/null)"
 expect_eq "repo and branch staleness are nonnegative integer days" \
 	"true" \

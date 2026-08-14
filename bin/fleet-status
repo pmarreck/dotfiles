@@ -26,11 +26,15 @@ Options:
   --all             Run all five tiers, using cached network providers.
   --jobs N          Bound all-tier provider concurrency (default: 4).
   --cache-ttl-hours HOURS
-                    Reuse network results for HOURS (default: 24).
+                    Reuse identical provider calls for HOURS; 0 forces refresh.
   --format FORMAT   Output one-line, markdown, or json (default: one-line).
   --full            Render full state instead of the default delta.
   --max-names N     Names shown per one-line category before +N more (default: 4).
   --state-dir DIR   Persist snapshots in DIR (default: $XDG_STATE_HOME/fleet-status).
+  --report-path PATH
+                    Publish Markdown to PATH (default: $HOME/Documents/Fleet Status.md).
+  --publish-if-viewed-or-weekly
+                    Publish visibly after a read or seven days; state still updates.
   --no-save         Do not update persisted current/previous snapshots.
   -h, --help        Show this help.
   --about           Print a one-line description.
@@ -46,9 +50,14 @@ local format = "one-line"
 local full = false
 local max_names = 4
 local no_save = false
+local publish_if_viewed_or_weekly = false
 local state_home = os.getenv("XDG_STATE_HOME")
 if not state_home or state_home == "" then state_home = home .. "/.local/state" end
 local state_dir = state_home .. "/fleet-status"
+local report_path = os.getenv("FLEET_STATUS_REPORT_PATH")
+if not report_path or report_path == "" then
+	report_path = home .. "/Documents/Fleet Status.md"
+end
 local index = 1
 while index <= #arg do
 	local value = arg[index]
@@ -112,6 +121,23 @@ while index <= #arg do
 			os.exit(2)
 		end
 		index = index + 2
+	elseif value == "--report-path" then
+		report_path = arg[index + 1]
+		if not report_path or report_path == "" then
+			io.stderr:write("Error: --report-path requires a path.\n")
+			os.exit(2)
+		end
+		index = index + 2
+	elseif value:match("^%-%-report%-path=") then
+		report_path = value:sub(#"--report-path=" + 1)
+		if report_path == "" then
+			io.stderr:write("Error: --report-path requires a path.\n")
+			os.exit(2)
+		end
+		index = index + 1
+	elseif value == "--publish-if-viewed-or-weekly" then
+		publish_if_viewed_or_weekly = true
+		index = index + 1
 	elseif value == "--no-save" then
 		no_save = true
 		index = index + 1
@@ -142,9 +168,21 @@ if format ~= "one-line" and format ~= "markdown" and format ~= "json" then
 end
 if #roots == 0 then roots[1] = home .. "/Code" end
 
+local now_epoch = tonumber(os.getenv("FLEET_STATUS_NOW_EPOCH"))
+local publish_visible = true
+if publish_if_viewed_or_weekly then
+	if no_save then
+		io.stderr:write("Error: --publish-if-viewed-or-weekly cannot be combined with --no-save.\n")
+		os.exit(2)
+	end
+	now_epoch = now_epoch or os.time()
+	local atime_epoch, mtime_epoch = fleet.file_times(report_path)
+	publish_visible = fleet.publication_due(now_epoch, atime_epoch, mtime_epoch)
+end
+
 local snapshot, err = fleet.collect_roots(roots, {
 	max_tier = tonumber(tier),
-	now_epoch = tonumber(os.getenv("FLEET_STATUS_NOW_EPOCH")),
+	now_epoch = now_epoch,
 })
 if not snapshot then
 	io.stderr:write("Error: " .. err .. "\n")
@@ -178,14 +216,23 @@ if not no_save then
 		os.exit(1)
 	end
 	previous = persisted_previous
+	local rendered_report = fleet.render_markdown(snapshot, previous) .. "\n"
 	local report_ok, report_err = fleet.write_atomic(
 		state_dir .. "/report.md",
-		fleet.render_markdown(snapshot, previous) .. "\n"
+		rendered_report
 	)
 	if not report_ok then
 		fleet.release_state_lock(lock)
 		io.stderr:write("Error: " .. report_err .. "\n")
 		os.exit(1)
+	end
+	if publish_visible and report_path ~= state_dir .. "/report.md" then
+		local visible_ok, visible_err = fleet.write_atomic(report_path, rendered_report)
+		if not visible_ok then
+			fleet.release_state_lock(lock)
+			io.stderr:write("Error: " .. visible_err .. "\n")
+			os.exit(1)
+		end
 	end
 	local released, release_err = fleet.release_state_lock(lock)
 	if not released then

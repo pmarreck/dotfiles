@@ -11,6 +11,7 @@ trap 'rm -rf "$scratch"' EXIT
 scan_root="$scratch/root with spaces"
 repo="$scan_root/solo"
 state="$scratch/state"
+visible_report="$scratch/Documents/Fleet Status.md"
 mkdir -p "$repo"
 git -C "$repo" init -q -b main
 printf 'initial\n' >"$repo/tracked"
@@ -29,18 +30,44 @@ expect_eq() {
 	((fails++))
 }
 
-first=$("$fleet" --tier 1 --root "$scan_root" --state-dir "$state" 2>"$scratch/first.err")
+policy_probe="$(luajit -e "
+	package.path = '$repo_root/lib/?.lua;' .. package.path
+	local fleet = require('fleet_status')
+	local cases = {
+		{ 'missing', 1000, nil, nil },
+		{ 'viewed', 1000, 901, 900 },
+		{ 'unread', 605699, 900, 900 },
+		{ 'weekly-boundary', 605700, 900, 900 },
+		{ 'clock-skew', 899, 900, 900 },
+	}
+	for _, case in ipairs(cases) do
+		local due, reason = fleet.publication_due(case[2], case[3], case[4])
+		io.write(case[1], '=', tostring(due), ':', reason, '\n')
+	end
+" 2>"$scratch/policy.err")"
+expect_eq "refresh policy distinguishes viewed, unread, weekly, missing, and skewed reports" \
+	$'missing=true:missing\nviewed=true:viewed\nunread=false:unread\nweekly-boundary=true:weekly\nclock-skew=true:clock-skew' \
+	"$policy_probe"
+expect_eq "refresh policy probe stderr is clean" "" "$(cat "$scratch/policy.err")"
+
+first=$("$fleet" --tier 1 --root "$scan_root" --state-dir "$state" \
+	--report-path "$visible_report" 2>"$scratch/first.err")
 expect_eq "first run emits full state" "1 no-remote (solo)" "$first"
 expect_eq "first run stderr is clean" "" "$(cat "$scratch/first.err")"
 expect_eq "first run persists current JSON" "true" \
 	"$(test -f "$state/current.json" && jq -e '.schema_version == 1' "$state/current.json" >/dev/null 2>&1 && printf true || printf false)"
 expect_eq "first run persists rendered Markdown" "true" \
 	"$(test -f "$state/report.md" && rg -q '^# Fleet status$' "$state/report.md" && printf true || printf false)"
+expect_eq "first run publishes the same report in Documents" "true" \
+	"$(test -f "$visible_report" && cmp -s "$state/report.md" "$visible_report" && printf true || printf false)"
+expect_eq "visible report publication leaves no partial temporary" "0" \
+	"$(fd --max-depth 1 --type f --glob 'Fleet Status.md.tmp.*' "$scratch/Documents" | wc -l | tr -d ' ')"
 expect_eq "first run has no synthetic previous snapshot" "false" \
 	"$(test -e "$state/previous.json" && printf true || printf false)"
 
 printf 'modified\n' >>"$repo/tracked"
-second=$("$fleet" --tier 1 --root "$scan_root" --state-dir "$state" 2>"$scratch/second.err")
+second=$("$fleet" --tier 1 --root "$scan_root" --state-dir "$state" \
+	--report-path "$visible_report" 2>"$scratch/second.err")
 expect_eq "second run emits only the new risk" "new: 1 modified (solo)" "$second"
 expect_eq "second run stderr is clean" "" "$(cat "$scratch/second.err")"
 expect_eq "previous snapshot preserves the clean run" "0" \
@@ -50,11 +77,13 @@ expect_eq "current snapshot contains the dirty run" "1" \
 expect_eq "saved Markdown includes the run's delta" "true" \
 	"$(rg -q '^new: 1 modified \(solo\)$' "$state/report.md" && printf true || printf false)"
 
-third=$("$fleet" --tier 1 --root "$scan_root" --state-dir "$state" 2>"$scratch/third.err")
+third=$("$fleet" --tier 1 --root "$scan_root" --state-dir "$state" \
+	--report-path "$visible_report" 2>"$scratch/third.err")
 expect_eq "unchanged third run is quiet and explicit" "No fleet status changes." "$third"
 expect_eq "third run stderr is clean" "" "$(cat "$scratch/third.err")"
 
-full=$("$fleet" --tier 1 --root "$scan_root" --state-dir "$state" --full 2>"$scratch/full.err")
+full=$("$fleet" --tier 1 --root "$scan_root" --state-dir "$state" \
+	--report-path "$visible_report" --full 2>"$scratch/full.err")
 expect_eq "full mode bypasses the delta" "1 no-remote (solo) · 1 modified (solo)" "$full"
 expect_eq "full mode stderr is clean" "" "$(cat "$scratch/full.err")"
 
@@ -72,6 +101,39 @@ expect_eq "Markdown format exposes the approved renderer" "true" \
 expect_eq "Markdown format stderr is clean" "" "$(cat "$scratch/markdown.err")"
 expect_eq "Markdown --no-save still leaves state unchanged" "$before_hash" \
 	"$(git hash-object "$state/current.json")"
+
+fake_stat="$scratch/stat"
+printf '#!%s\n' "$BASH" >"$fake_stat"
+printf '%s\n' 'printf "%s\n" "$FLEET_STATUS_FAKE_STAT"' >>"$fake_stat"
+chmod +x "$fake_stat"
+printf 'untracked\n' >"$repo/new-file"
+before_conditional_hash="$(git hash-object "$state/current.json")"
+before_visible_hash="$(git hash-object "$visible_report")"
+FLEET_STATUS_STAT="$fake_stat" FLEET_STATUS_FAKE_STAT='1000 1000' \
+FLEET_STATUS_NOW_EPOCH=1100 \
+	"$fleet" --tier 1 --root "$scan_root" --state-dir "$state" \
+		--report-path "$visible_report" --publish-if-viewed-or-weekly \
+		>"$scratch/unread.out" 2>"$scratch/unread.err"
+expect_eq "unread fresh report still collects structured state" "0" "$?"
+expect_eq "unread collection stderr is clean" "" "$(cat "$scratch/unread.err")"
+expect_eq "unread collection observes newly dirty state" "1" \
+	"$(jq -r '.repos[] | select(.name == "solo") | .dirty.untracked' "$state/current.json")"
+expect_eq "unread collection updates the structured snapshot" "true" \
+	"$([[ "$(git hash-object "$state/current.json")" != "$before_conditional_hash" ]] && printf true || printf false)"
+expect_eq "unread collection leaves the visible report unchanged" "$before_visible_hash" \
+	"$(git hash-object "$visible_report")"
+
+printf 'second untracked\n' >"$repo/new-file-2"
+FLEET_STATUS_STAT="$fake_stat" FLEET_STATUS_FAKE_STAT='1001 1000' \
+FLEET_STATUS_NOW_EPOCH=1100 \
+	"$fleet" --tier 1 --root "$scan_root" --state-dir "$state" \
+		--report-path "$visible_report" --publish-if-viewed-or-weekly \
+		>"$scratch/viewed.out" 2>"$scratch/viewed.err"
+expect_eq "viewed report runs collection" "0" "$?"
+expect_eq "viewed collection stderr is clean" "" "$(cat "$scratch/viewed.err")"
+expect_eq "viewed collection publishes newly observed dirt" "1" \
+	"$(test "$(jq -r '.repos[] | select(.name == "solo") | .dirty.untracked' "$state/current.json")" = 2 &&
+		cmp -s "$state/report.md" "$visible_report" && printf 1 || printf 0)"
 
 lock_probe="$(luajit -e "
 	package.path = '$repo_root/lib/?.lua;' .. package.path

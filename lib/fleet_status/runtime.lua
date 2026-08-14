@@ -48,6 +48,28 @@ function M.read_file(path)
 	return contents
 end
 
+--- Select the native stat binary and dialect without consulting host state.
+function M.stat_spec(os_name, override)
+	local stat = override
+	if not stat or stat == "" then
+		stat = os_name == "OSX" and "/usr/bin/stat" or "stat"
+	end
+	local format = os_name == "OSX" and "-f '%a %m'" or "-c '%X %Y'"
+	return stat, format
+end
+
+--- Read access and modification epochs through the host's native stat dialect.
+function M.file_times(path)
+	local stat, format = M.stat_spec(jit.os, os.getenv("FLEET_STATUS_STAT"))
+	local output, ok = M.run_command(
+		M.shell_quote(stat) .. " " .. format .. " " .. M.shell_quote(path)
+	)
+	if not ok then return nil, nil end
+	local atime, mtime = output:match("^(-?%d+)%s+(-?%d+)%s*$")
+	if not atime then return nil, nil end
+	return tonumber(atime), tonumber(mtime)
+end
+
 function M.write_file(path, contents)
 	local file, open_err = io.open(path, "wb")
 	if not file then return nil, tostring(open_err) end

@@ -5,5 +5,5 @@ Documentation=file:%h/dotfiles/docs/fleet-status.md
 [Service]
 Type=oneshot
 Environment=PATH=%h/bin:/run/current-system/sw/bin:/etc/profiles/per-user/%u/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=%h/dotfiles/bin/fleet-status --all
+ExecStart=%h/dotfiles/bin/fleet-status --all --publish-if-viewed-or-weekly
 Nice=10

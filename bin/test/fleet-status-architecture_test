@@ -19,7 +19,7 @@ expect_eq() {
 	((fails++))
 }
 
-expected_modules=$'local_collector.lua\nlock_parsers.lua\nnetwork.lua\nproviders.lua\nrenderers.lua\nruntime.lua\nstate.lua'
+expected_modules=$'attention.lua\nlocal_collector.lua\nlock_parsers.lua\nnetwork.lua\nproviders.lua\nrenderers.lua\nruntime.lua\nscheduler.lua\nstate.lua'
 actual_modules="$(
 	if [[ -d "$module_root" ]]; then
 		find "$module_root" ! -path "$module_root" -prune \
@@ -39,12 +39,12 @@ first_party_edges="$(
 			"$repo_root/lib/fleet_status.lua" "$module_root" 2>/dev/null || true
 	} | sed 's/.*require("//' | sort -u
 )"
-expected_edges=$'fleet_status.local_collector\nfleet_status.lock_parsers\nfleet_status.network\nfleet_status.providers\nfleet_status.renderers\nfleet_status.runtime\nfleet_status.state'
+expected_edges=$'fleet_status.attention\nfleet_status.local_collector\nfleet_status.lock_parsers\nfleet_status.network\nfleet_status.providers\nfleet_status.renderers\nfleet_status.runtime\nfleet_status.scheduler\nfleet_status.state'
 expect_eq "only the composition root imports first-party modules" \
 	"$expected_edges" "$first_party_edges"
 
 impure_pure_modules="$(
-	for module in renderers lock_parsers; do
+	for module in attention renderers lock_parsers scheduler; do
 		path="$module_root/$module.lua"
 		[[ -f "$path" ]] || continue
 		if rg -q 'io\.|os\.|popen|run_command|run_git|read_file|write_atomic' "$path"; then
@@ -67,10 +67,11 @@ if [[ -d "$module_root" ]]; then
 		local fleet = require("fleet_status")
 		local expected = {
 			"acquire_state_lock", "collect_network_repo", "collect_roots",
+			"classify_attention",
 			"configure_provider_cache", "decode_json", "encode_json",
-			"enrich_network", "load_json_file", "persist_snapshot",
-			"release_state_lock", "render_markdown", "render_one_line",
-			"write_atomic",
+			"enrich_network", "file_times", "load_json_file", "persist_snapshot",
+			"probe_network_repo", "release_state_lock", "render_markdown", "render_one_line",
+			"publication_due", "write_atomic",
 		}
 		local actual = {}
 		for name, value in pairs(fleet) do
@@ -88,6 +89,22 @@ else
 fi
 expect_eq "stable facade exports the complete existing function API" "0" "$api_status"
 expect_eq "facade API probe stderr is clean" "" "$(cat "$scratch/api.err" 2>/dev/null)"
+
+PACKAGE_PATH="$repo_root/lib/?.lua;$repo_root/lib/?/init.lua;;" \
+luajit -e '
+	package.path = assert(os.getenv("PACKAGE_PATH"))
+	local runtime = require("fleet_status.runtime")
+	local mac_command, mac_format = runtime.stat_spec("OSX")
+	local linux_command, linux_format = runtime.stat_spec("Linux")
+	local override_command, override_format = runtime.stat_spec("OSX", "/test/stat")
+	assert(mac_command == "/usr/bin/stat" and mac_format == "-f '\''%a %m'\''")
+	assert(linux_command == "stat" and linux_format == "-c '\''%X %Y'\''")
+	assert(override_command == "/test/stat" and override_format == mac_format)
+' >"$scratch/stat-spec.out" 2>"$scratch/stat-spec.err"
+stat_spec_status=$?
+expect_eq "stat command selection bypasses the GNU wrapper on macOS" "0" "$stat_spec_status"
+expect_eq "stat command-selection probe stderr is clean" "" \
+	"$(cat "$scratch/stat-spec.err" 2>/dev/null)"
 
 PACKAGE_PATH="$repo_root/lib/?.lua;$repo_root/lib/?/init.lua;;" \
 luajit -e '

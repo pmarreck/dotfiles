@@ -1,6 +1,7 @@
 {
 	"schema_version": 1,
 	"collected_at": "2026-07-28T15:40:00Z",
+	"collected_at_epoch": 1785253200,
 	"roots": ["/fleet"],
 	"repos": [
 		{

@@ -36,7 +36,9 @@ Tier 1 records:
 - every local branch's configured upstream and locally known ahead/behind
   counts;
 - repositories with no remote;
-- stash count, HEAD SHA, current branch, and last-commit timestamp.
+- stash count, HEAD SHA, current branch, and last-commit timestamp;
+- direct Markdown inbox-message count and oldest mtime; and
+- every linked Git worktree's path, branch, HEAD, and last-commit age.
 
 If decisive Git plumbing fails, the affected field and tier become `unknown`
 or `partial`; failure is never encoded as a clean working tree, a safe detached
@@ -47,6 +49,15 @@ Tier 2 extends the local snapshot with explicit configured/no-upstream/unknown
 sync state for every branch and integer last-commit age in days for both
 repositories and branches. It still performs no network access; ahead/behind
 reflects the locally stored upstream refs.
+
+The Markdown report begins with `Repos Requiring Special Attention`. Its pure
+classifier uses snapshot timestamps rather than reading the clock. Default
+thresholds are 50 commits behind an upstream parent, a common ancestor at least
+90 days old, 10 dirty files, a linked worktree idle for more than seven days,
+more than one direct inbox message, or an oldest inbox message over one day.
+Each row states the measured trigger. A GitHub compare merge-base timestamp is
+the fork-synchronization proxy; inbox file mtime is the age fallback because an
+inbox note is not required to contain durable message metadata.
 
 The remaining tiers are slow context. They are present in JSON and Markdown
 but deliberately never make the immediate-action one-liner noisy:
@@ -66,16 +77,28 @@ All external providers are read-only. GitHub calls use `gh`, registry lookups
 use `curl`, and CI history uses `mechatron-ci log --json`. Provider failures,
 rate limits, malformed responses, and unsupported pins become field-level
 `"unknown"` values while collection still exits successfully. Network results
-are cached for 24 hours by default. Each repository cache includes a fingerprint
-of its origin, branch/HEAD identity, lockfiles, and Mechatron target manifest,
-so a local edit invalidates the composite immediately. Successful provider
-responses are separately shared by exact command to avoid repeating the same
-GitHub or registry query across dependencies. Failed/malformed queries are
+live in an atomic per-repository cache. A daily run fully refreshes repositories
+whose newest local branch commit or known fork-parent push is at most seven days
+old. A quiet known fork receives one lightweight parent query every seven days;
+a changed parent immediately escalates that repository to a full refresh. Quiet
+non-forks carry their observations until local network inputs change, while
+unknown fork classifications retry weekly.
+
+Each repository cache includes a fingerprint of its origin, branch/HEAD
+identity, lockfiles, and Mechatron target manifest, so a meaningful local edit
+invalidates that repository immediately. Every carried value retains its full
+observation and upstream-probe timestamps in the JSON snapshot. Successful
+provider responses are separately shared by exact command for 24 hours by
+default to avoid repeating the same GitHub or registry query across
+dependencies. Failed/malformed queries are
 negative-cached for at most 15 minutes, preventing a rate limit from being
 hammered while allowing recovery much sooner than the normal TTL. Every
 provider subprocess has a 30-second deadline (override with
 `FLEET_STATUS_PROVIDER_TIMEOUT_SECONDS`). `--cache-ttl-hours 0` disables both
 cache layers; `--jobs N` bounds portable `xargs -P` worker concurrency.
+If a scheduled refresh or probe fails, the last complete per-repository
+observation remains in the report with its original check timestamp instead of
+being replaced by a false `unknown` result.
 
 Collection uses Git plumbing and porcelain v2. It performs no fetch and uses no
 Linux-only `/proc` paths or LuaJIT FFI syscall constants, so the same collector
@@ -111,6 +134,16 @@ The default state directory is
 - `report.md` — the latest human-readable report.
 - `network-cache/` — independently reusable per-repository Tier 3–5 results.
 
+The canonical current/previous JSON snapshots plus independently timestamped
+per-repository cache are the carry-forward data model. An append-only NDJSON
+journal would add replay and retention cost without improving the requested
+daily report or recovery behavior, so none is written.
+
+Every saved run also publishes the same Markdown bytes to the visible
+`$HOME/Documents/Fleet Status.md` path. Override that destination with
+`--report-path PATH` or `FLEET_STATUS_REPORT_PATH`; the XDG directory remains
+the authoritative JSON and network-cache location.
+
 Writes use a same-directory temporary file followed by atomic rename. A failed
 or interrupted collection cannot replace `current.json`. An atomic state lock
 prevents overlapping timer/manual runs from interleaving `current.json`,
@@ -130,14 +163,20 @@ systemctl --user status fleet-status.timer
 The installer links the exact committed service and timer into
 `~/.config/systemd/user/`, refuses to overwrite any conflicting file or
 symlink, reloads the user manager, and enables the timer immediately. The timer
-runs `fleet-status --all` nightly at approximately 03:15 local time, catches
-missed runs after suspend/offline periods, and adds a small randomized delay.
+runs `fleet-status --all --publish-if-viewed-or-weekly` at approximately 03:15
+local time, catches missed runs after suspend/offline periods, and adds a small
+randomized delay. Structured local state is collected daily, while slow network
+fields follow the per-repository hot/quiet schedule above. When the visible
+report has been accessed, the next daily timer republishes it. If it remains
+unread, visible publication occurs after seven days. Missing reports and
+backward clock movement also trigger publication.
 Use `fleet-status --tier 1` interactively when only the fast loss-risk answer
 is wanted.
 
 The macOS equivalent is a `launchd` user LaunchAgent under
 `~/Library/LaunchAgents/` with separate `ProgramArguments` entries for the
-absolute path to `~/dotfiles/bin/fleet-status` and `--all`, plus:
+absolute path to `~/dotfiles/bin/fleet-status`, `--all`, and
+`--publish-if-viewed-or-weekly`, plus:
 
 ```xml
 <key>StartCalendarInterval</key>

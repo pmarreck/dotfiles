@@ -16,9 +16,19 @@ local job = fleet.load_json_file(job_path)
 if not job then os.exit(2) end
 fleet.configure_provider_cache(job.provider_cache)
 
-local payload = fleet.collect_network_repo(job.repo, tonumber(job.now_epoch) or os.time())
+local now_epoch = tonumber(job.now_epoch) or os.time()
+local mode = job.mode or "full"
+local payload, changed
+if mode == "probe" then
+	payload, changed = fleet.probe_network_repo(job.repo, job.cached, now_epoch)
+	if not payload and not changed then os.exit(1) end
+end
+if mode == "full" or changed then
+	payload = fleet.collect_network_repo(job.repo, now_epoch)
+	payload.cached_at_epoch = now_epoch
+	payload.upstream_probed_at_epoch = now_epoch
+end
 payload.repo_path = job.repo.path
-payload.cached_at_epoch = tonumber(job.now_epoch) or os.time()
 payload.network_cache_version = fleet.NETWORK_CACHE_VERSION
 payload.network_fingerprint = job.network_fingerprint
 local ok = fleet.write_atomic(job.output, fleet.encode_json(payload) .. "\n")

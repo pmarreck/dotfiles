@@ -2,8 +2,8 @@ local cjson = require("cjson")
 
 --- Compose slow-tier collection around injected runtime, state, parser, and
 --- provider ports; the facade owns construction and therefore dependency flow.
-local function new(runtime, state, lock_parsers, providers)
-local M = { NETWORK_CACHE_VERSION = 2 }
+local function new(runtime, state, lock_parsers, providers, scheduler)
+local M = { NETWORK_CACHE_VERSION = 3 }
 local read_file = runtime.read_file
 local run_command = runtime.run_command
 local run_git = runtime.run_git
@@ -71,17 +71,17 @@ local function collect_fork_drift(repo)
 			and view.parent.name
 			and (view.parent.owner.login .. "/" .. view.parent.name))
 	local fork_branch = view.defaultBranchRef and view.defaultBranchRef.name
-	local parent_branch = view.parent.defaultBranchRef and view.parent.defaultBranchRef.name
-	if parent and not parent_branch then
-		local parent_view = decode_command_json(provider_command(
-			"FLEET_STATUS_GH",
-			"gh",
-			"repo view " .. shell_quote(parent)
-				.. " --json nameWithOwner,defaultBranchRef"
-		))
-		parent_branch = type(parent_view) == "table" and parent_view.defaultBranchRef
-			and parent_view.defaultBranchRef.name
-	end
+	local parent_view = parent and decode_command_json(provider_command(
+		"FLEET_STATUS_GH",
+		"gh",
+		"repo view " .. shell_quote(parent)
+			.. " --json nameWithOwner,defaultBranchRef,pushedAt"
+	)) or nil
+	local parent_branch = type(parent_view) == "table" and parent_view.defaultBranchRef
+		and parent_view.defaultBranchRef.name
+	local parent_pushed_at = type(parent_view) == "table"
+		and type(parent_view.pushedAt) == "string"
+		and parent_view.pushedAt or cjson.null
 	if not parent or not fork_branch or not parent_branch then
 		return { status = "unknown", reason = "missing_default_branch" }
 	end
@@ -107,6 +107,12 @@ local function collect_fork_drift(repo)
 	end
 	local ahead = comparison.ahead_by
 	local behind = comparison.behind_by
+	local common_commit_at = comparison.merge_base_commit
+		and comparison.merge_base_commit.commit
+		and (comparison.merge_base_commit.commit.committer
+			and comparison.merge_base_commit.commit.committer.date
+			or comparison.merge_base_commit.commit.author
+			and comparison.merge_base_commit.commit.author.date)
 	local relation = "even"
 	if ahead > 0 and behind > 0 then
 		relation = "diverged"
@@ -119,10 +125,14 @@ local function collect_fork_drift(repo)
 		status = "known",
 		repository = slug,
 		parent = parent,
+		parent_pushed_at = parent_pushed_at,
 		fork_default_branch = fork_branch,
 		parent_default_branch = parent_branch,
 		ahead = ahead,
 		behind = behind,
+		last_common_commit_at = common_commit_at or cjson.null,
+		last_common_commit_epoch = scheduler.parse_utc_timestamp(common_commit_at)
+			or cjson.null,
 		relation = relation,
 	}
 end
@@ -531,6 +541,24 @@ function M.collect_network_repo(repo, now_epoch)
 	}
 end
 
+--- Probe one known fork parent; unchanged data keeps the full cached payload.
+function M.probe_network_repo(repo, cached, now_epoch)
+	local fork = type(cached) == "table" and cached.fork_drift or nil
+	local parent = type(fork) == "table" and fork.parent or nil
+	if type(parent) ~= "string" then return nil, nil, "missing_parent" end
+	local parent_view = decode_command_json(provider_command(
+		"FLEET_STATUS_GH",
+		"gh",
+		"repo view " .. shell_quote(parent)
+			.. " --json nameWithOwner,defaultBranchRef,pushedAt"
+	))
+	local pushed_at = type(parent_view) == "table" and parent_view.pushedAt or nil
+	if type(pushed_at) ~= "string" then return nil, nil, "provider_unavailable" end
+	if pushed_at ~= fork.parent_pushed_at then return nil, true, nil end
+	cached.upstream_probed_at_epoch = now_epoch
+	return cached, false, nil
+end
+
 local function cache_key(repo)
 	local hash = 5381
 	for index = 1, #repo.path do
@@ -593,7 +621,9 @@ local function valid_network_payload(payload)
 		or type(payload.fork_drift.status) ~= "string"
 		or type(payload.pin_drift) ~= "table"
 		or type(payload.mechatron) ~= "table"
-		or type(payload.mechatron.status) ~= "string" then
+		or type(payload.mechatron.status) ~= "string"
+		or not tonumber(payload.cached_at_epoch)
+		or not tonumber(payload.upstream_probed_at_epoch) then
 		return false
 	end
 	for _, pin in ipairs(payload.pin_drift) do
@@ -654,13 +684,14 @@ function M.enrich_network(snapshot, options)
 		local cache_path = cache_dir .. "/" .. cache_key(repo) .. ".json"
 		local cached = M.load_json_file(cache_path)
 		local fingerprint = network_fingerprint(repo)
-		if ttl_seconds > 0 and cached
+		local cache_usable = ttl_seconds > 0 and cached
 			and valid_network_payload(cached)
 			and cached.network_cache_version == M.NETWORK_CACHE_VERSION
 			and cached.repo_path == repo.path
-			and cached.network_fingerprint == fingerprint
-			and tonumber(cached.cached_at_epoch)
-			and now_epoch - tonumber(cached.cached_at_epoch) <= ttl_seconds then
+		local action = cache_usable
+			and scheduler.network_action(now_epoch, repo, cached, fingerprint)
+			or "full"
+		if action == "carry" then
 			payloads[index] = cached
 		else
 			local job_path = job_dir .. "/" .. tostring(index) .. ".json"
@@ -668,6 +699,8 @@ function M.enrich_network(snapshot, options)
 				or (job_dir .. "/" .. tostring(index) .. ".result.json")
 			local ok, err = M.write_atomic(job_path, M.encode_json({
 				repo = repo,
+				mode = action,
+				cached = action == "probe" and cached or nil,
 				now_epoch = now_epoch,
 				output = output_path,
 				network_fingerprint = fingerprint,
@@ -685,6 +718,8 @@ function M.enrich_network(snapshot, options)
 				job = job_path,
 				output = output_path,
 				transient_output = not save_cache,
+				mode = action,
+				fallback = cache_usable and cached or nil,
 				network_fingerprint = fingerprint,
 			}
 		end
@@ -704,12 +739,15 @@ function M.enrich_network(snapshot, options)
 		)
 		for _, item in ipairs(pending) do
 			local payload = M.load_json_file(item.output)
+			local expected_time = item.mode == "probe"
+				and tonumber(payload and payload.upstream_probed_at_epoch)
+				or tonumber(payload and payload.cached_at_epoch)
 			if not valid_network_payload(payload)
 				or payload.network_cache_version ~= M.NETWORK_CACHE_VERSION
 				or payload.repo_path ~= snapshot.repos[item.index].path
 				or payload.network_fingerprint ~= item.network_fingerprint
-				or tonumber(payload.cached_at_epoch) ~= now_epoch then
-				payload = network_unknown(snapshot.repos[item.index])
+				or expected_time ~= now_epoch then
+				payload = item.fallback or network_unknown(snapshot.repos[item.index])
 			end
 			payloads[item.index] = payload
 			remove_path(item.job)
@@ -724,6 +762,8 @@ function M.enrich_network(snapshot, options)
 		repo.fork_drift = payload.fork_drift
 		repo.pin_drift = payload.pin_drift
 		repo.mechatron = payload.mechatron
+		repo.network_checked_at_epoch = tonumber(payload.cached_at_epoch) or cjson.null
+		repo.upstream_probed_at_epoch = tonumber(payload.upstream_probed_at_epoch) or cjson.null
 	end
 	snapshot.tiers["3"] = tier_health(snapshot.repos, 3)
 	snapshot.tiers["4"] = tier_health(snapshot.repos, 4)

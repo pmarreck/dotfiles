@@ -1,5 +1,75 @@
 # dotfiles — TODO / Plans
 
+## Urgent — identify GNOME “Device memory nearly full” warning (2026-08-14)
+
+- [x] Identify the live pressure category and whether “device memory” means GPU VRAM,
+  system RAM/swap, or filesystem capacity; capture current consumers and kernel
+  evidence before changing state. Curiosity poke: the warning may disappear as
+  allocations move, so process and journal timestamps matter.
+  Completed 2026-08-14 13:08 EDT: all live capacity categories are safe (GPU
+  1.5/12 GiB, 89 GiB RAM available, 10.4 GiB VRAM free, filesystems at most
+  57%); GNOME retained neither sender nor text after dismissal, so the exact
+  transient source remains unprovable without a notification tap on recurrence.
+- [x] Apply the smallest reversible mitigation if pressure remains dangerous,
+  then verify headroom without killing Peter's active agents or sessions.
+  Completed 2026-08-14 13:08 EDT: no mitigation was justified; swap traffic is
+  idle, pools are healthy, and no NVIDIA Xid, kernel OOM, or allocation errors
+  occurred in the warning window.
+
+## Active — visible, demand-sensitive fleet report (2026-08-14)
+
+- [x] Publish each saved fleet report atomically to
+  `$HOME/Documents/Fleet Status.md` while retaining the machine-readable state
+  under XDG state. Curiosity poke: publication must never expose partial bytes
+  or make a failed collection replace the last known-good report.
+  Completed 2026-08-14 12:50 EDT: exact-byte publication and safe atomic
+  replacement pass focused tests; the existing report was copied into Documents.
+- [x] Replace the provisional global viewed-or-weekly collection gate with
+  per-repository scheduling: locally active repos and forks whose upstream was
+  active within seven days receive daily network checks; quiet repos receive a
+  lightweight weekly upstream probe; unchecked metadata carries forward.
+  Curiosity poke: a dormant fork cannot reveal fresh upstream activity without
+  some probe, and dirty working-tree activity has no commit timestamp.
+  Completed 2026-08-14 13:27 EDT: an injected-clock scheduler now selects
+  `full`, `probe`, or `carry` per repository; provider failures retain the last
+  complete observation and its original check time.
+- [x] Decide whether the existing canonical JSON snapshot plus per-repository
+  cache can provide deterministic carry-forward, or whether an append-only
+  NDJSON event journal adds a concrete recovery/audit property. Curiosity poke:
+  NDJSON is good history but poor mutable state; derived reports must never
+  depend on replaying an unbounded log.
+  Completed 2026-08-14 13:27 EDT: canonical current/previous snapshots and
+  independently timestamped per-repository caches already provide deterministic
+  carry-forward and recovery; NDJSON adds no required property, so it was not
+  added.
+- [x] Add a leading `Repos Requiring Special Attention` report section whose
+  pure classifiers name the measured reason: severe fork drift by commit count
+  or time since synchronization, large uncommitted file sets, Git worktrees
+  idle for more than seven days, and inboxes with more than one message or a
+  message older than one day. Curiosity poke: every threshold needs a named,
+  test-injected constant; missing provider timestamps and file ages must be
+  `unknown`, never silently clean.
+  Completed 2026-08-14 13:27 EDT: pure classifier-set tests cover all exact
+  boundaries; the leading Markdown table states each repository's measured
+  trigger and partially collected local facts remain explicit unknown risks.
+- [x] Extend the structured snapshot only where those classifiers need facts
+  not currently collected: last fork synchronization evidence, per-worktree
+  activity, and inbox count/oldest age. Curiosity poke: file mtime is mutable;
+  prefer durable message metadata when present and document the fallback.
+  Completed 2026-08-14 13:27 EDT: snapshots now retain GitHub merge-base time,
+  linked-worktree commit ages, and direct inbox count/oldest mtime; the mtime
+  fallback and merge-base proxy are documented.
+- [x] Prove the revised scheduler and carried-forward values red/green, remove
+  the superseded global gating code/tests/docs, run the complete host and Nix
+  suites, update dirtree notes, activate the user service, and commit without
+  disturbing unrelated worktree changes.
+  Completed 2026-08-14 13:44 EDT: focused suites cover 162 assertions after a
+  live-report check exposed and fixed duplicate linked-worktree ownership. All
+  176 host test files and the hermetic Nix check pass; the enabled timer is
+  active, a 166-repository cache-v3 baseline completed, and the verified
+  Documents report's atime was restored so agent inspection does not count as
+  Peter reading it.
+
 ## Active — guarded public collaboration ledger (2026-08-13)
 
 - [x] Preserve the existing public gist as a normal local Git clone on `yolo`
