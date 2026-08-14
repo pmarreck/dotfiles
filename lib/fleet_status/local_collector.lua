@@ -1,13 +1,14 @@
 local cjson = require("cjson")
 
 --- Construct the local Git adapter from an injected process/filesystem port.
-local function new(runtime)
+local function new(runtime, repository_profile)
 local M = {}
 local run_git = runtime.run_git
 local run_command = runtime.run_command
 local shell_quote = runtime.shell_quote
 local trim = runtime.trim
 local file_times = runtime.file_times
+local read_file = runtime.read_file
 
 local function collect_dirty(repo)
 	local output, ok = run_git(repo, "status --porcelain=v2 --branch --untracked-files=all")
@@ -53,12 +54,12 @@ local function collect_branches(repo, now_epoch)
 			local ahead, behind = 0, 0
 			local sync_status = "no_upstream"
 			if upstream ~= "" then
-				local counts, ok = run_git(
+				local counts, counts_ok = run_git(
 					repo,
 					"rev-list --left-right --count "
 						.. shell_quote(name .. "..." .. upstream)
 				)
-				if ok then
+				if counts_ok then
 					ahead, behind = counts:match("^(%d+)%s+(%d+)")
 					ahead, behind = tonumber(ahead) or 0, tonumber(behind) or 0
 					sync_status = "known"
@@ -197,9 +198,34 @@ local function collect_worktrees(repo, now_epoch)
 	return records, status
 end
 
+--- Read only bounded root-level profile documents; large source trees and
+--- generated data never enter the classifier or the report process.
+local function collect_repository_profile(repo, repo_name)
+	local find = os.getenv("FLEET_STATUS_FIND") or "find"
+	local output, ok = run_command(
+		shell_quote(find) .. " " .. shell_quote(repo)
+			.. " ! -path " .. shell_quote(repo)
+			.. " -prune \\( -type f -o -type l \\) -print0"
+	)
+	if not ok then
+		local unknown = repository_profile.inspect_root(repo_name, {})
+		unknown.status = "unknown"
+		return unknown
+	end
+	local entries = {}
+	for path in output:gmatch("([^%z]+)%z") do
+		local name = basename(path)
+		if repository_profile.is_profile_document(name) then
+			entries[#entries + 1] = { name = name, contents = read_file(path) or "" }
+		end
+	end
+	return repository_profile.inspect_root(repo_name, entries)
+end
+
 --- Collect one working tree entirely through stable Git plumbing, keeping I/O
 --- outside the pure renderers and avoiding OS-specific filesystem constants.
 local function collect_repo(repo, now_epoch)
+	local name = basename(repo)
 	local head_output, has_head = run_git(repo, "rev-parse --verify HEAD")
 	local head_sha = has_head and trim(head_output) or cjson.null
 	local branch_output, on_branch = run_git(repo, "symbolic-ref --quiet --short HEAD")
@@ -219,7 +245,7 @@ local function collect_repo(repo, now_epoch)
 	local worktrees, worktrees_status = collect_worktrees(repo, now_epoch)
 
 	return {
-		name = basename(repo),
+		name = name,
 		path = repo,
 		dirty = collect_dirty(repo),
 		detached_head = detached,
@@ -240,6 +266,7 @@ local function collect_repo(repo, now_epoch)
 		worktrees = worktrees,
 		worktrees_status = worktrees_status,
 		inbox = collect_inbox(repo, now_epoch),
+		repository_profile = collect_repository_profile(repo, name),
 	}
 end
 

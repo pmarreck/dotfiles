@@ -25,31 +25,43 @@
   `--markdown`, and the live tmux TTY path were inspected; all 177 host test
   files and the hermetic Nix check pass.
 
-## Queued — fleet repository readiness and Mechatron status (2026-08-14)
+## Completed — fleet repository readiness and Mechatron status (2026-08-14)
 
-- [ ] Add red/green classifier-set tests for Mechatron configuration: require
+- [x] Add red/green classifier-set tests for Mechatron configuration: require
   the canonical badge near the top of `README.md`, recognize the stable
   `mechatron` identity without coupling to one Tailscale hostname, and avoid
   accepting prose mentions or unrelated badges.
-  Curiosity poke: README badge detection and runnable CI configuration are
-  distinct facts; the report must not silently equate one with the other.
-- [ ] Carry configured projects' latest Mechatron state into the cached network
+	Curiosity poke: README badge detection and runnable CI configuration are
+	distinct facts; the report must not silently equate one with the other.
+	Completed 2026-08-14 15:10 EDT: pure set tests accept the canonical
+	repository-specific endpoint badge within the first 40 README lines and
+	reject prose, late badges, nested documents, and other-repository badges.
+- [x] Carry configured projects' latest Mechatron state into the cached network
   record and report `PASSING`, `FAILING`, `BUILDING`, or explicit unknown using
   the existing machine API/cache rather than launching builds.
-  Curiosity poke: a green historical job for an older commit must not describe
-  an unbuilt current HEAD as green.
-- [ ] Collect README and LICENSE presence locally, identify license type only
+	Curiosity poke: a green historical job for an older commit must not describe
+	an unbuilt current HEAD as green.
+	Completed 2026-08-14 15:10 EDT: HEAD-filtered log and queue queries now
+	distinguish passing, failing, building, queued, not-run, and unknown states;
+	absent CI configuration causes no provider call.
+- [x] Collect README and LICENSE presence locally, identify license type only
   from mechanical signatures or provider metadata, and measure primary
   language through GitHub's API with a deterministic local-tool fallback.
   Carry these repository-intrinsic values forward when the activity fingerprint
   is unchanged instead of rescanning quiet repositories.
-  Curiosity poke: generated/vendor trees can dominate byte counts, while a
-  missing or ambiguous license must stay `unknown` rather than be guessed.
-- [ ] Add these facts to the structured snapshot, normal report table, and
+	Curiosity poke: generated/vendor trees can dominate byte counts, while a
+	missing or ambiguous license must stay `unknown` rather than be guessed.
+	Completed 2026-08-14 15:10 EDT: bounded root-file inspection feeds GitHub
+	license/language metadata with a declared Tokei fallback; intrinsic facts
+	carry with cache-v4 until HEAD or the bounded profile changes.
+- [x] Add these facts to the structured snapshot, normal report table, and
   `Repos Requiring Special Attention`; preserve cached values on skipped or
   failed network probes and run focused, complete host, and hermetic Nix gates.
-  Curiosity poke: missing README/LICENSE and failed CI are actionable, but an
-  intentionally private/non-GitHub repository may require distinct wording.
+	Curiosity poke: missing README/LICENSE and failed CI are actionable, but an
+	intentionally private/non-GitHub repository may require distinct wording.
+	Completed 2026-08-14 15:10 EDT: readiness and special-attention projections
+	are live-verified; Lua lint is clean, all 178 host test files pass, and the
+	hermetic Nix flake check passes all 129 included tests.
 
 ## Urgent — identify GNOME “Device memory nearly full” warning (2026-08-14)
 

@@ -1,0 +1,157 @@
+#!/usr/bin/env luajit
+
+-- Pure set classifiers for repository documents, CI badges, and cached metadata.
+
+local script = arg[0]
+local repo_root = script:match("^(.*)/bin/test/[^/]+$") or "."
+package.path = repo_root .. "/lib/?.lua;" .. package.path
+
+local profile = require("fleet_status.repository_profile")
+
+local function inspect(name, files)
+	return profile.inspect_root(name, files)
+end
+
+local canonical_badge = table.concat({
+	"# Fixture",
+	"",
+	"[![Mechatron Prime CI](https://img.shields.io/endpoint?url=https%3A%2F%2Fci.example.invalid%2Fbadges%2Ffixture.json&style=for-the-badge)](https://ci.example.invalid/mechatron-prime/)",
+}, "\n")
+
+local late_lines = {}
+for index = 1, 40 do late_lines[index] = "line " .. tostring(index) end
+late_lines[41] = canonical_badge:match("([^\n]+)$")
+
+local cases = {
+	{
+		name = "canonical documents and badge",
+		files = {
+			{ name = "README.md", contents = canonical_badge },
+			{ name = "LICENSE", contents = "fixture license" },
+		},
+		readme = true,
+		license = true,
+		badge = true,
+		badge_line = 3,
+	},
+	{
+		name = "case-insensitive conventional document names",
+		files = {
+			{ name = "readme.MD", contents = "# Fixture" },
+			{ name = "LiCeNcE.txt", contents = "fixture license" },
+		},
+		readme = true,
+		license = true,
+		badge = false,
+	},
+	{
+		name = "copying is a license document",
+		files = {
+			{ name = "README.md", contents = "# Fixture" },
+			{ name = "COPYING.md", contents = "fixture license" },
+		},
+		readme = true,
+		license = true,
+		badge = false,
+	},
+	{
+		name = "markdown license spelling variants are documents",
+		files = {
+			{ name = "README.md", contents = "# Fixture" },
+			{ name = "LICENCE.md", contents = "fixture license" },
+		},
+		readme = true,
+		license = true,
+		badge = false,
+	},
+	{
+		name = "prose mention is not a badge",
+		files = {
+			{ name = "README.md", contents = "This project runs on mechatron CI." },
+			{ name = "LICENSES", contents = "not a root license document" },
+		},
+		readme = true,
+		license = false,
+		badge = false,
+	},
+	{
+		name = "badge for a different repository is rejected",
+		files = {
+			{ name = "README.md", contents = canonical_badge:gsub("fixture%.json", "other.json") },
+		},
+		readme = true,
+		license = false,
+		badge = false,
+	},
+	{
+		name = "badge below the header zone is rejected",
+		files = {
+			{ name = "README.md", contents = table.concat(late_lines, "\n") },
+		},
+		readme = true,
+		license = false,
+		badge = false,
+	},
+	{
+		name = "nested lookalikes do not satisfy root documents",
+		files = {
+			{ name = "docs/README.md", contents = canonical_badge },
+			{ name = "vendor/LICENSE", contents = "fixture license" },
+		},
+		readme = false,
+		license = false,
+		badge = false,
+	},
+}
+
+local failures = {}
+for _, case in ipairs(cases) do
+	local actual = inspect("fixture", case.files)
+	local matches = actual.readme.present == case.readme
+		and actual.license.present == case.license
+		and actual.mechatron_badge.present == case.badge
+		and (case.badge_line == nil or actual.mechatron_badge.line == case.badge_line)
+	if not matches then failures[#failures + 1] = case.name end
+end
+
+local enriched = profile.enrich(
+	inspect("fixture", {
+		{ name = "README.md", contents = canonical_badge },
+		{ name = "LICENSE", contents = "fixture license" },
+	}),
+	{
+		licenseInfo = { spdxId = "MIT", name = "MIT License" },
+		primaryLanguage = { name = "Zig" },
+	},
+	nil
+)
+if enriched.license.type ~= "MIT"
+	or enriched.license.type_source ~= "github"
+	or enriched.primary_language.name ~= "Zig"
+	or enriched.primary_language.source ~= "github" then
+	failures[#failures + 1] = "GitHub metadata enriches intrinsic facts"
+end
+
+local tokei_fallback = profile.enrich(
+	inspect("local-only", {}),
+	nil,
+	{
+		Zig = { code = 120 },
+		Lua = { code = 30 },
+		Markdown = { code = 500 },
+		Total = { code = 650 },
+	}
+)
+if tokei_fallback.primary_language.name ~= "Zig"
+	or tokei_fallback.primary_language.source ~= "tokei"
+	or tokei_fallback.license.type ~= "unknown" then
+	failures[#failures + 1] = "Tokei supplies a deterministic local language fallback"
+end
+
+if #failures > 0 then
+	io.stderr:write("FAIL repository-profile classifier set:\n")
+	for _, failure in ipairs(failures) do io.stderr:write("- ", failure, "\n") end
+	os.exit(1)
+end
+
+io.write("All repository-profile classifier sets passed\n")

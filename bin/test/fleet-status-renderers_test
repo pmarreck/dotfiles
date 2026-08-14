@@ -6,6 +6,7 @@ package.path = repo_root .. "/lib/?.lua;" .. package.path
 
 local cjson = require("cjson")
 local fleet = require("fleet_status")
+local renderers = require("fleet_status.renderers")
 
 local function read_json(path)
 	local file = assert(io.open(path, "rb"))
@@ -133,6 +134,34 @@ expect(
 	"repository-controlled names cannot inject terminal lines or controls",
 	"true",
 	(not hostile:find("[%c]") and not hostile:find("<html>", 1, true)) and "true" or "false"
+)
+
+local readiness = renderers.readiness_rows({
+	{
+		name = "configured",
+		repository_profile = {
+			status = "known",
+			readme = { present = true, filename = "README.md" },
+			license = { present = true, filename = "LICENSE", type = "MIT" },
+			primary_language = { name = "Zig" },
+		},
+		mechatron = { configuration = "complete", head_status = "passing" },
+	},
+	{
+		name = "bare",
+		repository_profile = {
+			status = "known",
+			readme = { present = false },
+			license = { present = false, type = "unknown" },
+			primary_language = { name = "Lua" },
+		},
+		mechatron = { configuration = "absent", head_status = "not_configured" },
+	},
+})
+expect(
+	"readiness projection keeps every mechanically measured field distinct",
+	'[{"head_status":"not configured","license":"missing","license_type":"unknown","mechatron":"absent","primary_language":"Lua","readme":"missing","repository":"bare"},{"head_status":"passing","license":"LICENSE","license_type":"MIT","mechatron":"configured","primary_language":"Zig","readme":"README.md","repository":"configured"}]',
+	fleet.encode_json(readiness)
 )
 
 if failures == 0 then

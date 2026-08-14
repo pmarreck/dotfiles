@@ -25,6 +25,7 @@
           xxd
           imagemagick  # magick
           ffmpeg       # ffmpeg, ffprobe
+          tokei        # fleet-status local primary-language fallback
         ];
       in {
         checks = {

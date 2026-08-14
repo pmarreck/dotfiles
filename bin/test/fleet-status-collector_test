@@ -63,6 +63,14 @@ init_repo "$scan_root/container/vendor/nested"
 tracked="$scan_root/tracked"
 tracked_remote="$remote_root/tracked.git"
 init_repo "$tracked"
+cat >"$tracked/README.md" <<'EOF'
+# Tracked fixture
+
+[![Mechatron Prime CI](https://img.shields.io/endpoint?url=https%3A%2F%2Fci.example.invalid%2Fbadges%2Ftracked.json&style=for-the-badge)](https://ci.example.invalid/mechatron-prime/)
+EOF
+printf 'fixture license\n' >"$tracked/LICENSE"
+git_in "$tracked" add README.md LICENSE
+git_in "$tracked" commit -q -m 'add repository documents' || exit 1
 git init -q --bare "$tracked_remote" || exit 1
 git_in "$tracked" remote add origin "$tracked_remote"
 git_in "$tracked" push -q -u origin main || exit 1
@@ -187,6 +195,9 @@ expect_eq "counts stashes" \
 expect_eq "collects direct inbox count and oldest age from injected now" \
 	'true' \
 	"$(jq -r '.repos[] | select(.name == "tracked") | (.inbox.status == "known" and .inbox.count == 2 and .inbox.oldest_age_seconds > 86400)' "$json" 2>/dev/null)"
+expect_eq "classifies root documents and canonical top-of-README CI badge" \
+	'{"badge":{"header_line_limit":40,"line":3,"present":true},"license":{"filename":"LICENSE","present":true,"type":"unknown","type_source":"unavailable"},"readme":{"filename":"README.md","present":true}}' \
+	"$(jq -cS '.repos[] | select(.name == "tracked") | {readme:.repository_profile.readme,license:.repository_profile.license,badge:.repository_profile.mechatron_badge}' "$json" 2>/dev/null)"
 expect_eq "collects linked worktree activity without treating the main tree as stale" \
 	'[{"branch":"stale-worktree","idle_days":57,"path":"linked worktree"}]' \
 	"$(jq -c '[.repos[] | select(.name == "tracked") | .worktrees[] | {branch, idle_days: .last_commit_age_days, path: (.path | split("/") | last)}]' "$json" 2>/dev/null)"

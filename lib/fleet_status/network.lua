@@ -2,9 +2,8 @@ local cjson = require("cjson")
 
 --- Compose slow-tier collection around injected runtime, state, parser, and
 --- provider ports; the facade owns construction and therefore dependency flow.
-local function new(runtime, state, lock_parsers, providers, scheduler)
-local M = { NETWORK_CACHE_VERSION = 3 }
-local read_file = runtime.read_file
+local function new(runtime, state, lock_parsers, providers, scheduler, repository_profile)
+local M = { NETWORK_CACHE_VERSION = 4 }
 local run_command = runtime.run_command
 local run_git = runtime.run_git
 local shell_quote = runtime.shell_quote
@@ -491,26 +490,98 @@ local function collect_pin_drift(repo, now_epoch)
 	return pins
 end
 
+local function collect_repository_profile(repo)
+	local remote_url, has_remote = run_git(repo.path, "remote get-url origin")
+	local slug = has_remote and github_slug(trim(remote_url)) or nil
+	local github = slug and decode_command_json(provider_command(
+		"FLEET_STATUS_GH",
+		"gh",
+		"repo view " .. shell_quote(slug) .. " --json licenseInfo,primaryLanguage"
+	)) or nil
+	local has_github_language = type(github) == "table"
+		and type(github.primaryLanguage) == "table"
+		and type(github.primaryLanguage.name) == "string"
+	local tokei = not has_github_language and decode_command_json(provider_command(
+		"FLEET_STATUS_TOKEI",
+		"tokei",
+		"--output json " .. shell_quote(repo.path)
+	)) or nil
+	local local_profile = type(repo.repository_profile) == "table"
+		and repo.repository_profile or repository_profile.inspect_root(repo.name, {})
+	return repository_profile.enrich(local_profile, github, tokei)
+end
+
+local function mechatron_configuration(badge_present, targets_present)
+	if badge_present and targets_present then return "complete" end
+	if badge_present then return "badge_only" end
+	if targets_present then return "targets_only" end
+	return "absent"
+end
+
+local function mechatron_base(repo, manifest)
+	local badge = repo.repository_profile
+		and repo.repository_profile.mechatron_badge
+		and repo.repository_profile.mechatron_badge.present == true
+	local targets = manifest ~= nil
+	local configuration = mechatron_configuration(badge, targets)
+	return {
+		status = "known",
+		configured = configuration == "complete",
+		configuration = configuration,
+		badge_present = badge,
+		targets_manifest_present = targets,
+		missing_targets_manifest = not targets,
+		queried_commit = repo.head_sha,
+		head_status = configuration == "absent" and "not_configured" or "unknown",
+		last_result = cjson.null,
+	}
+end
+
 local function collect_mechatron(repo)
 	local manifest = read_file(repo.path .. "/.mechatron-prime/targets")
-	local missing_manifest = manifest == nil
+	local record = mechatron_base(repo, manifest)
+	if record.configuration == "absent" then return record end
+	if type(repo.head_sha) ~= "string" or #repo.head_sha < 7 then
+		record.status = "unknown"
+		record.reason = "missing_head"
+		return record
+	end
 	local result = decode_command_json(provider_command(
 		"FLEET_STATUS_MECHATRON_CI",
 		"mechatron-ci",
-		"log --project " .. shell_quote(repo.name) .. " --json --limit 1"
+		"log --project " .. shell_quote(repo.name)
+			.. " --commit " .. shell_quote(repo.head_sha) .. " --json --limit 1"
 	))
 	if type(result) ~= "table" or type(result.results) ~= "table" then
-		return {
-			status = "unknown",
-			reason = "malformed_or_unavailable_provider",
-			missing_targets_manifest = missing_manifest,
-		}
+		record.status = "unknown"
+		record.reason = "malformed_or_unavailable_provider"
+		return record
 	end
-	return {
-		status = "known",
-		missing_targets_manifest = missing_manifest,
-		last_result = result.results and result.results[1] or cjson.null,
-	}
+	if type(result.results[1]) == "table" then
+		record.last_result = result.results[1]
+		record.head_status = result.results[1].status == "success" and "passing" or "failing"
+		return record
+	end
+	local queue = decode_command_json(provider_command(
+		"FLEET_STATUS_MECHATRON_CI",
+		"mechatron-ci",
+		"queue --project " .. shell_quote(repo.name)
+			.. " --commit " .. shell_quote(repo.head_sha) .. " --json"
+	))
+	if type(queue) ~= "table" or type(queue.worker) ~= "table"
+		or type(queue.claimed) ~= "table" or type(queue.waiting) ~= "table" then
+		record.status = "unknown"
+		record.reason = "malformed_or_unavailable_queue"
+		return record
+	end
+	if type(queue.worker.current) == "table" or #queue.claimed > 0 then
+		record.head_status = "building"
+	elseif #queue.waiting > 0 then
+		record.head_status = "queued"
+	else
+		record.head_status = "not_run"
+	end
+	return record
 end
 
 --- Collect slow tiers as independently nullable fields; every external failure
@@ -522,6 +593,10 @@ function M.collect_network_repo(repo, now_epoch)
 		return fallback
 	end
 	return {
+		repository_profile = isolated(
+			collect_repository_profile,
+			repo.repository_profile or repository_profile.inspect_root(repo.name, {})
+		),
 		fork_drift = isolated(
 			collect_fork_drift,
 			{ status = "unknown", reason = "collector_failure" }
@@ -542,7 +617,7 @@ function M.collect_network_repo(repo, now_epoch)
 end
 
 --- Probe one known fork parent; unchanged data keeps the full cached payload.
-function M.probe_network_repo(repo, cached, now_epoch)
+function M.probe_network_repo(_repo, cached, now_epoch)
 	local fork = type(cached) == "table" and cached.fork_drift or nil
 	local parent = type(fork) == "table" and fork.parent or nil
 	if type(parent) ~= "string" then return nil, nil, "missing_parent" end
@@ -585,6 +660,7 @@ local function network_fingerprint(repo)
 		repo.path,
 		tostring(repo.head_sha),
 		tostring(repo.branch),
+		M.encode_json(repo.repository_profile or {}),
 	}
 	local origin, has_origin = run_git(repo.path, "remote get-url origin")
 	parts[#parts + 1] = has_origin and trim(origin) or "<no-origin>"
@@ -603,6 +679,8 @@ end
 local function network_unknown(repo)
 	return {
 		repo_path = repo.path,
+		repository_profile = repo.repository_profile
+			or repository_profile.inspect_root(repo.name, {}),
 		fork_drift = { status = "unknown", reason = "worker_unavailable" },
 		pin_drift = {
 			{ kind = "collection", name = repo.name, status = "unknown", reason = "worker_unavailable" },
@@ -617,6 +695,8 @@ end
 
 local function valid_network_payload(payload)
 	if type(payload) ~= "table"
+		or type(payload.repository_profile) ~= "table"
+		or type(payload.repository_profile.status) ~= "string"
 		or type(payload.fork_drift) ~= "table"
 		or type(payload.fork_drift.status) ~= "string"
 		or type(payload.pin_drift) ~= "table"
@@ -762,6 +842,7 @@ function M.enrich_network(snapshot, options)
 		repo.fork_drift = payload.fork_drift
 		repo.pin_drift = payload.pin_drift
 		repo.mechatron = payload.mechatron
+		repo.repository_profile = payload.repository_profile
 		repo.network_checked_at_epoch = tonumber(payload.cached_at_epoch) or cjson.null
 		repo.upstream_probed_at_epoch = tonumber(payload.upstream_probed_at_epoch) or cjson.null
 	end

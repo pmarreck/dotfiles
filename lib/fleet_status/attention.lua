@@ -83,6 +83,33 @@ function M.classify(snapshot, overrides)
 			reasons[#reasons + 1] = reason
 		end
 
+		local profile = repo.repository_profile
+		if type(profile) == "table" then
+			if profile.status == "unknown" then
+				reasons[#reasons + 1] = "documents: inspection unknown"
+			else
+				if not (profile.readme and profile.readme.present) then
+					reasons[#reasons + 1] = "documents: README.md missing"
+				end
+				if not (profile.license and profile.license.present) then
+					reasons[#reasons + 1] = "documents: LICENSE missing"
+				end
+			end
+		end
+
+		local ci = repo.mechatron
+		if type(ci) == "table" then
+			if ci.configuration == "badge_only" then
+				reasons[#reasons + 1] = "Mechatron: incomplete configuration (badge only)"
+			elseif ci.configuration == "targets_only" then
+				reasons[#reasons + 1] = "Mechatron: incomplete configuration (targets only)"
+			elseif ci.configuration == "complete"
+				and (ci.head_status == "failing" or ci.head_status == "not_run"
+					or ci.head_status == "unknown") then
+				reasons[#reasons + 1] = "Mechatron: current HEAD " .. ci.head_status
+			end
+		end
+
 		if #reasons > 0 then entries[#entries + 1] = { name = repo.name, reasons = reasons } end
 	end
 	table.sort(entries, function(left, right) return left.name < right.name end)

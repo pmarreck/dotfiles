@@ -15,6 +15,12 @@ local clean = {
 	worktrees = {},
 	worktrees_status = "known",
 	inbox = { status = "known", count = 0 },
+	repository_profile = {
+		status = "known",
+		readme = { present = true, filename = "README.md" },
+		license = { present = true, filename = "LICENSE", type = "MIT" },
+	},
+	mechatron = { configuration = "absent", head_status = "not_configured" },
 }
 
 local function repo(name, changes)
@@ -45,6 +51,25 @@ local snapshot = {
 		} }),
 		repo("inbox-two", { inbox = { status = "known", count = 2, oldest_age_seconds = 60 } }),
 		repo("inbox-old", { inbox = { status = "known", count = 1, oldest_age_seconds = 2 * day } }),
+		repo("missing-readme", { repository_profile = {
+			status = "known",
+			readme = { present = false },
+			license = { present = true, filename = "LICENSE", type = "MIT" },
+		} }),
+		repo("missing-license", { repository_profile = {
+			status = "known",
+			readme = { present = true, filename = "README.md" },
+			license = { present = false, type = "unknown" },
+		} }),
+		repo("ci-badge-only", { mechatron = {
+			configuration = "badge_only", head_status = "unknown",
+		} }),
+		repo("ci-failing", { mechatron = {
+			configuration = "complete", head_status = "failing",
+		} }),
+		repo("ci-building", { mechatron = {
+			configuration = "complete", head_status = "building",
+		} }),
 	},
 }
 
@@ -54,10 +79,14 @@ for _, entry in ipairs(attention.classify(snapshot)) do
 end
 local expected = {
 	"behind-50=fork: 50 commits behind",
+	"ci-badge-only=Mechatron: incomplete configuration (badge only)",
+	"ci-failing=Mechatron: current HEAD failing",
 	"common-ancestor=fork: common ancestor 90 days old",
 	"dirty-10=dirty: 10 files (3 staged, 4 modified, 3 untracked)",
 	"inbox-old=inbox: 1 message, oldest 2 days",
 	"inbox-two=inbox: 2 messages",
+	"missing-license=documents: LICENSE missing",
+	"missing-readme=documents: README.md missing",
 	"worktree-eight=worktree: feature idle 8 days (/tmp/feature)",
 }
 

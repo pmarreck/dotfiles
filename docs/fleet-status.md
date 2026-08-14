@@ -38,7 +38,10 @@ Tier 1 records:
 - repositories with no remote;
 - stash count, HEAD SHA, current branch, and last-commit timestamp;
 - direct Markdown inbox-message count and oldest mtime; and
-- every linked Git worktree's path, branch, HEAD, and last-commit age.
+- every linked Git worktree's path, branch, HEAD, and last-commit age;
+- root `README.md` and conventional `LICENSE`/`LICENCE`/`COPYING` presence; and
+- a canonical Mechatron endpoint badge in the first 40 README lines, matched by
+  repository badge path rather than one fixed CI hostname.
 
 If decisive Git plumbing fails, the affected field and tier become `unknown`
 or `partial`; failure is never encoded as a clean working tree, a safe detached
@@ -55,9 +58,19 @@ classifier uses snapshot timestamps rather than reading the clock. Default
 thresholds are 50 commits behind an upstream parent, a common ancestor at least
 90 days old, 10 dirty files, a linked worktree idle for more than seven days,
 more than one direct inbox message, or an oldest inbox message over one day.
-Each row states the measured trigger. A GitHub compare merge-base timestamp is
-the fork-synchronization proxy; inbox file mtime is the age fallback because an
-inbox note is not required to contain durable message metadata.
+Missing README/license documents, partial Mechatron configuration, and a
+configured current HEAD that is failing, unknown, or unbuilt are also explicit
+triggers. Each row states the measured reason. A GitHub compare merge-base
+timestamp is the fork-synchronization proxy; inbox file mtime is the age
+fallback because an inbox note is not required to contain durable message
+metadata.
+
+`Repository readiness` reports every repository's README filename, license
+filename and mechanically identified SPDX type, primary language, Mechatron
+configuration, and current-HEAD state. GitHub supplies license and language
+metadata where available. Tokei supplies the primary-language fallback for
+local or provider-unavailable repositories. Missing and ambiguous license
+types remain `unknown`.
 
 The remaining tiers are slow context. They are present in JSON and Markdown
 but deliberately never make the immediate-action one-liner noisy:
@@ -69,12 +82,16 @@ but deliberately never make the immediate-action one-liner noisy:
   pins found in `build.zig.zon`, `Cargo.lock`, `package-lock.json`, and
   `pnpm-lock.yaml`. Commit staleness and time staleness are separate JSON
   values. An immutable or unrecognized source is `unknown`, never guessed.
-- Tier 5 reads the last local Mechatron Prime result and records whether
-  `.mechatron-prime/targets` is missing. It does not create webhooks, targets,
-  badges, or any other external state.
+- Tier 5 distinguishes an absent, badge-only, targets-only, or complete
+  Mechatron Prime setup. Complete and partial setups query the exact local HEAD,
+  reporting `passing`, `failing`, `building`, `queued`, `not run`, or `unknown`.
+  A passing result from an older commit cannot mark the current checkout green.
+  Collection does not create webhooks, targets, badges, or any other external
+  state.
 
 All external providers are read-only. GitHub calls use `gh`, registry lookups
-use `curl`, and CI history uses `mechatron-ci log --json`. Provider failures,
+use `curl`, local language measurement uses `tokei`, and CI state uses
+HEAD-filtered `mechatron-ci log` and `queue` queries. Provider failures,
 rate limits, malformed responses, and unsupported pins become field-level
 `"unknown"` values while collection still exits successfully. Network results
 live in an atomic per-repository cache. A daily run fully refreshes repositories
@@ -85,9 +102,11 @@ non-forks carry their observations until local network inputs change, while
 unknown fork classifications retry weekly.
 
 Each repository cache includes a fingerprint of its origin, branch/HEAD
-identity, lockfiles, and Mechatron target manifest, so a meaningful local edit
-invalidates that repository immediately. Every carried value retains its full
-observation and upstream-probe timestamps in the JSON snapshot. Successful
+identity, lockfiles, Mechatron target manifest, and bounded root-document
+classification, so a meaningful local edit invalidates that repository
+immediately. License type and primary language carry forward with the complete
+observation while that fingerprint remains unchanged. Every carried value
+retains its full observation and upstream-probe timestamps in the JSON snapshot. Successful
 provider responses are separately shared by exact command for 24 hours by
 default to avoid repeating the same GitHub or registry query across
 dependencies. Failed/malformed queries are
@@ -110,7 +129,8 @@ works on Linux and macOS.
 hexagonal core whose dependencies point inward through constructor-injected
 ports:
 
-- `renderers.lua` and `lock_parsers.lua` are pure domain functions;
+- `renderers.lua`, `repository_profile.lua`, and `lock_parsers.lua` are pure
+  domain functions;
 - `network.lua` orchestrates Tier 3–5 collection only through injected runtime,
   state, parser, and provider ports;
 - `local_collector.lua` adapts local Git plumbing into the canonical snapshot;

@@ -12,7 +12,8 @@ scan_root="$scratch/fleet root"
 state="$scratch/state"
 provider_log="$scratch/provider.log"
 mkdir -p "$scan_root/forked/.mechatron-prime" "$scan_root/unavailable" \
-	"$scan_root/legacy-npm" "$scan_root/malformed-compare" "$scan_root/quiet-fork"
+	"$scan_root/legacy-npm" "$scan_root/malformed-compare" "$scan_root/quiet-fork" \
+	"$scan_root/building/.mechatron-prime"
 
 init_repo() {
 	local repo="$1"
@@ -30,11 +31,39 @@ init_repo "$scan_root/unavailable"
 init_repo "$scan_root/legacy-npm"
 init_repo "$scan_root/malformed-compare"
 init_repo "$scan_root/quiet-fork"
+init_repo "$scan_root/building"
 git -C "$scan_root/forked" remote add origin git@github.com:pmarreck/forked.git
 git -C "$scan_root/unavailable" remote add origin https://github.com/pmarreck/unavailable.git
 git -C "$scan_root/malformed-compare" remote add origin https://github.com/other/malformed-compare.git
 git -C "$scan_root/quiet-fork" remote add origin https://github.com/pmarreck/quiet-fork.git
 printf 'packages.default\nchecks.test\n' >"$scan_root/forked/.mechatron-prime/targets"
+printf 'packages.default\n' >"$scan_root/building/.mechatron-prime/targets"
+cat >"$scan_root/forked/README.md" <<'EOF'
+# Forked
+
+[![Mechatron Prime CI](https://img.shields.io/endpoint?url=https%3A%2F%2Fci.example.invalid%2Fbadges%2Fforked.json&style=for-the-badge)](https://ci.example.invalid/mechatron-prime/)
+EOF
+printf 'MIT fixture\n' >"$scan_root/forked/LICENSE"
+cat >"$scan_root/unavailable/README.md" <<'EOF'
+# Unavailable
+
+[![Mechatron Prime CI](https://img.shields.io/endpoint?url=https%3A%2F%2Fci.example.invalid%2Fbadges%2Funavailable.json&style=for-the-badge)](https://ci.example.invalid/mechatron-prime/)
+EOF
+cat >"$scan_root/building/README.md" <<'EOF'
+# Building
+
+[![Mechatron Prime CI](https://img.shields.io/endpoint?url=https%3A%2F%2Fci.example.invalid%2Fbadges%2Fbuilding.json&style=for-the-badge)](https://ci.example.invalid/mechatron-prime/)
+EOF
+for profile_repo in forked unavailable building; do
+	git -C "$scan_root/$profile_repo" add README.md
+	[[ "$profile_repo" != forked ]] || git -C "$scan_root/$profile_repo" add LICENSE
+	GIT_AUTHOR_DATE='2026-06-01T12:01:00Z' \
+	GIT_COMMITTER_DATE='2026-06-01T12:01:00Z' \
+		git -C "$scan_root/$profile_repo" -c user.name=FleetTest \
+			-c user.email=fleet@example.invalid commit -q -m documents || exit 1
+done
+forked_head="$(git -C "$scan_root/forked" rev-parse HEAD)"
+building_head="$(git -C "$scan_root/building" rev-parse HEAD)"
 printf '{invalid lock\n' >"$scan_root/unavailable/flake.lock"
 cat >"$scan_root/forked/flake.lock" <<'EOF'
 {
@@ -223,6 +252,18 @@ case "$*" in
 	"repo view pmarreck/unavailable --json nameWithOwner,parent,defaultBranchRef,isFork")
 		printf '%s\n' '{}'
 		;;
+	"repo view pmarreck/forked --json licenseInfo,primaryLanguage")
+		printf '%s\n' '{"licenseInfo":{"spdxId":"MIT","name":"MIT License"},"primaryLanguage":{"name":"Zig"}}'
+		;;
+	"repo view pmarreck/unavailable --json licenseInfo,primaryLanguage")
+		printf '%s\n' '{"licenseInfo":null,"primaryLanguage":{"name":"Lua"}}'
+		;;
+	"repo view other/malformed-compare --json licenseInfo,primaryLanguage")
+		printf '%s\n' '{"licenseInfo":null,"primaryLanguage":{"name":"C"}}'
+		;;
+	"repo view pmarreck/quiet-fork --json licenseInfo,primaryLanguage")
+		printf '%s\n' '{"licenseInfo":null,"primaryLanguage":{"name":"Shell"}}'
+		;;
 	"repo view other/malformed-compare --json nameWithOwner,parent,defaultBranchRef,isFork")
 		printf '%s\n' '{"nameWithOwner":"other/malformed-compare","isFork":true,"defaultBranchRef":{"name":"main"},"parent":{"name":"core","owner":{"login":"upstream"}}}'
 		;;
@@ -286,11 +327,17 @@ printf '#!%s\n' "$BASH" >"$fake_mechatron"
 cat >>"$fake_mechatron" <<'EOF'
 printf 'mechatron %s\n' "$*" >>"$FLEET_STATUS_PROVIDER_LOG"
 case "$*" in
-	"log --project forked --json --limit 1")
-		printf '%s\n' '{"generated_at":"2026-07-28T12:00:00Z","results":[{"status":"success","commit_sha":"3333333333333333333333333333333333333333","finished_at":"2026-07-28T11:59:00Z","duration_seconds":42}]}'
+	"log --project forked --commit $FLEET_STATUS_FORKED_HEAD --json --limit 1")
+		printf '{"generated_at":"2026-07-28T12:00:00Z","results":[{"status":"success","commit_sha":"%s","finished_at":"2026-07-28T11:59:00Z","duration_seconds":42}]}\n' "$FLEET_STATUS_FORKED_HEAD"
 		;;
-	"log --project unavailable --json --limit 1")
+	"log --project unavailable --commit $FLEET_STATUS_UNAVAILABLE_HEAD --json --limit 1")
 		printf '%s\n' '{}'
+		;;
+	"log --project building --commit $FLEET_STATUS_BUILDING_HEAD --json --limit 1")
+		printf '%s\n' '{"results":[]}'
+		;;
+	"queue --project building --commit $FLEET_STATUS_BUILDING_HEAD --json")
+		printf '{"worker":{"current":{"project":"building","commit_sha":"%s"}},"claimed":[],"waiting":[]}\n' "$FLEET_STATUS_BUILDING_HEAD"
 		;;
 	*)
 		exit 45
@@ -332,6 +379,14 @@ esac
 EOF
 chmod +x "$fake_curl"
 
+fake_tokei="$scratch/tokei"
+printf '#!%s\n' "$BASH" >"$fake_tokei"
+cat >>"$fake_tokei" <<'EOF'
+printf 'tokei %s\n' "$*" >>"$FLEET_STATUS_PROVIDER_LOG"
+printf '%s\n' '{"Shell":{"code":12},"Markdown":{"code":99},"Total":{"code":111}}'
+EOF
+chmod +x "$fake_tokei"
+
 fake_xargs="$scratch/xargs"
 printf '#!%s\n' "$BASH" >"$fake_xargs"
 cat >>"$fake_xargs" <<'EOF'
@@ -356,6 +411,7 @@ run_fleet() {
 	FLEET_STATUS_GH="$fake_gh" \
 	FLEET_STATUS_MECHATRON_CI="$fake_mechatron" \
 	FLEET_STATUS_CURL="$fake_curl" \
+	FLEET_STATUS_TOKEI="$fake_tokei" \
 	FLEET_STATUS_XARGS="$fake_xargs" \
 	FLEET_STATUS_REAL_XARGS="$(command -v xargs)" \
 	FLEET_STATUS_TIMEOUT="$fake_timeout" \
@@ -363,6 +419,9 @@ run_fleet() {
 	FLEET_STATUS_NOW_EPOCH="${FLEET_STATUS_TEST_NOW_EPOCH:-1785240000}" \
 	FLEET_STATUS_QUIET_PARENT_PUSHED_AT="${FLEET_STATUS_TEST_QUIET_PARENT_PUSHED_AT:-2026-06-01T12:00:00Z}" \
 	FLEET_STATUS_PROVIDER_LOG="$provider_log" \
+	FLEET_STATUS_FORKED_HEAD="$forked_head" \
+	FLEET_STATUS_UNAVAILABLE_HEAD="$(git -C "$scan_root/unavailable" rev-parse HEAD)" \
+	FLEET_STATUS_BUILDING_HEAD="$building_head" \
 		"$fleet" --all --jobs 2 --cache-ttl-hours 24 --root "$scan_root" \
 			--state-dir "$state" --format json "$@"
 }
@@ -388,10 +447,12 @@ expect_eq "provider failures stay off stderr" "" "$(cat "$scratch/first.err")"
 expect_eq "all requested tiers have independent health" \
 	'{"1":"known","2":"known","3":"partial","4":"partial","5":"partial"}' \
 	"$(jq -cS '.tiers' "$first" 2>/dev/null)"
+expect_eq "the deterministic local language fallback is declared in the flake" "true" \
+	"$(rg -q '^[[:space:]]*tokei([[:space:]]|$)' "$repo_root/flake.nix" && printf true || printf false)"
 expect_eq "configured concurrency reaches the portable worker boundary" "1" \
 	"$(rg -c '^xargs -0 -n 1 -P 2 ' "$provider_log" 2>/dev/null)"
 expect_eq "every external provider call is bounded by a timeout" \
-	"$(rg -c '^(gh|curl|mechatron) ' "$provider_log" 2>/dev/null)" \
+	"$(rg -c '^(gh|curl|mechatron|tokei) ' "$provider_log" 2>/dev/null)" \
 	"$(rg -c '^timeout 30 ' "$provider_log" 2>/dev/null)"
 expect_eq "fork divergence preserves both directions" \
 	'{"ahead":2,"behind":5,"parent":"upstream/core","relation":"diverged","status":"known"}' \
@@ -432,10 +493,25 @@ expect_eq "package-lock v1 reports only top-level direct dependencies" \
 expect_eq "fork and pin drift remain separate fields" "true" \
 	"$(jq -r '.repos[] | select(.name == "forked") | has("fork_drift") and has("pin_drift")' "$first" 2>/dev/null)"
 expect_eq "Mechatron result is preserved" \
-	'{"commit_sha":"3333333333333333333333333333333333333333","duration_seconds":42,"finished_at":"2026-07-28T11:59:00Z","status":"success"}' \
+	"{\"commit_sha\":\"$forked_head\",\"duration_seconds\":42,\"finished_at\":\"2026-07-28T11:59:00Z\",\"status\":\"success\"}" \
 	"$(jq -cS '.repos[] | select(.name == "forked") | .mechatron.last_result' "$first" 2>/dev/null)"
+expect_eq "Mechatron status is constrained to the current HEAD" \
+	"{\"configuration\":\"complete\",\"configured\":true,\"head\":\"$forked_head\",\"head_status\":\"passing\"}" \
+	"$(jq -cS '.repos[] | select(.name == "forked") | .mechatron | {configuration,configured,head:.queried_commit,head_status}' "$first" 2>/dev/null)"
+expect_eq "a queued current-HEAD build is distinguished from a result" \
+	'{"configuration":"complete","head_status":"building","result":null}' \
+	"$(jq -cS '.repos[] | select(.name == "building") | .mechatron | {configuration,head_status,result:.last_result}' "$first" 2>/dev/null)"
+expect_eq "GitHub license and primary-language facts are mechanical" \
+	'{"language":{"name":"Zig","source":"github"},"license":{"filename":"LICENSE","present":true,"type":"MIT","type_source":"github"}}' \
+	"$(jq -cS '.repos[] | select(.name == "forked") | {license:.repository_profile.license,language:.repository_profile.primary_language}' "$first" 2>/dev/null)"
+expect_eq "non-GitHub repositories use the cached Tokei language fallback" \
+	'{"name":"Shell","source":"tokei"}' \
+	"$(jq -cS '.repos[] | select(.name == "legacy-npm") | .repository_profile.primary_language' "$first" 2>/dev/null)"
 expect_eq "manifest absence is explicit" "true" \
 	"$(jq -r '.repos[] | select(.name == "unavailable") | .mechatron.missing_targets_manifest' "$first" 2>/dev/null)"
+expect_eq "badge-only Mechatron setup is not called configured" \
+	'false|badge_only' \
+	"$(jq -r '.repos[] | select(.name == "unavailable") | [.mechatron.configured,.mechatron.configuration] | join("|")' "$first" 2>/dev/null)"
 expect_eq "unavailable fork provider becomes field-level unknown" "unknown" \
 	"$(jq -r '.repos[] | select(.name == "unavailable") | .fork_drift.status' "$first" 2>/dev/null)"
 expect_eq "unavailable Mechatron provider becomes field-level unknown" "unknown" \
@@ -450,8 +526,8 @@ expect_eq "warm-cache run succeeds cleanly" "0" "$?"
 expect_eq "warm cache makes no additional provider calls" "$call_count" \
 	"$(wc -l <"$provider_log" | tr -d ' ')"
 expect_eq "cache preserves the complete enrichment payload" \
-	"$(jq -cS '[.repos[] | {name,fork_drift,pin_drift,mechatron}]' "$first")" \
-	"$(jq -cS '[.repos[] | {name,fork_drift,pin_drift,mechatron}]' "$second")"
+	"$(jq -cS '[.repos[] | {name,repository_profile,fork_drift,pin_drift,mechatron}]' "$first")" \
+	"$(jq -cS '[.repos[] | {name,repository_profile,fork_drift,pin_drift,mechatron}]' "$second")"
 
 failed_refresh="$scratch/failed-refresh.json"
 FLEET_STATUS_TEST_NOW_EPOCH=$((1785240000 + 86400)) \
@@ -483,8 +559,13 @@ expect_eq "quiet fork gets one lightweight weekly parent probe" "$((before_quiet
 expect_eq "unchanged weekly probe carries the full metadata observation forward" \
 	'{"checked":1785240000,"probed":1785844800}' \
 	"$(jq -cS '.repos[] | select(.name == "quiet-fork") | {checked:.network_checked_at_epoch,probed:.upstream_probed_at_epoch}' "$week_later")"
+expect_eq "quiet intrinsic repository facts carry through the weekly upstream probe" \
+	"$(jq -cS '.repos[] | select(.name == "quiet-fork") | .repository_profile' "$first")" \
+	"$(jq -cS '.repos[] | select(.name == "quiet-fork") | .repository_profile' "$week_later")"
+expect_eq "weekly probe does not repeat stable license or language metadata" "1" \
+	"$(rg -c '^gh repo view pmarreck/quiet-fork --json licenseInfo,primaryLanguage$' "$provider_log" 2>/dev/null)"
 expect_eq "weekly quiet-fork probe does not repeat fork classification" "1" \
-	"$(rg -c '^gh repo view pmarreck/quiet-fork ' "$provider_log" 2>/dev/null)"
+	"$(rg -c '^gh repo view pmarreck/quiet-fork --json nameWithOwner,parent,defaultBranchRef,isFork$' "$provider_log" 2>/dev/null)"
 expect_eq "weekly adaptive refresh stderr is clean" "" "$(cat "$scratch/week-later.err")"
 
 changed_parent="$scratch/changed-parent.json"
@@ -495,9 +576,20 @@ expect_eq "changed upstream escalates a lightweight probe into a full refresh" \
 	'{"checked":1785844800,"probed":1785844800,"pushed_at":"2026-08-04T12:00:00Z"}' \
 	"$(jq -cS '.repos[] | select(.name == "quiet-fork") | {checked:.network_checked_at_epoch,probed:.upstream_probed_at_epoch,pushed_at:.fork_drift.parent_pushed_at}' "$changed_parent")"
 expect_eq "changed-upstream refresh repeats fork classification exactly once" "2" \
-	"$(rg -c '^gh repo view pmarreck/quiet-fork ' "$provider_log" 2>/dev/null)"
+	"$(rg -c '^gh repo view pmarreck/quiet-fork --json nameWithOwner,parent,defaultBranchRef,isFork$' "$provider_log" 2>/dev/null)"
 expect_eq "changed-upstream adaptive refresh stderr is clean" "" \
 	"$(cat "$scratch/changed-parent.err")"
+
+printf 'fixture license\n' >"$scan_root/quiet-fork/LICENSE"
+before_profile_change="$(wc -l <"$provider_log" | tr -d ' ')"
+run_fleet --no-save >"$scratch/profile-change.json" 2>"$scratch/profile-change.err"
+expect_eq "changed root documents invalidate carried intrinsic facts" \
+	'true|LICENSE' \
+	"$(jq -r '.repos[] | select(.name == "quiet-fork") | [.repository_profile.license.present,.repository_profile.license.filename] | join("|")' "$scratch/profile-change.json")"
+expect_eq "document-profile change triggers one full observation refresh" "true" \
+	"$(if (( $(wc -l <"$provider_log") > before_profile_change )); then printf true; else printf false; fi)"
+expect_eq "document-profile refresh stderr is clean" "" \
+	"$(cat "$scratch/profile-change.err")"
 
 printf '\n' >>"$scan_root/forked/flake.lock"
 before_local_change="$(wc -l <"$provider_log" | tr -d ' ')"

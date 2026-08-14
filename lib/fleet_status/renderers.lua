@@ -275,6 +275,72 @@ local function markdown_ref(value)
 	return markdown_escape(text)
 end
 
+local function document_value(profile, field)
+	if type(profile) ~= "table" or profile.status == "unknown" then return "unknown" end
+	local document = profile[field]
+	if type(document) ~= "table" or not document.present then return "missing" end
+	return document.filename or "present"
+end
+
+local function display_state(value)
+	return tostring(value or "unknown"):gsub("_", " ")
+end
+
+--- Project repository readiness into stable scalar rows before presentation.
+--- This keeps the table renderer free of policy and missing-field inference.
+function M.readiness_rows(repos)
+	local rows = {}
+	for _, repo in ipairs(repos or {}) do
+		local profile = repo.repository_profile
+		local ci = repo.mechatron
+		rows[#rows + 1] = {
+			repository = repo.name,
+			readme = document_value(profile, "readme"),
+			license = document_value(profile, "license"),
+			license_type = profile and profile.license and profile.license.type or "unknown",
+			primary_language = profile and profile.primary_language
+				and profile.primary_language.name or "unknown",
+			mechatron = ci and display_state(
+				ci.configuration == "complete" and "configured" or ci.configuration
+			) or "unknown",
+			head_status = ci and display_state(ci.head_status) or "unknown",
+		}
+	end
+	table.sort(rows, function(left, right) return left.repository < right.repository end)
+	return rows
+end
+
+local function readiness_lines(repos)
+	local measured = false
+	for _, repo in ipairs(repos or {}) do
+		if repo.repository_profile or repo.mechatron then
+			measured = true
+			break
+		end
+	end
+	if not measured then return {} end
+	local lines = {
+		"",
+		"## Repository readiness",
+		"",
+		"| Repository | README | License | License type | Primary language | Mechatron | Current HEAD |",
+		"|---|---|---|---|---|---|---|",
+	}
+	for _, row in ipairs(M.readiness_rows(repos)) do
+		lines[#lines + 1] = string.format(
+			"| %s | %s | %s | %s | %s | %s | %s |",
+			markdown_escape(row.repository),
+			markdown_escape(row.readme),
+			markdown_escape(row.license),
+			markdown_escape(row.license_type),
+			markdown_escape(row.primary_language),
+			markdown_escape(row.mechatron),
+			markdown_escape(row.head_status)
+		)
+	end
+	return lines
+end
+
 local function slow_drift_lines(repos)
 	local fork_rows, pin_rows, ci_rows = {}, {}, {}
 	for _, repo in ipairs(repos) do
@@ -385,6 +451,9 @@ function M.render_markdown(snapshot, previous, options)
 				markdown_escape(table.concat(entry.reasons, "; "))
 			)
 		end
+	end
+	for _, line in ipairs(readiness_lines(snapshot.repos or {})) do
+		lines[#lines + 1] = line
 	end
 	lines[#lines + 1] = ""
 	lines[#lines + 1] = "## Action summary"
