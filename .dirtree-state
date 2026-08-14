@@ -24,6 +24,7 @@ hide=[
 ]
 
 annotate=[
+	.pathconfig = Canonical, idempotent PATH constructor and sole location allowed to export PATH
 	RULES.md = Durable dotfiles policy decisions, including the explicit decision not to add i18n to personal helper commands.
 	bin/base85 = LuaJIT base85 encode/decode (Z85/ZeroMQ default, Adobe ASCII85 via -A); stdin only, --encode/--decode/auto-detect alphabet+direction; Z85 arbitrary-length via BLIP-pad wrapper (-p/-P to force/disable)
 	bin/checksite = Poll a URL until response stops matching a down-pattern, then alert (tput bel); --once/--input - for offline testing
@@ -76,6 +77,7 @@ annotate=[
 	bin/test/block-attribution_test = tests the global PreToolUse hook that blocks AI authorship trailers (hook at ~/.claude/hooks/block-attribution/)
 	bin/test/claude_update_alias_test = Regression test ensuring update_claude targets the PATH-winning npm prefix and narrowly allows Anthropic postinstall.
 	bin/test/code_test = tests for the 'code' fuzzy-project-jump function (cd, case-insensitivity, dirs-only, no-match, deterministic first-match, --edit routing, usage)
+	bin/test/codex_update_alias_test = Regression guard requiring update_codex to use the standalone native updater shared with Remote Control.
 	bin/test/collaboration-ledger_test = Exercises path rejection, exact-digest confirmation, one-file publication, and safe push retry.
 	bin/test/darktide-patch-mods_test = Test suite for bin/darktide-patch-mods: host-guard, action validation, DTKIT_PATCH_BIN override, cache-hit/fresh-download/download-failure paths via mocked curl+fixture tarball
 	bin/test/darktide-sync-mods_test = Test suite for bin/darktide-sync-mods: host-guard matrix, real rsync against temp dirs (idempotency, additive vs --delete), CLI surface
@@ -103,6 +105,7 @@ annotate=[
 	bin/test/nas_ps1_test = static-content validation for bin/nas.ps1 (no pwsh required locally); checks param block, both protocol branches, safety helpers, mojibake hygiene; opportunistic pwsh parse if available
 	bin/test/nas_test = TDD coverage for bin/nas: pure helpers (_nas_fstab_line, _nas_nixos_snippet, _nas_auto_nfs_line), platform override, --help, --dry-run for all three OS branches
 	bin/test/npmrc_project_config_test = guards that no repo .npmrc sets prefix, and that npmrc still installs as ~/.npmrc
+	bin/test/path_export_policy_test = Push-gated classifier forbidding tracked PATH export commands outside .pathconfig
 	bin/test/pathconfig_code_bin_denylist_test = tests that denylisted $CODE project bin dirs never reach PATH, by discovery or inheritance
 	bin/test/pathconfig_foreign_path_test = regression tests: .pathconfig must preserve FOREIGN PATH injections (nix shell/develop, direnv) across its ORIG_PATH rebuild; set-based classifier with paired specificity case + e2e that forces on-the-fly nix instantiation of a run-unique derivation and asserts it resolves in the new interactive shell
 	bin/test/randompassdict_test = CLI security regressions for uniform dictionary passphrases, exact entropy accounting, literal outputs, and fail-closed arguments

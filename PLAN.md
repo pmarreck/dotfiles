@@ -17,6 +17,25 @@
   2026-08-13 11:38 EDT: all 174 host test files and the hermetic Nix flake check
   pass; the real ledger and clean gist clone pass non-publishing preflight.
 
+## Active — canonical PATH export gate (2026-08-06)
+
+- [x] Add a tracked-source test that fails on every active `export PATH`
+  command outside the explicitly allowed canonical export in `.pathconfig`.
+  Prove the gate fails on the current Volta installer residue before removing
+  that residue. Curiosity poke: comments, documentation, test fixtures, alternate
+  assignment syntax, and multiple commands on one line must not make the
+  classifier vacuous or noisy. Completed 2026-08-06 10:21 EDT: the new
+  `path_export_policy_test` first failed on 22 commands and now permits only
+  `.pathconfig`'s single bare export; synthetic classifier controls cover direct,
+  bare, grouped, append, comment, quoted-prose, and similarly named cases.
+- [x] Purge obsolete Volta environment and PATH declarations, update startup
+  expectations, run focused and complete suites, document the gate, and commit
+  only this known-good unit without disturbing existing worktree changes.
+  Completed 2026-08-06 10:21 EDT: all five Volta remnants are gone; 19 other
+  raw test/Nix exports became ordinary assignments that retain PATH's inherited
+  export attribute. All 17 focused tests, the 173-file host suite, and the
+  125-file hermetic Nix suite pass.
+
 ## Active — align Bash and Lua truthiness semantics (2026-08-06)
 
 - [x] Add a failing Lua classifier-set regression proving that unset/`nil` and
@@ -42,6 +61,48 @@
   Curiosity poke: explain the useful Bash state distinction without implying
   that ordinary empty-string comparison can distinguish unset from set-empty.
   Completed 2026-08-06 12:04 EDT with a 257-character draft.
+
+## Queued — identify the pipe-script approval tool (2026-08-06)
+
+- [x] Find the existing `~/dotfiles/bin` command intended to sit between a
+  downloaded installer and `sh`, verify its actual safety and invocation, and
+  report the remembered name. Curiosity poke: approval must occur after the
+  complete input is buffered; streaming bytes onward before approval cannot
+  prevent partial execution. Completed 2026-08-06 10:21 EDT: the command is
+  `confirm`, and it buffers all stdin before approval. Its executable currently
+  defines the function without invoking it, so repair remains separate work
+  before using it in an installer pipeline.
+- [ ] Repair `confirm`'s executable entry point under TDD and verify that denial
+  emits zero stdout bytes while approval emits the complete buffered script.
+  Curiosity poke: interruption, empty input, downloader failure, temporary-file
+  cleanup, and a downstream shell that starts immediately all need fail-closed
+  behavior.
+
+## Active — one Codex installation and updater (2026-08-04)
+
+- [x] Replace the npm-only `update_codex` alias with the standalone CLI's
+  native updater, then remove the redundant npm installation and make the PATH
+  launcher share Remote Control's `packages/standalone/current` release.
+  Curiosity poke: the one-time cutover must not remove the currently running
+  agent before the standalone launcher is installed and verified.
+  Completed 2026-08-04 22:05 EDT: removed the user-prefix npm package, installed
+  the standalone launcher at `~/.local/bin/codex`, and verified that PATH and
+  both live Remote Control processes resolve to standalone 0.146.0.
+- [x] Prove the old alias fails the single-install contract, make the focused
+  test pass, validate the complete suite, update dirtree notes, and commit only
+  the updater unit without touching the active `repeat` work.
+  Completed 2026-08-04 22:08 EDT: focused test failed twice before the alias
+  change, then passed 3/3; ShellCheck is clean and the full host suite passes
+  all 172 test files.
+
+## Queued — Baldur's Gate 3 Proton startup failure (2026-08-04)
+
+- [ ] Reproduce BG3's failure to load under Proton tomorrow, capture the Steam
+  launch command, selected compatibility tool, Proton log, GPU/driver state,
+  game-filesystem mount, and recent crash evidence before changing anything.
+  Curiosity poke: distinguish launcher failure, DX11/Vulkan translation,
+  filesystem permissions, stale prefix/shader cache, mods, and GPU pressure;
+  preserve saves and the Proton prefix until the failing layer is identified.
 
 ## Active — repeat compound commands and shorten the push gate (2026-08-04)
 

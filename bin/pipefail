@@ -1,0 +1,199 @@
+#!/usr/bin/env bash
+# pipefail — run ONE pipeline with `set -o pipefail`, then restore the shell's
+# previous setting.
+#
+# Why a string argument and not `foo | bar | pipefail`:
+#   A pipeline is parsed and its exit status decided by the shell that runs it.
+#   By the time a wrapper is executing it is merely one process inside that
+#   pipeline, and cannot retroactively change how the caller reports status.
+#   So the pipeline has to arrive as text this helper can evaluate itself.
+#
+# Prefer sourcing over executing. Sourced, the eval runs in YOUR shell, so shell
+# functions and aliases (capture, etc.) are visible. Executed, it forks a new
+# bash that knows only exported things, and `pipefail 'myfunc | grep x'` fails
+# with "command not found".
+
+declare -F debug >/dev/null 2>&1 || \
+debug() {
+	[ -n "${DEBUG:-}" ] && echo "DEBUG: $*" >&2
+}
+
+pipefail() {
+	local first_only=0
+	local show_help=0
+
+	while [ $# -gt 0 ]; do
+		case "$1" in
+			-h|--help) show_help=1; shift ;;
+			-0|--first)
+				# Report the FIRST stage's status, ignoring downstream ones.
+				# For `cmd | grep -q x`, grep's 1 for "no match" is not cmd
+				# failing. Note this does NOT rescue `producer | head -n`:
+				# SIGPIPE kills the producer itself, so 141 IS the first
+				# status and reporting it is correct, not noise.
+				first_only=1; shift ;;
+			--test) _pipefail_selftest; return $? ;;
+			--) shift; break ;;
+			-*) printf 'pipefail: unknown option %s\n' "$1" >&2; return 2 ;;
+			*) break ;;
+		esac
+	done
+
+	if [ "$show_help" -eq 1 ] || [ $# -eq 0 ]; then
+		cat <<'EOF'
+pipefail: run one pipeline with `set -o pipefail`, restoring prior state
+
+USAGE:
+	pipefail 'CMD1 | CMD2 [| ...]'      Run the pipeline; exit non-zero if ANY stage failed
+	pipefail -0 'CMD1 | CMD2'           Report only the FIRST stage's status
+	pipefail --test                     Run self-tests
+	pipefail -h, --help                 Show this help
+
+OPTIONS:
+	-0, --first     Return ${PIPESTATUS[0]} rather than the rightmost failure —
+	                i.e. judge the PRODUCER and ignore what happens downstream.
+	                Use for `cmd | grep -q x`, where grep's 1 means "no match"
+	                rather than "cmd failed", or `cmd | tee log` where you do
+	                not care whether tee succeeded.
+
+	                It does NOT rescue `producer | head -n`. There SIGPIPE kills
+	                the producer itself, so 141 is genuinely ${PIPESTATUS[0]}
+	                and reporting it is correct. If you want to ignore that, do
+	                so explicitly rather than expecting --first to hide it.
+
+WHY:
+	Without pipefail, `$?` after a pipeline is only the LAST command's status,
+	so `./test | tail -5` reports success whenever `tail` succeeds — even if the
+	tests failed. That is a false green.
+
+NOTES:
+	The pipeline is a single quoted STRING, because a wrapper cannot change how
+	an already-parsed pipeline reports status. `bash -o pipefail -c '...'` does
+	the same thing; this is the short form that also restores prior state.
+
+	SOURCE this file rather than executing it if the pipeline uses your shell
+	functions or aliases — an executed copy runs in a fresh bash that cannot
+	see them.
+
+EXAMPLES:
+	pipefail './test 2>&1 | tail -20'
+	pipefail -0 'build.sh 2>&1 | grep -q WARNING'
+	if ! pipefail 'make 2>&1 | tee build.log'; then echo "build failed"; fi
+EOF
+		[ "$show_help" -eq 1 ] && return 0
+		return 2
+	fi
+
+	# `shopt -po pipefail` prints a command that restores the current setting,
+	# so the caller's shell is left exactly as it was found.
+	local restore
+	restore=$(shopt -po pipefail)
+	debug "pipefail: restore command is: $restore"
+
+	# The PIPESTATUS capture has to happen INSIDE the eval, on the line right
+	# after the pipeline. Two traps, both of which silently produce a
+	# plausible-but-wrong answer:
+	#   1. `eval` is itself a single command, so PIPESTATUS observed after it
+	#      describes `eval`, not the pipeline within it.
+	#   2. Any intervening statement clobbers PIPESTATUS — including
+	#      `local rc=$?`, which is a command that succeeds.
+	local -a __pipefail_statuses=()
+	set -o pipefail
+	eval "$*
+__pipefail_statuses=(\"\${PIPESTATUS[@]}\")"
+	local -a statuses=("${__pipefail_statuses[@]}")
+	eval "$restore"
+
+	# pipefail semantics: the rightmost non-zero status, or zero if all passed.
+	local rc=0 s
+	for s in "${statuses[@]}"; do
+		[ "$s" -ne 0 ] && rc="$s"
+	done
+
+	if [ "$first_only" -eq 1 ]; then
+		debug "pipefail: statuses=(${statuses[*]}), returning first"
+		return "${statuses[0]}"
+	fi
+	return "$rc"
+}
+
+_pipefail_selftest() {
+	local failures=0
+	local rc
+
+	_expect() {
+		local want="$1" got="$2" what="$3"
+		if [ "$want" != "$got" ]; then
+			printf 'FAIL %s: expected %s, got %s\n' "$what" "$want" "$got" >&2
+			failures=$((failures + 1))
+		fi
+	}
+
+	# The whole point: a failing producer must not be masked by a succeeding
+	# consumer. Establish the broken baseline first so the fix is meaningful.
+	( false | true ); _expect 0 "$?" 'baseline: bare pipeline hides producer failure'
+	pipefail 'false | true'; _expect 1 "$?" 'producer failure surfaces'
+
+	pipefail 'true | true'; _expect 0 "$?" 'all-success pipeline'
+	pipefail 'true | false'; _expect 1 "$?" 'consumer failure surfaces'
+	pipefail 'exit 3 | true'; _expect 3 "$?" 'exact producer status preserved'
+
+	# Rightmost non-zero wins when several stages fail.
+	pipefail 'exit 3 | exit 4'; _expect 4 "$?" 'rightmost failure reported'
+
+	# --first reports the producer regardless of downstream.
+	pipefail -0 'exit 3 | true'; _expect 3 "$?" '--first reports producer'
+	pipefail -0 'true | exit 4'; _expect 0 "$?" '--first ignores consumer'
+
+	# --first must NOT be advertised as a SIGPIPE escape hatch. When `head`
+	# closes the pipe, the producer is the process that dies, so 141 really is
+	# the first status. Pinned because the help text once claimed otherwise.
+	pipefail -0 'yes | head -1 >/dev/null'; _expect 141 "$?" '--first does not mask SIGPIPE'
+
+	# Single command, no pipe at all, must still work.
+	pipefail 'true'; _expect 0 "$?" 'single command success'
+	pipefail 'false'; _expect 1 "$?" 'single command failure'
+
+	# State restoration, in BOTH directions — a helper that leaks shell options
+	# is worse than no helper.
+	set +o pipefail
+	pipefail 'true | true' >/dev/null
+	case "$(shopt -po pipefail)" in
+		*'+o pipefail') ;;
+		*) printf 'FAIL: pipefail leaked into a shell that had it off\n' >&2; failures=$((failures + 1)) ;;
+	esac
+
+	set -o pipefail
+	pipefail 'true | true' >/dev/null
+	case "$(shopt -po pipefail)" in
+		*'-o pipefail') ;;
+		*) printf 'FAIL: pipefail cleared a setting the caller had on\n' >&2; failures=$((failures + 1)) ;;
+	esac
+	set +o pipefail
+
+	# Restoration must survive a FAILING pipeline too, not just a passing one.
+	set +o pipefail
+	pipefail 'false | true' >/dev/null 2>&1
+	case "$(shopt -po pipefail)" in
+		*'+o pipefail') ;;
+		*) printf 'FAIL: pipefail leaked after a failing pipeline\n' >&2; failures=$((failures + 1)) ;;
+	esac
+
+	# Usage errors are rejected, not silently treated as an empty pipeline.
+	pipefail >/dev/null 2>&1; _expect 2 "$?" 'no arguments is a usage error'
+	pipefail --nonsense >/dev/null 2>&1; _expect 2 "$?" 'unknown option rejected'
+	pipefail --help >/dev/null 2>&1; _expect 0 "$?" '--help succeeds'
+
+	if [ "$failures" -ne 0 ]; then
+		printf '%d pipefail self-test failure(s)\n' "$failures" >&2
+		return 1
+	fi
+	printf 'PASS pipefail self-tests\n'
+	return 0
+}
+
+# Executed rather than sourced: run it. (Sourcing just defines the function,
+# which is the preferred use — see the note at the top.)
+if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+	pipefail "$@"
+fi
