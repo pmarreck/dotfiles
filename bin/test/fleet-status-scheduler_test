@@ -42,6 +42,13 @@ actual="$(PACKAGE_PATH="$repo_root/lib/?.lua;$repo_root/lib/?/init.lua;;" luajit
 				parent_pushed_at = "2026-07-21T12:00:00Z",
 			},
 		}), "same" },
+		{ "origin-boundary", quiet_repo, cache({
+			fork_drift = {
+				status = "not_fork",
+				repository = "pmarreck/plain",
+				repository_pushed_at = "2026-07-21T12:00:00Z",
+			},
+		}), "same" },
 		{ "quiet-fork-not-due", quiet_repo, cache({
 			cached_at_epoch = now - week,
 			upstream_probed_at_epoch = now - week + 1,
@@ -60,7 +67,16 @@ actual="$(PACKAGE_PATH="$repo_root/lib/?.lua;$repo_root/lib/?/init.lua;;" luajit
 				parent_pushed_at = "2026-06-01T12:00:00Z",
 			},
 		}), "same" },
-		{ "quiet-nonfork", quiet_repo, cache({ cached_at_epoch = now - (4 * week) }), "same" },
+		{ "quiet-origin-weekly", quiet_repo, cache({
+			cached_at_epoch = now - week,
+			upstream_probed_at_epoch = now - week,
+			fork_drift = {
+				status = "not_fork",
+				repository = "pmarreck/plain",
+				repository_pushed_at = "2026-06-01T12:00:00Z",
+			},
+		}), "same" },
+		{ "quiet-no-remote", quiet_repo, cache({ cached_at_epoch = now - (4 * week) }), "same" },
 		{ "unknown-weekly-retry", quiet_repo, cache({
 			cached_at_epoch = now - week,
 			upstream_probed_at_epoch = now - week,
@@ -77,7 +93,7 @@ actual="$(PACKAGE_PATH="$repo_root/lib/?.lua;$repo_root/lib/?/init.lua;;" luajit
 ' 2>"$scratch/err")"
 status=$?
 
-expected=$'missing=full:missing-cache:0\ninput-changed=full:local-input-changed:0\nlocal-boundary=full:daily-local-activity:86400\nactive-branch=full:daily-local-activity:86400\nhot-not-due=carry:hot-cache-current:86400\nupstream-boundary=full:daily-upstream-activity:86400\nquiet-fork-not-due=carry:quiet-probe-current:604800\nquiet-fork-weekly=probe:weekly-upstream-probe:604800\nquiet-nonfork=carry:quiet-nonfork:604800\nunknown-weekly-retry=full:weekly-classification-retry:604800\nfuture-cache=full:clock-skew:0'
+expected=$'missing=full:missing-cache:0\ninput-changed=full:local-input-changed:0\nlocal-boundary=full:daily-local-activity:86400\nactive-branch=full:daily-local-activity:86400\nhot-not-due=carry:hot-cache-current:86400\nupstream-boundary=full:daily-upstream-activity:86400\norigin-boundary=full:daily-origin-activity:86400\nquiet-fork-not-due=carry:quiet-probe-current:604800\nquiet-fork-weekly=probe:weekly-remote-probe:604800\nquiet-origin-weekly=probe:weekly-remote-probe:604800\nquiet-no-remote=carry:quiet-no-remote:604800\nunknown-weekly-retry=full:weekly-classification-retry:604800\nfuture-cache=full:clock-skew:0'
 
 if (( status != 0 )); then
 	printf 'FAIL scheduler classifier exited %s\n%s\n' "$status" "$(cat "$scratch/err")" >&2
@@ -93,4 +109,4 @@ if [[ "$actual" != "$expected" ]]; then
 	exit 1
 fi
 
-printf 'All 11 fleet-status scheduler classifier cases passed\n'
+printf 'All 13 fleet-status scheduler classifier cases passed\n'

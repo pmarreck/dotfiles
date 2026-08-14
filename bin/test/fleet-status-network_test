@@ -13,7 +13,7 @@ state="$scratch/state"
 provider_log="$scratch/provider.log"
 mkdir -p "$scan_root/forked/.mechatron-prime" "$scan_root/unavailable" \
 	"$scan_root/legacy-npm" "$scan_root/malformed-compare" "$scan_root/quiet-fork" \
-	"$scan_root/building/.mechatron-prime"
+	"$scan_root/quiet-origin" "$scan_root/building/.mechatron-prime"
 
 init_repo() {
 	local repo="$1"
@@ -31,11 +31,13 @@ init_repo "$scan_root/unavailable"
 init_repo "$scan_root/legacy-npm"
 init_repo "$scan_root/malformed-compare"
 init_repo "$scan_root/quiet-fork"
+init_repo "$scan_root/quiet-origin"
 init_repo "$scan_root/building"
 git -C "$scan_root/forked" remote add origin git@github.com:pmarreck/forked.git
 git -C "$scan_root/unavailable" remote add origin https://github.com/pmarreck/unavailable.git
 git -C "$scan_root/malformed-compare" remote add origin https://github.com/other/malformed-compare.git
 git -C "$scan_root/quiet-fork" remote add origin https://github.com/pmarreck/quiet-fork.git
+git -C "$scan_root/quiet-origin" remote add origin https://github.com/pmarreck/quiet-origin.git
 printf 'packages.default\nchecks.test\n' >"$scan_root/forked/.mechatron-prime/targets"
 printf 'packages.default\n' >"$scan_root/building/.mechatron-prime/targets"
 cat >"$scan_root/forked/README.md" <<'EOF'
@@ -237,19 +239,31 @@ printf '#!%s\n' "$BASH" >"$fake_gh"
 cat >>"$fake_gh" <<'EOF'
 printf 'gh %s\n' "$*" >>"$FLEET_STATUS_PROVIDER_LOG"
 case "$*" in
-	"repo view pmarreck/forked --json nameWithOwner,parent,defaultBranchRef,isFork")
-		printf '%s\n' '{"nameWithOwner":"pmarreck/forked","isFork":true,"defaultBranchRef":{"name":"main"},"parent":{"name":"core","owner":{"login":"upstream"}}}'
+	"repo view pmarreck/forked --json nameWithOwner,parent,defaultBranchRef,isFork,pushedAt")
+		printf '%s\n' '{"nameWithOwner":"pmarreck/forked","isFork":true,"pushedAt":"2026-07-27T12:00:00Z","defaultBranchRef":{"name":"main"},"parent":{"name":"core","owner":{"login":"upstream"}}}'
 		;;
 	"repo view upstream/core --json nameWithOwner,defaultBranchRef,pushedAt")
 		printf '%s\n' '{"nameWithOwner":"upstream/core","defaultBranchRef":{"name":"main"},"pushedAt":"2026-07-27T12:00:00Z"}'
 		;;
-	"repo view pmarreck/quiet-fork --json nameWithOwner,parent,defaultBranchRef,isFork")
-		printf '%s\n' '{"nameWithOwner":"pmarreck/quiet-fork","isFork":true,"defaultBranchRef":{"name":"main"},"parent":{"name":"quiet-core","owner":{"login":"upstream"}}}'
+	"repo view pmarreck/quiet-fork --json nameWithOwner,parent,defaultBranchRef,isFork,pushedAt")
+		printf '%s\n' '{"nameWithOwner":"pmarreck/quiet-fork","isFork":true,"pushedAt":"2026-06-01T12:00:00Z","defaultBranchRef":{"name":"main"},"parent":{"name":"quiet-core","owner":{"login":"upstream"}}}'
+		;;
+	"repo view pmarreck/quiet-fork --json nameWithOwner,pushedAt")
+		printf '%s\n' '{"nameWithOwner":"pmarreck/quiet-fork","pushedAt":"2026-06-01T12:00:00Z"}'
+		;;
+	"repo view pmarreck/quiet-origin --json nameWithOwner,parent,defaultBranchRef,isFork,pushedAt")
+		printf '{"nameWithOwner":"pmarreck/quiet-origin","isFork":false,"defaultBranchRef":{"name":"main"},"pushedAt":"%s"}\n' "$FLEET_STATUS_QUIET_ORIGIN_PUSHED_AT"
+		;;
+	"repo view pmarreck/quiet-origin --json nameWithOwner,pushedAt")
+		printf '{"nameWithOwner":"pmarreck/quiet-origin","pushedAt":"%s"}\n' "$FLEET_STATUS_QUIET_ORIGIN_PUSHED_AT"
 		;;
 	"repo view upstream/quiet-core --json nameWithOwner,defaultBranchRef,pushedAt")
 		printf '{"nameWithOwner":"upstream/quiet-core","defaultBranchRef":{"name":"main"},"pushedAt":"%s"}\n' "$FLEET_STATUS_QUIET_PARENT_PUSHED_AT"
 		;;
-	"repo view pmarreck/unavailable --json nameWithOwner,parent,defaultBranchRef,isFork")
+	"repo view upstream/quiet-core --json nameWithOwner,pushedAt")
+		printf '{"nameWithOwner":"upstream/quiet-core","pushedAt":"%s"}\n' "$FLEET_STATUS_QUIET_PARENT_PUSHED_AT"
+		;;
+	"repo view pmarreck/unavailable --json nameWithOwner,parent,defaultBranchRef,isFork,pushedAt")
 		printf '%s\n' '{}'
 		;;
 	"repo view pmarreck/forked --json licenseInfo,primaryLanguage")
@@ -264,8 +278,11 @@ case "$*" in
 	"repo view pmarreck/quiet-fork --json licenseInfo,primaryLanguage")
 		printf '%s\n' '{"licenseInfo":null,"primaryLanguage":{"name":"Shell"}}'
 		;;
-	"repo view other/malformed-compare --json nameWithOwner,parent,defaultBranchRef,isFork")
-		printf '%s\n' '{"nameWithOwner":"other/malformed-compare","isFork":true,"defaultBranchRef":{"name":"main"},"parent":{"name":"core","owner":{"login":"upstream"}}}'
+	"repo view pmarreck/quiet-origin --json licenseInfo,primaryLanguage")
+		printf '%s\n' '{"licenseInfo":{"spdxId":"MIT","name":"MIT License"},"primaryLanguage":{"name":"Lua"}}'
+		;;
+	"repo view other/malformed-compare --json nameWithOwner,parent,defaultBranchRef,isFork,pushedAt")
+		printf '%s\n' '{"nameWithOwner":"other/malformed-compare","isFork":true,"pushedAt":"2026-06-01T12:00:00Z","defaultBranchRef":{"name":"main"},"parent":{"name":"core","owner":{"login":"upstream"}}}'
 		;;
 	"api repos/upstream/core/compare/main...other:main")
 		printf '%s\n' '{}'
@@ -418,6 +435,7 @@ run_fleet() {
 	FLEET_STATUS_PROVIDER_TIMEOUT_SECONDS=30 \
 	FLEET_STATUS_NOW_EPOCH="${FLEET_STATUS_TEST_NOW_EPOCH:-1785240000}" \
 	FLEET_STATUS_QUIET_PARENT_PUSHED_AT="${FLEET_STATUS_TEST_QUIET_PARENT_PUSHED_AT:-2026-06-01T12:00:00Z}" \
+	FLEET_STATUS_QUIET_ORIGIN_PUSHED_AT="${FLEET_STATUS_TEST_QUIET_ORIGIN_PUSHED_AT:-2026-06-01T12:00:00Z}" \
 	FLEET_STATUS_PROVIDER_LOG="$provider_log" \
 	FLEET_STATUS_FORKED_HEAD="$forked_head" \
 	FLEET_STATUS_UNAVAILABLE_HEAD="$(git -C "$scan_root/unavailable" rev-parse HEAD)" \
@@ -552,6 +570,7 @@ expect_eq "quiet fork performs no premature daily upstream probe" "$before_quiet
 expect_eq "adaptive daily refresh stderr is clean" "" "$(cat "$scratch/day-later.err")"
 
 week_later="$scratch/week-later.json"
+before_quiet_origin_probe="$(rg -c '^gh repo view pmarreck/quiet-origin --json nameWithOwner,pushedAt$' "$provider_log" 2>/dev/null)"
 FLEET_STATUS_TEST_NOW_EPOCH=$((1785240000 + 604800)) \
 	run_fleet --no-save >"$week_later" 2>"$scratch/week-later.err"
 expect_eq "quiet fork gets one lightweight weekly parent probe" "$((before_quiet_daily_probe + 1))" \
@@ -559,13 +578,19 @@ expect_eq "quiet fork gets one lightweight weekly parent probe" "$((before_quiet
 expect_eq "unchanged weekly probe carries the full metadata observation forward" \
 	'{"checked":1785240000,"probed":1785844800}' \
 	"$(jq -cS '.repos[] | select(.name == "quiet-fork") | {checked:.network_checked_at_epoch,probed:.upstream_probed_at_epoch}' "$week_later")"
+expect_eq "quiet non-fork gets one lightweight weekly origin probe" \
+	"$((before_quiet_origin_probe + 1))" \
+	"$(rg -c '^gh repo view pmarreck/quiet-origin --json nameWithOwner,pushedAt$' "$provider_log" 2>/dev/null)"
+expect_eq "unchanged origin carries the full non-fork observation forward" \
+	'{"checked":1785240000,"probed":1785844800,"pushed_at":"2026-06-01T12:00:00Z"}' \
+	"$(jq -cS '.repos[] | select(.name == "quiet-origin") | {checked:.network_checked_at_epoch,probed:.upstream_probed_at_epoch,pushed_at:.fork_drift.repository_pushed_at}' "$week_later")"
 expect_eq "quiet intrinsic repository facts carry through the weekly upstream probe" \
 	"$(jq -cS '.repos[] | select(.name == "quiet-fork") | .repository_profile' "$first")" \
 	"$(jq -cS '.repos[] | select(.name == "quiet-fork") | .repository_profile' "$week_later")"
 expect_eq "weekly probe does not repeat stable license or language metadata" "1" \
 	"$(rg -c '^gh repo view pmarreck/quiet-fork --json licenseInfo,primaryLanguage$' "$provider_log" 2>/dev/null)"
 expect_eq "weekly quiet-fork probe does not repeat fork classification" "1" \
-	"$(rg -c '^gh repo view pmarreck/quiet-fork --json nameWithOwner,parent,defaultBranchRef,isFork$' "$provider_log" 2>/dev/null)"
+	"$(rg -c '^gh repo view pmarreck/quiet-fork --json nameWithOwner,parent,defaultBranchRef,isFork,pushedAt$' "$provider_log" 2>/dev/null)"
 expect_eq "weekly adaptive refresh stderr is clean" "" "$(cat "$scratch/week-later.err")"
 
 changed_parent="$scratch/changed-parent.json"
@@ -576,9 +601,21 @@ expect_eq "changed upstream escalates a lightweight probe into a full refresh" \
 	'{"checked":1785844800,"probed":1785844800,"pushed_at":"2026-08-04T12:00:00Z"}' \
 	"$(jq -cS '.repos[] | select(.name == "quiet-fork") | {checked:.network_checked_at_epoch,probed:.upstream_probed_at_epoch,pushed_at:.fork_drift.parent_pushed_at}' "$changed_parent")"
 expect_eq "changed-upstream refresh repeats fork classification exactly once" "2" \
-	"$(rg -c '^gh repo view pmarreck/quiet-fork --json nameWithOwner,parent,defaultBranchRef,isFork$' "$provider_log" 2>/dev/null)"
+	"$(rg -c '^gh repo view pmarreck/quiet-fork --json nameWithOwner,parent,defaultBranchRef,isFork,pushedAt$' "$provider_log" 2>/dev/null)"
 expect_eq "changed-upstream adaptive refresh stderr is clean" "" \
 	"$(cat "$scratch/changed-parent.err")"
+
+changed_origin="$scratch/changed-origin.json"
+FLEET_STATUS_TEST_NOW_EPOCH=$((1785240000 + 604800)) \
+FLEET_STATUS_TEST_QUIET_ORIGIN_PUSHED_AT='2026-08-04T12:00:00Z' \
+	run_fleet --no-save >"$changed_origin" 2>"$scratch/changed-origin.err"
+expect_eq "changed origin escalates a lightweight probe into a full refresh" \
+	'{"checked":1785844800,"probed":1785844800,"pushed_at":"2026-08-04T12:00:00Z"}' \
+	"$(jq -cS '.repos[] | select(.name == "quiet-origin") | {checked:.network_checked_at_epoch,probed:.upstream_probed_at_epoch,pushed_at:.fork_drift.repository_pushed_at}' "$changed_origin")"
+expect_eq "changed-origin refresh repeats non-fork classification exactly once" "2" \
+	"$(rg -c '^gh repo view pmarreck/quiet-origin --json nameWithOwner,parent,defaultBranchRef,isFork,pushedAt$' "$provider_log" 2>/dev/null)"
+expect_eq "changed-origin adaptive refresh stderr is clean" "" \
+	"$(cat "$scratch/changed-origin.err")"
 
 printf 'fixture license\n' >"$scan_root/quiet-fork/LICENSE"
 before_profile_change="$(wc -l <"$provider_log" | tr -d ' ')"

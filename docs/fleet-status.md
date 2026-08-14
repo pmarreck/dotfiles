@@ -95,18 +95,22 @@ HEAD-filtered `mechatron-ci log` and `queue` queries. Provider failures,
 rate limits, malformed responses, and unsupported pins become field-level
 `"unknown"` values while collection still exits successfully. Network results
 live in an atomic per-repository cache. A daily run fully refreshes repositories
-whose newest local branch commit or known fork-parent push is at most seven days
-old. A quiet known fork receives one lightweight parent query every seven days;
-a changed parent immediately escalates that repository to a full refresh. Quiet
-non-forks carry their observations until local network inputs change, while
-unknown fork classifications retry weekly.
+whose newest local branch commit, GitHub-origin push, or known fork-parent push
+is at most seven days old. Every quiet GitHub repository receives one
+lightweight origin query every seven days; quiet forks also query their parent.
+A changed remote immediately escalates that repository to a full refresh. This
+catches commits pushed from another machine even when the local checkout has
+not moved. Repositories without GitHub remotes carry their observations until
+local network inputs change, while unknown fork classifications retry weekly.
 
 Each repository cache includes a fingerprint of its origin, branch/HEAD
 identity, lockfiles, Mechatron target manifest, and bounded root-document
 classification, so a meaningful local edit invalidates that repository
 immediately. License type and primary language carry forward with the complete
-observation while that fingerprint remains unchanged. Every carried value
-retains its full observation and upstream-probe timestamps in the JSON snapshot. Successful
+observation while that fingerprint remains unchanged and the weekly remote
+probe finds no change. Every carried value retains its full observation and
+remote-probe timestamp (the compatibility field remains
+`upstream_probed_at_epoch`) in the JSON snapshot. Successful
 provider responses are separately shared by exact command for 24 hours by
 default to avoid repeating the same GitHub or registry query across
 dependencies. Failed/malformed queries are

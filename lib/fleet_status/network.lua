@@ -53,13 +53,19 @@ local function collect_fork_drift(repo)
 		"FLEET_STATUS_GH",
 		"gh",
 		"repo view " .. shell_quote(slug)
-			.. " --json nameWithOwner,parent,defaultBranchRef,isFork"
+			.. " --json nameWithOwner,parent,defaultBranchRef,isFork,pushedAt"
 	))
 	if type(view) ~= "table" or type(view.isFork) ~= "boolean" then
 		return { status = "unknown", reason = "malformed_provider_response" }
 	end
+	local repository_pushed_at = type(view.pushedAt) == "string"
+		and view.pushedAt or cjson.null
 	if not view.isFork then
-		return { status = "not_fork", repository = slug }
+		return {
+			status = "not_fork",
+			repository = slug,
+			repository_pushed_at = repository_pushed_at,
+		}
 	end
 	if type(view.parent) ~= "table" then
 		return { status = "unknown", reason = "malformed_provider_response" }
@@ -123,6 +129,7 @@ local function collect_fork_drift(repo)
 	return {
 		status = "known",
 		repository = slug,
+		repository_pushed_at = repository_pushed_at,
 		parent = parent,
 		parent_pushed_at = parent_pushed_at,
 		fork_default_branch = fork_branch,
@@ -616,20 +623,38 @@ function M.collect_network_repo(repo, now_epoch)
 	}
 end
 
---- Probe one known fork parent; unchanged data keeps the full cached payload.
-function M.probe_network_repo(_repo, cached, now_epoch)
-	local fork = type(cached) == "table" and cached.fork_drift or nil
-	local parent = type(fork) == "table" and fork.parent or nil
-	if type(parent) ~= "string" then return nil, nil, "missing_parent" end
-	local parent_view = decode_command_json(provider_command(
+local function probe_github_repository(repository)
+	local view = decode_command_json(provider_command(
 		"FLEET_STATUS_GH",
 		"gh",
-		"repo view " .. shell_quote(parent)
-			.. " --json nameWithOwner,defaultBranchRef,pushedAt"
+		"repo view " .. shell_quote(repository)
+			.. " --json nameWithOwner,pushedAt"
 	))
-	local pushed_at = type(parent_view) == "table" and parent_view.pushedAt or nil
-	if type(pushed_at) ~= "string" then return nil, nil, "provider_unavailable" end
-	if pushed_at ~= fork.parent_pushed_at then return nil, true, nil end
+	local pushed_at = type(view) == "table" and view.pushedAt or nil
+	if type(pushed_at) ~= "string" then return nil, "provider_unavailable" end
+	return pushed_at
+end
+
+--- Probe a repository's origin and optional fork parent; unchanged remote
+--- timestamps justify carrying the complete cached observation another week.
+function M.probe_network_repo(_repo, cached, now_epoch)
+	local fork = type(cached) == "table" and cached.fork_drift or nil
+	if type(fork) ~= "table" then return nil, nil, "missing_remote" end
+	local repository = fork.repository
+	local parent = fork.parent
+	if type(repository) ~= "string" and type(parent) ~= "string" then
+		return nil, nil, "missing_remote"
+	end
+	if type(repository) == "string" then
+		local pushed_at, err = probe_github_repository(repository)
+		if not pushed_at then return nil, nil, err end
+		if pushed_at ~= fork.repository_pushed_at then return nil, true, nil end
+	end
+	if type(parent) == "string" then
+		local pushed_at, err = probe_github_repository(parent)
+		if not pushed_at then return nil, nil, err end
+		if pushed_at ~= fork.parent_pushed_at then return nil, true, nil end
+	end
 	cached.upstream_probed_at_epoch = now_epoch
 	return cached, false, nil
 end

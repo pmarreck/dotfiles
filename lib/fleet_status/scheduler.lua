@@ -73,32 +73,40 @@ function M.network_action(now_epoch, repo, cached, fingerprint, options)
 	local local_activity = M.latest_local_activity_epoch(repo)
 	local fork = type(cached.fork_drift) == "table" and cached.fork_drift or {}
 	local local_hot = local_activity and local_activity >= cutoff_epoch
+	local origin_hot = github_timestamp_is_recent(
+		fork.repository_pushed_at,
+		now_epoch,
+		week
+	)
 	local upstream_hot = github_timestamp_is_recent(
 		fork.parent_pushed_at,
 		now_epoch,
 		week
 	)
-	if local_hot or upstream_hot then
+	if local_hot or origin_hot or upstream_hot then
 		if now_epoch - checked_at >= day then
-			return "full",
-				local_hot and "daily-local-activity" or "daily-upstream-activity",
-				day
+			local reason = "daily-upstream-activity"
+			if local_hot then reason = "daily-local-activity"
+			elseif origin_hot then reason = "daily-origin-activity" end
+			return "full", reason, day
 		end
 		return "carry", "hot-cache-current", day
 	end
 
 	local probed_at = tonumber(cached.upstream_probed_at_epoch) or checked_at
 	if now_epoch < probed_at then return "full", "clock-skew", 0 end
-	if fork.status == "known" and type(fork.parent) == "string" then
+	local has_remote = type(fork.repository) == "string"
+		or type(fork.parent) == "string"
+	if has_remote then
 		if now_epoch - probed_at >= week then
-			return "probe", "weekly-upstream-probe", week
+			return "probe", "weekly-remote-probe", week
 		end
 		return "carry", "quiet-probe-current", week
 	end
 	if fork.status == "unknown" and now_epoch - checked_at >= week then
 		return "full", "weekly-classification-retry", week
 	end
-	return "carry", "quiet-nonfork", week
+	return "carry", "quiet-no-remote", week
 end
 
 return M

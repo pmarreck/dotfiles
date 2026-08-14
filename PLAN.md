@@ -62,6 +62,14 @@
 	Completed 2026-08-14 15:10 EDT: readiness and special-attention projections
 	are live-verified; Lua lint is clean, all 178 host test files pass, and the
 	hermetic Nix flake check passes all 129 included tests.
+- [x] Probe each quiet GitHub origin weekly, plus the parent for forks, so
+  commits pushed from another machine invalidate carried repository metadata.
+  Curiosity poke: a local HEAD fingerprint proves only this checkout is quiet;
+  it says nothing about the shared remote.
+  Completed 2026-08-14 15:21 EDT: injected-clock scheduler and offline provider
+  fixtures prove unchanged origin/parent timestamps carry the prior observation
+  while either change causes a full refresh. All 178 host tests and the
+  hermetic Nix check pass.
 
 ## Urgent — identify GNOME “Device memory nearly full” warning (2026-08-14)
 
