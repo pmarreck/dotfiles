@@ -1,5 +1,56 @@
 # dotfiles — TODO / Plans
 
+## Active — Markdown frontmatter reader (2026-08-14)
+
+- [x] Specify the CLI contract with failing tests: Markdown paths with spaces,
+  `-`/`@stdin`, BOM and CRLF input, malformed or missing frontmatter, multiple
+  files, clean stderr, `--json`, and non-TTY plaintext.
+  Curiosity poke: JSON needs one stable shape for both one and many documents;
+  partial output on the first malformed file would be unsafe for agents.
+  Completed 2026-08-14 14:43 EDT: 56 focused assertions cover the input,
+  extraction, mode-precedence, body-exclusion, and clean-error contracts.
+- [x] Implement `bin/frontmatter` in LuaJIT with a pure extraction/rendering
+  core and the existing `cjson` dependency. Parse new `---json` records and
+  expose old `---` records as opaque legacy text rather than implementing YAML.
+  Curiosity poke: a home-directory script must not silently depend on Lua
+  modules that exist only in one interactive shell's `LUA_PATH`.
+  Completed 2026-08-14 14:43 EDT: the existing LuaJIT+cjson environment is the
+  only runtime; no YAML parser or host reconfiguration was added.
+- [x] Render through `glow`, then `bat`, only when stdout is interactive; show
+  Peter the real compact and Markdown-table output, update dirtree notes, and
+  run the focused plus complete host/Nix suites.
+  Curiosity poke: `NO_COLOR`, `TERM=dumb`, `--simple`, and redirected output
+  must all produce escape-free plaintext.
+  Completed 2026-08-14 14:43 EDT: compact redirected output, renderer-neutral
+  `--markdown`, and the live tmux TTY path were inspected; all 177 host test
+  files and the hermetic Nix check pass.
+
+## Queued — fleet repository readiness and Mechatron status (2026-08-14)
+
+- [ ] Add red/green classifier-set tests for Mechatron configuration: require
+  the canonical badge near the top of `README.md`, recognize the stable
+  `mechatron` identity without coupling to one Tailscale hostname, and avoid
+  accepting prose mentions or unrelated badges.
+  Curiosity poke: README badge detection and runnable CI configuration are
+  distinct facts; the report must not silently equate one with the other.
+- [ ] Carry configured projects' latest Mechatron state into the cached network
+  record and report `PASSING`, `FAILING`, `BUILDING`, or explicit unknown using
+  the existing machine API/cache rather than launching builds.
+  Curiosity poke: a green historical job for an older commit must not describe
+  an unbuilt current HEAD as green.
+- [ ] Collect README and LICENSE presence locally, identify license type only
+  from mechanical signatures or provider metadata, and measure primary
+  language through GitHub's API with a deterministic local-tool fallback.
+  Carry these repository-intrinsic values forward when the activity fingerprint
+  is unchanged instead of rescanning quiet repositories.
+  Curiosity poke: generated/vendor trees can dominate byte counts, while a
+  missing or ambiguous license must stay `unknown` rather than be guessed.
+- [ ] Add these facts to the structured snapshot, normal report table, and
+  `Repos Requiring Special Attention`; preserve cached values on skipped or
+  failed network probes and run focused, complete host, and hermetic Nix gates.
+  Curiosity poke: missing README/LICENSE and failed CI are actionable, but an
+  intentionally private/non-GitHub repository may require distinct wording.
+
 ## Urgent — identify GNOME “Device memory nearly full” warning (2026-08-14)
 
 - [x] Identify the live pressure category and whether “device memory” means GPU VRAM,

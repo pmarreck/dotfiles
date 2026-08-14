@@ -1,0 +1,195 @@
+#!/usr/bin/env luajit
+
+local ffi = require("ffi")
+
+local PROGRAM = "frontmatter"
+local VERSION = "0.1.0"
+
+local source = debug.getinfo(1, "S").source
+if source:sub(1, 1) == "@" then source = source:sub(2) end
+local bin_dir = source:match("^(.*)/[^/]+$") or "."
+package.path = bin_dir .. "/../lib/?.lua;" .. package.path
+
+local loaded, core = pcall(require, "frontmatter")
+if not loaded then
+	io.stderr:write(PROGRAM .. ": cannot load the JSON runtime: " .. tostring(core) .. "\n")
+	os.exit(69)
+end
+
+local function help()
+	io.write([[Usage: frontmatter [OPTIONS] FILE...
+
+Extract and render initial JSON or legacy frontmatter from Markdown documents.
+
+Input:
+  FILE              One or more Markdown paths; use - or @stdin once for stdin.
+
+Output:
+  --json             Emit a stable documents array with format and frontmatter.
+  --markdown         Emit the renderer-neutral Markdown table.
+  --plain            Emit human-readable text (overrides an earlier --json).
+  --simple           Suppress ANSI styling.
+  --no-ansi          Suppress ANSI styling.
+  --no-color         Alias for --no-ansi.
+
+Other:
+  -h, --help         Show this help.
+  --about            Show version, runtime, platform, and architecture.
+  --                 Treat all remaining arguments as paths.
+
+ANSI styling is used only when stdout is an interactive terminal, TERM is not
+dumb, NO_COLOR is unset, and no suppression option was given.
+]])
+end
+
+local function die(code, message)
+	io.stderr:write(PROGRAM .. ": " .. message .. "\n")
+	os.exit(code)
+end
+
+local function read_all(path)
+	if path == "-" or path == "@stdin" then return io.read("*a") or "" end
+	local file, err = io.open(path, "rb")
+	if not file then return nil, "cannot read " .. path .. ": " .. tostring(err) end
+	local text = file:read("*a") or ""
+	file:close()
+	return text
+end
+
+local function stdout_is_tty()
+	if ffi.os == "Windows" then
+		ffi.cdef("int _isatty(int fd);")
+		return ffi.C._isatty(1) == 1
+	end
+	ffi.cdef("int isatty(int fd);")
+	return ffi.C.isatty(1) == 1
+end
+
+local function executable_on_path(name)
+	local separator = ffi.os == "Windows" and ";" or ":"
+	local suffixes = ffi.os == "Windows" and { ".exe", ".cmd", ".bat", "" } or { "" }
+	local path = os.getenv("PATH") or ""
+	if ffi.os == "Windows" then ffi.cdef("int _access(const char *path, int mode);")
+	else ffi.cdef("int access(const char *path, int mode);") end
+	for directory in (path .. separator):gmatch("(.-)" .. separator) do
+		if directory == "" then directory = "." end
+		for _, suffix in ipairs(suffixes) do
+			local candidate = directory .. "/" .. name .. suffix
+			local accessible
+			if ffi.os == "Windows" then accessible = ffi.C._access(candidate, 0) == 0
+			else accessible = ffi.C.access(candidate, 1) == 0 end
+			if accessible then return candidate end
+		end
+	end
+end
+
+local function shell_quote(value)
+	if ffi.os == "Windows" then return '"' .. value:gsub('"', '\\"') .. '"' end
+	return "'" .. value:gsub("'", "'\\''") .. "'"
+end
+
+local function render_with(command, markdown)
+	if ffi.os == "Windows" then return false end
+	ffi.cdef("int mkstemp(char *template_name); int close(int fd);")
+	local template = (os.getenv("TMPDIR") or "/tmp") .. "/frontmatter-render.XXXXXX"
+	local buffer = ffi.new("char[?]", #template + 1)
+	ffi.copy(buffer, template)
+	local descriptor = ffi.C.mkstemp(buffer)
+	if descriptor < 0 then return false end
+	ffi.C.close(descriptor)
+	local path = ffi.string(buffer)
+	local file = io.open(path, "wb")
+	if not file then os.remove(path); return false end
+	local wrote = file:write(markdown)
+	file:close()
+	if not wrote then os.remove(path); return false end
+	local status = os.execute(command .. " " .. shell_quote(path))
+	os.remove(path)
+	return status == 0
+end
+
+local mode = "human"
+local suppress_ansi = false
+local paths = {}
+local positional_only = false
+
+local index = 1
+while index <= #arg do
+	local value = arg[index]
+	if positional_only then
+		paths[#paths + 1] = value
+	elseif value == "--" then
+		positional_only = true
+	elseif value == "-h" or value == "--help" then
+		help()
+		os.exit(0)
+	elseif value == "--about" then
+		io.write(string.format(
+			"%s %s - JSON/legacy frontmatter extractor (LuaJIT %s for %s/%s)\n",
+			PROGRAM, VERSION, jit.version, jit.os, jit.arch
+		))
+		os.exit(0)
+	elseif value == "--json" then
+		mode = "json"
+	elseif value == "--markdown" then
+		mode = "markdown"
+	elseif value == "--plain" then
+		mode = "human"
+		suppress_ansi = true
+	elseif value == "--simple" or value == "--no-ansi" or value == "--no-color" then
+		suppress_ansi = true
+	elseif value == "-" or value == "@stdin" then
+		paths[#paths + 1] = value
+	elseif value:sub(1, 1) == "-" then
+		die(64, "unknown option: " .. value)
+	else
+		paths[#paths + 1] = value
+	end
+	index = index + 1
+end
+
+if #paths == 0 then die(64, "expected at least one Markdown path (-h for help)") end
+local stdin_count = 0
+for _, path in ipairs(paths) do
+	if path == "-" or path == "@stdin" then stdin_count = stdin_count + 1 end
+end
+if stdin_count > 1 then die(64, "stdin may be specified only once") end
+
+local documents = {}
+for _, path in ipairs(paths) do
+	local text, read_error = read_all(path)
+	if not text then die(66, read_error) end
+	local metadata, format, parse_error, status = core.extract(text)
+	if not metadata then die(status or 65, path .. ": " .. parse_error) end
+	documents[#documents + 1] = {
+		path = path == "-" and "@stdin" or path,
+		format = format,
+		frontmatter = metadata,
+	}
+end
+
+if mode == "json" then
+	local rendered, encode_error = core.render_json(documents)
+	if not rendered then die(65, encode_error) end
+	io.write(rendered)
+	return
+end
+
+if mode == "markdown" then
+	io.write(core.render_markdown(documents))
+	return
+end
+
+local interactive = stdout_is_tty()
+local use_renderer = interactive
+	and not suppress_ansi
+	and os.getenv("NO_COLOR") == nil
+	and os.getenv("TERM") ~= "dumb"
+if use_renderer then
+	local markdown = core.render_markdown(documents)
+	local glow = executable_on_path("glow")
+	if glow and render_with(shell_quote(glow) .. " --style dark --width 0", markdown) then return end
+	local bat = executable_on_path("bat") or executable_on_path("batcat")
+	if bat and render_with(shell_quote(bat) .. " --language=md --style=plain --paging=never", markdown) then return end
+end
+io.write(core.render(documents))

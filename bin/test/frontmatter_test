@@ -1,0 +1,181 @@
+#!/usr/bin/env bash
+
+set -u
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+cli="$repo_root/bin/frontmatter"
+scratch="$(mktemp -d "${TMPDIR:-/tmp}/frontmatter-test.XXXXXX")" || exit 1
+trap 'rm -rf -- "$scratch"' EXIT
+
+fails=0
+tests=0
+
+expect_eq() {
+	local label="$1" expected="$2" actual="$3"
+	tests=$((tests + 1))
+	if [ "$expected" = "$actual" ]; then return 0; fi
+	printf 'FAIL %s\nexpected: [%s]\nactual:   [%s]\n' "$label" "$expected" "$actual" >&2
+	fails=$((fails + 1))
+}
+
+expect_contains() {
+	local label="$1" haystack="$2" needle="$3"
+	tests=$((tests + 1))
+	case "$haystack" in
+		*"$needle"*) return 0 ;;
+	esac
+	printf 'FAIL %s\nmissing: [%s]\nin:      [%s]\n' "$label" "$needle" "$haystack" >&2
+	fails=$((fails + 1))
+}
+
+if [ ! -x "$cli" ]; then
+	printf 'FAIL frontmatter executable is missing\n' >&2
+	exit 1
+fi
+
+document="$scratch/note with spaces.frontmatter.md"
+printf '%s\n' \
+	'---json' \
+	'{' \
+	'  "schema": "llmsend/v1",' \
+	'  "subject": "Pin Validate Release",' \
+	'  "description": "Metadata without the body.",' \
+	'  "response_expected": true,' \
+	'  "count": 7,' \
+	'  "tags": ["validate", "release pin"],' \
+	'  "context": {"project": "validate_gui"}' \
+	'}' \
+	'---' \
+	'# Secret body' \
+	'This must never appear in extracted output.' > "$document"
+
+json="$($cli --json -- "$document" 2>"$scratch/json.err")"
+status=$?
+expect_eq "JSON extraction succeeds" 0 "$status"
+expect_eq "JSON extraction keeps stderr clean" "" "$(cat "$scratch/json.err")"
+expect_eq "JSON has one stable top-level documents array" 1 \
+	"$(printf '%s' "$json" | jq '.documents | length')"
+expect_eq "JSON preserves the source path" "$document" \
+	"$(printf '%s' "$json" | jq -r '.documents[0].path')"
+expect_eq "JSON identifies the structured format" json \
+	"$(printf '%s' "$json" | jq -r '.documents[0].format')"
+expect_eq "JSON decodes strings" 'Pin Validate Release' \
+	"$(printf '%s' "$json" | jq -r '.documents[0].frontmatter.subject')"
+expect_eq "JSON decodes booleans" true \
+	"$(printf '%s' "$json" | jq -r '.documents[0].frontmatter.response_expected')"
+expect_eq "JSON decodes numbers" 7 \
+	"$(printf '%s' "$json" | jq -r '.documents[0].frontmatter.count')"
+expect_eq "JSON decodes arrays as a complete set" $'release pin\nvalidate' \
+	"$(printf '%s' "$json" | jq -r '.documents[0].frontmatter.tags[]' | LC_ALL=C sort)"
+expect_eq "JSON decodes nested objects" validate_gui \
+	"$(printf '%s' "$json" | jq -r '.documents[0].frontmatter.context.project')"
+expect_eq "JSON never ingests the Markdown body" false \
+	"$(printf '%s' "$json" | jq -r 'tostring | contains("Secret body")')"
+
+plain="$($cli "$document" 2>"$scratch/plain.err")"
+expect_eq "redirected plaintext succeeds" 0 "$?"
+expect_eq "redirected plaintext keeps stderr clean" "" "$(cat "$scratch/plain.err")"
+expect_contains "plaintext includes the subject" "$plain" 'subject: Pin Validate Release'
+expect_contains "plaintext renders scalar arrays compactly" "$plain" 'tags: validate, release pin'
+expect_eq "redirected plaintext contains no ANSI escapes" false \
+	"$(printf '%s' "$plain" | LC_ALL=C grep -q $'\033' && printf true || printf false)"
+expect_eq "plaintext never includes the body" false \
+	"$(printf '%s' "$plain" | grep -q 'Secret body' && printf true || printf false)"
+
+second="$scratch/second.frontmatter.md"
+printf '%s\n' '---json' '{"subject":"Second"}' '---' 'body' > "$second"
+many="$($cli "$document" --json "$second" 2>"$scratch/many.err")"
+expect_eq "named options can appear between paths" 0 "$?"
+expect_eq "multiple inputs retain the stable documents shape" 2 \
+	"$(printf '%s' "$many" | jq '.documents | length')"
+expect_eq "multiple inputs retain order" Second \
+	"$(printf '%s' "$many" | jq -r '.documents[1].frontmatter.subject')"
+expect_eq "multiple-input JSON keeps stderr clean" "" "$(cat "$scratch/many.err")"
+
+stdin_json="$(printf '%s\n' '---json' '{"subject":"Standard input"}' '---' 'body' \
+	| "$cli" --json @stdin 2>"$scratch/stdin.err")"
+expect_eq "@stdin input succeeds" 0 "$?"
+expect_eq "stdin source is labeled mechanically" '@stdin' \
+	"$(printf '%s' "$stdin_json" | jq -r '.documents[0].path')"
+expect_eq "stdin frontmatter is decoded" 'Standard input' \
+	"$(printf '%s' "$stdin_json" | jq -r '.documents[0].frontmatter.subject')"
+
+bom_crlf="$scratch/bom-crlf.frontmatter.md"
+printf '\357\273\277---json\r\n{"subject":"CRLF"}\r\n---\r\nbody\r\n' > "$bom_crlf"
+expect_eq "UTF-8 BOM and CRLF are accepted" CRLF \
+	"$($cli --json "$bom_crlf" | jq -r '.documents[0].frontmatter.subject')"
+
+printf '%s\n' '# no frontmatter' > "$scratch/missing.md"
+$cli --json "$scratch/missing.md" >"$scratch/missing.out" 2>"$scratch/missing.err"
+expect_eq "missing frontmatter has a distinct status" 3 "$?"
+expect_contains "missing frontmatter identifies the file" "$(cat "$scratch/missing.err")" "$scratch/missing.md"
+expect_eq "missing frontmatter emits no partial JSON" "" "$(cat "$scratch/missing.out")"
+
+printf '%s\n' '---json' '{"broken": [json}' '---' > "$scratch/malformed.md"
+$cli --json "$scratch/malformed.md" >"$scratch/malformed.out" 2>"$scratch/malformed.err"
+expect_eq "malformed JSON is a data error" 65 "$?"
+expect_contains "malformed JSON is actionable" "$(cat "$scratch/malformed.err")" 'invalid JSON'
+expect_eq "malformed JSON emits no partial output" "" "$(cat "$scratch/malformed.out")"
+
+printf '%s\n' '---json' '{"subject":"First document"}' '...' '# Markdown body' > "$scratch/document-end.md"
+expect_eq "explicit document end closes frontmatter" 'First document' \
+	"$($cli --json "$scratch/document-end.md" | jq -r '.documents[0].frontmatter.subject')"
+
+printf '%s\n' '---json' '{}' '---' 'body' > "$scratch/empty.frontmatter.md"
+expect_eq "empty frontmatter is an empty JSON object" '{}' \
+	"$($cli --json "$scratch/empty.frontmatter.md" | jq -c '.documents[0].frontmatter')"
+
+legacy="$scratch/legacy.frontmatter.md"
+printf '%s\n' '---' 'description: Existing record' 'tags: [memory, old]' '---' 'private body' > "$legacy"
+legacy_json="$($cli --json "$legacy")"
+expect_eq "legacy records are identified without parsing YAML" legacy-text \
+	"$(printf '%s' "$legacy_json" | jq -r '.documents[0].format')"
+expect_eq "legacy frontmatter is returned as opaque text" $'description: Existing record\ntags: [memory, old]' \
+	"$(printf '%s' "$legacy_json" | jq -r '.documents[0].frontmatter')"
+expect_eq "legacy extraction still excludes the body" false \
+	"$(printf '%s' "$legacy_json" | jq -r 'tostring | contains("private body")')"
+
+$cli --json - @stdin >"$scratch/two-stdin.out" 2>"$scratch/two-stdin.err" </dev/null
+expect_eq "stdin can be named only once" 64 "$?"
+expect_contains "duplicate stdin failure is actionable" "$(cat "$scratch/two-stdin.err")" 'stdin may be specified only once'
+
+late_plain="$($cli --json --plain "$document")"
+expect_contains "later --plain overrides --json" "$late_plain" 'subject: Pin Validate Release'
+late_json="$($cli --plain --json "$document")"
+expect_eq "later --json overrides --plain" 'Pin Validate Release' \
+	"$(printf '%s' "$late_json" | jq -r '.documents[0].frontmatter.subject')"
+
+markdown="$($cli --markdown "$document" 2>"$scratch/markdown.err")"
+expect_eq "Markdown table rendering succeeds" 0 "$?"
+expect_contains "Markdown output contains the table contract" "$markdown" '| Field | Value |'
+expect_contains "Markdown output keeps tags compact" "$markdown" '| tags | validate, release pin |'
+expect_eq "Markdown output excludes the body" false \
+	"$(printf '%s' "$markdown" | grep -q 'Secret body' && printf true || printf false)"
+expect_eq "Markdown rendering keeps stderr clean" "" "$(cat "$scratch/markdown.err")"
+
+late_plain="$($cli --markdown --plain "$document")"
+expect_contains "later --plain overrides --markdown" "$late_plain" 'schema: llmsend/v1'
+late_markdown="$($cli --plain --markdown "$document")"
+expect_contains "later --markdown overrides --plain" "$late_markdown" '| Field | Value |'
+
+$cli --help >"$scratch/help.out" 2>"$scratch/help.err"
+expect_eq "help succeeds" 0 "$?"
+expect_contains "help documents JSON" "$(cat "$scratch/help.out")" '--json'
+expect_contains "help documents Markdown rendering" "$(cat "$scratch/help.out")" '--markdown'
+expect_contains "help documents stdin" "$(cat "$scratch/help.out")" '@stdin'
+expect_eq "help keeps stderr clean" "" "$(cat "$scratch/help.err")"
+
+about="$($cli --about 2>"$scratch/about.err")"
+expect_eq "about succeeds" 0 "$?"
+expect_contains "about names LuaJIT and platform" "$about" 'LuaJIT'
+expect_eq "about keeps stderr clean" "" "$(cat "$scratch/about.err")"
+
+expect_eq "the executable has no YAML parser dependency" false \
+	"$(rg -q 'lyaml|luaPackages[.]lyaml' "$repo_root/bin/frontmatter" "$repo_root/lib/frontmatter.lua" "$repo_root/flake.nix" && printf true || printf false)"
+
+if [ "$fails" -eq 0 ]; then
+	printf 'All %s frontmatter tests passed!\n' "$tests"
+else
+	printf '%s of %s frontmatter tests failed!\n' "$fails" "$tests" >&2
+fi
+exit "$fails"
