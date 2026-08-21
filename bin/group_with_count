@@ -1,0 +1,94 @@
+#!/usr/bin/env luajit
+
+local cjson = require('cjson')
+
+local VERSION = '0.1.0'
+local ABOUT = string.format(
+	'group_with_count %s: count newline-delimited records in bytewise key order (%s/%s)',
+	VERSION,
+	jit.os:lower(),
+	jit.arch
+)
+
+local HELP = [[
+Usage: group_with_count [--json] < records
+
+Count equal newline-delimited input records and emit them in deterministic,
+bytewise key order. Text output contains one key<TAB>count record per line.
+Spaces and tabs inside a key are preserved. A key cannot contain a newline;
+use --json when downstream parsing must distinguish embedded tabs.
+
+Options:
+      --json   Emit an ordered JSON array of {"key":...,"count":...} objects
+      --text   Emit key<TAB>count text (the default; later options win)
+  -a, --about  Show a one-line description and version
+  -h, --help   Show this help
+]]
+
+local function usage_error(message)
+	io.stderr:write('group_with_count: ', message, '\n')
+	os.exit(2)
+end
+
+local output_format = 'text'
+
+for _, option in ipairs(arg) do
+	if option == '--json' then
+		output_format = 'json'
+	elseif option == '--text' then
+		output_format = 'text'
+	elseif option == '-a' or option == '--about' then
+		io.write(ABOUT, '\n')
+		os.exit(0)
+	elseif option == '-h' or option == '--help' then
+		io.write(HELP)
+		os.exit(0)
+	else
+		usage_error('unknown option: ' .. option)
+	end
+end
+
+local input = io.stdin:read('*a') or ''
+local counts = {}
+local keys = {}
+
+local function count_record(key)
+	local count = counts[key]
+	if count == nil then
+		counts[key] = 1
+		keys[#keys + 1] = key
+	else
+		counts[key] = count + 1
+	end
+end
+
+if #input > 0 then
+	local record_start = 1
+	while record_start <= #input do
+		local newline = input:find('\n', record_start, true)
+		if newline == nil then
+			count_record(input:sub(record_start))
+			break
+		end
+
+		count_record(input:sub(record_start, newline - 1))
+		record_start = newline + 1
+	end
+end
+
+table.sort(keys)
+
+if output_format == 'json' then
+	io.write('[')
+	for index, key in ipairs(keys) do
+		if index > 1 then
+			io.write(',')
+		end
+		io.write('{"key":', cjson.encode(key), ',"count":', counts[key], '}')
+	end
+	io.write(']\n')
+else
+	for _, key in ipairs(keys) do
+		io.write(key, '\t', counts[key], '\n')
+	end
+end

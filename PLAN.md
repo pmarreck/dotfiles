@@ -1,5 +1,28 @@
 # dotfiles — TODO / Plans
 
+## Active — deterministic stream grouping (2026-08-21)
+
+- [x] Define `group_with_count` with failing CLI tests covering bytewise-sorted
+      grouping, repeated and whitespace-bearing records, empty records and
+      input, clean errors, help/about, and stable JSON output.
+      Curiosity poke: the default newline record boundary cannot preserve a
+      key containing a newline; document that limit and preserve every other
+      byte accepted by Lua strings.
+      Completed 2026-08-21 14:40 EDT: the initial suite failed at the missing
+      executable with status 127, then all 15 focused assertions passed.
+- [x] Implement the minimal LuaJIT filter, install it directly on the existing
+      dotfiles PATH under Peter's requested command name, and keep text output
+      mechanically parseable as `key<TAB>count`.
+      Completed 2026-08-21 14:40 EDT: text and stable ordered JSON modes are
+      live through `~/bin/group_with_count`; help documents the newline-key
+      boundary and embedded-tab JSON escape hatch.
+- [x] Prove the complete inbox pipeline with `glob` negation and `cols -3`, run
+      the focused, complete host, and hermetic Nix gates, update dirtree notes,
+      then commit and push only the intended files.
+      Completed 2026-08-21 14:45 EDT: the live 35-project query returned zero
+      from all three stages; 179/179 host test files and 131/131 hermetic Nix
+      test files passed. Commit and push evidence follows in Git history.
+
 ## Active — Markdown frontmatter reader (2026-08-14)
 
 - [x] Specify the CLI contract with failing tests: Markdown paths with spaces,

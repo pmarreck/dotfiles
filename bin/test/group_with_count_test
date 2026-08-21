@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+
+set -u
+
+command_path="$HOME/dotfiles/bin/group_with_count"
+scratch="$(mktemp -d "${TMPDIR:-/tmp}/group-with-count-test.XXXXXX")" || exit 1
+trap 'rm -rf "$scratch"' EXIT
+
+tests=0
+fails=0
+
+expect_files_equal() {
+	local description="$1"
+	local expected="$2"
+	local actual="$3"
+	((tests++))
+	if cmp -s "$expected" "$actual"; then
+		printf 'PASS: %s\n' "$description"
+	else
+		printf 'FAIL: %s\n' "$description" >&2
+		printf '%s\n' '--- expected' >&2
+		od -An -tx1c "$expected" >&2
+		printf '%s\n' '--- actual' >&2
+		od -An -tx1c "$actual" >&2
+		((fails++))
+	fi
+}
+
+expect_status() {
+	local description="$1"
+	local expected="$2"
+	local actual="$3"
+	((tests++))
+	if [[ "$actual" -eq "$expected" ]]; then
+		printf 'PASS: %s\n' "$description"
+	else
+		printf 'FAIL: %s (expected %s, got %s)\n' \
+			"$description" "$expected" "$actual" >&2
+		((fails++))
+	fi
+}
+
+printf '%s\n' beta alpha beta 'hello world' alpha >"$scratch/input"
+printf 'alpha\t2\nbeta\t2\nhello world\t1\n' >"$scratch/expected"
+"$command_path" <"$scratch/input" >"$scratch/actual" 2>"$scratch/stderr"
+status=$?
+expect_status 'text grouping succeeds' 0 "$status"
+expect_files_equal 'groups full records in bytewise key order' \
+	"$scratch/expected" "$scratch/actual"
+printf '' >"$scratch/empty"
+expect_files_equal 'successful text mode has clean stderr' \
+	"$scratch/empty" "$scratch/stderr"
+
+printf '\nalpha\n\n' >"$scratch/input"
+printf '\t2\nalpha\t1\n' >"$scratch/expected"
+"$command_path" <"$scratch/input" >"$scratch/actual" 2>"$scratch/stderr"
+expect_files_equal 'empty records are counted rather than discarded' \
+	"$scratch/expected" "$scratch/actual"
+
+printf '' >"$scratch/input"
+"$command_path" <"$scratch/input" >"$scratch/actual" 2>"$scratch/stderr"
+status=$?
+expect_status 'empty input succeeds' 0 "$status"
+expect_files_equal 'empty input emits nothing' "$scratch/empty" "$scratch/actual"
+
+printf '%s\n' beta alpha beta >"$scratch/input"
+printf '%s\n' '[{"key":"alpha","count":1},{"key":"beta","count":2}]' \
+	>"$scratch/expected"
+"$command_path" --json <"$scratch/input" >"$scratch/actual" 2>"$scratch/stderr"
+status=$?
+expect_status 'JSON grouping succeeds' 0 "$status"
+expect_files_equal 'JSON output is stable and ordered' \
+	"$scratch/expected" "$scratch/actual"
+
+"$command_path" --help >"$scratch/actual" 2>"$scratch/stderr"
+status=$?
+expect_status '--help succeeds' 0 "$status"
+((tests++))
+if rg -q --fixed-strings 'key<TAB>count' "$scratch/actual"; then
+	printf 'PASS: help documents the text record format\n'
+else
+	printf 'FAIL: help does not document the text record format\n' >&2
+	((fails++))
+fi
+
+"$command_path" --about >"$scratch/actual" 2>"$scratch/stderr"
+status=$?
+expect_status '--about succeeds' 0 "$status"
+((tests++))
+if [[ -s "$scratch/actual" ]]; then
+	printf 'PASS: --about emits a description\n'
+else
+	printf 'FAIL: --about emitted no description\n' >&2
+	((fails++))
+fi
+
+"$command_path" --not-an-option >"$scratch/actual" 2>"$scratch/stderr"
+status=$?
+expect_status 'unknown options are usage errors' 2 "$status"
+expect_files_equal 'unknown options do not leak partial stdout' \
+	"$scratch/empty" "$scratch/actual"
+((tests++))
+if rg -q --fixed-strings 'unknown option' "$scratch/stderr"; then
+	printf 'PASS: unknown option error is actionable\n'
+else
+	printf 'FAIL: unknown option error is missing or vague\n' >&2
+	((fails++))
+fi
+
+if [[ "$fails" -eq 0 ]]; then
+	printf 'All %d tests passed\n' "$tests"
+else
+	printf '%d of %d tests failed\n' "$fails" "$tests" >&2
+fi
+
+exit "$fails"
