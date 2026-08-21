@@ -9,7 +9,6 @@ declare -a dotfiles=(
     .commandpromptconfig
     .direnvrc
     .envconfig
-    .envrc
     .esrc
     .gemrc
     .gitconfig
@@ -46,6 +45,10 @@ ln -sfv dotfiles/lib
 
 # symlink the dotfiles
 for dotfile in ${dotfiles[@]}; do
+    if [[ ! -e "dotfiles/$dotfile" ]]; then
+        echo "Warning: dotfiles/$dotfile does not exist, skipping" >&2
+        continue
+    fi
     if [[ ! -L $dotfile ]]; then
         if [ -f "$dotfile" ]; then
             echo "$dotfile already exists; renaming to $dotfile.old"
@@ -73,6 +76,10 @@ declare -A renamed_dotfiles=(
 
 for renamed_src in "${!renamed_dotfiles[@]}"; do
     renamed_dest="${renamed_dotfiles[$renamed_src]}"
+    if [[ ! -e "dotfiles/$renamed_src" ]]; then
+        echo "Warning: dotfiles/$renamed_src does not exist, skipping" >&2
+        continue
+    fi
     if [[ ! -L $renamed_dest ]] && [ -f "$renamed_dest" ]; then
         echo "$renamed_dest already exists; renaming to $renamed_dest.old"
         mv -v "$renamed_dest" "$renamed_dest.old"
@@ -85,6 +92,10 @@ mkdir -p ~/Scripts
 
 # symlink the script files
 for scriptfile in ${scriptfiles[@]}; do
+    if [[ ! -e "dotfiles/$scriptfile" ]]; then
+        echo "Warning: dotfiles/$scriptfile does not exist, skipping" >&2
+        continue
+    fi
     if [[ ! -L $scriptfile ]]; then
         if [ -f "$scriptfile" ]; then
             echo "$scriptfile already exists; renaming to $scriptfile.old"
