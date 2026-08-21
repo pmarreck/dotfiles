@@ -63,7 +63,6 @@ date_test
 date_difference_days_test
 stat_test
 sed_test
-glob_test
 getfile_test
 block-attribution_test
 run_test_suite_test

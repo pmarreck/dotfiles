@@ -1,5 +1,26 @@
 # dotfiles — TODO / Plans
 
+## Active — retire the dotfiles-owned `glob` copy (2026-08-21)
+
+- [x] Add a repository-ownership regression proving dotfiles contains no
+      mutable `glob` implementation while `.pathconfig` still discovers
+      project-owned `~/Code/*/bin` commands.
+      Completed 2026-08-21 04:23 PM EDT: the six-assertion test failed on all
+      four duplicate files and the stale sandbox exclusion before removal,
+      then passed without requiring a live standalone checkout.
+      Curiosity poke: the test must remain hermetic and cannot require Peter's
+      live `~/Code/glob` checkout.
+- [x] Remove the old executable, helper, and superseded tests; run the full
+      host and Nix gates; verify a fresh interactive shell resolves
+      `~/Code/glob/bin/glob`; commit and push.
+      Curiosity poke: remove the stale `NOT_HERMETIC` exclusion so the sandbox
+      fails if its test inventory drifts.
+      Completed 2026-08-21 04:23 PM EDT: the old implementation and tests are
+      gone, `glob_test` left `NOT_HERMETIC`, all 178 host and 131 hermetic test
+      files pass, and fresh minimal plus login shells resolve the standalone
+      source executable. The dotfiles flake pins standalone `glob` at
+      `f4d2fba` for reproducible tests and development shells.
+
 ## Active — deterministic stream grouping (2026-08-21)
 
 - [x] Define `group_with_count` with failing CLI tests covering bytewise-sorted

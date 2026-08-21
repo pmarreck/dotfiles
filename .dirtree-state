@@ -90,6 +90,7 @@ annotate=[
 	bin/test/erect-recent-agent-stacks_test = Set-classifier coverage for recent conversation selection, subagent exclusion, backend precedence, missing and spaced paths, alternate tmux names, JSON, and launcher calls
 	bin/test/exclude_test = test suite for bin/exclude (semantics + --help regression guards)
 	bin/test/executable-names_test = Set-classifier gate preventing new underscore-named top-level executables.
+	bin/test/glob_ownership_test = Prevents dotfiles from regaining a duplicate glob implementation while preserving project-bin discovery
 	bin/test/fixtures/erect-agent-stack/codex = Fake Codex trust and readiness TUI for deterministic agent-stack orchestration tests
 	bin/test/fleet-status-architecture_test = Hexagonal dependency, purity, facade, and port-substitution contract
 	bin/test/fleet-status-attention_test = Boundary-set contract for every special-attention classifier threshold.

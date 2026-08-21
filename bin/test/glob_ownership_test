@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+
+set -u
+
+repo_root=$(CDPATH='' cd -- "${BASH_SOURCE[0]%/*}/../.." && pwd)
+tests=0
+fails=0
+
+expect_absent() {
+	local description=$1 path=$2
+	((tests++))
+	if [[ ! -e "$path" ]]; then
+		printf 'PASS: %s\n' "$description"
+	else
+		printf 'FAIL: %s (%s still exists)\n' "$description" "$path" >&2
+		((fails++))
+	fi
+}
+
+expect_absent 'dotfiles does not own a glob executable' "$repo_root/bin/glob"
+expect_absent 'dotfiles does not own the glob expansion helper' \
+	"$repo_root/bin/src/expand_glob.bash"
+expect_absent 'legacy glob behavior test moved to the glob repository' \
+	"$repo_root/bin/test/glob_test"
+expect_absent 'legacy stripped-Bash test moved to the glob repository' \
+	"$repo_root/bin/test/glob_no_compgen_test"
+
+((tests++))
+if rg -q --fixed-strings '"$CODE"/*/bin' "$repo_root/.pathconfig"; then
+	printf 'PASS: path configuration discovers project-owned bin directories\n'
+else
+	printf 'FAIL: .pathconfig no longer discovers project-owned bin directories\n' >&2
+	((fails++))
+fi
+
+((tests++))
+if ! rg -q '^[[:space:]]*glob(_no_compgen)?_test[[:space:]]*$' \
+	"$repo_root/bin/test/NOT_HERMETIC"; then
+	printf 'PASS: hermetic exclusion list has no retired glob tests\n'
+else
+	printf 'FAIL: NOT_HERMETIC still lists a retired glob test\n' >&2
+	((fails++))
+fi
+
+if (( fails == 0 )); then
+	printf 'All %d glob ownership tests passed\n' "$tests"
+else
+	printf '%d of %d glob ownership tests failed\n' "$fails" "$tests" >&2
+fi
+
+exit "$fails"

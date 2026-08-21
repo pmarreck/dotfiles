@@ -18,6 +18,26 @@
         "type": "github"
       }
     },
+    "glob": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1787343666,
+        "narHash": "sha256-bHfSJ+9KF6NcamaUH8XlA4Wm68fvoJYjHSnEuqgjUnI=",
+        "owner": "pmarreck",
+        "repo": "glob",
+        "rev": "f4d2fbab78b0f81345855e23aa3b80ebccbe7dcd",
+        "type": "github"
+      },
+      "original": {
+        "owner": "pmarreck",
+        "repo": "glob",
+        "type": "github"
+      }
+    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1784872115,
@@ -37,6 +57,7 @@
     "root": {
       "inputs": {
         "flake-utils": "flake-utils",
+        "glob": "glob",
         "nixpkgs": "nixpkgs"
       }
     },

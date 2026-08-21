@@ -4,9 +4,13 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     flake-utils.url = "github:numtide/flake-utils";
+    glob = {
+      url = "github:pmarreck/glob";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs, flake-utils }:
+  outputs = { self, nixpkgs, flake-utils, glob }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs { inherit system; };
@@ -15,7 +19,7 @@
         # inheriting the builder's environment: the point of the check is to prove
         # the dotfiles work against a declared toolset, not against whatever happens
         # to be installed on the machine running it.
-        suiteTools = with pkgs; [
+        suiteTools = (with pkgs; [
           bash coreutils gnused gnugrep gawk findutils diffutils
           jq ripgrep fd tmux expect git openssh
           gzip gnutar zip unzip xz bc file which
@@ -26,7 +30,7 @@
           imagemagick  # magick
           ffmpeg       # ffmpeg, ffprobe
           tokei        # fleet-status local primary-language fallback
-        ];
+        ]) ++ [ glob.packages.${system}.default ];
       in {
         checks = {
           test = pkgs.stdenv.mkDerivation {
