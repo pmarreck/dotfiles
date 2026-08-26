@@ -1,14 +1,19 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/usr/bin/env luajit
 
-script_path=$(command -v "$0" 2>/dev/null || echo "$0")
-script_dir=$(cd "$(dirname "$script_path")" 2>/dev/null && pwd -P)
-script_name=$(basename "$script_path")
-readonly BACKUP_ROOT="/tmp/rstt$$"
+local ffi = require('ffi')
 
-usage() {
-	cat <<USAGE
-Usage: $script_name [options] file1 [file2 ...]
+ffi.cdef([[
+	int getpid(void);
+]])
+
+local script_path = arg[0]
+local script_name = script_path:match('([^/]+)$') or script_path
+local script_dir = script_path:match('^(.*)/[^/]+$') or '.'
+local backup_root = '/tmp/rstt' .. tonumber(ffi.C.getpid())
+
+local function usage(output)
+	output:write(string.format([[
+Usage: %s [options] file1 [file2 ...]
 
 Convert consistent leading spaces in files to tabs.
 
@@ -16,221 +21,350 @@ OPTIONS:
 	-h, --help      Show this help information
 	--test          Run the test suite (silent on success)
 	-i, --in-place  Modify files in place instead of writing to stdout
-USAGE
-}
+]], script_name))
+end
 
-require_awk() {
-	local bin
-	if command -v gawk >/dev/null 2>&1; then
-		bin=$(command -v gawk)
-	elif command -v awk >/dev/null 2>&1; then
-		bin=$(command -v awk)
-	else
-		echo "Error: gawk or awk is required" >&2
+local function shell_quote(value)
+	return "'" .. value:gsub("'", "'\\''") .. "'"
+end
+
+local function command_status(command)
+	local wait_status = os.execute(command)
+	if wait_status == nil then
 		return 1
-	fi
-	printf '%s' "$bin"
-}
+	end
+	return math.floor(wait_status / 256)
+end
 
-AWK_BIN=$(require_awk)
-readonly AWK_BIN
+local function command_succeeds(command)
+	return command_status(command) == 0
+end
 
-resolve_backup_path() {
-	local file="$1"
-	local base
-	base=$(basename "$file")
-	local candidate="$BACKUP_ROOT/${base}.maybe-no-tabs"
-	local suffix=1
-	while [ -e "$candidate" ]; do
-		candidate="$BACKUP_ROOT/${base}.maybe-no-tabs.$suffix"
-		suffix=$((suffix + 1))
-	done
-	printf '%s' "$candidate"
-}
-determine_tab_size_in_spaces() {
-	local file="$1"
-	"$AWK_BIN" '
-	{
-		if (length($0) > 0 && ($0 ~ /^ / || $0 ~ /^\t/)) {
-			match($0, /^ */);
-			if (RLENGTH > 0) {
-				space_indents[RLENGTH]++;
-			}
-			match($0, /^\t*/);
-			if (RLENGTH > 0) {
-				tab_indents[RLENGTH]++;
-			}
-		}
-	}
-	END {
-		for (indent in space_indents) {
-			if (indent > 0 && space_indents[indent] > max_space_count) {
-				third_space = second_space;
-				second_space = max_space;
-				max_space = indent;
-				max_space_count = space_indents[indent];
-			}
-		}
-		for (indent in tab_indents) {
-			if (indent > 0 && tab_indents[indent] > max_tab_count) {
-				third_tab = second_tab;
-				second_tab = max_tab;
-				max_tab = indent;
-				max_tab_count = tab_indents[indent];
-			}
-		}
-		if (max_tab_count > max_space_count) {
-			print 0;
-			exit;
-		}
-		if (max_space == 0) {
-			print 0;
-			exit;
-		}
-		div_count = split("8 7 6 5 4 3 2", divs, " ");
-		for (i = 1; i <= div_count; i++) {
-			d = divs[i];
-			if (max_space % d == 0 &&
-				(second_space == 0 || second_space % d == 0) &&
-				(third_space == 0 || third_space % d == 0)) {
-				print d;
-				exit;
-			}
-		}
-		print 1;
-	}
-	' "$file"
-}
-process_file() {
-	local file="$1"
-	local in_place="$2"
+local function is_regular_file(path)
+	return command_succeeds('[ -f ' .. shell_quote(path) .. ' ]')
+end
 
-	if ! file -b --mime-type "$file" | grep -q '^text/'; then
-		echo "Warning: Not a text file: $file" >&2
-		return 1
-	fi
+local function path_exists(path)
+	return command_succeeds('[ -e ' .. shell_quote(path) .. ' ]')
+end
 
-	local indent
-	indent=$(determine_tab_size_in_spaces "$file")
+local function is_text_file(path)
+	local command = 'file -b --mime-type ' .. shell_quote(path)
+		.. " | grep -q '^text/'"
+	return command_succeeds(command)
+end
 
-	if [ "${indent:-0}" -le 0 ]; then
-		if [ "$in_place" = true ]; then
-			echo "No changes needed for: $file" >&2
-		else
-			cat "$file"
-		fi
+local function read_file(path)
+	local handle, open_error = io.open(path, 'rb')
+	if handle == nil then
+		return nil, open_error
+	end
+
+	local data, read_error = handle:read('*a')
+	local closed, close_error = handle:close()
+	if data == nil then
+		return nil, read_error
+	end
+	if not closed then
+		return nil, close_error
+	end
+	return data
+end
+
+local function write_file(path, data)
+	local handle, open_error = io.open(path, 'wb')
+	if handle == nil then
+		return nil, open_error
+	end
+
+	local written, write_error = handle:write(data)
+	if written == nil then
+		handle:close()
+		return nil, write_error
+	end
+
+	local closed, close_error = handle:close()
+	if not closed then
+		return nil, close_error
+	end
+	return true
+end
+
+local function visit_records(data, visit)
+	if #data == 0 then
+		return
+	end
+
+	local record_start = 1
+	while record_start <= #data do
+		local newline = data:find('\n', record_start, true)
+		if newline == nil then
+			visit(data:sub(record_start))
+			return
+		end
+
+		visit(data:sub(record_start, newline - 1))
+		record_start = newline + 1
+	end
+end
+
+local function leading_byte_count(record, byte)
+	local count = 0
+	while record:byte(count + 1) == byte do
+		count = count + 1
+	end
+	return count
+end
+
+local function sorted_widths(counts)
+	local widths = {}
+	for width in pairs(counts) do
+		widths[#widths + 1] = width
+	end
+	table.sort(widths)
+	return widths
+end
+
+local function frequency_leaders(counts)
+	local maximum_width = 0
+	local second_width = 0
+	local third_width = 0
+	local maximum_count = 0
+
+	for _, width in ipairs(sorted_widths(counts)) do
+		if counts[width] > maximum_count then
+			third_width = second_width
+			second_width = maximum_width
+			maximum_width = width
+			maximum_count = counts[width]
+		end
+	end
+
+	return maximum_width, second_width, third_width, maximum_count
+end
+
+local function determine_tab_size_in_spaces(data)
+	local space_indents = {}
+	local tab_indents = {}
+
+	visit_records(data, function(record)
+		local first_byte = record:byte(1)
+		if first_byte == 32 then
+			local width = leading_byte_count(record, 32)
+			space_indents[width] = (space_indents[width] or 0) + 1
+		elseif first_byte == 9 then
+			local width = leading_byte_count(record, 9)
+			tab_indents[width] = (tab_indents[width] or 0) + 1
+		end
+	end)
+
+	local maximum_space, second_space, third_space, maximum_space_count =
+		frequency_leaders(space_indents)
+	local _, _, _, maximum_tab_count = frequency_leaders(tab_indents)
+
+	if maximum_tab_count > maximum_space_count or maximum_space == 0 then
 		return 0
-	fi
+	end
 
-	local indent_spaces
-	printf -v indent_spaces '%*s' "$indent" ''
+	for divisor = 8, 2, -1 do
+		if maximum_space % divisor == 0
+			and (second_space == 0 or second_space % divisor == 0)
+			and (third_space == 0 or third_space % divisor == 0)
+		then
+			return divisor
+		end
+	end
 
-	if [ "$in_place" = true ]; then
-		mkdir -p "$BACKUP_ROOT"
-		local backup_file
-		backup_file=$(resolve_backup_path "$file")
-		mkdir -p "$(dirname "$backup_file")"
-		cp -p "$file" "$backup_file"
-		printf 'Backup stored for %s at %s\n' "$file" "$backup_file" >&2
+	return 1
+end
 
-		local stat_bin stat_fmt
-		if command -v gstat >/dev/null 2>&1; then
-			stat_bin=$(command -v gstat)
-			stat_fmt='-c %a'
+local function rewrite_record(record, indent_width)
+	local tab_count = leading_byte_count(record, 9)
+	local space_start = tab_count + 1
+	local space_count = 0
+	while record:byte(space_start + space_count) == 32 do
+		space_count = space_count + 1
+	end
+
+	local replacement_count = math.floor(space_count / indent_width)
+	if replacement_count == 0 then
+		return record
+	end
+
+	local remainder = space_count % indent_width
+	local unchanged_start = space_start + space_count
+	return string.rep('\t', tab_count + replacement_count)
+		.. string.rep(' ', remainder)
+		.. record:sub(unchanged_start)
+end
+
+local function rewrite_data(data, indent_width)
+	local rewritten = {}
+	visit_records(data, function(record)
+		rewritten[#rewritten + 1] = rewrite_record(record, indent_width)
+		rewritten[#rewritten + 1] = '\n'
+	end)
+	return table.concat(rewritten)
+end
+
+local function basename(path)
+	local without_trailing_slashes = path:gsub('/+$', '')
+	return without_trailing_slashes:match('([^/]+)$') or without_trailing_slashes
+end
+
+local function dirname(path)
+	local directory = path:match('^(.*)/[^/]*$')
+	if directory == nil or directory == '' then
+		return '.'
+	end
+	return directory
+end
+
+local function resolve_backup_path(path)
+	local candidate = backup_root .. '/' .. basename(path) .. '.maybe-no-tabs'
+	local suffix = 1
+	while path_exists(candidate) do
+		candidate = backup_root .. '/' .. basename(path)
+			.. '.maybe-no-tabs.' .. suffix
+		suffix = suffix + 1
+	end
+	return candidate
+end
+
+local function copy_preserving_metadata(source, destination)
+	local command = 'cp -p ' .. shell_quote(source) .. ' ' .. shell_quote(destination)
+	return command_succeeds(command)
+end
+
+local function process_file(path, in_place)
+	if not is_text_file(path) then
+		io.stderr:write('Warning: Not a text file: ', path, '\n')
+		return 1
+	end
+
+	local data, read_error = read_file(path)
+	if data == nil then
+		io.stderr:write('Error: Could not read ', path, ': ', read_error, '\n')
+		return 1
+	end
+
+	local indent_width = determine_tab_size_in_spaces(data)
+	if indent_width <= 0 then
+		if in_place then
+			io.stderr:write('No changes needed for: ', path, '\n')
 		else
-			stat_bin=$(command -v stat)
-			stat_fmt='-f %A'
-		fi
-		local perms
-		perms=$($stat_bin $stat_fmt "$file")
+			io.stdout:write(data)
+		end
+		return 0
+	end
 
-		"$AWK_BIN" -v indent="$indent_spaces" '
-		{
-			while (match($0, "^\t*" indent)) {
-				$0 = gensub("^(\t*)" indent, "\\1\t", "g");
-			}
-			print;
-		}
-		' "$file" >"$file.new"
+	local rewritten = rewrite_data(data, indent_width)
+	if not in_place then
+		io.stdout:write(rewritten)
+		return 0
+	end
 
-		chmod "$perms" "$file.new"
-		mv "$file.new" "$file"
-		echo "Reformatted: $file (indent size: $indent)"
-	else
-		"$AWK_BIN" -v indent="$indent_spaces" '
-		{
-			while (match($0, "^\t*" indent)) {
-				$0 = gensub("^(\t*)" indent, "\\1\t", "g");
-			}
-			print;
-		}
-		' "$file"
-	fi
-}
-run_tests() {
-	local test_script="$script_dir/test/${script_name}_test"
-	if [ ! -x "$test_script" ]; then
-		echo "Test script not found: $test_script" >&2
+	if not command_succeeds('mkdir -p ' .. shell_quote(backup_root)) then
 		return 1
-	fi
-	RSTT_RUNNING_SUITE=1 "$test_script" >/dev/null
-}
+	end
 
-reformat_spaces_to_tabs() {
-	local in_place=false
-	local files=()
+	local backup_path = resolve_backup_path(path)
+	if not command_succeeds('mkdir -p ' .. shell_quote(dirname(backup_path))) then
+		return 1
+	end
+	if not copy_preserving_metadata(path, backup_path) then
+		return 1
+	end
+	io.stderr:write('Backup stored for ', path, ' at ', backup_path, '\n')
 
-	while [ $# -gt 0 ]; do
-		case "$1" in
-			-h|--help)
-				usage
-				return 0
-				;;
-			--test)
-				if [ $# -ne 1 ]; then
-					echo "Error: --test does not accept additional arguments" >&2
-					return 1
-				fi
-				run_tests
-				return $?
-				;;
-			-i|--in-place)
-				in_place=true
-				shift
-				continue
-				;;
-			--)
-				shift
-				files+=("$@")
-				break
-				;;
-			-*)
-				echo "Error: Unknown option $1" >&2
-				usage >&2
+	local replacement_path = path .. '.new'
+	if not copy_preserving_metadata(path, replacement_path) then
+		return 1
+	end
+
+	local written, write_error = write_file(replacement_path, rewritten)
+	if not written then
+		io.stderr:write(
+			'Error: Could not write ', replacement_path, ': ', write_error, '\n'
+		)
+		return 1
+	end
+
+	local renamed, rename_error = os.rename(replacement_path, path)
+	if not renamed then
+		io.stderr:write('Error: Could not replace ', path, ': ', rename_error, '\n')
+		return 1
+	end
+
+	io.stdout:write(
+		'Reformatted: ', path, ' (indent size: ', indent_width, ')\n'
+	)
+	return 0
+end
+
+local function run_tests()
+	local test_script = script_dir .. '/test/' .. script_name .. '_test'
+	if not command_succeeds('[ -x ' .. shell_quote(test_script) .. ' ]') then
+		io.stderr:write('Test script not found: ', test_script, '\n')
+		return 1
+	end
+
+	local command = 'RSTT_RUNNING_SUITE=1 ' .. shell_quote(test_script)
+		.. ' >/dev/null'
+	return command_status(command)
+end
+
+local function reformat_spaces_to_tabs(arguments)
+	local in_place = false
+	local files = {}
+	local index = 1
+
+	while index <= #arguments do
+		local argument = arguments[index]
+		if argument == '-h' or argument == '--help' then
+			usage(io.stdout)
+			return 0
+		elseif argument == '--test' then
+			if index ~= #arguments then
+				io.stderr:write(
+					'Error: --test does not accept additional arguments\n'
+				)
 				return 1
-				;;
-			*)
-				files+=("$1")
-				;;
-		esac
-		shift || true
-	done
+			end
+			return run_tests()
+		elseif argument == '-i' or argument == '--in-place' then
+			in_place = true
+		elseif argument == '--' then
+			for remaining = index + 1, #arguments do
+				files[#files + 1] = arguments[remaining]
+			end
+			break
+		elseif argument:sub(1, 1) == '-' then
+			io.stderr:write('Error: Unknown option ', argument, '\n')
+			usage(io.stderr)
+			return 1
+		else
+			files[#files + 1] = argument
+		end
+		index = index + 1
+	end
 
-	if [ ${#files[@]} -eq 0 ]; then
-		echo "Usage: $script_name [options] file1 [file2 ...]" >&2
+	if #files == 0 then
+		io.stderr:write(
+			'Usage: ', script_name, ' [options] file1 [file2 ...]\n'
+		)
 		return 1
-	fi
+	end
 
-	local file
-	for file in "${files[@]}"; do
-		if [ ! -f "$file" ]; then
-			echo "Warning: File not found: $file" >&2
-			continue
-		fi
-		process_file "$file" "$in_place"
-	done
-}
+	for _, path in ipairs(files) do
+		if not is_regular_file(path) then
+			io.stderr:write('Warning: File not found: ', path, '\n')
+		elseif process_file(path, in_place) ~= 0 then
+			return 1
+		end
+	end
 
-if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
-	reformat_spaces_to_tabs "$@"
-fi
+	return 0
+end
+
+os.exit(reformat_spaces_to_tabs(arg))

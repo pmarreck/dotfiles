@@ -83,6 +83,7 @@ protect_chmod
 realign_HEAD
 red_text
 reformat_spaces_to_tabs
+reformat_spaces_to_tabs.awk.bash
 remove_z_library_attrib
 reparse_bundle_config
 reverse_args

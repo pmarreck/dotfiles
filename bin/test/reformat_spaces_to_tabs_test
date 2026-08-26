@@ -1,94 +1,469 @@
 #!/usr/bin/env bash
-set -euo pipefail
+
+set -u
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+repo_root="$(dirname "$(dirname "$script_dir")")"
+command_path="$repo_root/bin/reformat_spaces_to_tabs"
+legacy_path="$repo_root/bin/reformat_spaces_to_tabs.awk.bash"
+scratch="$(mktemp -d "${TMPDIR:-/tmp}/reformat-spaces-to-tabs-test.XXXXXX")" || exit 1
+backup_roots_file="$scratch/backup-roots"
+: >"$backup_roots_file"
 
 tests=0
 fails=0
+actual_status=0
+actual_stdout="$scratch/actual.stdout"
+actual_stderr="$scratch/actual.stderr"
 
-print_result() {
-	local status=$1
+cleanup() {
+	local backup_root
+	while IFS= read -r backup_root; do
+		if [[ "$backup_root" =~ ^/tmp/rstt[0-9]+$ && -d "$backup_root" ]]; then
+			rm -rf -- "$backup_root"
+		fi
+	done <"$backup_roots_file"
+	rm -rf -- "$scratch"
+}
+trap cleanup EXIT
+
+pass() {
+	printf 'PASS: %s\n' "$1"
+}
+
+fail() {
+	printf 'FAIL: %s\n' "$1" >&2
+	((fails++))
+}
+
+expect_status() {
+	local description="$1"
+	local expected="$2"
+	local actual="$3"
+	((tests++))
+	if [[ "$actual" -eq "$expected" ]]; then
+		pass "$description"
+	else
+		fail "$description (expected status $expected, got $actual)"
+	fi
+}
+
+expect_files_equal() {
+	local description="$1"
+	local expected="$2"
+	local actual="$3"
+	((tests++))
+	if cmp -s "$expected" "$actual"; then
+		pass "$description"
+	else
+		fail "$description"
+		printf '%s\n' '--- expected bytes' >&2
+		od -An -tx1c "$expected" >&2
+		printf '%s\n' '--- actual bytes' >&2
+		od -An -tx1c "$actual" >&2
+	fi
+}
+
+expect_empty() {
+	local description="$1"
+	local path="$2"
+	((tests++))
+	if [[ ! -s "$path" ]]; then
+		pass "$description"
+	else
+		fail "$description"
+		od -An -tx1c "$path" >&2
+	fi
+}
+
+expect_contains() {
+	local description="$1"
+	local needle="$2"
+	local path="$3"
+	((tests++))
+	if rg -q --fixed-strings -- "$needle" "$path"; then
+		pass "$description"
+	else
+		fail "$description (missing: $needle)"
+		printf '%s\n' '--- actual text' >&2
+		sed -n '1,120p' "$path" >&2
+	fi
+}
+
+expect_value() {
+	local description="$1"
+	local expected="$2"
+	local actual="$3"
+	((tests++))
+	if [[ "$actual" == "$expected" ]]; then
+		pass "$description"
+	else
+		fail "$description (expected '$expected', got '$actual')"
+	fi
+}
+
+run_command() {
+	: >"$actual_stdout"
+	: >"$actual_stderr"
+	"$@" >"$actual_stdout" 2>"$actual_stderr"
+	actual_status=$?
+}
+
+run_command_in() {
+	local directory="$1"
 	shift
-	if [ "$status" -eq 0 ]; then
-		printf '%s\n' "PASSED"
-	else
-		printf '%s\n' "FAILED"
-		((fails+=1))
-	fi
-}
-
-test_help_output() {
-	((tests+=1))
-	printf 'Test --help shows usage... '
-	local output rc
-	output=$(reformat_spaces_to_tabs --help 2>&1) || rc=$?
-	rc=${rc:-0}
-	if [ "$rc" -eq 0 ] && printf '%s' "$output" | grep -q 'Usage: reformat_spaces_to_tabs'; then
-		print_result 0
-	else
-		print_result 1
-		printf '%s\n' "$output" >&2
-	fi
-}
-
-test_self_test_flag() {
-	if [ -n "${RSTT_RUNNING_SUITE:-}" ]; then
-		return
-	fi
-	((tests+=1))
-	printf 'Test --test is silent on success... '
-	local output rc
-	output=$(reformat_spaces_to_tabs --test 2>&1) || rc=$?
-	rc=${rc:-0}
-	if [ "$rc" -eq 0 ] && [ -z "$output" ]; then
-		print_result 0
-	else
-		print_result 1
-		printf '%s\n' "$output" >&2
-	fi
-}
-
-test_backup_directory() {
-	((tests+=1))
-	printf 'Test backups are stored in /tmp/rstt$PID... '
-	local workdir stderr_file stdout_file backup_line backup_path
-	workdir=$(mktemp -d "${TMPDIR:-/tmp}/rstt_test.XXXXXX")
-	stderr_file=$(mktemp --tmpdir)
-	stdout_file=$(mktemp --tmpdir)
+	: >"$actual_stdout"
+	: >"$actual_stderr"
 	(
-		cd "$workdir"
-		cat <<'EOF' > sample.txt
-  def foo
-    puts "hello"
-EOF
-		reformat_spaces_to_tabs -i sample.txt >"$stdout_file" 2>"$stderr_file"
-	) || true
-	if grep -q '\.maybe-no-tabs' "$workdir"/sample.txt*; then
-		print_result 1
-		printf 'Unexpected backup alongside original file\n' >&2
-		rm -rf "$workdir" "$stderr_file" "$stdout_file"
-		return
+		cd "$directory" || exit 125
+		"$@"
+	) >"$actual_stdout" 2>"$actual_stderr"
+	actual_status=$?
+}
+
+record_backup_root() {
+	local backup_path="$1"
+	local backup_root
+	backup_root="$(dirname "$backup_path")"
+	if [[ "$backup_root" =~ ^/tmp/rstt[0-9]+$ ]]; then
+		printf '%s\n' "$backup_root" >>"$backup_roots_file"
 	fi
-	backup_line=$(grep 'Backup stored for' "$stderr_file" || true)
-	backup_path=${backup_line##* }
-	if [ -n "$backup_path" ] && [ -f "$backup_path" ] && printf '%s' "$backup_path" | grep -q '/tmp/rstt'; then
-		print_result 0
+}
+
+permission_mode() {
+	local path="$1"
+	if command -v gstat >/dev/null 2>&1; then
+		gstat -c '%a' "$path"
+	elif stat --version 2>/dev/null | rg -q 'GNU coreutils'; then
+		stat -c '%a' "$path"
 	else
-		print_result 1
-		printf 'Backup path not reported correctly\n' >&2
+		stat -f '%Lp' "$path"
 	fi
-	rm -rf "$workdir" "$stderr_file" "$stdout_file"
 }
 
-main() {
-	test_help_output
-	test_self_test_flag
-	test_backup_directory
+run_conversion_case() {
+	local description="$1"
+	local input="$2"
+	local expected="$3"
+	run_command "$command_path" "$input"
+	expect_status "$description succeeds" 0 "$actual_status"
+	expect_files_equal "$description emits the expected bytes" "$expected" "$actual_stdout"
+	expect_empty "$description has clean stderr" "$actual_stderr"
+}
 
-	if [ "$fails" -eq 0 ]; then
-		printf 'All %d tests passed\n' "$tests"
-		return 0
+# The active executable must be LuaJIT, and the exact Bash/Awk predecessor must
+# remain runnable under the requested suffix.
+candidate_shebang="$(sed -n '1p' "$command_path")"
+((tests++))
+if [[ "$candidate_shebang" == '#!/usr/bin/env luajit' \
+	|| "$candidate_shebang" =~ ^\#!/nix/store/[^/]+/bin/luajit$ ]]; then
+	pass 'active executable uses LuaJIT'
+else
+	fail "active executable uses LuaJIT (got '$candidate_shebang')"
+fi
+((tests++))
+if [[ -x "$legacy_path" ]]; then
+	pass 'legacy Bash/Awk executable is preserved and executable'
+else
+	fail 'legacy Bash/Awk executable is preserved and executable'
+fi
+if [[ -e "$legacy_path" ]]; then
+	legacy_shebang="$(sed -n '1p' "$legacy_path")"
+	((tests++))
+	if [[ "$legacy_shebang" == '#!/usr/bin/env bash' \
+		|| "$legacy_shebang" =~ ^\#!/nix/store/[^/]+/bin/bash$ ]]; then
+		pass 'legacy executable retains its Bash interpreter'
+	else
+		fail "legacy executable retains its Bash interpreter (got '$legacy_shebang')"
 	fi
+fi
+
+# A fake Awk that always fails proves the active algorithm does not delegate its
+# inference or rewriting back to the old implementation.
+mkdir -p "$scratch/fake-awk-bin"
+cat >"$scratch/fake-awk-bin/gawk" <<'EOF'
+#!/usr/bin/env bash
+exit 99
+EOF
+chmod +x "$scratch/fake-awk-bin/gawk"
+ln -s gawk "$scratch/fake-awk-bin/awk"
+printf '    alpha\n        beta\n' >"$scratch/no-awk.input"
+printf '\talpha\n\t\tbeta\n' >"$scratch/no-awk.expected"
+run_command env PATH="$scratch/fake-awk-bin:$PATH" "$command_path" "$scratch/no-awk.input"
+expect_status 'active implementation does not execute Awk' 0 "$actual_status"
+expect_files_equal 'Awk-free conversion keeps inference behavior' \
+	"$scratch/no-awk.expected" "$actual_stdout"
+
+run_command "$command_path" --help
+expect_status '--help succeeds' 0 "$actual_status"
+expect_contains '--help names the command' 'Usage: reformat_spaces_to_tabs' "$actual_stdout"
+expect_empty '--help has clean stderr' "$actual_stderr"
+
+run_command "$command_path" --unknown
+expect_status 'unknown options fail' 1 "$actual_status"
+expect_empty 'unknown options emit no stdout' "$actual_stdout"
+expect_contains 'unknown options identify the bad switch' 'Error: Unknown option --unknown' "$actual_stderr"
+
+run_command "$command_path"
+expect_status 'an empty file list fails' 1 "$actual_status"
+expect_contains 'an empty file list emits concise usage' 'Usage: reformat_spaces_to_tabs' "$actual_stderr"
+
+run_command "$command_path" --test extra
+expect_status '--test rejects additional arguments' 1 "$actual_status"
+expect_contains '--test explains its arity' '--test does not accept additional arguments' "$actual_stderr"
+
+# Frequency leaders are sampled over the whole set. Width 2 occurs four times,
+# width 3 three times, and width 6 five times. The leaders are therefore 2 and
+# then 6, whose largest tested common divisor is 2.
+: >"$scratch/successive-leaders.input"
+: >"$scratch/successive-leaders.expected"
+for label in a b c d; do
+	printf '  two-%s\n' "$label" >>"$scratch/successive-leaders.input"
+	printf '\ttwo-%s\n' "$label" >>"$scratch/successive-leaders.expected"
+done
+for label in a b c; do
+	printf '   three-%s\n' "$label" >>"$scratch/successive-leaders.input"
+	printf '\t three-%s\n' "$label" >>"$scratch/successive-leaders.expected"
+done
+for label in a b c d e; do
+	printf '      six-%s\n' "$label" >>"$scratch/successive-leaders.input"
+	printf '\t\t\tsix-%s\n' "$label" >>"$scratch/successive-leaders.expected"
+done
+run_conversion_case 'successive frequency-leader sampling' \
+	"$scratch/successive-leaders.input" "$scratch/successive-leaders.expected"
+
+# Every divisor candidate in the legacy 8..2 search order gets its own set.
+# A width appears twice and its double once, so the repeated width wins the
+# frequency sample and both levels must convert exactly.
+for width in 2 3 4 5 6 7 8; do
+	printf -v indent '%*s' "$width" ''
+	printf -v double_indent '%*s' "$((width * 2))" ''
+	printf '%swidth-%s-a\n%swidth-%s-b\n%sdouble-%s\n' \
+		"$indent" "$width" "$indent" "$width" "$double_indent" "$width" \
+		>"$scratch/divisor-$width.input"
+	printf '\twidth-%s-a\n\twidth-%s-b\n\t\tdouble-%s\n' \
+		"$width" "$width" "$width" >"$scratch/divisor-$width.expected"
+	run_conversion_case "divisor candidate $width" \
+		"$scratch/divisor-$width.input" "$scratch/divisor-$width.expected"
+done
+
+# Equal space frequencies keep the first width encountered by the legacy
+# ascending numeric traversal. Four therefore wins over six.
+printf '    four\n      six\n' >"$scratch/space-frequency-tie.input"
+printf '\tfour\n\t  six\n' >"$scratch/space-frequency-tie.expected"
+run_conversion_case 'equal-frequency space widths' \
+	"$scratch/space-frequency-tie.input" "$scratch/space-frequency-tie.expected"
+
+# Three successive leaders participate in divisibility. Counts rise from one
+# line at width 3, to two at width 4, to three at width 8. Width 3 prevents the
+# otherwise eligible divisor 4, forcing the one-space fallback.
+printf '   three\n    four-a\n    four-b\n        eight-a\n        eight-b\n        eight-c\n' \
+	>"$scratch/third-leader.input"
+printf '\t\t\tthree\n\t\t\t\tfour-a\n\t\t\t\tfour-b\n\t\t\t\t\t\t\t\teight-a\n\t\t\t\t\t\t\t\teight-b\n\t\t\t\t\t\t\t\teight-c\n' \
+	>"$scratch/third-leader.expected"
+run_conversion_case 'third frequency leader participates' \
+	"$scratch/third-leader.input" "$scratch/third-leader.expected"
+
+# Four spaces dominate the sample. Unmatched remainders stay as spaces, and a
+# leading tab does not prevent a following complete space group from changing.
+printf '    four-a\n    four-b\n        eight\n      partial\n\t    after-tab\n    \tspace-before-tab\n    \n' \
+	>"$scratch/mixed-prefix.input"
+printf '\tfour-a\n\tfour-b\n\t\teight\n\t  partial\n\t\tafter-tab\n\t\tspace-before-tab\n\t\n' \
+	>"$scratch/mixed-prefix.expected"
+run_conversion_case 'mixed prefixes and incomplete groups' \
+	"$scratch/mixed-prefix.input" "$scratch/mixed-prefix.expected"
+
+# A tab-frequency tie still permits conversion because suppression requires a
+# strictly greater tab count.
+printf '\talready-tabbed\n    spaced' >"$scratch/frequency-tie.input"
+printf '\talready-tabbed\n\tspaced\n' >"$scratch/frequency-tie.expected"
+run_conversion_case 'tab and space frequency tie' \
+	"$scratch/frequency-tie.input" "$scratch/frequency-tie.expected"
+
+# A strictly dominant tab sample suppresses conversion and therefore preserves
+# the source byte-for-byte, including the missing final newline.
+printf '\talready-a\n\talready-b\n    spaced' >"$scratch/tab-dominant.input"
+cp "$scratch/tab-dominant.input" "$scratch/tab-dominant.expected"
+run_conversion_case 'strictly tab-dominant sample' \
+	"$scratch/tab-dominant.input" "$scratch/tab-dominant.expected"
+
+# Eleven has no divisor in the tested 8..2 range, so inference falls back to a
+# one-space tab width.
+printf '           eleven\n' >"$scratch/fallback-one.input"
+printf '\t\t\t\t\t\t\t\t\t\t\televen\n' >"$scratch/fallback-one.expected"
+run_conversion_case 'one-space fallback' \
+	"$scratch/fallback-one.input" "$scratch/fallback-one.expected"
+
+printf '    windows\r\n        child\r\n' >"$scratch/crlf.input"
+printf '\twindows\r\n\t\tchild\r\n' >"$scratch/crlf.expected"
+run_conversion_case 'CRLF records' "$scratch/crlf.input" "$scratch/crlf.expected"
+
+printf 'plain\n\n\tkept\nlast-without-newline' >"$scratch/no-space-sample.input"
+cp "$scratch/no-space-sample.input" "$scratch/no-space-sample.expected"
+run_conversion_case 'input without a leading-space sample' \
+	"$scratch/no-space-sample.input" "$scratch/no-space-sample.expected"
+
+: >"$scratch/empty.input"
+run_command "$command_path" "$scratch/empty.input"
+expect_status 'an empty file is rejected by the MIME check' 1 "$actual_status"
+expect_empty 'an empty file emits no stdout' "$actual_stdout"
+expect_contains 'an empty file is reported as non-text' \
+	"Warning: Not a text file: $scratch/empty.input" "$actual_stderr"
+
+mkdir -p "$scratch/path cases"
+printf '   path\n' >"$scratch/path cases/leading spaces.txt"
+printf '\tpath\n' >"$scratch/path.expected"
+run_command "$command_path" "$scratch/path cases/leading spaces.txt"
+expect_status 'a path containing spaces succeeds' 0 "$actual_status"
+expect_files_equal 'a path containing spaces is converted' \
+	"$scratch/path.expected" "$actual_stdout"
+expect_empty 'a path containing spaces has clean stderr' "$actual_stderr"
+
+printf '   dash\n' >"$scratch/path cases/- leading dash.txt"
+run_command_in "$scratch/path cases" "$command_path" -- '- leading dash.txt'
+expect_status 'a dash-leading path reaches the legacy MIME-check failure' 1 "$actual_status"
+expect_empty 'a dash-leading MIME-check failure emits no stdout' "$actual_stdout"
+expect_contains 'a dash-leading MIME-check failure names the path' \
+	'Warning: Not a text file: - leading dash.txt' "$actual_stderr"
+
+printf '  first\n' >"$scratch/first.txt"
+printf 'plain-second\n' >"$scratch/second.txt"
+printf '\tfirst\nplain-second\n' >"$scratch/multiple.expected"
+run_command "$command_path" "$scratch/first.txt" "$scratch/second.txt"
+expect_status 'multiple input files succeed' 0 "$actual_status"
+expect_files_equal 'multiple file outputs are concatenated in argument order' \
+	"$scratch/multiple.expected" "$actual_stdout"
+expect_empty 'multiple successful files have clean stderr' "$actual_stderr"
+
+run_command "$command_path" "$scratch/missing.txt" "$scratch/second.txt"
+expect_status 'a missing file warns and later files continue' 0 "$actual_status"
+expect_files_equal 'a missing file contributes no stdout' "$scratch/second.txt" "$actual_stdout"
+expect_contains 'a missing file is named in its warning' \
+	"Warning: File not found: $scratch/missing.txt" "$actual_stderr"
+
+printf '\000\001\002\003' >"$scratch/binary.dat"
+run_command "$command_path" "$scratch/binary.dat"
+expect_status 'a non-text file fails' 1 "$actual_status"
+expect_empty 'a non-text file emits no stdout' "$actual_stdout"
+expect_contains 'a non-text file is named in its warning' \
+	"Warning: Not a text file: $scratch/binary.dat" "$actual_stderr"
+
+mkdir -p "$scratch/in-place"
+printf '    original\n        child\n' >"$scratch/in-place/with spaces.txt"
+cp "$scratch/in-place/with spaces.txt" "$scratch/in-place.expected-backup"
+printf '\toriginal\n\t\tchild\n' >"$scratch/in-place.expected"
+chmod 640 "$scratch/in-place/with spaces.txt"
+run_command "$command_path" -i "$scratch/in-place/with spaces.txt"
+expect_status 'in-place conversion succeeds' 0 "$actual_status"
+expect_files_equal 'in-place conversion replaces the original content' \
+	"$scratch/in-place.expected" "$scratch/in-place/with spaces.txt"
+expect_value 'in-place conversion preserves permission bits' '640' \
+	"$(permission_mode "$scratch/in-place/with spaces.txt")"
+expect_contains 'in-place conversion reports completion on stdout' 'Reformatted:' "$actual_stdout"
+expect_contains 'in-place conversion reports its inferred width' 'indent size: 4' "$actual_stdout"
+
+backup_line="$(rg -m1 '^Backup stored for ' "$actual_stderr")"
+backup_path="${backup_line##* at }"
+record_backup_root "$backup_path"
+((tests++))
+if [[ -f "$backup_path" ]]; then
+	pass 'in-place conversion creates the reported backup'
+else
+	fail 'in-place conversion creates the reported backup'
+fi
+if [[ -f "$backup_path" ]]; then
+	expect_files_equal 'the backup contains the exact original bytes' \
+		"$scratch/in-place.expected-backup" "$backup_path"
+fi
+
+printf 'already plain\n' >"$scratch/in-place/no-change.txt"
+run_command "$command_path" -i "$scratch/in-place/no-change.txt"
+expect_status 'in-place no-op succeeds' 0 "$actual_status"
+expect_empty 'in-place no-op emits no stdout' "$actual_stdout"
+expect_contains 'in-place no-op reports that no change was needed' \
+	'No changes needed for:' "$actual_stderr"
+
+mkdir -p "$scratch/collision/a" "$scratch/collision/b"
+printf '  one\n' >"$scratch/collision/a/shared.txt"
+printf '  two\n' >"$scratch/collision/b/shared.txt"
+run_command "$command_path" -i \
+	"$scratch/collision/a/shared.txt" "$scratch/collision/b/shared.txt"
+expect_status 'same-basename backups in one invocation succeed' 0 "$actual_status"
+mapfile -t collision_backup_lines < <(rg '^Backup stored for ' "$actual_stderr")
+expect_value 'both same-basename backups are reported' '2' "${#collision_backup_lines[@]}"
+if [[ "${#collision_backup_lines[@]}" -eq 2 ]]; then
+	first_backup="${collision_backup_lines[0]##* at }"
+	second_backup="${collision_backup_lines[1]##* at }"
+	record_backup_root "$first_backup"
+	record_backup_root "$second_backup"
+	expect_value 'first same-basename backup uses the base suffix' \
+		'shared.txt.maybe-no-tabs' "$(basename "$first_backup")"
+	expect_value 'second same-basename backup receives a numeric suffix' \
+		'shared.txt.maybe-no-tabs.1' "$(basename "$second_backup")"
+fi
+
+# The preserved implementation is an external oracle for a mechanical sweep.
+# The sweep combines every pair of widths from 1 through 8 with frequency ties,
+# either width winning, and zero through three leading-tab records. One call per
+# implementation keeps the suite fast while each file gets independent inference.
+if [[ -x "$legacy_path" ]]; then
+	differential_files=()
+	differential_case=0
+	for ((first_width = 1; first_width <= 8; first_width++)); do
+		for ((second_width = first_width + 1; second_width <= 8; second_width++)); do
+			for frequency_case in 1 2 3; do
+				((differential_case++))
+				case "$frequency_case" in
+					1) first_frequency=1; second_frequency=1 ;;
+					2) first_frequency=1; second_frequency=2 ;;
+					3) first_frequency=2; second_frequency=1 ;;
+				esac
+				tab_frequency=$(((first_width + second_width + differential_case) % 4))
+				printf -v first_indent '%*s' "$first_width" ''
+				printf -v second_indent '%*s' "$second_width" ''
+				differential_path="$scratch/differential-$differential_case.txt"
+				: >"$differential_path"
+				for ((line = 1; line <= first_frequency; line++)); do
+					printf '%sfirst-%s-%s\n' "$first_indent" "$first_width" "$line" \
+						>>"$differential_path"
+				done
+				for ((line = 1; line <= second_frequency; line++)); do
+					printf '%ssecond-%s-%s\n' "$second_indent" "$second_width" "$line" \
+						>>"$differential_path"
+				done
+				for ((line = 1; line <= tab_frequency; line++)); do
+					printf '\ttab-%s\n' "$line" >>"$differential_path"
+				done
+				differential_files+=("$differential_path")
+			done
+		done
+	done
+
+	expect_value 'mechanical differential sweep generated all cases' '84' \
+		"${#differential_files[@]}"
+	"$legacy_path" "${differential_files[@]}" \
+		>"$scratch/legacy.stdout" 2>"$scratch/legacy.stderr"
+	legacy_status=$?
+	run_command "$command_path" "${differential_files[@]}"
+	expect_status 'mechanical differential sweep succeeds under both implementations' \
+		"$legacy_status" "$actual_status"
+	expect_files_equal 'LuaJIT matches legacy output on the mechanical sweep' \
+		"$scratch/legacy.stdout" "$actual_stdout"
+	expect_files_equal 'LuaJIT matches legacy stderr on the mechanical sweep' \
+		"$scratch/legacy.stderr" "$actual_stderr"
+fi
+
+if [[ -z "${RSTT_RUNNING_SUITE:-}" ]]; then
+	run_command "$command_path" --test
+	expect_status '--test runs the associated suite successfully' 0 "$actual_status"
+	expect_empty '--test is silent on success' "$actual_stdout"
+	expect_empty '--test success has clean stderr' "$actual_stderr"
+fi
+
+if [[ "$fails" -eq 0 ]]; then
+	printf 'All %d tests passed\n' "$tests"
+else
 	printf '%d of %d tests failed\n' "$fails" "$tests" >&2
-	return "$fails"
-}
+fi
 
-main "$@"
+exit "$fails"

@@ -1,5 +1,50 @@
 # dotfiles — TODO / Plans
 
+## Active — port `reformat_spaces_to_tabs` to LuaJIT (2026-08-26)
+
+- [x] Characterize the hybrid Bash/Awk implementation's tab-width inference,
+      transformation boundaries, CLI behavior, backups, and file metadata.
+      Curiosity poke: Awk's associative-array iteration order may affect which
+      indentation widths become the second and third divisibility samples.
+      Completed 2026-08-26 06:22 PM EDT: the characterization pins ascending
+      indentation-width traversal, successive frequency leaders, the 8-to-2
+      divisor search, strict tab-frequency suppression, and byte-level rewrite
+      behavior.
+- [x] Add a failing regression matrix before implementation, including
+      frequency ties, tab-dominant input, mixed tab/space prefixes, blank and
+      unindented lines, incomplete space groups, missing/non-text files, paths
+      with spaces, multiple files, options, permissions, and backup collisions.
+      Curiosity poke: byte-for-byte output and clean stderr matter as much as
+      the inferred tab width, especially when stdout combines several files.
+      Completed 2026-08-26 06:22 PM EDT: 63 of 67 checks pass against the old
+      executable; the four expected failures require a LuaJIT shebang, the
+      preserved `.awk.bash` file, and an implementation independent of Awk.
+- [x] Preserve the old executable as `bin/reformat_spaces_to_tabs.awk.bash`,
+      then implement `bin/reformat_spaces_to_tabs` as a LuaJIT function and CLI
+      without changing observed behavior.
+      Curiosity poke: in-place replacement must remain recoverable if a write,
+      chmod, or rename fails midway.
+      Completed 2026-08-26 06:34 PM EDT: the legacy file is byte-identical to
+      `HEAD` at SHA-256 `c28d0cd545e008546934a77878661056f79492bd0137ca84b84161d84bc23a20`;
+      the active inference and rewriting functions are LuaJIT and execute no
+      Awk.
+- [x] Run the focused regression, the legacy differential cases, and the full
+      host and hermetic Nix suites; update dirtree notes and commit the known-
+      good unit.
+      Curiosity poke: the test must prove it executed LuaJIT, rather than pass
+      accidentally against the preserved Bash/Awk implementation.
+      Completed 2026-08-26 06:34 PM EDT: 102 focused checks pass, including an
+      84-file mechanical differential sweep; all 178 host and 131 hermetic Nix
+      test files pass. The Nix gate also proves patched store-path shebangs.
+- [x] Report algorithm critiques only after the behavior-preserving port, with
+      each proposed change scoped to both implementations.
+      Curiosity poke: distinguish correctness defects from taste or policy
+      changes so later fixes can get their own red/green evidence.
+      Completed 2026-08-26 06:34 PM EDT: post-port review identified the
+      iteration-order-dependent leader sample, aggressive one-space fallback,
+      peak-frequency-only tab veto, broad MIME gate, and predictable `.new`
+      sidecar as separate follow-up candidates; none changed in this port.
+
 ## Active — retire the dotfiles-owned `glob` copy (2026-08-21)
 
 - [x] Add a repository-ownership regression proving dotfiles contains no
