@@ -4,6 +4,9 @@ local ffi = require('ffi')
 
 ffi.cdef([[
 	int getpid(void);
+	int mkstemp(char *template_name);
+	int close(int file_descriptor);
+	int unlink(const char *path);
 ]])
 
 local script_path = arg[0]
@@ -49,40 +52,16 @@ local function path_exists(path)
 end
 
 local function is_text_file(path)
-	local command = 'file -b --mime-type ' .. shell_quote(path)
-		.. " | grep -q '^text/'"
+	if command_succeeds('[ ! -s ' .. shell_quote(path) .. ' ]') then
+		return true
+	end
+
+	local command = 'file -b --mime-type -- ' .. shell_quote(path)
+		.. " | grep -Eq '^(text/|application/([^/]+[+])?(json|xml)$)'"
 	return command_succeeds(command)
 end
 
-local function read_file(path)
-	local handle, open_error = io.open(path, 'rb')
-	if handle == nil then
-		return nil, open_error
-	end
-
-	local data, read_error = handle:read('*a')
-	local closed, close_error = handle:close()
-	if data == nil then
-		return nil, read_error
-	end
-	if not closed then
-		return nil, close_error
-	end
-	return data
-end
-
-local function write_file(path, data)
-	local handle, open_error = io.open(path, 'wb')
-	if handle == nil then
-		return nil, open_error
-	end
-
-	local written, write_error = handle:write(data)
-	if written == nil then
-		handle:close()
-		return nil, write_error
-	end
-
+local function close_file(handle)
 	local closed, close_error = handle:close()
 	if not closed then
 		return nil, close_error
@@ -90,22 +69,66 @@ local function write_file(path, data)
 	return true
 end
 
-local function visit_records(data, visit)
-	if #data == 0 then
-		return
+local function write_bytes(handle, bytes)
+	local written, write_error = handle:write(bytes)
+	if written == nil then
+		return nil, write_error
+	end
+	return true
+end
+
+local function copy_file_to_handle(path, output)
+	local input, open_error = io.open(path, 'rb')
+	if input == nil then
+		return nil, open_error
 	end
 
-	local record_start = 1
-	while record_start <= #data do
-		local newline = data:find('\n', record_start, true)
-		if newline == nil then
-			visit(data:sub(record_start))
-			return
+	while true do
+		local chunk, read_error = input:read(64 * 1024)
+		if chunk == nil then
+			if read_error ~= nil then
+				input:close()
+				return nil, read_error
+			end
+			break
 		end
-
-		visit(data:sub(record_start, newline - 1))
-		record_start = newline + 1
+		local written, write_error = write_bytes(output, chunk)
+		if not written then
+			input:close()
+			return nil, write_error
+		end
 	end
+
+	return close_file(input)
+end
+
+local function create_unique_file(path_template)
+	local template = ffi.new('char[?]', #path_template + 1)
+	ffi.copy(template, path_template)
+	local file_descriptor = ffi.C.mkstemp(template)
+	if file_descriptor < 0 then
+		return nil, 'could not create a unique temporary file'
+	end
+	local path = ffi.string(template)
+	if ffi.C.close(file_descriptor) ~= 0 then
+		ffi.C.unlink(path)
+		return nil, 'could not close the unique temporary file'
+	end
+	return path
+end
+
+local function remove_created_file(path)
+	if path ~= nil then
+		ffi.C.unlink(path)
+	end
+end
+
+local function open_output(path)
+	local handle, open_error = io.open(path, 'wb')
+	if handle == nil then
+		return nil, open_error
+	end
+	return handle
 end
 
 local function leading_byte_count(record, byte)
@@ -116,69 +139,107 @@ local function leading_byte_count(record, byte)
 	return count
 end
 
-local function sorted_widths(counts)
+local function ranked_widths(counts)
 	local widths = {}
 	for width in pairs(counts) do
 		widths[#widths + 1] = width
 	end
-	table.sort(widths)
+	table.sort(widths, function(left, right)
+		if counts[left] == counts[right] then
+			return left < right
+		end
+		return counts[left] > counts[right]
+	end)
 	return widths
 end
 
-local function frequency_leaders(counts)
-	local maximum_width = 0
-	local second_width = 0
-	local third_width = 0
-	local maximum_count = 0
-
-	for _, width in ipairs(sorted_widths(counts)) do
-		if counts[width] > maximum_count then
-			third_width = second_width
-			second_width = maximum_width
-			maximum_width = width
-			maximum_count = counts[width]
-		end
-	end
-
-	return maximum_width, second_width, third_width, maximum_count
+local function is_whitespace_only(record)
+	return record:match('^[ \t]*\r?$') ~= nil
 end
 
-local function determine_tab_size_in_spaces(data)
-	local space_indents = {}
-	local tab_indents = {}
+local function observe_record(sample, record)
+	if is_whitespace_only(record) then
+		return
+	end
 
-	visit_records(data, function(record)
-		local first_byte = record:byte(1)
-		if first_byte == 32 then
-			local width = leading_byte_count(record, 32)
-			space_indents[width] = (space_indents[width] or 0) + 1
-		elseif first_byte == 9 then
-			local width = leading_byte_count(record, 9)
-			tab_indents[width] = (tab_indents[width] or 0) + 1
-		end
-	end)
+	local tab_count = leading_byte_count(record, 9)
+	local space_start = tab_count + 1
+	local space_count = 0
+	while record:byte(space_start + space_count) == 32 do
+		space_count = space_count + 1
+	end
 
-	local maximum_space, second_space, third_space, maximum_space_count =
-		frequency_leaders(space_indents)
-	local _, _, _, maximum_tab_count = frequency_leaders(tab_indents)
+	if tab_count > 0 then
+		sample.tabbed_lines = sample.tabbed_lines + 1
+	end
+	if space_count > 0 then
+		sample.spaced_lines = sample.spaced_lines + 1
+		sample.space_indents[space_count] =
+			(sample.space_indents[space_count] or 0) + 1
+	end
+end
 
-	if maximum_tab_count > maximum_space_count or maximum_space == 0 then
+local function infer_tab_width(sample)
+	if sample.tabbed_lines > sample.spaced_lines then
+		return 0
+	end
+
+	local widths = ranked_widths(sample.space_indents)
+	if #widths == 0 then
 		return 0
 	end
 
 	for divisor = 8, 2, -1 do
-		if maximum_space % divisor == 0
-			and (second_space == 0 or second_space % divisor == 0)
-			and (third_space == 0 or third_space % divisor == 0)
-		then
+		local divides_all = true
+		for index = 1, math.min(3, #widths) do
+			if widths[index] % divisor ~= 0 then
+				divides_all = false
+				break
+			end
+		end
+		if divides_all then
 			return divisor
 		end
 	end
 
-	return 1
+	return 0
+end
+
+local function determine_tab_size_in_spaces(path)
+	local input, open_error = io.open(path, 'rb')
+	if input == nil then
+		return nil, open_error
+	end
+
+	local sample = {
+		space_indents = {},
+		spaced_lines = 0,
+		tabbed_lines = 0,
+	}
+	while true do
+		local record, read_error = input:read('*l')
+		if record == nil then
+			if read_error ~= nil then
+				input:close()
+				return nil, read_error
+			end
+			break
+		end
+		observe_record(sample, record)
+	end
+
+	local closed, close_error = close_file(input)
+	if not closed then
+		return nil, close_error
+	end
+	return infer_tab_width(sample)
 end
 
 local function rewrite_record(record, indent_width)
+	if is_whitespace_only(record) then
+		return record
+	end
+
 	local tab_count = leading_byte_count(record, 9)
 	local space_start = tab_count + 1
 	local space_count = 0
@@ -198,13 +259,32 @@ local function rewrite_record(record, indent_width)
 		.. record:sub(unchanged_start)
 end
 
-local function rewrite_data(data, indent_width)
-	local rewritten = {}
-	visit_records(data, function(record)
-		rewritten[#rewritten + 1] = rewrite_record(record, indent_width)
-		rewritten[#rewritten + 1] = '\n'
-	end)
-	return table.concat(rewritten)
+local function stream_rewritten_file(path, output, indent_width)
+	local input, open_error = io.open(path, 'rb')
+	if input == nil then
+		return nil, open_error
+	end
+
+	while true do
+		local record, read_error = input:read('*l')
+		if record == nil then
+			if read_error ~= nil then
+				input:close()
+				return nil, read_error
+			end
+			break
+		end
+		local written, write_error = write_bytes(
+			output,
+			rewrite_record(record, indent_width) .. '\n'
+		)
+		if not written then
+			input:close()
+			return nil, write_error
+		end
+	end
+
+	return close_file(input)
 end
 
 local function basename(path)
@@ -232,7 +312,7 @@ local function resolve_backup_path(path)
 end
 
 local function copy_preserving_metadata(source, destination)
-	local command = 'cp -p ' .. shell_quote(source) .. ' ' .. shell_quote(destination)
+	local command = 'cp -p -- ' .. shell_quote(source) .. ' ' .. shell_quote(destination)
 	return command_succeeds(command)
 end
 
@@ -242,25 +322,32 @@ local function process_file(path, in_place)
 		return 1
 	end
 
-	local data, read_error = read_file(path)
-	if data == nil then
+	local indent_width, read_error = determine_tab_size_in_spaces(path)
+	if indent_width == nil then
 		io.stderr:write('Error: Could not read ', path, ': ', read_error, '\n')
 		return 1
 	end
 
-	local indent_width = determine_tab_size_in_spaces(data)
 	if indent_width <= 0 then
 		if in_place then
 			io.stderr:write('No changes needed for: ', path, '\n')
 		else
-			io.stdout:write(data)
+			local copied, copy_error = copy_file_to_handle(path, io.stdout)
+			if not copied then
+				io.stderr:write('Error: Could not read ', path, ': ', copy_error, '\n')
+				return 1
+			end
 		end
 		return 0
 	end
 
-	local rewritten = rewrite_data(data, indent_width)
 	if not in_place then
-		io.stdout:write(rewritten)
+		local streamed, stream_error =
+			stream_rewritten_file(path, io.stdout, indent_width)
+		if not streamed then
+			io.stderr:write('Error: Could not convert ', path, ': ', stream_error, '\n')
+			return 1
+		end
 		return 0
 	end
 
@@ -277,21 +364,42 @@ local function process_file(path, in_place)
 	end
 	io.stderr:write('Backup stored for ', path, ' at ', backup_path, '\n')
 
-	local replacement_path = path .. '.new'
+	local replacement_path, create_error = create_unique_file(path .. '.tmp.XXXXXX')
+	if replacement_path == nil then
+		io.stderr:write(
+			'Error: Could not prepare replacement for ', path, ': ', create_error, '\n'
+		)
+		return 1
+	end
 	if not copy_preserving_metadata(path, replacement_path) then
+		remove_created_file(replacement_path)
 		return 1
 	end
 
-	local written, write_error = write_file(replacement_path, rewritten)
-	if not written then
+	local replacement, open_error = open_output(replacement_path)
+	if replacement == nil then
+		remove_created_file(replacement_path)
 		io.stderr:write(
-			'Error: Could not write ', replacement_path, ': ', write_error, '\n'
+			'Error: Could not write ', replacement_path, ': ', open_error, '\n'
+		)
+		return 1
+	end
+
+	local streamed, stream_error =
+		stream_rewritten_file(path, replacement, indent_width)
+	local closed, close_error = close_file(replacement)
+	if not streamed or not closed then
+		remove_created_file(replacement_path)
+		io.stderr:write(
+			'Error: Could not write ', replacement_path, ': ',
+			stream_error or close_error, '\n'
 		)
 		return 1
 	end
 
 	local renamed, rename_error = os.rename(replacement_path, path)
 	if not renamed then
+		remove_created_file(replacement_path)
 		io.stderr:write('Error: Could not replace ', path, ': ', rename_error, '\n')
 		return 1
 	end

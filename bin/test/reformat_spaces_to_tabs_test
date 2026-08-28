@@ -149,6 +149,16 @@ run_conversion_case() {
 	expect_status "$description succeeds" 0 "$actual_status"
 	expect_files_equal "$description emits the expected bytes" "$expected" "$actual_stdout"
 	expect_empty "$description has clean stderr" "$actual_stderr"
+	if [[ -x "$legacy_path" ]]; then
+		"$legacy_path" "$input" \
+			>"$scratch/legacy-case.stdout" 2>"$scratch/legacy-case.stderr"
+		local legacy_status=$?
+		expect_status "$description succeeds under Bash/Awk" 0 "$legacy_status"
+		expect_files_equal "$description has the same Bash/Awk bytes" \
+			"$expected" "$scratch/legacy-case.stdout"
+		expect_empty "$description has clean Bash/Awk stderr" \
+			"$scratch/legacy-case.stderr"
+	fi
 }
 
 # The active executable must be LuaJIT, and the exact Bash/Awk predecessor must
@@ -212,24 +222,21 @@ run_command "$command_path" --test extra
 expect_status '--test rejects additional arguments' 1 "$actual_status"
 expect_contains '--test explains its arity' '--test does not accept additional arguments' "$actual_stderr"
 
-# Frequency leaders are sampled over the whole set. Width 2 occurs four times,
-# width 3 three times, and width 6 five times. The leaders are therefore 2 and
-# then 6, whose largest tested common divisor is 2.
+# The three most frequent widths are ranked by descending count, with ascending
+# width as the explicit tie-breaker. Widths 6, 2, and 3 have no supported common
+# divisor, so uncertain inference must preserve the input.
 : >"$scratch/successive-leaders.input"
-: >"$scratch/successive-leaders.expected"
 for label in a b c d; do
 	printf '  two-%s\n' "$label" >>"$scratch/successive-leaders.input"
-	printf '\ttwo-%s\n' "$label" >>"$scratch/successive-leaders.expected"
 done
 for label in a b c; do
 	printf '   three-%s\n' "$label" >>"$scratch/successive-leaders.input"
-	printf '\t three-%s\n' "$label" >>"$scratch/successive-leaders.expected"
 done
 for label in a b c d e; do
 	printf '      six-%s\n' "$label" >>"$scratch/successive-leaders.input"
-	printf '\t\t\tsix-%s\n' "$label" >>"$scratch/successive-leaders.expected"
 done
-run_conversion_case 'successive frequency-leader sampling' \
+cp "$scratch/successive-leaders.input" "$scratch/successive-leaders.expected"
+run_conversion_case 'deterministic top-three frequency sampling' \
 	"$scratch/successive-leaders.input" "$scratch/successive-leaders.expected"
 
 # Every divisor candidate in the legacy 8..2 search order gets its own set.
@@ -247,31 +254,65 @@ for width in 2 3 4 5 6 7 8; do
 		"$scratch/divisor-$width.input" "$scratch/divisor-$width.expected"
 done
 
-# Equal space frequencies keep the first width encountered by the legacy
-# ascending numeric traversal. Four therefore wins over six.
+# Equal frequencies use ascending width as a deterministic rank tie-breaker.
+# Both selected widths participate, so four and six infer a two-space tab.
 printf '    four\n      six\n' >"$scratch/space-frequency-tie.input"
-printf '\tfour\n\t  six\n' >"$scratch/space-frequency-tie.expected"
+printf '\t\tfour\n\t\t\tsix\n' >"$scratch/space-frequency-tie.expected"
 run_conversion_case 'equal-frequency space widths' \
 	"$scratch/space-frequency-tie.input" "$scratch/space-frequency-tie.expected"
 
-# Three successive leaders participate in divisibility. Counts rise from one
-# line at width 3, to two at width 4, to three at width 8. Width 3 prevents the
-# otherwise eligible divisor 4, forcing the one-space fallback.
+# Four equally frequent widths exercise the three-entry cutoff. Ascending width
+# selects 2, 3, and 4; their lack of a supported common divisor makes this a
+# no-op. Selecting the fourth width 6 in place of 3 would incorrectly infer 2.
+printf '  two\n   three\n    four\n      six\n' \
+	>"$scratch/top-three-cutoff.input"
+cp "$scratch/top-three-cutoff.input" "$scratch/top-three-cutoff.expected"
+run_conversion_case 'equal-frequency top-three cutoff' \
+	"$scratch/top-three-cutoff.input" "$scratch/top-three-cutoff.expected"
+
+# All three ranked leaders participate in divisibility. Widths 8, 4, and 3 have
+# no supported common divisor, so the source remains byte-for-byte unchanged.
 printf '   three\n    four-a\n    four-b\n        eight-a\n        eight-b\n        eight-c\n' \
 	>"$scratch/third-leader.input"
-printf '\t\t\tthree\n\t\t\t\tfour-a\n\t\t\t\tfour-b\n\t\t\t\t\t\t\t\teight-a\n\t\t\t\t\t\t\t\teight-b\n\t\t\t\t\t\t\t\teight-c\n' \
-	>"$scratch/third-leader.expected"
+cp "$scratch/third-leader.input" "$scratch/third-leader.expected"
 run_conversion_case 'third frequency leader participates' \
 	"$scratch/third-leader.input" "$scratch/third-leader.expected"
 
-# Four spaces dominate the sample. Unmatched remainders stay as spaces, and a
-# leading tab does not prevent a following complete space group from changing.
-printf '    four-a\n    four-b\n        eight\n      partial\n\t    after-tab\n    \tspace-before-tab\n    \n' \
+# Four, eight, and twelve are the three ranked widths. The rarer six-space line
+# retains its two-space remainder. Whitespace-only records do not enter the
+# sample or get rewritten, while mixed leading tabs and spaces do both.
+printf '    four-a\n    four-b\n        eight-a\n        eight-b\n            twelve-a\n            twelve-b\n      partial\n\t    after-tab\n    \tspace-before-tab\n    \n' \
 	>"$scratch/mixed-prefix.input"
-printf '\tfour-a\n\tfour-b\n\t\teight\n\t  partial\n\t\tafter-tab\n\t\tspace-before-tab\n\t\n' \
+printf '\tfour-a\n\tfour-b\n\t\teight-a\n\t\teight-b\n\t\t\ttwelve-a\n\t\t\ttwelve-b\n\t  partial\n\t\tafter-tab\n\t\tspace-before-tab\n    \n' \
 	>"$scratch/mixed-prefix.expected"
 run_conversion_case 'mixed prefixes and incomplete groups' \
 	"$scratch/mixed-prefix.input" "$scratch/mixed-prefix.expected"
+
+# Mixed tab/space prefixes supply both kinds of evidence. Their post-tab space
+# groups must therefore be sufficient to infer a width when no line begins
+# with a space.
+printf '\t    mixed-four\n\t        mixed-eight\n' \
+	>"$scratch/mixed-only.input"
+printf '\t\tmixed-four\n\t\t\tmixed-eight\n' \
+	>"$scratch/mixed-only.expected"
+run_conversion_case 'mixed prefixes participate in space sampling' \
+	"$scratch/mixed-only.input" "$scratch/mixed-only.expected"
+
+# Whitespace-only lines cannot outweigh content-bearing indentation evidence.
+: >"$scratch/blank-sampling.input"
+for blank_line in 1 2 3 4 5 6; do
+	printf '  \n' >>"$scratch/blank-sampling.input"
+done
+printf '    content-a\n    content-b\n        child\n' \
+	>>"$scratch/blank-sampling.input"
+{
+	for blank_line in 1 2 3 4 5 6; do
+		printf '  \n'
+	done
+	printf '\tcontent-a\n\tcontent-b\n\t\tchild\n'
+} >"$scratch/blank-sampling.expected"
+run_conversion_case 'whitespace-only records are excluded from sampling' \
+	"$scratch/blank-sampling.input" "$scratch/blank-sampling.expected"
 
 # A tab-frequency tie still permits conversion because suppression requires a
 # strictly greater tab count.
@@ -287,11 +328,20 @@ cp "$scratch/tab-dominant.input" "$scratch/tab-dominant.expected"
 run_conversion_case 'strictly tab-dominant sample' \
 	"$scratch/tab-dominant.input" "$scratch/tab-dominant.expected"
 
-# Eleven has no divisor in the tested 8..2 range, so inference falls back to a
-# one-space tab width.
+# Tab suppression compares total content-bearing lines, rather than only the
+# largest bucket. Three tabbed lines at different depths outweigh two spaced
+# lines even though each individual tab-depth bucket has a count of one.
+printf '\tone-tab\n\t\ttwo-tabs\n\t\t\tthree-tabs\n    spaced-a\n    spaced-b\n' \
+	>"$scratch/tab-total.input"
+cp "$scratch/tab-total.input" "$scratch/tab-total.expected"
+run_conversion_case 'total tabbed-line count suppresses conversion' \
+	"$scratch/tab-total.input" "$scratch/tab-total.expected"
+
+# Eleven has no divisor in the supported 8..2 range. It is insufficient
+# evidence for conversion and must not trigger the unsafe one-space fallback.
 printf '           eleven\n' >"$scratch/fallback-one.input"
-printf '\t\t\t\t\t\t\t\t\t\t\televen\n' >"$scratch/fallback-one.expected"
-run_conversion_case 'one-space fallback' \
+cp "$scratch/fallback-one.input" "$scratch/fallback-one.expected"
+run_conversion_case 'unsupported width remains unchanged' \
 	"$scratch/fallback-one.input" "$scratch/fallback-one.expected"
 
 printf '    windows\r\n        child\r\n' >"$scratch/crlf.input"
@@ -304,11 +354,17 @@ run_conversion_case 'input without a leading-space sample' \
 	"$scratch/no-space-sample.input" "$scratch/no-space-sample.expected"
 
 : >"$scratch/empty.input"
-run_command "$command_path" "$scratch/empty.input"
-expect_status 'an empty file is rejected by the MIME check' 1 "$actual_status"
-expect_empty 'an empty file emits no stdout' "$actual_stdout"
-expect_contains 'an empty file is reported as non-text' \
-	"Warning: Not a text file: $scratch/empty.input" "$actual_stderr"
+run_conversion_case 'empty text file' "$scratch/empty.input" "$scratch/empty.input"
+
+printf '{\n    "outer": {\n        "inner": true\n    }\n}\n' >"$scratch/sample.json"
+printf '{\n\t"outer": {\n\t\t"inner": true\n\t}\n}\n' >"$scratch/sample-json.expected"
+run_conversion_case 'JSON text MIME type' \
+	"$scratch/sample.json" "$scratch/sample-json.expected"
+
+printf '<root>\n  <child>value</child>\n</root>\n' >"$scratch/sample.xml"
+printf '<root>\n\t<child>value</child>\n</root>\n' >"$scratch/sample-xml.expected"
+run_conversion_case 'XML text MIME type' \
+	"$scratch/sample.xml" "$scratch/sample-xml.expected"
 
 mkdir -p "$scratch/path cases"
 printf '   path\n' >"$scratch/path cases/leading spaces.txt"
@@ -320,11 +376,18 @@ expect_files_equal 'a path containing spaces is converted' \
 expect_empty 'a path containing spaces has clean stderr' "$actual_stderr"
 
 printf '   dash\n' >"$scratch/path cases/- leading dash.txt"
+printf '\tdash\n' >"$scratch/dash-path.expected"
 run_command_in "$scratch/path cases" "$command_path" -- '- leading dash.txt'
-expect_status 'a dash-leading path reaches the legacy MIME-check failure' 1 "$actual_status"
-expect_empty 'a dash-leading MIME-check failure emits no stdout' "$actual_stdout"
-expect_contains 'a dash-leading MIME-check failure names the path' \
-	'Warning: Not a text file: - leading dash.txt' "$actual_stderr"
+expect_status 'a dash-leading path succeeds after the option delimiter' 0 "$actual_status"
+expect_files_equal 'a dash-leading path is converted' \
+	"$scratch/dash-path.expected" "$actual_stdout"
+expect_empty 'a dash-leading path has clean stderr' "$actual_stderr"
+run_command_in "$scratch/path cases" "$legacy_path" -- '- leading dash.txt'
+expect_status 'a dash-leading Bash/Awk path succeeds after the delimiter' \
+	0 "$actual_status"
+expect_files_equal 'a dash-leading Bash/Awk path is converted' \
+	"$scratch/dash-path.expected" "$actual_stdout"
+expect_empty 'a dash-leading Bash/Awk path has clean stderr' "$actual_stderr"
 
 printf '  first\n' >"$scratch/first.txt"
 printf 'plain-second\n' >"$scratch/second.txt"
@@ -348,10 +411,64 @@ expect_empty 'a non-text file emits no stdout' "$actual_stdout"
 expect_contains 'a non-text file is named in its warning' \
 	"Warning: Not a text file: $scratch/binary.dat" "$actual_stderr"
 
+# The inference result depends on a multiset of records, not record order or
+# file size. These properties are independent of the hand-authored examples
+# above and catch order-sensitive ranking or whole-input assumptions.
+tac "$scratch/mixed-prefix.input" >"$scratch/permuted.input"
+run_command "$command_path" "$scratch/permuted.input"
+expect_status 'record permutation succeeds' 0 "$actual_status"
+tac "$actual_stdout" >"$scratch/permuted-restored.stdout"
+expect_files_equal 'record permutation does not change per-record conversion' \
+	"$scratch/mixed-prefix.expected" "$scratch/permuted-restored.stdout"
+expect_empty 'record permutation has clean stderr' "$actual_stderr"
+
+awk '{ print; print; print }' "$scratch/mixed-prefix.input" \
+	>"$scratch/replicated.input"
+awk '{ print; print; print }' "$scratch/mixed-prefix.expected" \
+	>"$scratch/replicated.expected"
+run_conversion_case 'uniform record replication' \
+	"$scratch/replicated.input" "$scratch/replicated.expected"
+
+run_command "$command_path" "$scratch/mixed-prefix.expected"
+expect_status 'a second conversion succeeds' 0 "$actual_status"
+expect_files_equal 'conversion is idempotent' \
+	"$scratch/mixed-prefix.expected" "$actual_stdout"
+expect_empty 'a second conversion has clean stderr' "$actual_stderr"
+
+# A 15 MB source exceeds the active implementation's old whole-input plus
+# whole-output memory footprint under this 64 MiB ceiling. A line-streaming
+# implementation remains below it. Skip only where the host cannot set RLIMIT_AS.
+awk 'BEGIN { for (i = 0; i < 2500000; i++) print "    x" }' \
+	>"$scratch/streaming.input"
+if (ulimit -v 65536) 2>/dev/null; then
+	(
+		ulimit -v 65536
+		"$command_path" "$scratch/streaming.input" >/dev/null 2>"$scratch/streaming.stderr"
+	)
+	streaming_status=$?
+	expect_status 'LuaJIT conversion streams under a 64 MiB address-space limit' \
+		0 "$streaming_status"
+	expect_empty 'streaming conversion has clean stderr' "$scratch/streaming.stderr"
+	if [[ -x "$legacy_path" ]]; then
+		(
+			ulimit -v 65536
+			"$legacy_path" "$scratch/streaming.input" \
+				>/dev/null 2>"$scratch/legacy-streaming.stderr"
+		)
+		legacy_streaming_status=$?
+		expect_status 'Bash/Awk conversion streams under the same memory limit' \
+			0 "$legacy_streaming_status"
+		expect_empty 'Bash/Awk streaming conversion has clean stderr' \
+			"$scratch/legacy-streaming.stderr"
+	fi
+fi
+
 mkdir -p "$scratch/in-place"
 printf '    original\n        child\n' >"$scratch/in-place/with spaces.txt"
 cp "$scratch/in-place/with spaces.txt" "$scratch/in-place.expected-backup"
 printf '\toriginal\n\t\tchild\n' >"$scratch/in-place.expected"
+printf 'pre-existing sidecar\n' >"$scratch/in-place/with spaces.txt.new"
+cp "$scratch/in-place/with spaces.txt.new" "$scratch/in-place.expected-sidecar"
 chmod 640 "$scratch/in-place/with spaces.txt"
 run_command "$command_path" -i "$scratch/in-place/with spaces.txt"
 expect_status 'in-place conversion succeeds' 0 "$actual_status"
@@ -361,6 +478,12 @@ expect_value 'in-place conversion preserves permission bits' '640' \
 	"$(permission_mode "$scratch/in-place/with spaces.txt")"
 expect_contains 'in-place conversion reports completion on stdout' 'Reformatted:' "$actual_stdout"
 expect_contains 'in-place conversion reports its inferred width' 'indent size: 4' "$actual_stdout"
+expect_files_equal 'in-place conversion leaves a pre-existing .new path untouched' \
+	"$scratch/in-place.expected-sidecar" "$scratch/in-place/with spaces.txt.new"
+replacement_count="$(find "$scratch/in-place" -maxdepth 1 -type f \
+	-name 'with spaces.txt.tmp.*' -print | wc -l)"
+expect_value 'in-place conversion removes its unique temporary file' \
+	'0' "$replacement_count"
 
 backup_line="$(rg -m1 '^Backup stored for ' "$actual_stderr")"
 backup_path="${backup_line##* at }"
@@ -375,6 +498,45 @@ if [[ -f "$backup_path" ]]; then
 	expect_files_equal 'the backup contains the exact original bytes' \
 		"$scratch/in-place.expected-backup" "$backup_path"
 fi
+
+printf '    legacy\n        child\n' >"$scratch/in-place/legacy.txt"
+printf '\tlegacy\n\t\tchild\n' >"$scratch/in-place/legacy.expected"
+printf 'legacy sidecar sentinel\n' >"$scratch/in-place/legacy.txt.new"
+cp "$scratch/in-place/legacy.txt.new" "$scratch/in-place/legacy-sidecar.expected"
+run_command "$legacy_path" -i "$scratch/in-place/legacy.txt"
+expect_status 'Bash/Awk in-place conversion succeeds' 0 "$actual_status"
+expect_files_equal 'Bash/Awk in-place conversion replaces the original' \
+	"$scratch/in-place/legacy.expected" "$scratch/in-place/legacy.txt"
+expect_files_equal 'Bash/Awk leaves a pre-existing .new path untouched' \
+	"$scratch/in-place/legacy-sidecar.expected" "$scratch/in-place/legacy.txt.new"
+legacy_backup_line="$(rg -m1 '^Backup stored for ' "$actual_stderr")"
+legacy_backup_path="${legacy_backup_line##* at }"
+record_backup_root "$legacy_backup_path"
+
+mkdir -p "$scratch/in-place-dash"
+printf '    active dash\n' >"$scratch/in-place-dash/- active.txt"
+printf '\tactive dash\n' >"$scratch/in-place-dash/active.expected"
+run_command_in "$scratch/in-place-dash" \
+	"$command_path" -i -- '- active.txt'
+expect_status 'dash-leading in-place LuaJIT path succeeds' 0 "$actual_status"
+expect_files_equal 'dash-leading in-place LuaJIT path is converted' \
+	"$scratch/in-place-dash/active.expected" \
+	"$scratch/in-place-dash/- active.txt"
+dash_backup_line="$(rg -m1 '^Backup stored for ' "$actual_stderr")"
+dash_backup_path="${dash_backup_line##* at }"
+record_backup_root "$dash_backup_path"
+
+printf '    legacy dash\n' >"$scratch/in-place-dash/- legacy.txt"
+printf '\tlegacy dash\n' >"$scratch/in-place-dash/legacy.expected"
+run_command_in "$scratch/in-place-dash" \
+	"$legacy_path" -i -- '- legacy.txt'
+expect_status 'dash-leading in-place Bash/Awk path succeeds' 0 "$actual_status"
+expect_files_equal 'dash-leading in-place Bash/Awk path is converted' \
+	"$scratch/in-place-dash/legacy.expected" \
+	"$scratch/in-place-dash/- legacy.txt"
+legacy_dash_backup_line="$(rg -m1 '^Backup stored for ' "$actual_stderr")"
+legacy_dash_backup_path="${legacy_dash_backup_line##* at }"
+record_backup_root "$legacy_dash_backup_path"
 
 printf 'already plain\n' >"$scratch/in-place/no-change.txt"
 run_command "$command_path" -i "$scratch/in-place/no-change.txt"
@@ -402,10 +564,10 @@ if [[ "${#collision_backup_lines[@]}" -eq 2 ]]; then
 		'shared.txt.maybe-no-tabs.1' "$(basename "$second_backup")"
 fi
 
-# The preserved implementation is an external oracle for a mechanical sweep.
-# The sweep combines every pair of widths from 1 through 8 with frequency ties,
-# either width winning, and zero through three leading-tab records. One call per
-# implementation keeps the suite fast while each file gets independent inference.
+# A mechanical parity sweep combines every pair of widths from 1 through 8 with
+# frequency ties, either width winning, and zero through three leading-tab
+# records. The hand-authored and metamorphic checks above remain the independent
+# controls; agreement here prevents the implementations from drifting.
 if [[ -x "$legacy_path" ]]; then
 	differential_files=()
 	differential_case=0
@@ -447,9 +609,9 @@ if [[ -x "$legacy_path" ]]; then
 	run_command "$command_path" "${differential_files[@]}"
 	expect_status 'mechanical differential sweep succeeds under both implementations' \
 		"$legacy_status" "$actual_status"
-	expect_files_equal 'LuaJIT matches legacy output on the mechanical sweep' \
+	expect_files_equal 'LuaJIT matches Bash/Awk output on the mechanical sweep' \
 		"$scratch/legacy.stdout" "$actual_stdout"
-	expect_files_equal 'LuaJIT matches legacy stderr on the mechanical sweep' \
+	expect_files_equal 'LuaJIT matches Bash/Awk stderr on the mechanical sweep' \
 		"$scratch/legacy.stderr" "$actual_stderr"
 fi
 
