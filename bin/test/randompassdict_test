@@ -1,352 +1,308 @@
 #!/usr/bin/env bash
 
-# Test the randompassdict function
-test_randompassdict() {
-	local fails=0
-	local tests=0
-	local tmpdir
+# Deterministic CLI and pure-core contract for the LuaJIT randompassdict port.
 
-	# Override dictionary to use test file
-	tmpdir=$(mktemp -d --tmpdir randompassdict_test.XXXXXX)
-	trap 'rm -rf "$tmpdir"' RETURN
-	export WORDLIST_FILEPATH="$tmpdir/dictionary.txt"
-	export RANDOM_SOURCE=/dev/urandom
-	printf '%s\n' \
-		a at cat dog fish bird house Apple Bobby Charlie David Edward \
-		password computer elephant fantastic wonderful programming dictionary \
-		beautiful extraordinary supercalifragilisticexpialidocious \
-		>"$WORDLIST_FILEPATH"
-	
-	echo "Testing randompassdict with test dictionary..."
-	
-	# Test 1: Usage message (no arguments)
-	(( tests++ ))
-	echo "Testing usage message..."
-	
-	# Capture exit code first
-	randompassdict >/dev/null 2>&1
-	local usage_exit_code=$?
-	# Then capture output
-	local usage_output
-	usage_output=$(randompassdict 2>&1)
-	
-	if [[ "$usage_output" == *"Usage: randompassdict"* ]] && [ "$usage_exit_code" -eq 2 ]; then
-		echo "✓ Usage message test passed: shows usage and exits 2"
-	else
-		echo "✗ Usage message test failed:" >&2
-		echo "  Exit code: $usage_exit_code (expected 2)" >&2
-		echo "  Output: $usage_output" >&2
-		(( fails++ ))
-	fi
-	
-	# Test 2: Basic argument parsing (1 word, default length)
-	(( tests++ ))
-	echo "Testing basic argument parsing (1 word)..."
-	unset FILTERPROPERNOUNS
-	local single_word
-	single_word=$(randompassdict 1 2>/dev/null)
-	local word_count
-	word_count=$(echo "$single_word" | wc -w)
-	
-	if [ "$word_count" -eq 1 ]; then
-		echo "✓ Single word test passed: got 1 word"
-	else
-		echo "✗ Single word test failed: got $word_count words, expected 1" >&2
-		echo "  Output: '$single_word'" >&2
-		(( fails++ ))
-	fi
-	
-	# Test 3: Multiple words (3 words)
-	(( tests++ ))
-	echo "Testing multiple words (3 words)..."
-	local three_words
-	three_words=$(randompassdict 3 2>/dev/null)
-	local three_word_count
-	three_word_count=$(echo "$three_words" | wc -w)
-	
-	if [ "$three_word_count" -eq 3 ]; then
-		echo "✓ Three words test passed: got 3 words"
-	else
-		echo "✗ Three words test failed: got $three_word_count words, expected 3" >&2
-		echo "  Output: '$three_words'" >&2
-		(( fails++ ))
-	fi
-	
-	# Test 4: Custom word length (5 words, 4-6 chars each)
-	(( tests++ ))
-	echo "Testing custom word length (5 words, 4-6 chars)..."
-	local custom_length
-	custom_length=$(randompassdict 5 4 6 2>/dev/null)
-	local custom_count
-	custom_count=$(echo "$custom_length" | wc -w)
-	
-	# Check that all words are within length range
-	local length_violations=0
-	for word in $custom_length; do
-		local len=${#word}
-		if [ "$len" -lt 4 ] || [ "$len" -gt 6 ]; then
-			(( length_violations++ ))
-		fi
-	done
-	
-	if [ "$custom_count" -eq 5 ] && [ "$length_violations" -eq 0 ]; then
-		echo "✓ Custom length test passed: 5 words, all 4-6 chars"
-	else
-		echo "✗ Custom length test failed:" >&2
-		echo "  Word count: $custom_count (expected 5)" >&2
-		echo "  Length violations: $length_violations (expected 0)" >&2
-		echo "  Output: '$custom_length'" >&2
-		(( fails++ ))
-	fi
-	
-	# Test 5: Proper noun filtering
-	(( tests++ ))
-	echo "Testing proper noun filtering..."
-	export FILTERPROPERNOUNS=1
-	local no_proper_nouns
-	no_proper_nouns=$(randompassdict 10 4 8 2>/dev/null)
-	
-	# Check for capital letters at start of words (proper nouns)
-	local proper_noun_count=0
-	for word in $no_proper_nouns; do
-		if [[ "$word" =~ ^[A-Z] ]]; then
-			(( proper_noun_count++ ))
-		fi
-	done
-	
-	if [ "$proper_noun_count" -eq 0 ]; then
-		echo "✓ Proper noun filtering test passed: no capitalized words"
-	else
-		echo "✗ Proper noun filtering test failed: found $proper_noun_count capitalized words" >&2
-		echo "  Output: '$no_proper_nouns'" >&2
-		(( fails++ ))
-	fi
-	
-	# Test 6: Statistical randomness (multiple runs should produce different results)
-	(( tests++ ))
-	echo "Testing statistical randomness (10 runs, 2 words each)..."
-	unset FILTERPROPERNOUNS
-	local runs=()
-	local unique_runs=0
-	
-	# Generate 10 different password runs
-	for ((i=0; i<10; i++)); do
-		local run_result
-		run_result=$(randompassdict 2 4 8 2>/dev/null)
-		runs[i]="$run_result"
-	done
-	
-	# Count unique results
-	printf '%s\n' "${runs[@]}" | sort -u > "$tmpdir/unique_runs.txt"
-	unique_runs=$(wc -l < "$tmpdir/unique_runs.txt")
-	
-	# We expect most runs to be different (at least 7 out of 10)
-	if [ "$unique_runs" -ge 7 ]; then
-		echo "✓ Statistical randomness test passed: $unique_runs/10 unique results"
-	else
-		echo "✗ Statistical randomness test failed: only $unique_runs/10 unique results" >&2
-		echo "  Results:" >&2
-		for ((i=0; i<10; i++)); do
-			echo "    Run $((i+1)): ${runs[i]}" >&2
-		done
-		(( fails++ ))
-	fi
-	
-	# Test 7: JUST_OUTPUT_DICTIONARY mode
-	(( tests++ ))
-	echo "Testing dictionary output mode..."
-	export JUST_OUTPUT_DICTIONARY=1
-	local dict_output
-	dict_output=$(randompassdict 1 4 8 2>/dev/null)
-	unset JUST_OUTPUT_DICTIONARY
-	unset RANDOM_SOURCE
-	
-	# Should output the filtered dictionary, not a password
-	local dict_lines
-	dict_lines=$(echo "$dict_output" | wc -l)
-	local has_multiple_lines=false
-	
-	if [ "$dict_lines" -gt 5 ]; then
-		has_multiple_lines=true
-	fi
-	
-	if $has_multiple_lines; then
-		echo "✓ Dictionary output test passed: got $dict_lines lines of dictionary"
-	else
-		echo "✗ Dictionary output test failed: got $dict_lines lines, expected multiple" >&2
-		echo "  Output: '$dict_output'" >&2
-		(( fails++ ))
-	fi
-	
-	# Test 8: Edge case - very restrictive length (should still work)
-	(( tests++ ))
-	echo "Testing restrictive length range..."
-	unset FILTERPROPERNOUNS
-	# Use length 3-3 (only "cat", "dog" available)
-	local restrictive
-	restrictive=$(randompassdict 1 3 3 2>/dev/null)
-	local restrictive_length=${#restrictive}
-	
-	if [ "$restrictive_length" -eq 3 ]; then
-		echo "✓ Restrictive length test passed: got 3-char word"
-	else
-		echo "✗ Restrictive length test failed: got ${restrictive_length}-char word '$restrictive'" >&2
-		(( fails++ ))
-	fi
+set -u
 
-	# Test 9: A dictionary's final record counts even without a trailing newline.
-	(( tests++ ))
-	echo "Testing exact dictionary cardinality without a trailing newline..."
-	printf 'alpha\nbravo' >"$WORDLIST_FILEPATH"
-	local cardinality_out cardinality_err cardinality_rc
-	cardinality_out=$(randompassdict 2 5 5 2>"$tmpdir/cardinality.err")
-	cardinality_rc=$?
-	cardinality_err=$(cat "$tmpdir/cardinality.err")
-	if [ "$cardinality_rc" -eq 0 ] &&
-	   [[ "$cardinality_err" == *"2 available words"* ]] &&
-	   [[ "$cardinality_err" == *"4 possible combinations"* ]]; then
-		echo "✓ Exact dictionary cardinality test passed"
-	else
-		echo "✗ Exact dictionary cardinality test failed: rc=$cardinality_rc stdout='$cardinality_out' stderr='$cardinality_err'" >&2
-		(( fails++ ))
-	fi
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+cli="$repo_root/bin/randompassdict"
+legacy="$repo_root/bin/randompassdict.bash"
+core_module="$repo_root/bin/src/randompassdict_core.lua"
+scratch="$(mktemp -d "${TMPDIR:-/tmp}/randompassdict-test.XXXXXX")" || exit 1
+cleanup_rm=''
+while IFS= read -r candidate; do
+	case "$candidate" in
+		*rm_safe*) ;;
+		*) cleanup_rm="$candidate"; break ;;
+	esac
+done < <(type -aP rm)
+trap '"$cleanup_rm" -rf "$scratch"' EXIT
 
-	# Test 10: Output is literal data; shell quoting characters are not parsed.
-	(( tests++ ))
-	echo "Testing literal quote and backslash preservation..."
-	printf "%s\n" "can't\\fail" >"$WORDLIST_FILEPATH"
-	local literal_out literal_rc
-	literal_out=$(randompassdict 1 4 20 2>"$tmpdir/literal.err")
-	literal_rc=$?
-	if [ "$literal_rc" -eq 0 ] && [ "$literal_out" = "can't\\fail" ]; then
-		echo "✓ Literal word preservation test passed"
-	else
-		echo "✗ Literal word preservation test failed: rc=$literal_rc stdout='$literal_out' stderr='$(cat "$tmpdir/literal.err")'" >&2
-		(( fails++ ))
-	fi
+# shellcheck source=/dev/null
+source "$repo_root/bin/src/capture.bash"
 
-	# Test 11: Duplicate lines are one observable password outcome, not extra
-	# entropy. Dictionary output gives this classifier a deterministic oracle.
-	(( tests++ ))
-	echo "Testing duplicate dictionary entries are deduplicated..."
-	printf 'alpha\nalpha\nbravo\n' >"$WORDLIST_FILEPATH"
-	export JUST_OUTPUT_DICTIONARY=1
-	local deduped
-	deduped=$(randompassdict 1 5 5 2>"$tmpdir/dedupe.err")
-	local dedupe_rc=$?
-	unset JUST_OUTPUT_DICTIONARY
-	if [ "$dedupe_rc" -eq 0 ] && [ "$deduped" = $'alpha\nbravo' ]; then
-		echo "✓ Duplicate dictionary entry test passed"
-	else
-		echo "✗ Duplicate dictionary entry test failed: rc=$dedupe_rc output='$deduped' stderr='$(cat "$tmpdir/dedupe.err")'" >&2
-		(( fails++ ))
-	fi
+fails=0
+tests=0
+out=''
+err=''
+rc=0
 
-	# Test 12: Whitespace-bearing entries are ambiguous in a space-delimited
-	# passphrase and therefore cannot silently become two output words.
-	(( tests++ ))
-	echo "Testing ambiguous dictionary entries fail closed..."
-	printf 'two words\n' >"$WORDLIST_FILEPATH"
-	local ambiguous_out ambiguous_rc
-	ambiguous_out=$(randompassdict 1 1 20 2>"$tmpdir/ambiguous.err")
-	ambiguous_rc=$?
-	if [ "$ambiguous_rc" -ne 0 ] && [ -z "$ambiguous_out" ] &&
-	   [[ "$(cat "$tmpdir/ambiguous.err")" == *"no usable words"* ]]; then
-		echo "✓ Ambiguous dictionary entry test passed"
-	else
-		echo "✗ Ambiguous dictionary entry test failed: rc=$ambiguous_rc stdout='$ambiguous_out' stderr='$(cat "$tmpdir/ambiguous.err")'" >&2
-		(( fails++ ))
-	fi
-
-	# Test 13: Combination counts remain exact beyond machine integer and
-	# floating-point precision, and entropy is reported directly in bits.
-	(( tests++ ))
-	echo "Testing exact large combination count and entropy report..."
-	printf 'alpha\nbravo' >"$WORDLIST_FILEPATH"
-	randompassdict 200 5 5 >"$tmpdir/large.out" 2>"$tmpdir/large.err"
-	local large_rc=$?
-	local exact_2_pow_200='1606938044258990275541962092341162602522202993782792835301376'
-	local large_err
-	large_err=$(tr -d ',' <"$tmpdir/large.err")
-	if [ "$large_rc" -eq 0 ] &&
-	   [[ "$large_err" == *"$exact_2_pow_200 possible combinations"* ]] &&
-	   [[ "$large_err" == *"200.000 bits"* ]]; then
-		echo "✓ Exact large count and entropy test passed"
-	else
-		echo "✗ Exact large count and entropy test failed: rc=$large_rc stderr='$large_err'" >&2
-		(( fails++ ))
-	fi
-
-	# Test 14: Ambient environment cannot quietly replace the cryptographic
-	# random source. `/dev/null` made the old shuf call fail or emit nothing.
-	(( tests++ ))
-	echo "Testing ambient random-source override is ignored..."
-	printf 'alpha\nbravo\n' >"$WORDLIST_FILEPATH"
-	local override_out override_rc
-	override_out=$(RANDOM_SOURCE=/dev/null randompassdict 1 5 5 2>"$tmpdir/override.err")
-	override_rc=$?
-	if [ "$override_rc" -eq 0 ] &&
-	   { [ "$override_out" = 'alpha' ] || [ "$override_out" = 'bravo' ]; }; then
-		echo "✓ Ambient random-source override test passed"
-	else
-		echo "✗ Ambient random-source override test failed: rc=$override_rc stdout='$override_out' stderr='$(cat "$tmpdir/override.err")'" >&2
-		(( fails++ ))
-	fi
-
-	# Test 15: Every numeric argument has a strict, useful domain.
-	(( tests++ ))
-	echo "Testing invalid argument classifier..."
-	local invalid_failures=0 invalid_case invalid_rc
-	for invalid_case in '0 4 14' 'words 4 14' '1 0 14' '1 15 14' '1 4 nope'; do
-		# shellcheck disable=SC2086 # each fixture intentionally expands to argv
-		randompassdict $invalid_case >"$tmpdir/invalid.out" 2>"$tmpdir/invalid.err"
-		invalid_rc=$?
-		[ "$invalid_rc" -eq 2 ] || invalid_failures=$((invalid_failures + 1))
-	done
-	if [ "$invalid_failures" -eq 0 ]; then
-		echo "✓ Invalid argument classifier test passed"
-	else
-		echo "✗ Invalid argument classifier test failed: $invalid_failures cases did not exit 2" >&2
-		(( fails++ ))
-	fi
-
-	# Test 16: The executable's help and about contracts describe the security
-	# source and remain script-friendly.
-	(( tests++ ))
-	echo "Testing help and about contracts..."
-	local help_out help_rc about_out about_rc
-	help_out=$(randompassdict --help 2>"$tmpdir/help.err")
-	help_rc=$?
-	about_out=$(randompassdict --about 2>"$tmpdir/about.err")
-	about_rc=$?
-	if [ "$help_rc" -eq 0 ] && [[ "$help_out" == *'/dev/urandom'* ]] &&
-	   [ -z "$(cat "$tmpdir/help.err")" ] &&
-	   [ "$about_rc" -eq 0 ] && [[ "$about_out" == 'randompassdict 1.0.0 - '* ]] &&
-	   [ "$(printf '%s\n' "$about_out" | wc -l)" -eq 1 ] &&
-	   [ -z "$(cat "$tmpdir/about.err")" ]; then
-		echo "✓ Help and about contract test passed"
-	else
-		echo "✗ Help/about contract failed: help_rc=$help_rc help='$help_out' about_rc=$about_rc about='$about_out'" >&2
-		(( fails++ ))
-	fi
-	
-	# Clean up
-	unset FILTERPROPERNOUNS
-	unset WORDLIST_FILEPATH
-	unset JUST_OUTPUT_DICTIONARY
-	
-	# Final results
-	if [ $fails -gt 0 ]; then
-		echo ""
-		echo "randompassdict test FAILED: $fails of $tests tests failed" >&2
-		return 1
-	else
-		echo ""
-		echo "randompassdict test PASSED: All $tests tests passed"
-		return 0
-	fi
+expect_eq() {
+	local label="$1" expected="$2" actual="$3"
+	((tests++))
+	if [[ "$expected" == "$actual" ]]; then return 0; fi
+	printf 'FAIL %s\nexpected: %q\nactual:   %q\n' \
+		"$label" "$expected" "$actual" >&2
+	((fails++))
 }
 
-# Run the test if this script is executed directly
-	test_randompassdict
-	exit $?
+expect_match() {
+	local label="$1" pattern="$2" actual="$3"
+	((tests++))
+	if [[ "$actual" =~ $pattern ]]; then return 0; fi
+	printf 'FAIL %s\npattern: %s\nactual:  %q\n' \
+		"$label" "$pattern" "$actual" >&2
+	((fails++))
+}
+
+expect_true() {
+	local label="$1"
+	shift
+	((tests++))
+	if "$@"; then return 0; fi
+	printf 'FAIL %s\n' "$label" >&2
+	((fails++))
+}
+
+expect_false() {
+	local label="$1"
+	shift
+	((tests++))
+	if ! "$@"; then return 0; fi
+	printf 'FAIL %s\n' "$label" >&2
+	((fails++))
+}
+
+# shellcheck disable=SC2329 # invoked indirectly through expect_true/expect_false
+file_has_line() {
+	local wanted="$1" file="$2" line
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		if [[ "$line" == "$wanted" ]]; then return 0; fi
+	done <"$file"
+	return 1
+}
+
+expect_match 'active executable uses a LuaJIT shebang' \
+	'^#!(/usr/bin/env luajit|.*/luajit)$' "$(head -n 1 "$cli")"
+expect_true 'Bash predecessor remains executable' test -x "$legacy"
+if [[ -e "$legacy" ]]; then
+	expect_match 'Bash predecessor retains a Bash shebang' \
+		'^#!(/usr/bin/env bash|.*/bash)$' "$(head -n 1 "$legacy")"
+	expect_eq 'Bash predecessor body is byte-for-byte preserved' \
+		'9f6e20f5b4e4c1b5e8f77f9dec9e5a2570239e097e3e4ec4b16570297e3e2d3b' \
+		"$(tail -n +2 "$legacy" | sha256sum | awk '{print $1}')"
+	# shellcheck disable=SC2016 # $1 belongs to the inner Bash process
+	capture bash -c 'source "$1"; randompassdict --help' _ "$legacy"
+	expect_eq 'preserved Bash function remains sourceable' '0' "$rc"
+	expect_match 'preserved Bash function retains its help' \
+		'^Usage: randompassdict' "$out"
+	expect_eq 'preserved Bash help keeps stderr clean' '' "$err"
+fi
+
+capture "$cli"
+expect_eq 'missing word count is a usage error' '2' "$rc"
+expect_eq 'missing word count emits no stdout' '' "$out"
+expect_match 'missing word count prints usage on stderr' \
+	'^Usage: randompassdict' "$err"
+
+capture "$cli" --help
+expect_eq '--help succeeds' '0' "$rc"
+expect_match '--help documents both inclusive range spellings' \
+	'M-N.*M\.\.N' "$(tr '\n' ' ' <<<"$out")"
+expect_match '--help documents proper-noun filtering' \
+	'--no-proper-nouns' "$out"
+expect_match '--help documents spelling-corpus overrides' \
+	'--american.*--british' "$(tr '\n' ' ' <<<"$out")"
+expect_match '--help names the fixed secure source' '/dev/urandom' "$out"
+expect_eq '--help keeps stderr clean' '' "$err"
+
+capture "$cli" --about
+expect_eq '--about succeeds' '0' "$rc"
+expect_match '--about reports the breaking-interface version and platform' \
+	'^randompassdict 2\.0\.0 - .+ \(.+/.+\)$' "$out"
+expect_eq '--about is exactly one line' '1' \
+	"$(printf '%s\n' "$out" | wc -l | tr -d ' ')"
+expect_eq '--about keeps stderr clean' '' "$err"
+
+range_dict="$scratch/ranges.txt"
+printf 'aa\ncat\nfour\nfives\nsixsix\n' >"$range_dict"
+
+capture env WORDLIST_FILEPATH="$range_dict" JUST_OUTPUT_DICTIONARY=1 \
+	"$cli" 1 4
+expect_eq 'an exact length selects exactly that boundary' 'four' "$out"
+expect_eq 'exact-length dictionary inspection succeeds' '0' "$rc"
+expect_eq 'exact-length dictionary inspection keeps stderr clean' '' "$err"
+
+capture env WORDLIST_FILEPATH="$range_dict" JUST_OUTPUT_DICTIONARY=1 \
+	"$cli" 1 3-5
+expect_eq 'M-N includes both boundaries' $'cat\nfour\nfives' "$out"
+expect_eq 'M-N dictionary inspection succeeds' '0' "$rc"
+
+capture env WORDLIST_FILEPATH="$range_dict" JUST_OUTPUT_DICTIONARY=1 \
+	"$cli" 1 3..5
+expect_eq 'M..N has the same inclusive classifier as M-N' \
+	$'cat\nfour\nfives' "$out"
+expect_eq 'M..N dictionary inspection succeeds' '0' "$rc"
+
+capture env WORDLIST_FILEPATH="$range_dict" JUST_OUTPUT_DICTIONARY=1 \
+	"$cli" --british 1 3-5 --no-proper-nouns
+expect_eq 'options parse before and after positional arguments' \
+	$'cat\nfour\nfives' "$out"
+expect_eq 'mixed option order succeeds' '0' "$rc"
+
+capture env WORDLIST_FILEPATH="$range_dict" JUST_OUTPUT_DICTIONARY=1 \
+	"$cli" --british -- 1 3-5
+expect_eq '-- terminates option parsing without changing positionals' \
+	$'cat\nfour\nfives' "$out"
+expect_eq '-- terminator succeeds' '0' "$rc"
+
+proper_dict="$scratch/proper-nouns.txt"
+printf 'Apple\nMcDonald\nNASA\nA\niPhone\nlower\n' >"$proper_dict"
+capture env WORDLIST_FILEPATH="$proper_dict" JUST_OUTPUT_DICTIONARY=1 \
+	"$cli" --no-proper-nouns 1 1-20
+expect_eq '--no-proper-nouns classifies the complete mixed-case set' \
+	$'NASA\nA\niPhone\nlower' "$out"
+expect_eq 'proper-noun filtering succeeds' '0' "$rc"
+expect_eq 'proper-noun filtering keeps stderr clean' '' "$err"
+
+dirty_dict="$scratch/dirty.txt"
+printf 'alpha\nalpha\ntwo words\nbravo' >"$dirty_dict"
+capture env WORDLIST_FILEPATH="$dirty_dict" JUST_OUTPUT_DICTIONARY=1 \
+	"$cli" 1 1-20
+expect_eq 'dictionary records are deduplicated and whitespace records rejected' \
+	$'alpha\nbravo' "$out"
+expect_eq 'an unterminated final dictionary record is retained' '0' "$rc"
+
+utf8_dict="$scratch/utf8.txt"
+printf 'éé\nbbb\n' >"$utf8_dict"
+capture env WORDLIST_FILEPATH="$utf8_dict" JUST_OUTPUT_DICTIONARY=1 \
+	"$cli" 1 2
+expect_eq 'dictionary length is measured in UTF-8 code points' 'éé' "$out"
+expect_eq 'UTF-8 dictionary inspection succeeds' '0' "$rc"
+
+invalid_cases=(
+	'0'
+	'words'
+	'1 0'
+	'1 6-3'
+	'1 3..'
+	'1 3...5'
+	'1 3-5 extra'
+	'1 3 5'
+	'1 --unknown'
+)
+invalid_failures=0
+for invalid_case in "${invalid_cases[@]}"; do
+	# shellcheck disable=SC2086 # each fixture intentionally expands to argv
+	capture env WORDLIST_FILEPATH="$range_dict" "$cli" $invalid_case
+	if [[ "$rc" != 2 || -n "$out" || ! "$err" =~ [Ee]rror ]]; then
+		printf 'FAIL invalid argument fixture %q: rc=%s out=%q err=%q\n' \
+			"$invalid_case" "$rc" "$out" "$err" >&2
+		((invalid_failures++))
+	fi
+done
+((tests++))
+if ((invalid_failures > 0)); then
+	printf 'FAIL invalid argument classifier: %d of %d fixtures failed\n' \
+		"$invalid_failures" "${#invalid_cases[@]}" >&2
+	((fails++))
+fi
+
+capture env RANDOMPASSDICT_CORE="$core_module" luajit -e '
+	local core = dofile(os.getenv("RANDOMPASSDICT_CORE"))
+	local fixtures = {
+		{nil, "british"}, {"C", "british"}, {"POSIX", "british"},
+		{"C.UTF-8", "british"}, {"en_US.UTF-8", "american"},
+		{"en-US", "american"}, {"de_US.UTF-8", "american"},
+		{"English_United States.1252", "american"},
+		{"en_GB.UTF-8", "british"}, {"fr_FR.UTF-8", "british"}
+	}
+	for _, fixture in ipairs(fixtures) do
+		local got = core.variant_for_locale(fixture[1])
+		if got ~= fixture[2] then
+			error(string.format("%s => %s, wanted %s",
+			tostring(fixture[1]), got, fixture[2]))
+		end
+	end
+	local parsed, parse_error = core.parse_args({
+		"--american", "2", "3..7", "--british", "--no-proper-nouns"
+	})
+	assert(parsed, parse_error)
+	io.write(parsed.variant, " ", parsed.minimum, " ", parsed.maximum,
+		" ", tostring(parsed.no_proper_nouns))
+'
+expect_eq 'pure locale and option classifiers cover the complete fixture sets' \
+	'british 3 7 true' "$out"
+expect_eq 'pure classifier fixture succeeds' '0' "$rc"
+expect_eq 'pure classifier fixture keeps stderr clean' '' "$err"
+
+# The bundled corpora form an external oracle for the variant switch. These
+# checks classify both spellings in both modes, so mere presence of one token
+# cannot make a broken union of both dictionaries pass.
+env -u WORDLIST_FILEPATH JUST_OUTPUT_DICTIONARY=1 \
+	"$cli" --american 1 5-6 >"$scratch/american.out" 2>"$scratch/american.err"
+american_rc=$?
+expect_eq 'American corpus inspection succeeds' '0' "$american_rc"
+expect_eq 'American corpus inspection keeps stderr clean' '' \
+	"$(cat "$scratch/american.err")"
+expect_true 'American corpus contains color' file_has_line color "$scratch/american.out"
+expect_true 'American corpus contains center' file_has_line center "$scratch/american.out"
+expect_false 'American corpus excludes colour' file_has_line colour "$scratch/american.out"
+expect_false 'American corpus excludes centre' file_has_line centre "$scratch/american.out"
+
+env -u WORDLIST_FILEPATH JUST_OUTPUT_DICTIONARY=1 \
+	"$cli" --british 1 5-6 >"$scratch/british.out" 2>"$scratch/british.err"
+british_rc=$?
+expect_eq 'British corpus inspection succeeds' '0' "$british_rc"
+expect_eq 'British corpus inspection keeps stderr clean' '' \
+	"$(cat "$scratch/british.err")"
+expect_true 'British corpus contains colour' file_has_line colour "$scratch/british.out"
+expect_true 'British corpus contains centre' file_has_line centre "$scratch/british.out"
+expect_false 'British corpus excludes color' file_has_line color "$scratch/british.out"
+expect_false 'British corpus excludes center' file_has_line center "$scratch/british.out"
+
+env -u WORDLIST_FILEPATH LC_ALL=C JUST_OUTPUT_DICTIONARY=1 \
+	"$cli" 1 5-6 >"$scratch/locale-default.out" 2>"$scratch/locale-default.err"
+locale_default_rc=$?
+expect_eq 'C locale default corpus inspection succeeds' '0' "$locale_default_rc"
+expect_eq 'C locale default corpus inspection keeps stderr clean' '' \
+	"$(cat "$scratch/locale-default.err")"
+expect_true 'C locale defaults to the British corpus' \
+	file_has_line colour "$scratch/locale-default.out"
+expect_false 'C locale default does not merge the American corpus' \
+	file_has_line color "$scratch/locale-default.out"
+
+printf 'alpha\nbravo\n' >"$scratch/two-words.txt"
+capture env WORDLIST_FILEPATH="$scratch/two-words.txt" "$cli" 200 5
+expect_eq 'large passphrase generation succeeds' '0' "$rc"
+expect_eq 'sampling with replacement emits the requested word count' '200' \
+	"$(wc -w <<<"$out" | tr -d ' ')"
+unexpected_word=''
+for sampled_word in $out; do
+	case "$sampled_word" in
+		alpha | bravo) ;;
+		*) unexpected_word="$sampled_word"; break ;;
+	esac
+done
+expect_eq 'every sampled word belongs to the filtered pool' '' "$unexpected_word"
+plain_large_err="$(tr -d ',' <<<"$err")"
+expect_match 'combination count remains exact beyond machine integers' \
+	'1606938044258990275541962092341162602522202993782792835301376 possible combinations' \
+	"$plain_large_err"
+expect_match 'entropy is reported directly in bits' \
+	'200\.000 bits of entropy' "$plain_large_err"
+
+capture env WORDLIST_FILEPATH="$scratch/two-words.txt" RANDOM_SOURCE=/dev/null \
+	"$cli" 1 5
+expect_eq 'ambient RANDOM_SOURCE cannot replace /dev/urandom' '0' "$rc"
+expect_match 'ambient override still yields one pool member' \
+	'^(alpha|bravo)$' "$out"
+
+capture env WORDLIST_FILEPATH="$scratch/missing-dictionary" "$cli" 1 5
+expect_eq 'a missing custom dictionary fails closed' '1' "$rc"
+expect_eq 'a missing dictionary emits no passphrase' '' "$out"
+expect_match 'a missing dictionary diagnostic names its path' \
+	'missing-dictionary' "$err"
+
+printf 'Apple\n' >"$scratch/only-proper.txt"
+capture env WORDLIST_FILEPATH="$scratch/only-proper.txt" "$cli" \
+	--no-proper-nouns 1 1-20
+expect_eq 'an empty filtered pool fails closed' '1' "$rc"
+expect_eq 'an empty filtered pool emits no passphrase' '' "$out"
+expect_match 'an empty pool has a specific diagnostic' \
+	'no usable words' "$err"
+
+if ((fails == 0)); then
+	printf 'All %d randompassdict tests passed\n' "$tests"
+fi
+exit "$fails"

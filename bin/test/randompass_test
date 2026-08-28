@@ -1,0 +1,153 @@
+#!/usr/bin/env bash
+
+# Contract tests for the standalone LuaJIT randompass port.
+
+set -u
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+cli="$repo_root/bin/randompass"
+legacy="$repo_root/bin/randompass.bash"
+random_module="$repo_root/bin/src/secure_random.lua"
+scratch="$(mktemp -d "${TMPDIR:-/tmp}/randompass-test.XXXXXX")" || exit 1
+cleanup_rm=''
+while IFS= read -r candidate; do
+	case "$candidate" in
+		*rm_safe*) ;;
+		*) cleanup_rm="$candidate"; break ;;
+	esac
+done < <(type -aP rm)
+trap '"$cleanup_rm" -rf "$scratch"' EXIT
+
+# shellcheck source=/dev/null
+source "$repo_root/bin/src/capture.bash"
+
+fails=0
+tests=0
+out=''
+err=''
+rc=0
+
+expect_eq() {
+	local label="$1" expected="$2" actual="$3"
+	((tests++))
+	if [[ "$expected" == "$actual" ]]; then return 0; fi
+	printf 'FAIL %s\nexpected: %q\nactual:   %q\n' \
+		"$label" "$expected" "$actual" >&2
+	((fails++))
+}
+
+expect_match() {
+	local label="$1" pattern="$2" actual="$3"
+	((tests++))
+	if [[ "$actual" =~ $pattern ]]; then return 0; fi
+	printf 'FAIL %s\npattern: %s\nactual:  %q\n' \
+		"$label" "$pattern" "$actual" >&2
+	((fails++))
+}
+
+expect_true() {
+	local label="$1"
+	shift
+	((tests++))
+	if "$@"; then return 0; fi
+	printf 'FAIL %s\n' "$label" >&2
+	((fails++))
+}
+
+expect_match 'active executable uses a LuaJIT shebang' \
+	'^#!(/usr/bin/env luajit|.*/luajit)$' "$(head -n 1 "$cli")"
+expect_true 'Bash predecessor remains executable' test -x "$legacy"
+if [[ -e "$legacy" ]]; then
+	expect_match 'Bash predecessor retains a Bash shebang' \
+		'^#!(/usr/bin/env bash|.*/bash)$' "$(head -n 1 "$legacy")"
+	expect_eq 'Bash predecessor body is byte-for-byte preserved' \
+		'f941edd49f82ce480e037da0ba009828598b7dd03552ca0ebd8f9caa8692e2d1' \
+		"$(tail -n +2 "$legacy" | sha256sum | awk '{print $1}')"
+	# shellcheck disable=SC2016 # $1 belongs to the inner Bash process
+	capture bash -c 'source "$1"; randompass --help' _ "$legacy"
+	expect_eq 'preserved Bash function remains sourceable' '0' "$rc"
+	expect_match 'preserved Bash function retains its help' \
+		'^Usage: randompass' "$out"
+	expect_eq 'preserved Bash help keeps stderr clean' '' "$err"
+fi
+
+capture "$cli"
+expect_eq 'missing length exits 1' '1' "$rc"
+expect_match 'missing length prints usage' '^Usage: randompass <length>' "$out"
+expect_eq 'missing length keeps stderr clean' '' "$err"
+
+capture "$cli" --help
+expect_eq '--help succeeds' '0' "$rc"
+expect_match '--help documents PWCHARSET' 'PWCHARSET' "$out"
+expect_eq '--help keeps stderr clean' '' "$err"
+
+capture "$cli" 3-5
+expect_eq 'randompass does not acquire a range interface' '1' "$rc"
+expect_eq 'a range-shaped length emits no random text' '' "$out"
+expect_match 'a range-shaped length is diagnosed as invalid' \
+	'length must be a non-negative integer' "$err"
+
+# u32 values 0, 1, and 2 independently specify the first three indices of a
+# three-code-point alphabet. This fixture also proves the adapter reads the
+# requested source instead of silently switching back to /dev/random.
+printf '\0\0\0\0\0\0\0\1\0\0\0\2' >"$scratch/indices-0-1-2"
+capture env PWCHARSET=ABC RANDOM_SOURCE="$scratch/indices-0-1-2" "$cli" 3
+expect_eq 'deterministic source selects the independently specified indices' \
+	'ABC' "$out"
+expect_eq 'deterministic generation succeeds' '0' "$rc"
+expect_eq 'successful generation keeps stderr clean' '' "$err"
+
+# 2^32 mod 3 is 1. UINT32_MAX is therefore outside the largest multiple of 3
+# and must be discarded; the following value 1 selects B. Modulo reduction
+# without rejection would select A and fail this test.
+printf '\377\377\377\377\0\0\0\1' >"$scratch/reject-then-one"
+capture env PWCHARSET=ABC RANDOM_SOURCE="$scratch/reject-then-one" "$cli" 1
+expect_eq 'sampling rejects the biased UINT32_MAX tail' 'B' "$out"
+expect_eq 'rejection sampling succeeds' '0' "$rc"
+expect_eq 'rejection sampling keeps stderr clean' '' "$err"
+
+printf '\0\0\0\0\0\0\0\0\0\0\0\0' >"$scratch/three-zeroes"
+capture env PWCHARSET='éβ' RANDOM_SOURCE="$scratch/three-zeroes" "$cli" 3
+expect_eq 'PWCHARSET is split into UTF-8 code points rather than bytes' \
+	'ééé' "$out"
+expect_eq 'UTF-8 generation succeeds' '0' "$rc"
+expect_eq 'UTF-8 generation keeps stderr clean' '' "$err"
+
+printf '\0\0\0\0' >"$scratch/one-zero"
+invalid_charset="$(printf '\300\257')"
+capture env PWCHARSET="$invalid_charset" RANDOM_SOURCE="$scratch/one-zero" \
+	"$cli" 1
+expect_eq 'invalid UTF-8 in PWCHARSET fails closed' '1' "$rc"
+expect_eq 'invalid UTF-8 emits no random text' '' "$out"
+expect_match 'invalid UTF-8 reports its failing byte' \
+	'invalid UTF-8 at byte 1' "$err"
+
+capture env -u PWCHARSET RANDOM_SOURCE="$scratch/one-zero" "$cli" 1
+expect_eq 'the embedded default preserves the sane-alphanumeric first symbol' \
+	'a' "$out"
+expect_eq 'default generation succeeds' '0' "$rc"
+
+capture env PWCHARSET=ABC RANDOM_SOURCE="$scratch/missing" "$cli" 1
+expect_eq 'an unavailable requested source fails closed' '1' "$rc"
+expect_eq 'source failure emits no password' '' "$out"
+expect_match 'source failure identifies the requested path' \
+	'random source.*missing' "$err"
+
+capture env SECURE_RANDOM_MODULE="$random_module" luajit -e '
+	local random = dofile(os.getenv("SECURE_RANDOM_MODULE"))
+	local chunks = {string.char(255,255,255,255), string.char(0,0,0,1)}
+	local at = 0
+	local function read_four()
+		at = at + 1
+		return chunks[at]
+	end
+	io.write(random.sample_index(read_four, 3), " ", at)
+'
+expect_eq 'pure sampler exposes the same rejection boundary' '2 2' "$out"
+expect_eq 'pure sampler fixture succeeds' '0' "$rc"
+expect_eq 'pure sampler fixture keeps stderr clean' '' "$err"
+
+if ((fails == 0)); then
+	printf 'All %d randompass tests passed\n' "$tests"
+fi
+exit "$fails"

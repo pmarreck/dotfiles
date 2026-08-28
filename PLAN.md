@@ -1,5 +1,111 @@
 # dotfiles — TODO / Plans
 
+## Active — harden both `reformat_spaces_to_tabs` implementations (2026-08-27)
+
+- [x] Define deterministic inference tests for the three most frequent widths,
+      no unsafe one-space fallback, total tabbed-versus-spaced line counts,
+      ignored whitespace-only records, and mixed tab/space prefixes.
+      Curiosity poke: an explicit frequency-tie rule must not depend on Awk
+      associative-array order.
+      Completed 2026-08-27 18:44 EDT: explicit count-descending/width-ascending
+      ranking, top-three cutoff, total-line veto, mixed-prefix sampling, blank
+      exclusion, and conservative no-op inference are pinned in both versions.
+- [x] Add file-adapter tests for empty, JSON, XML, and dash-leading paths;
+      longest-record-bounded streaming; and unique same-directory replacement
+      files that cannot overwrite a pre-existing `.new` path.
+      Curiosity poke: preserve CRLF bytes, final-newline behavior, permissions,
+      backups, and multi-file stdout while removing whole-file buffering.
+      Completed 2026-08-27 18:44 EDT: both adapters accept the broadened text
+      set and dash-leading relative paths, preserve old byte boundaries, leave
+      `.new` sentinels untouched, and remove unique same-directory temps.
+- [x] Implement the revised contract in LuaJIT, then apply the same algorithm
+      and adapter fixes to the preserved Bash/Awk implementation.
+      Curiosity poke: both versions need the same tie-breaking and mixed-prefix
+      definitions even though their iteration and I/O primitives differ.
+      Completed 2026-08-27 18:44 EDT: LuaJIT now uses a streaming sample pass
+      and a streaming copy/rewrite pass; Bash/Awk uses the identical ranked
+      inference, total-line rule, and whitespace definition.
+- [x] Run independent metamorphic checks, the focused differential matrix, and
+      the complete host and hermetic Nix suites.
+      Curiosity poke: differential agreement proves parity, so an independent
+      property must catch the same defect copied into both implementations.
+      Completed 2026-08-27 18:44 EDT: 214 focused checks pass, including
+      permutation, replication, idempotence, a 15 MB/64 MiB streaming control,
+      and the 84-file parity sweep. The clean host fixture passed the formatter
+      plus 165/178 files; 13 unrelated live-environment tests were unavailable.
+      The canonical Nix gate passed 217 formatter checks and all 131 files.
+- [x] Update dirtree notes, preserve collaboration evidence if warranted, and
+      commit the known-good unit.
+      Completed 2026-08-27 18:46 EDT: all three dirtree notes describe the
+      revised roles. The qualifying collaboration case is frontmatter-validated
+      and recoverably staged under `/tmp/rstt-hardening.3kQJzL/`; the canonical
+      private ledger and live checkout remain read-only. This green project
+      state is the formatter hardening commit unit.
+
+## Active — port `randompass` and `randompassdict` to LuaJIT (2026-08-27)
+
+Locale is used only to choose an American or British spelling corpus. This
+does not introduce translated UI, localized aliases, or other i18n
+infrastructure; the repository-wide i18n scope decision remains unchanged.
+
+Accepted contract: `randompass` preserves its valid-input CLI and `PWCHARSET` /
+`RANDOM_SOURCE` behavior; its broader interface cleanup stays deferred.
+`randompassdict` accepts `NUM_WORDS` plus an optional exact `N`, inclusive
+`M-N`, or inclusive `M..N` length. Options may appear in any order; later
+`--american`/`--british` wins. Native locale territory `US` selects the
+American SCOWL corpus, while `C`, `POSIX`, regionless, and other territories
+fall back to the current British corpus. `--no-proper-nouns` removes exactly
+ASCII `^[A-Z][a-z]`, retaining acronyms and one-letter uppercase words.
+
+- [x] Characterize both Bash implementations, their dictionary source,
+      randomness contract, CLI surface, and all current callers before writing
+      port code.
+      Curiosity poke: determine whether either command is sourced as a function
+      and whether tests need an injected deterministic random-byte source.
+      Completed 2026-08-27 19:13 EDT: `randompass 10` has one repository caller;
+      both commands were sourceable Bash functions with direct-execution shims.
+      The British corpus is SCOWL 2020.12.07 level 60, and both generators now
+      share a pure, injected u32 rejection-sampling seam.
+- [x] Add behavior-preserving port tests for `randompass`. Add `randompassdict`
+      tests for inclusive `M-N` and `M..N` ranges, malformed and reversed
+      ranges, `--no-proper-nouns`, and explicit
+      `--american`/`--british` precedence over locale-derived defaults.
+      Curiosity poke: define locale handling for `C`, `POSIX`, unset locales,
+      regional English tags, and non-English locales without guessing silently.
+      Completed 2026-08-27 19:13 EDT: 36 deterministic `randompass` checks and
+      71 `randompassdict` checks cover the ports, set classifiers, real corpora,
+      UTF-8, exact arithmetic, and secure-source failure behavior. The former
+      statistical uniqueness assertion was removed.
+- [x] Port `randompass` to LuaJIT without changing its behavior. Port
+      `randompassdict` with a testable pure core and injected adapters for
+      dictionary access and randomness; its old separate length arguments may
+      break.
+      Curiosity poke: inspect the dictionary's actual variant data before
+      deciding whether American mode selects entries, maps spellings, or uses a
+      separate source.
+      Completed 2026-08-27 19:13 EDT: the active commands are standalone LuaJIT
+      executables. `randompassdict` selects separate American/British SCOWL
+      corpora, accepts the new length grammar, and defaults through the native
+      locale. Exact decimal exponentiation replaced the external `calc` call.
+- [x] Preserve both original implementations as executable `randompass.bash`
+      and `randompassdict.bash` files before replacing the unsuffixed commands.
+      Defer any broader `randompass` interface redesign to a later task.
+      Curiosity poke: existing callers may execute, source, or resolve these
+      names through symlinks, so characterize path behavior before renaming.
+      Completed 2026-08-27 19:13 EDT: both bodies match their predecessors
+      byte-for-byte after the shebang, retain Bash shebangs, and remain
+      sourceable. Their complete source-file SHA-256 values are
+      `18a3768278460ea237d15fdfeddb73d36726127b1f2e3c31346d68ba3a45bd40`
+      and `98eb74a43f65592eef04705d08d6db7ab503c8b798d3147f410367e5360ac823`.
+- [x] Run focused, host, and hermetic Nix gates; update dirtree notes and commit
+      each passing unit.
+      Curiosity poke: statistical output tests need deterministic controls and
+      classifier-set coverage rather than flaky distribution assertions.
+      Completed 2026-08-27 19:13 EDT: focused host suites pass 36/36 and 71/71;
+      shellcheck, LuaJIT bytecode compilation, and diff checks are clean. Nix
+      derivation `j3bw6fj4nb41nbjz8b64hd1snjnw7wk1` passes all 132 hermetic
+      test files in 37 seconds. Dirtree notes cover every added file.
+
 ## Active — port `reformat_spaces_to_tabs` to LuaJIT (2026-08-26)
 
 - [x] Characterize the hybrid Bash/Awk implementation's tab-width inference,

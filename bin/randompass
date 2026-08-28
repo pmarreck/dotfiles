@@ -1,50 +1,74 @@
-#!/usr/bin/env bash
+#!/usr/bin/env luajit
 
-randompass() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-	if [[ $# -eq 0 || "$1" == "--help" ]]; then
-		echo "Usage: randompass <length>"
-		echo "This function is defined in $BASH_SOURCE"
-		echo "You can override the default character set CHARSET_ALNUM_SANE by passing in PWCHARSET=<charset> as env"
-		echo "where <charset> is one or more of:"
-		echo "CHARSET_LOWER, CHARSET_UPPER, CHARSET_NUM, CHARSET_ALPHA, CHARSET_ALNUM, CHARSET_ALNUM_SANE, CHARSET_PUNC, CHARSET_HEX"
-		[ $# -eq 0 ] && return 1 # only error if insufficient input
-		return 0
-	fi
-	needs shuf "please install coreutils" || return 1
-	RANDOM_SOURCE="${RANDOM_SOURCE:-/dev/random}"
-	# globbing & history expansion here is a pain, so we store its state, temp turn it off & restore it later
-	local maybeglob="$(shopt -po noglob histexpand)"
-	set -o noglob # turn off globbing
-	set +o histexpand # turn off history expansion
-	# allow overriding the password character set with env var PWCHARSET
-	# NOTE that we DELETE THE CAPITAL O, CAPITAL I, LOWERCASE L CHARACTERS
-	# DUE TO SIMILARITY TO 1 AND 0 (which we leave in)
-	# (but only if you use the default "sane alnum" set)
-	local PWCHARSET="${PWCHARSET:-$CHARSET_ALNUM_SANE}"
-	# ...but also intersperse it with spaces so that the -e option to shuf works.
-	# Using awk to split the character set into a space-separated string of characters.
-	# Saw some noise that empty field separator will cause awk problems,
-	# but it's concise and fast and works, so... &shrug;
-	# printf is necessary due to some of the punctuation characters being interpreted when using echo
-	local characterset=$(printf "%s" "$PWCHARSET" | awk NF=NF FS="")
-	# using /dev/random to enforce entropy, but use urandom if you want speed
-	{ shuf --random-source=$RANDOM_SOURCE -n $1 -er $characterset; } | tr -d '\n'
-	echo
-	# restore any globbing state
-	eval "$maybeglob"
-	# cat /dev/urandom | LC_ALL=C tr -dc 'a-zA-Z0-9\!\@\#\$\%\&\*\?' | fold -w $1 | head -n 1
-}
+local source_path = debug.getinfo(1, "S").source:sub(2)
+local script_dir = source_path:match("^(.*)/[^/]+$") or "."
+package.path = script_dir .. "/src/?.lua;" .. package.path
 
-# Run the function if this script is executed directly
-if ! (return 0 2>/dev/null); then
-	# Check if we are running tests
-	if [ "$1" = "--test" ]; then
-		# Run tests from the test file
-		_test_file="$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
-		if [ -f "$_test_file" ]; then . "$_test_file" > /dev/null; fi
-	else
-		# If called directly, pass all arguments to the function
-		$(basename "${0##\-}") "$@"
-	fi
-fi
+local random = require("secure_random")
+local utf8_text = require("utf8_text")
+
+local DEFAULT_CHARSET = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ0123456789"
+
+local function help()
+	io.write([[Usage: randompass <length>
+Generate random text from the sane alphanumeric character set.
+Set PWCHARSET to replace the character set and RANDOM_SOURCE to replace
+/dev/random. PWCHARSET is interpreted as UTF-8 code points.
+]])
+end
+
+if #arg == 0 then
+	help()
+	os.exit(1)
+end
+
+if arg[1] == "--help" then
+	help()
+	os.exit(0)
+end
+
+local length_text = arg[1]
+if not length_text:match("^%d+$") then
+	io.stderr:write("Error: length must be a non-negative integer.\n")
+	os.exit(1)
+end
+local length = tonumber(length_text)
+
+local charset = os.getenv("PWCHARSET")
+if not charset or charset == "" then
+	charset = DEFAULT_CHARSET
+end
+local characters, charset_error = utf8_text.codepoints(charset)
+if not characters then
+	io.stderr:write("Error: PWCHARSET contains ", charset_error, ".\n")
+	os.exit(1)
+end
+if #characters == 0 then
+	io.stderr:write("Error: PWCHARSET must contain at least one character.\n")
+	os.exit(1)
+end
+
+local random_path = os.getenv("RANDOM_SOURCE")
+if not random_path or random_path == "" then
+	random_path = "/dev/random"
+end
+local read_four, random_file_or_error = random.open_reader(random_path)
+if not read_four then
+	io.stderr:write("Error: ", random_file_or_error, ".\n")
+	os.exit(1)
+end
+local random_file = random_file_or_error
+
+local result = {}
+for index = 1, length do
+	local selected, sample_error = random.sample_index(read_four, #characters)
+	if not selected then
+		random_file:close()
+		io.stderr:write("Error: ", sample_error, ".\n")
+		os.exit(1)
+	end
+	result[index] = characters[selected]
+end
+random_file:close()
+
+io.write(table.concat(result), "\n")
