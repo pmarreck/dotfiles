@@ -36,11 +36,14 @@
       Completed 2026-09-02 16:48 EDT: native Grok `summary.json` histories join
       cross-harness newest-session selection, and launches explicitly set all
       three privilege controls.
-- [ ] Run focused red-green tests, the complete host suite, and the hermetic Nix
+- [x] Run focused red-green tests, the complete host suite, and the hermetic Nix
       gate; update dirtree notes, commit the known-good unit, and push the three
       already-ahead commits plus this work only after every gate passes.
       Curiosity poke: tests need isolated tmux sockets and deterministic fixture
       histories so they neither find nor kill Peter's live fleet.
+      Completed 2026-09-02 17:05 EDT: 62 focused assertions, 180/180 host test
+      files, 133/133 sandboxed test files, and the 180-test pre-push gate pass.
+      Commit `694d200` plus the three earlier green commits are on `origin/master`.
 
 ## Active — harden both `reformat_spaces_to_tabs` implementations (2026-08-27)
 
