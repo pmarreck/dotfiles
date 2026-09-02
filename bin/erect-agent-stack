@@ -41,10 +41,9 @@ _eas_backend() {
 			_b_fresh="gemini --yolo"
 			_b_resume="gemini --yolo --resume latest" ;;
 		grok)
-			# Grok Build CLI: flags best-effort until installed for live verification.
 			_b_bin=grok; _b_gate=GROK_API_KEY
-			_b_fresh="grok --yolo"
-			_b_resume="grok --yolo --resume" ;;
+			_b_fresh="grok --always-approve --permission-mode bypassPermissions --sandbox off"
+			_b_resume="$_b_fresh --resume" ;;
 		*) return 1 ;;
 	esac
 }
@@ -93,16 +92,16 @@ _eas_launch() {
 		echo "launch: $cmd"
 		return 0
 	fi
-	_eas_tmux send-keys -t "$n" "$cmd" Enter
+	# Replace the pane's shell directly. Queuing launch text into an interactive
+	# shell races .bashrc/direnv: a slow activation can consume the first command
+	# late, after the readiness timeout has already queued a second command. The
+	# duplicate then lands inside the resumed TUI's input box. respawn-pane runs
+	# one non-interactive shell command and has no startup input queue to race.
+	_eas_tmux respawn-pane -k -t "$n" "$cmd" || return 70
 	if ! _eas_bootwait "$n" "$agent"; then
-		if [ "$fresh" = "0" ]; then
-			# resume may have had nothing to resume; fall back to a fresh start
-			local fcmd="$_b_fresh"
-			[ -n "${_b_checker:-}" ] && fcmd="MFIC_ROLE=checker $fcmd"
-			_eas_tmux send-keys -t "$n" C-u
-			_eas_tmux send-keys -t "$n" "$fcmd" Enter
-			_eas_bootwait "$n" "$agent" && return 0
-		fi
+		# A timeout proves only that readiness was not observed. It does not prove
+		# resume failed, so never paste or respawn a speculative fresh launch.
+		# Callers that truly want a new conversation have the explicit --fresh flag.
 		echo "erect-agent-stack: agent did not boot in $n within ${ERECT_BOOT_TIMEOUT:-120}s" >&2
 		return 69
 	fi

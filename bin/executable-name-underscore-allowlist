@@ -1,15 +1,16 @@
-# Grandfathered top-level bin/ executables containing underscores.
+# Approved top-level bin/ executables containing underscores.
 #
-# These names predate the hyphens-for-executables convention. Renaming any one
+# Most names predate the hyphens-for-executables convention. Renaming any one
 # can break shell history, aliases, scripts, or external callers, so each needs
-# a compatibility audit outside the fleet-status scope. This exact, sorted list
-# freezes the legacy set: new underscore-named executables fail the suite.
+# a compatibility audit. New exceptions require Peter's explicit API decision.
+# agent_tmux_sessions is the exact public API Peter selected on 2026-09-02.
 Time.now.to_f
 __wezterm_osc7
 __wezterm_osc7_home
 _generate_curl_api_request_for_please
 _uuidv7_sequence_init
 _uuidv7_sequencer
+agent_tmux_sessions
 alias_permanently
 array_contains_element
 asciidragon_anim

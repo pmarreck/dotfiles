@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 
-# Restore the newest main Claude or Codex conversation per project directory.
+# Restore the newest main Claude, Codex, or Grok conversation per project.
 # Transcript timestamps decide recency; mtimes only bound the default scan.
 
 _eras_help() {
 	cat <<'EOF'
 Usage: erect-recent-agent-stacks [OPTIONS]
 
-Resume the newest main Claude or Codex conversation per project directory.
+Resume the newest main Claude, Codex, or Grok conversation per project directory.
 The default window is the previous 72 hours. Subagent conversations are
 excluded, missing directories are reported, and the existing idempotent
 erect-agent-stack command performs each launch.
@@ -27,7 +27,7 @@ EOF
 }
 
 _eras_about() {
-	printf "erect-recent-agent-stacks: resume each recent project's newest Claude or Codex conversation.\n"
+	printf "erect-recent-agent-stacks: resume each recent project's newest Claude, Codex, or Grok conversation.\n"
 }
 
 _eras_cutoff() {
@@ -57,7 +57,7 @@ _eras_candidate_files() {
 }
 
 _eras_records() {
-	local claude_root="$1" codex_root="$2" cutoff="$3" scan_age="$4"
+	local claude_root="$1" codex_root="$2" grok_root="$3" cutoff="$4" scan_age="$5"
 	local file cwd last meta canonical
 
 	if [[ -d "$codex_root" ]]; then
@@ -89,11 +89,27 @@ _eras_records() {
 	else
 		printf 'erect-recent-agent-stacks: Claude history root is missing: %s\n' "$claude_root" >&2
 	fi
+
+	if [[ -d "$grok_root" ]]; then
+		while IFS= read -r file; do
+			meta=$(jq -r 'select(.info.cwd? != null and .info.id? != null) |
+				[.info.cwd, (.updated_at // .last_active_at // "")] | @tsv' "$file" 2>/dev/null)
+			[[ -n "$meta" ]] || continue
+			cwd=${meta%%$'\t'*}
+			last=${meta#*$'\t'}
+			[[ -n "$cwd" && -n "$last" ]] || continue
+			_eras_at_or_after "$last" "$cutoff" || continue
+			if [[ -d "$cwd" ]]; then canonical=$(cd "$cwd" && pwd -P); else canonical="$cwd"; fi
+			printf 'grok\t%s\t%s\n' "$last" "$canonical"
+		done < <(fd -H -t f '^summary\.json$' "$grok_root")
+	else
+		printf 'erect-recent-agent-stacks: Grok history root is missing: %s\n' "$grok_root" >&2
+	fi
 }
 
 _eras_selected() {
-	local claude_root="$1" codex_root="$2" cutoff="$3" scan_age="$4"
-	_eras_records "$claude_root" "$codex_root" "$cutoff" "$scan_age" |
+	local claude_root="$1" codex_root="$2" grok_root="$3" cutoff="$4" scan_age="$5"
+	_eras_records "$claude_root" "$codex_root" "$grok_root" "$cutoff" "$scan_age" |
 		sort -t $'\t' -k3,3 -k2,2r -k1,1 |
 		awk -F '\t' '!seen[$3]++' |
 		sort -t $'\t' -k3,3
@@ -119,6 +135,7 @@ erect_recent_agent_stacks() {
 	local days=3 since='' jobs=4 dry_run=0 json=0 scan_age
 	local claude_root="${ERECT_CLAUDE_PROJECTS_DIR:-$HOME/.claude/projects}"
 	local codex_root="${ERECT_CODEX_SESSIONS_DIR:-$HOME/.codex/sessions}"
+	local grok_root="${ERECT_GROK_SESSIONS_DIR:-${GROK_HOME:-$HOME/.grok}/sessions}"
 	local launcher="${ERECT_AGENT_STACK_BIN:-erect-agent-stack}"
 	local backend timestamp directory output status failures=0 result_file input_file live_session
 
@@ -154,7 +171,7 @@ erect_recent_agent_stacks() {
 
 	if (( dry_run )); then
 		if (( json )); then
-			_eras_selected "$claude_root" "$codex_root" "$since" "$scan_age" |
+			_eras_selected "$claude_root" "$codex_root" "$grok_root" "$since" "$scan_age" |
 				while IFS=$'\t' read -r backend timestamp directory; do
 					if [[ -d "$directory" ]]; then
 						printf '%s\t%s\t%s\n' "$backend" "$timestamp" "$directory"
@@ -164,7 +181,7 @@ erect_recent_agent_stacks() {
 				done |
 				jq -Rn '[inputs | split("\t") | {backend: .[0], timestamp: .[1], directory: .[2]}]'
 		else
-			_eras_selected "$claude_root" "$codex_root" "$since" "$scan_age" |
+			_eras_selected "$claude_root" "$codex_root" "$grok_root" "$since" "$scan_age" |
 				while IFS=$'\t' read -r backend timestamp directory; do
 					if [[ -d "$directory" ]]; then
 						printf '%s\t%s\t%s\n' "$backend" "$timestamp" "$directory"
@@ -195,7 +212,7 @@ erect_recent_agent_stacks() {
 			(( status == 0 )) || failures=$((failures + 1))
 			jq -cn --arg backend "$backend" --arg timestamp "$timestamp" --arg directory "$directory" --arg output "$output" --argjson status "$status" \
 				'{backend: $backend, timestamp: $timestamp, directory: $directory, status: $status, output: $output}' >>"$result_file"
-		done < <(_eras_selected "$claude_root" "$codex_root" "$since" "$scan_age")
+		done < <(_eras_selected "$claude_root" "$codex_root" "$grok_root" "$since" "$scan_age")
 		jq -s . "$result_file"
 		rm -f "$result_file"
 		(( failures == 0 ))
@@ -214,7 +231,7 @@ erect_recent_agent_stacks() {
 		else
 			printf 'erect-recent-agent-stacks: skipping missing project directory: %s\n' "$directory" >&2
 		fi
-	done < <(_eras_selected "$claude_root" "$codex_root" "$since" "$scan_age")
+	done < <(_eras_selected "$claude_root" "$codex_root" "$grok_root" "$since" "$scan_age")
 	if [[ ! -s "$input_file" ]]; then
 		rm -f "$input_file"
 		return 0

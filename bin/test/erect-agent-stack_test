@@ -112,6 +112,15 @@ erect_agent_stack_test() {
   assert "$out" =~ "launch: gemini --yolo" "-a aliases --agent"
   ((fails+=$?))
 
+  out=$(ERECT_TMUX_SOCKET="$sock" ERECT_DRY_RUN=1 erect-agent-stack --fresh --agent grok "$tmproot/projbeta" 2>&1)
+  assert "$out" =~ "launch: grok --always-approve --permission-mode bypassPermissions --sandbox off" \
+    "Grok fresh launch explicitly grants approvals and disables the sandbox"
+  ((fails+=$?))
+  out=$(ERECT_TMUX_SOCKET="$sock" ERECT_DRY_RUN=1 erect-agent-stack --agent grok "$tmproot/projbeta" 2>&1)
+  assert "$out" =~ "grok --always-approve --permission-mode bypassPermissions --sandbox off --resume" \
+    "Grok resume explicitly grants approvals and disables the sandbox"
+  ((fails+=$?))
+
   out=$(ERECT_TMUX_SOCKET="$sock" ERECT_DRY_RUN=1 erect-agent-stack --fresh "$tmproot/projbeta" 2>&1)
   assert "$out" =~ "launch: claude --rc" "default agent stays claude"
   ((fails+=$?))
@@ -176,6 +185,36 @@ erect_agent_stack_test() {
   )
   status=$?
   assert "$status" == "0" "Codex node process satisfies current 0.146 readiness"
+  ((fails+=$?))
+
+  # Launching through send-keys races interactive shell startup and direnv. The
+  # observed failure pasted a fallback `codex ...` command into an already-live
+  # Random session. Replace the pane process directly, and never guess that a
+  # readiness timeout means the resume failed.
+  local launch_log="$tmproot/direct-launch.log"
+  : >"$launch_log"
+  (
+    # shellcheck source=bin/erect-agent-stack
+    . "$HOME/dotfiles/bin/erect-agent-stack"
+    _eas_tmux() {
+      printf '%s\n' "$*" >>"$launch_log"
+      case "$1" in
+        capture-pane) printf 'Booting MCP server\n' ;;
+        display-message) printf 'codex\n' ;;
+      esac
+    }
+    _b_resume='codex resume --last --dangerously-bypass-approvals-and-sandbox'
+    _b_fresh='codex --dangerously-bypass-approvals-and-sandbox'
+    ERECT_BOOT_TIMEOUT=1 _eas_launch slow-project 0 codex
+  ) >/dev/null 2>&1
+  status=$?
+  assert "$status" == "69" "a still-booting agent times out without inventing success"
+  ((fails+=$?))
+  assert "$(grep -c '^respawn-pane -k -t slow-project ' "$launch_log" 2>/dev/null || true)" == "1" \
+    "agent launch directly replaces the pane shell exactly once"
+  ((fails+=$?))
+  assert "$(grep -c '^send-keys ' "$launch_log" 2>/dev/null || true)" == "0" \
+    "a readiness timeout never pastes a fallback command into the pane"
   ((fails+=$?))
 
   # Codex's paste-burst protection needs an explicit bracketed paste boundary;

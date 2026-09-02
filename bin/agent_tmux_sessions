@@ -1,0 +1,620 @@
+#!/usr/bin/env bash
+
+# Snapshot, restore, and safely shut down tmux-hosted Codex, Claude, and Grok
+# fleets. State contains launch identity, never raw process arguments or env.
+
+set -u
+
+readonly ATS_SCHEMA='agent-tmux-sessions/v1'
+readonly ATS_UUID_RE='[[:xdigit:]]{8}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{12}'
+
+_ats_help() {
+	cat <<'EOF'
+Usage:
+  agent_tmux_sessions snapshot [PATH]
+  agent_tmux_sessions restore [PATH] [--dry-run] [--jobs N]
+  agent_tmux_sessions shutdown [PATH] [--force]
+
+Record or recreate tmux-hosted Codex, Claude Code, and Grok Build agents.
+The default state file is:
+  $XDG_STATE_HOME/agent_tmux_sessions/latest.json
+or, when XDG_STATE_HOME is unset:
+  $HOME/.local/state/agent_tmux_sessions/latest.json
+
+snapshot records each agent's tmux session/pane, canonical cwd, harness, and
+exact conversation UUID. Shell-only panes are excluded. The write is atomic,
+mode 0600, and retains the preceding state as PATH.previous.
+
+restore uses exact UUIDs and explicit full-privilege flags. It starts agents
+directly rather than through an interactive shell, avoiding direnv/startup
+races. Startup is limited to four agents at a time by default, and every new
+pane must clear its startup gates before restore succeeds. Existing tmux
+sessions are left untouched.
+
+shutdown takes a fresh snapshot first, then refuses if any agent is not at an
+idle prompt. --force allows shutdown of busy or unrecognized panes.
+
+Options:
+  --dry-run  Print restore commands without changing tmux.
+  --jobs N   Start and verify N agents per restore batch (default: 4).
+  --force    Permit shutdown when a pane is not demonstrably idle.
+  -h, --help Show this help.
+  --about    Show a one-line description.
+EOF
+}
+
+_ats_about() {
+	printf '%s\n' 'agent_tmux_sessions: snapshot, exactly resume, or safely stop a tmux-hosted AI agent fleet.'
+}
+
+_ats_default_path() {
+	printf '%s/agent_tmux_sessions/latest.json\n' "${XDG_STATE_HOME:-$HOME/.local/state}"
+}
+
+_ats_now() {
+	if [[ -n "${AGENT_TMUX_SESSIONS_NOW:-}" ]]; then
+		printf '%s\n' "$AGENT_TMUX_SESSIONS_NOW"
+		return
+	fi
+	local raw
+	raw="$(date '+%Y-%m-%dT%H:%M:%S%z')" || return
+	printf '%s:%s\n' "${raw%??}" "${raw: -2}"
+}
+
+_ats_host() {
+	if [[ -n "${AGENT_TMUX_SESSIONS_HOST:-}" ]]; then
+		printf '%s\n' "$AGENT_TMUX_SESSIONS_HOST"
+	else
+		hostname
+	fi
+}
+
+_ats_mtime() {
+	local path="$1"
+	if stat -c %Y "$path" >/dev/null 2>&1; then
+		stat -c %Y "$path"
+	else
+		stat -f %m "$path"
+	fi
+}
+
+_ats_process_args() {
+	local pid="$1" ps_bin="${AGENT_TMUX_SESSIONS_PS_BIN:-ps}"
+	local pgrep_bin="${AGENT_TMUX_SESSIONS_PGREP_BIN:-pgrep}"
+	local parent_args child child_args
+	parent_args="$("$ps_bin" -p "$pid" -o args= 2>/dev/null)"
+	case "$parent_args" in
+		*codex* | *claude* | *grok*) printf '%s\n' "$parent_args"; return ;;
+	esac
+	if command -v "$pgrep_bin" >/dev/null 2>&1; then
+		while IFS= read -r child; do
+			[[ -n "$child" ]] || continue
+			child_args="$("$ps_bin" -p "$child" -o args= 2>/dev/null)"
+			case "$child_args" in
+				*codex* | *claude* | *grok*) printf '%s\n' "$child_args"; return ;;
+			esac
+		done < <("$pgrep_bin" -P "$pid" 2>/dev/null)
+	fi
+	printf '%s\n' "$parent_args"
+}
+
+_ats_explicit_uuid() {
+	local args="$1"
+	if [[ "$args" =~ ($ATS_UUID_RE) ]]; then
+		printf '%s\n' "${BASH_REMATCH[1]}"
+	fi
+}
+
+_ats_harness() {
+	local pane_command="$1" process_args="$2"
+	case "$pane_command" in
+		codex) printf '%s\n' codex ;;
+		claude) printf '%s\n' claude ;;
+		grok) printf '%s\n' grok ;;
+		node)
+			case "$process_args" in
+				*codex*) printf '%s\n' codex ;;
+				*claude*) printf '%s\n' claude ;;
+			esac
+			;;
+	esac
+}
+
+_ats_fd_jsonl() {
+	local root="$1" fd_bin="${AGENT_TMUX_SESSIONS_FD_BIN:-fd}"
+	[[ -d "$root" ]] || return 0
+	"$fd_bin" -H -t f -e jsonl -0 . "$root"
+}
+
+_ats_history_cache() {
+	local output="$1"
+	local codex_root="${AGENT_TMUX_SESSIONS_CODEX_ROOT:-$HOME/.codex/sessions}"
+	local claude_root="${AGENT_TMUX_SESSIONS_CLAUDE_ROOT:-$HOME/.claude/projects}"
+	local grok_root="${AGENT_TMUX_SESSIONS_GROK_ROOT:-${GROK_HOME:-$HOME/.grok}/sessions}"
+	local file row cwd id timestamp
+	: >"$output"
+
+	while IFS= read -r -d '' file; do
+		row="$(sed -n '1p' "$file" | jq -r '
+			select(.type == "session_meta") |
+			select(.payload.thread_source? != "subagent") |
+			select((.payload.source? | type) != "object" or .payload.source.subagent? == null) |
+			[(.payload.cwd // ""), (.payload.id // .payload.session_id // "")] | @tsv
+		' 2>/dev/null)"
+		[[ -n "$row" ]] || continue
+		cwd="${row%%$'\t'*}"
+		id="${row#*$'\t'}"
+		[[ -n "$cwd" && "$id" =~ ^$ATS_UUID_RE$ ]] || continue
+		timestamp="$(_ats_mtime "$file")" || continue
+		jq -cn --arg harness codex --arg cwd "$cwd" --arg id "$id" \
+			--argjson timestamp "$timestamp" \
+			'{harness:$harness,cwd:$cwd,id:$id,timestamp:$timestamp}' >>"$output"
+	done < <(_ats_fd_jsonl "$codex_root")
+
+	while IFS= read -r -d '' file; do
+		row="$(jq -r 'select(.cwd? != null and .sessionId? != null) |
+			[.cwd,.sessionId] | @tsv' "$file" 2>/dev/null | head -n 1)"
+		[[ -n "$row" ]] || continue
+		cwd="${row%%$'\t'*}"
+		id="${row#*$'\t'}"
+		[[ -n "$cwd" && "$id" =~ ^$ATS_UUID_RE$ ]] || continue
+		timestamp="$(_ats_mtime "$file")" || continue
+		jq -cn --arg harness claude --arg cwd "$cwd" --arg id "$id" \
+			--argjson timestamp "$timestamp" \
+			'{harness:$harness,cwd:$cwd,id:$id,timestamp:$timestamp}' >>"$output"
+	done < <(_ats_fd_jsonl "$claude_root")
+
+	if [[ -d "$grok_root" ]]; then
+		local fd_bin="${AGENT_TMUX_SESSIONS_FD_BIN:-fd}"
+		while IFS= read -r -d '' file; do
+			row="$(jq -r 'select(.info.cwd? != null and .info.id? != null) |
+				[.info.cwd,.info.id,((.updated_at // .last_active_at // "")|tostring)] | @tsv' "$file" 2>/dev/null)"
+			[[ -n "$row" ]] || continue
+			cwd="${row%%$'\t'*}"
+			row="${row#*$'\t'}"
+			id="${row%%$'\t'*}"
+			timestamp="$(_ats_mtime "$file")" || continue
+			[[ -n "$cwd" && "$id" =~ ^$ATS_UUID_RE$ ]] || continue
+			jq -cn --arg harness grok --arg cwd "$cwd" --arg id "$id" \
+				--argjson timestamp "$timestamp" \
+				'{harness:$harness,cwd:$cwd,id:$id,timestamp:$timestamp}' >>"$output"
+		done < <("$fd_bin" -H -t f -0 '^summary\.json$' "$grok_root")
+	fi
+}
+
+_ats_history_id() {
+	local cache="$1" harness="$2" cwd="$3"
+	jq -sr --arg harness "$harness" --arg cwd "$cwd" '
+		map(select(.harness == $harness and .cwd == $cwd)) |
+		sort_by(.timestamp) | last | .id // empty
+	' "$cache"
+}
+
+_ats_write_state() {
+	local destination="$1" agents="$2" captured_at="$3" host="$4"
+	local directory temporary previous
+	directory="$(dirname "$destination")"
+	mkdir -p "$directory" || return 73
+	temporary="$(mktemp "$directory/.agent_tmux_sessions.XXXXXX")" || return 73
+	previous="$destination.previous"
+
+	if ! jq -s --arg schema "$ATS_SCHEMA" --arg captured_at "$captured_at" \
+		--arg host "$host" '
+		{schema:$schema,captured_at:$captured_at,host:$host,
+		 agents:(sort_by(.tmux_session,.window_index,.pane_index))}
+	' "$agents" >"$temporary"; then
+		rm -f "$temporary"
+		return 70
+	fi
+	chmod 600 "$temporary" || { rm -f "$temporary"; return 73; }
+	if [[ -f "$destination" ]]; then
+		cp -p "$destination" "$previous" || { rm -f "$temporary"; return 73; }
+		chmod 600 "$previous" || { rm -f "$temporary"; return 73; }
+	fi
+	mv -f "$temporary" "$destination" || { rm -f "$temporary"; return 73; }
+}
+
+_ats_snapshot() {
+	local destination="$1"
+	local tmux_bin="${AGENT_TMUX_SESSIONS_TMUX_BIN:-tmux}"
+	local scratch agents cache captured_at host
+	local tmux_session window_index window_name window_layout pane_index pane_id
+	local pane_command cwd pane_pid pane_active process_args harness conversation_id
+
+	command -v "$tmux_bin" >/dev/null 2>&1 || {
+		printf 'agent_tmux_sessions: tmux is required.\n' >&2
+		return 69
+	}
+	command -v jq >/dev/null 2>&1 || {
+		printf 'agent_tmux_sessions: jq is required.\n' >&2
+		return 69
+	}
+
+	scratch="$(mktemp -d "${TMPDIR:-/tmp}/agent_tmux_sessions.XXXXXX")" || return 73
+	agents="$scratch/agents.ndjson"
+	cache="$scratch/history.ndjson"
+	: >"$agents"
+	_ats_history_cache "$cache"
+
+	while IFS='|' read -r tmux_session window_index window_name window_layout \
+		pane_index pane_id pane_command cwd pane_pid pane_active; do
+		process_args="$(_ats_process_args "$pane_pid")"
+		harness="$(_ats_harness "$pane_command" "$process_args")"
+		[[ -n "$harness" ]] || continue
+		conversation_id="$(_ats_explicit_uuid "$process_args")"
+		if [[ -z "$conversation_id" ]]; then
+			conversation_id="$(_ats_history_id "$cache" "$harness" "$cwd")"
+		fi
+		if [[ ! "$conversation_id" =~ ^$ATS_UUID_RE$ ]]; then
+			printf 'agent_tmux_sessions: cannot resolve exact %s conversation for %s pane %s (%s).\n' \
+				"$harness" "$tmux_session" "$pane_id" "$cwd" >&2
+			rm -rf "$scratch"
+			return 65
+		fi
+		jq -cn \
+			--arg tmux_session "$tmux_session" --arg window_name "$window_name" \
+			--arg window_layout "$window_layout" --arg pane_id "$pane_id" \
+			--arg cwd "$cwd" --arg harness "$harness" \
+			--arg conversation_id "$conversation_id" \
+			--argjson window_index "$window_index" --argjson pane_index "$pane_index" \
+			--argjson pane_active "$pane_active" '
+			{tmux_session:$tmux_session,window_index:$window_index,
+			 window_name:$window_name,window_layout:$window_layout,
+			 pane_index:$pane_index,pane_id:$pane_id,cwd:$cwd,
+			 harness:$harness,conversation_id:$conversation_id,
+			 pane_active:($pane_active == 1)}
+		' >>"$agents"
+	done < <("$tmux_bin" list-panes -a -F '#{session_name}|#{window_index}|#{window_name}|#{window_layout}|#{pane_index}|#{pane_id}|#{pane_current_command}|#{pane_current_path}|#{pane_pid}|#{pane_active}')
+
+	captured_at="$(_ats_now)" || { rm -rf "$scratch"; return 70; }
+	host="$(_ats_host)" || { rm -rf "$scratch"; return 70; }
+	_ats_write_state "$destination" "$agents" "$captured_at" "$host"
+	local status=$?
+	rm -rf "$scratch"
+	(( status == 0 )) || return "$status"
+	printf '%s\n' "$destination"
+}
+
+_ats_validate_state() {
+	local path="$1"
+	[[ -f "$path" ]] || {
+		printf 'agent_tmux_sessions: state file does not exist: %s\n' "$path" >&2
+		return 66
+	}
+	if ! jq -e --arg schema "$ATS_SCHEMA" '
+		.schema == $schema and (.agents | type == "array") and
+		all(.agents[];
+			(.tmux_session|type)=="string" and (.cwd|type)=="string" and
+			(.harness=="codex" or .harness=="claude" or .harness=="grok") and
+			(.conversation_id|type)=="string")
+	' "$path" >/dev/null 2>&1; then
+		printf 'agent_tmux_sessions: unsupported or malformed state schema in %s\n' "$path" >&2
+		return 65
+	fi
+}
+
+_ats_launch_argv() {
+	local harness="$1" session="$2" cwd="$3" conversation_id="$4"
+	local escaped_dir trust_override
+	case "$harness" in
+		codex)
+		escaped_dir="${cwd//\\/\\\\}"
+		escaped_dir="${escaped_dir//\"/\\\"}"
+		trust_override="projects.\"$escaped_dir\".trust_level=\"trusted\""
+		_ats_argv=(codex resume --include-non-interactive \
+			--dangerously-bypass-approvals-and-sandbox -C "$cwd" \
+			-c "$trust_override" "$conversation_id")
+		;;
+		claude)
+		_ats_argv=(claude --rc --permission-mode bypassPermissions \
+			--name "$session" --resume "$conversation_id")
+		;;
+		grok)
+		_ats_argv=(grok --always-approve --permission-mode bypassPermissions \
+			--sandbox off --resume "$conversation_id")
+		;;
+	esac
+}
+
+_ats_command_string() {
+	local rendered=''
+	printf -v rendered '%q ' "$@"
+	printf '%s\n' "${rendered% }"
+}
+
+_ats_preview_line() {
+	local session="$1" window="$2" pane="$3" cwd="$4" harness="$5" id="$6"
+	shift 6
+	printf 'session=%s window=%s pane=%s cwd=%s harness=%s command=' \
+		"$session" "$window" "$pane" "$cwd" "$harness"
+	printf '%s' "$1"
+	shift
+	printf ' %s' "$@"
+	printf '\n'
+}
+
+_ats_readiness() {
+	local harness="$1" pane_command="$2" screen="$3" lower
+	lower="${screen,,}"
+	_ats_readiness_reason=''
+
+	if [[ "$lower" == *'do you trust'* ]]; then
+		_ats_readiness_reason='trust prompt'
+		return 2
+	fi
+	if [[ "$lower" == *'not logged in'* || "$lower" == *'authentication required'* \
+		|| "$lower" == *'please run /login'* ]]; then
+		_ats_readiness_reason='login prompt'
+		return 2
+	fi
+	if [[ "$lower" == *'confirm summary'* || "$lower" == *'review the summary'* ]]; then
+		_ats_readiness_reason='summary confirmation'
+		return 2
+	fi
+	if [[ "$lower" == *'[exited]'* || "$lower" == *'server exited unexpectedly'* ]]; then
+		_ats_readiness_reason='agent exited'
+		return 2
+	fi
+
+	case "$harness" in
+		codex)
+			[[ "$pane_command" =~ ^(codex|node)$ ]] || return 1
+			[[ "$screen" != *'Booting MCP server'* ]] || return 1
+			[[ "$screen" == *'OpenAI Codex'* || "$screen" == *'context left'* \
+				|| "$screen" == *'Ask Codex to do anything'* \
+				|| "$screen" == *'esc to interrupt'* ]]
+			;;
+		claude)
+			[[ "$pane_command" =~ ^(claude|node)$ ]] || return 1
+			[[ "$screen" == *'❯'* && ( "$lower" == *'claude code'* \
+				|| "$lower" == *'bypass permissions'* ) ]]
+			;;
+		grok)
+			[[ "$pane_command" =~ ^(grok|node)$ ]] || return 1
+			[[ "$screen" == *'❯'* && "$lower" == *'always-approve'* ]]
+			;;
+	esac
+}
+
+_ats_wait_for_ready() {
+	local launched="$1" tmux_bin="$2"
+	local cycles="${AGENT_TMUX_SESSIONS_BOOT_CYCLES:-120}"
+	local interval="${AGENT_TMUX_SESSIONS_BOOT_INTERVAL:-1}"
+	local scratch pending next row target session harness screen pane_command i
+	local blocked=0 remaining=0
+
+	[[ -s "$launched" ]] || return 0
+	scratch="$(mktemp -d "${TMPDIR:-/tmp}/agent_tmux_sessions_ready.XXXXXX")" || return 73
+	pending="$scratch/pending.ndjson"
+	next="$scratch/next.ndjson"
+	cp "$launched" "$pending" || { rm -rf "$scratch"; return 73; }
+
+	for ((i=0; i<cycles; i++)); do
+		: >"$next"
+		while IFS= read -r row; do
+			target="$(jq -r .target <<<"$row")"
+			session="$(jq -r .session <<<"$row")"
+			harness="$(jq -r .harness <<<"$row")"
+			screen="$("$tmux_bin" capture-pane -p -t "$target" 2>/dev/null)"
+			pane_command="$("$tmux_bin" display-message -p -t "$target" '#{pane_current_command}' 2>/dev/null)"
+			if _ats_readiness "$harness" "$pane_command" "$screen"; then
+				printf 'restored-ready: %s pane %s (%s)\n' "$session" "$target" "$harness"
+			else
+				case $? in
+					2)
+						printf 'agent_tmux_sessions: %s pane %s (%s) is blocked by a %s.\n' \
+							"$session" "$target" "$harness" "$_ats_readiness_reason" >&2
+						blocked=1
+						;;
+					*) printf '%s\n' "$row" >>"$next" ;;
+				esac
+			fi
+		done <"$pending"
+		mv "$next" "$pending"
+		[[ -s "$pending" ]] || break
+		if [[ "$interval" != 0 ]]; then sleep "$interval"; fi
+	done
+
+	if [[ -s "$pending" ]]; then
+		while IFS= read -r row; do
+			target="$(jq -r .target <<<"$row")"
+			session="$(jq -r .session <<<"$row")"
+			harness="$(jq -r .harness <<<"$row")"
+			printf 'agent_tmux_sessions: %s pane %s (%s) did not become ready.\n' \
+				"$session" "$target" "$harness" >&2
+			remaining=1
+		done <"$pending"
+	fi
+	rm -rf "$scratch"
+	(( blocked == 0 && remaining == 0 )) || return 69
+}
+
+_ats_restore() {
+	local path="$1" dry_run="$2" jobs="$3" tmux_bin="${AGENT_TMUX_SESSIONS_TMUX_BIN:-tmux}"
+	local row session window_index window_name pane_index cwd harness id
+	local key target launch launched status batch=0
+	local -a _ats_argv
+	local -A restored_sessions=() skipped_sessions=() window_targets=()
+
+	_ats_validate_state "$path" || return
+	if [[ ! "$jobs" =~ ^[1-9][0-9]*$ ]]; then
+		printf 'agent_tmux_sessions: --jobs must be a positive integer.\n' >&2
+		return 64
+	fi
+	launched="$(mktemp "${TMPDIR:-/tmp}/agent_tmux_sessions_restore.XXXXXX")" || return 73
+	: >"$launched"
+	while IFS= read -r row; do
+		session="$(jq -r .tmux_session <<<"$row")"
+		[[ -n "${skipped_sessions[$session]:-}" ]] && continue
+		window_index="$(jq -r .window_index <<<"$row")"
+		window_name="$(jq -r .window_name <<<"$row")"
+		pane_index="$(jq -r .pane_index <<<"$row")"
+		cwd="$(jq -r .cwd <<<"$row")"
+		harness="$(jq -r .harness <<<"$row")"
+		id="$(jq -r .conversation_id <<<"$row")"
+		_ats_launch_argv "$harness" "$session" "$cwd" "$id"
+		if (( dry_run )); then
+			_ats_preview_line "$session" "$window_index" "$pane_index" "$cwd" "$harness" "$id" "${_ats_argv[@]}"
+			continue
+		fi
+		[[ -d "$cwd" ]] || {
+			printf 'agent_tmux_sessions: restore directory is missing: %s\n' "$cwd" >&2
+			rm -f "$launched"
+			return 66
+		}
+		key="$session:$window_index"
+		launch="$(_ats_command_string "${_ats_argv[@]}")"
+		if [[ -z "${restored_sessions[$session]:-}" ]]; then
+			if "$tmux_bin" has-session -t "=$session" 2>/dev/null; then
+				printf 'joined-running: %s (left untouched)\n' "$session"
+				skipped_sessions[$session]=1
+				continue
+			fi
+			target="$("$tmux_bin" new-session -d -P -F '#{pane_id}' -s "$session" -c "$cwd" "$launch")" || { rm -f "$launched"; return 70; }
+			restored_sessions[$session]=1
+			window_targets[$key]="$target"
+			"$tmux_bin" rename-window -t "$session:0" "$window_name" 2>/dev/null || :
+		elif [[ -z "${window_targets[$key]:-}" ]]; then
+			target="$("$tmux_bin" new-window -d -P -F '#{pane_id}' -t "$session:" -n "$window_name" -c "$cwd" "$launch")" || { rm -f "$launched"; return 70; }
+			window_targets[$key]="$target"
+		else
+			target="$("$tmux_bin" split-window -d -P -F '#{pane_id}' -t "${window_targets[$key]}" -c "$cwd" "$launch")" || { rm -f "$launched"; return 70; }
+		fi
+		jq -cn --arg target "$target" --arg session "$session" --arg harness "$harness" \
+			'{target:$target,session:$session,harness:$harness}' >>"$launched"
+		batch=$((batch + 1))
+		if (( batch >= jobs )); then
+			_ats_wait_for_ready "$launched" "$tmux_bin" || { status=$?; rm -f "$launched"; return "$status"; }
+			: >"$launched"
+			batch=0
+		fi
+	done < <(jq -c '.agents | sort_by(.tmux_session,.window_index,.pane_index)[]' "$path")
+	_ats_wait_for_ready "$launched" "$tmux_bin"
+	status=$?
+	rm -f "$launched"
+	return "$status"
+}
+
+_ats_idle() {
+	local harness="$1" screen="$2"
+	case "$harness" in
+		codex) [[ "$screen" == *'Ask Codex to do anything'* ]] ;;
+		claude) [[ "$screen" == *'bypass permissions on'* && "$screen" == *'❯'* ]] ;;
+		grok) [[ "$screen" == *'always-approve'* && "$screen" == *'❯'* ]] ;;
+	esac
+}
+
+_ats_shutdown() {
+	local path="$1" force="$2" tmux_bin="${AGENT_TMUX_SESSIONS_TMUX_BIN:-tmux}"
+	local row session pane_id harness screen busy=0
+	local sessions_file
+
+	_ats_snapshot "$path" >/dev/null || return
+	sessions_file="$(mktemp "${TMPDIR:-/tmp}/agent_tmux_sessions_shutdown.XXXXXX")" || return 73
+	: >"$sessions_file"
+	while IFS= read -r row; do
+		session="$(jq -r .tmux_session <<<"$row")"
+		pane_id="$(jq -r .pane_id <<<"$row")"
+		harness="$(jq -r .harness <<<"$row")"
+		screen="$("$tmux_bin" capture-pane -p -t "$pane_id" 2>/dev/null)"
+		printf '%s\n' "$session" >>"$sessions_file"
+		if ! _ats_idle "$harness" "$screen"; then
+			printf 'agent_tmux_sessions: refusing shutdown; %s pane %s (%s) is not demonstrably idle.\n' \
+				"$session" "$pane_id" "$harness" >&2
+			busy=1
+		fi
+	done < <(jq -c '.agents[]' "$path")
+	if (( busy && ! force )); then
+		rm -f "$sessions_file"
+		return 75
+	fi
+
+	while IFS= read -r row; do
+		pane_id="$(jq -r .pane_id <<<"$row")"
+		harness="$(jq -r .harness <<<"$row")"
+		"$tmux_bin" send-keys -t "$pane_id" -l '/exit' || :
+		if [[ "$harness" == codex ]]; then
+			"$tmux_bin" send-keys -t "$pane_id" Enter || :
+		else
+			"$tmux_bin" send-keys -t "$pane_id" $'\e[13u' || :
+		fi
+	done < <(jq -c '.agents[]' "$path")
+
+	local wait_cycles="${AGENT_TMUX_SESSIONS_EXIT_WAIT_CYCLES:-20}" i
+	for ((i=0; i<wait_cycles; i++)); do
+		sleep 0.1
+	done
+	sort -u "$sessions_file" | while IFS= read -r session; do
+		"$tmux_bin" kill-session -t "=$session" 2>/dev/null || :
+	done
+	rm -f "$sessions_file"
+}
+
+agent_tmux_sessions() {
+	local action="${1:-}" path='' dry_run=0 force=0 jobs=4 jobs_set=0
+	case "$action" in
+		-h | --help) _ats_help; return 0 ;;
+		--about) _ats_about; return 0 ;;
+		snapshot | restore | shutdown) shift ;;
+		'') _ats_help >&2; return 64 ;;
+		*) printf 'agent_tmux_sessions: unknown action: %s\n' "$action" >&2; return 64 ;;
+	esac
+
+	while (( $# > 0 )); do
+		case "$1" in
+			--dry-run) dry_run=1 ;;
+			--force) force=1 ;;
+			--jobs)
+				(( $# >= 2 )) || {
+					printf 'agent_tmux_sessions: --jobs requires a value.\n' >&2
+					return 64
+				}
+				jobs="$2"
+				jobs_set=1
+				shift
+				;;
+			--jobs=*) jobs="${1#*=}"; jobs_set=1 ;;
+			-h | --help) _ats_help; return 0 ;;
+			--about) _ats_about; return 0 ;;
+			--*) printf 'agent_tmux_sessions: unknown option: %s\n' "$1" >&2; return 64 ;;
+			*)
+				[[ -z "$path" ]] || {
+					printf 'agent_tmux_sessions: only one state path may be supplied.\n' >&2
+					return 64
+				}
+				path="$1"
+				;;
+		esac
+		shift
+	done
+	[[ -n "$path" ]] || path="$(_ats_default_path)"
+
+	case "$action" in
+		snapshot)
+			(( dry_run == 0 && force == 0 && jobs_set == 0 )) || {
+				printf 'agent_tmux_sessions: snapshot accepts no --dry-run, --force, or --jobs option.\n' >&2
+				return 64
+			}
+			_ats_snapshot "$path"
+			;;
+		restore)
+			(( force == 0 )) || {
+				printf 'agent_tmux_sessions: --force applies only to shutdown.\n' >&2
+				return 64
+			}
+			_ats_restore "$path" "$dry_run" "$jobs"
+			;;
+		shutdown)
+			(( dry_run == 0 && jobs_set == 0 )) || {
+				printf 'agent_tmux_sessions: --dry-run and --jobs apply only to restore.\n' >&2
+				return 64
+			}
+			_ats_shutdown "$path" "$force"
+			;;
+	esac
+}
+
+if ! (return 0 2>/dev/null); then
+	agent_tmux_sessions "$@"
+	exit $?
+fi

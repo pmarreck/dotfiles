@@ -1,0 +1,344 @@
+#!/usr/bin/env bash
+
+# agent_tmux_sessions_test — deterministic fleet snapshot/restore/shutdown CLI.
+
+set -u
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+command_under_test="$repo_root/bin/agent_tmux_sessions"
+# Repository-local helper is present in every test environment.
+# shellcheck disable=SC1091
+source "$repo_root/bin/src/capture.bash"
+
+tests=0
+fails=0
+
+pass() {
+	printf '✓ %s\n' "$1"
+}
+
+fail() {
+	printf '✗ %s\n' "$1" >&2
+	fails=$((fails + 1))
+}
+
+assert_eq() {
+	local actual="$1" expected="$2" description="$3"
+	tests=$((tests + 1))
+	if [[ "$actual" == "$expected" ]]; then pass "$description"; else
+		printf '  expected: %q\n  actual:   %q\n' "$expected" "$actual" >&2
+		fail "$description"
+	fi
+}
+
+assert_contains() {
+	local actual="$1" expected="$2" description="$3"
+	tests=$((tests + 1))
+	if [[ "$actual" == *"$expected"* ]]; then pass "$description"; else
+		printf '  missing: %q\n  actual:  %q\n' "$expected" "$actual" >&2
+		fail "$description"
+	fi
+}
+
+assert_file() {
+	local path="$1" description="$2"
+	tests=$((tests + 1))
+	if [[ -f "$path" ]]; then pass "$description"; else fail "$description"; fi
+}
+
+work="$(mktemp -d --tmpdir agent_tmux_sessions_test.XXXXXX)"
+trap 'rm -rf "$work"' EXIT
+mkdir -p "$work/bin" "$work/state" "$work/code/project with spaces" \
+	"$work/code/romantic_collation" "$work/code/renamed_project" "$work/claude/project"
+mkdir -p "$work/code/multiwindow"
+
+printf '#!%s\n' "$(command -v bash)" >"$work/bin/tmux"
+cat >>"$work/bin/tmux" <<'FAKE_TMUX'
+set -u
+root="${ATS_FIXTURE_ROOT:?}"
+printf '%s\n' "$*" >>"$root/tmux.log"
+next_pane() {
+	local next=90 launch="${*: -1}" harness screen
+	[[ -f "$root/next_pane" ]] && next="$(<"$root/next_pane")"
+	printf '%s\n' "$((next + 1))" >"$root/next_pane"
+	case "$launch" in
+		*codex*) harness=codex; screen='OpenAI Codex | Ask Codex to do anything' ;;
+		*claude*) harness=claude; screen='Claude Code | ❯ | bypass permissions on' ;;
+		*grok*) harness=grok; screen='Grok 4.6 | ❯ | always-approve' ;;
+		*) harness=unknown; screen='' ;;
+	esac
+	if [[ "${ATS_FAKE_BLOCK_HARNESS:-}" == "$harness" ]]; then
+		screen='Do you trust this folder? (y/n)'
+	elif [[ "${ATS_FAKE_PENDING_HARNESS:-}" == "$harness" ]]; then
+		screen='Booting...'
+	fi
+	printf '%s\n' "$screen" >"$root/screen.$next"
+	case "$harness" in codex) printf 'codex\n' ;; claude) printf 'claude\n' ;; grok) printf 'grok\n' ;; *) printf 'bash\n' ;; esac >"$root/command.$next"
+	printf '%%%s\n' "$next"
+}
+case "${1:-}" in
+	list-panes)
+		cat "$root/panes"
+		;;
+	capture-pane)
+		target=''
+		while (( $# > 0 )); do
+			if [[ "$1" == -t ]]; then target="$2"; break; fi
+			shift
+		done
+		file="$root/screen.${target#%}"
+		[[ -f "$file" ]] && cat "$file"
+		;;
+	has-session)
+		target="${*: -1}"
+		target="${target#=}"
+		[[ -f "$root/existing_sessions" ]] && rg -qx -F "$target" "$root/existing_sessions"
+		;;
+	new-session)
+		next_pane "$@"
+		;;
+	new-window)
+		next_pane "$@"
+		;;
+	display-message)
+		target=''
+		while (( $# > 0 )); do
+			if [[ "$1" == -t ]]; then target="$2"; break; fi
+			shift
+		done
+		[[ -f "$root/command.${target#%}" ]] && cat "$root/command.${target#%}"
+		;;
+	rename-window | select-window | select-pane | select-layout | send-keys | kill-session)
+		;;
+	split-window)
+		next_pane "$@"
+		;;
+	*)
+		printf 'fake tmux: unsupported command: %s\n' "$*" >&2
+		exit 70
+		;;
+esac
+FAKE_TMUX
+chmod +x "$work/bin/tmux"
+
+printf '#!%s\n' "$(command -v bash)" >"$work/bin/ps"
+cat >>"$work/bin/ps" <<'FAKE_PS'
+set -u
+root="${ATS_FIXTURE_ROOT:?}"
+pid=''
+while (( $# > 0 )); do
+	if [[ "$1" == -p ]]; then pid="$2"; shift 2; else shift; fi
+done
+awk -F '\t' -v wanted="$pid" '$1 == wanted {sub(/^[^\t]*\t/, ""); print; found=1} END {exit !found}' "$root/processes"
+FAKE_PS
+chmod +x "$work/bin/ps"
+
+printf '#!%s\n' "$(command -v bash)" >"$work/bin/pgrep"
+cat >>"$work/bin/pgrep" <<'FAKE_PGREP'
+set -u
+root="${ATS_FIXTURE_ROOT:?}"
+parent=''
+while (( $# > 0 )); do
+	if [[ "$1" == -P ]]; then parent="$2"; shift 2; else shift; fi
+done
+awk -F '\t' -v wanted="$parent" '$1 == wanted {print $2}' "$root/children"
+FAKE_PGREP
+chmod +x "$work/bin/pgrep"
+
+codex_id='11111111-1111-4111-8111-111111111111'
+claude_id='22222222-2222-4222-8222-222222222222'
+grok_id='33333333-3333-4333-8333-333333333333'
+child_codex_id='44444444-4444-4444-8444-444444444444'
+window_codex_id='55555555-5555-4555-8555-555555555555'
+window_grok_id='66666666-6666-4666-8666-666666666666'
+
+project_spaces="$work/code/project with spaces"
+romantic="$work/code/romantic_collation"
+renamed_project="$work/code/renamed_project"
+multiwindow="$work/code/multiwindow"
+claude_project="$work/claude/project"
+
+{
+	printf 'alpha|0|main|tiled|0|%%1|codex|%s|101|1\n' "$project_spaces"
+	printf 'alpha|0|main|tiled|1|%%2|claude|%s|102|0\n' "$claude_project"
+	printf 'romantic_collation|0|main|even-horizontal|0|%%3|grok|%s|103|1\n' "$romantic"
+	printf 'shell-only|0|main|tiled|0|%%4|bash|%s|104|1\n' "$work/code"
+	printf 'renamed_project|0|main|tiled|0|%%5|codex|%s|105|1\n' "$renamed_project"
+	printf 'multiwindow|1|first|tiled|0|%%6|codex|%s|106|1\n' "$multiwindow"
+	printf 'multiwindow|2|second|tiled|0|%%7|grok|%s|107|0\n' "$multiwindow"
+} >"$work/panes"
+
+{
+	printf '101\tcodex resume --dangerously-bypass-approvals-and-sandbox %s --token SECRET_MUST_NOT_PERSIST\n' "$codex_id"
+	printf '102\tclaude --rc --permission-mode bypassPermissions --continue\n'
+	printf '103\tgrok --yolo --resume %s\n' "$grok_id"
+	printf '104\tbash\n'
+	printf '105\t-bash\n'
+	printf '205\tcodex resume --dangerously-bypass-approvals-and-sandbox %s\n' "$child_codex_id"
+	printf '106\tcodex resume --dangerously-bypass-approvals-and-sandbox %s\n' "$window_codex_id"
+	printf '107\tgrok --yolo --resume %s\n' "$window_grok_id"
+} >"$work/processes"
+printf '105\t205\n' >"$work/children"
+
+claude_history="$work/claude-history/project/$claude_id.jsonl"
+mkdir -p "$(dirname "$claude_history")"
+printf '{"type":"user","sessionId":"%s","cwd":"%s","timestamp":"2026-08-28T20:00:00.000Z"}\n' \
+	"$claude_id" "$claude_project" >"$claude_history"
+
+printf '› Ask Codex to do anything\n' >"$work/screen.1"
+printf '❯\nbypass permissions on\n' >"$work/screen.2"
+printf '│ ❯\nGrok 4.6 (high) · always-approve\n' >"$work/screen.3"
+printf '› Ask Codex to do anything\n' >"$work/screen.5"
+printf '› Ask Codex to do anything\n' >"$work/screen.6"
+printf '│ ❯\nGrok 4.6 (high) · always-approve\n' >"$work/screen.7"
+
+export ATS_FIXTURE_ROOT="$work"
+export AGENT_TMUX_SESSIONS_TMUX_BIN="$work/bin/tmux"
+export AGENT_TMUX_SESSIONS_PS_BIN="$work/bin/ps"
+export AGENT_TMUX_SESSIONS_PGREP_BIN="$work/bin/pgrep"
+export AGENT_TMUX_SESSIONS_CODEX_ROOT="$work/no-codex-history"
+export AGENT_TMUX_SESSIONS_CLAUDE_ROOT="$work/claude-history"
+export AGENT_TMUX_SESSIONS_GROK_ROOT="$work/no-grok-history"
+export AGENT_TMUX_SESSIONS_NOW='2026-09-02T16:30:00-04:00'
+export AGENT_TMUX_SESSIONS_HOST='test-host'
+export AGENT_TMUX_SESSIONS_BOOT_CYCLES=1
+export AGENT_TMUX_SESSIONS_BOOT_INTERVAL=0
+export XDG_STATE_HOME="$work/state"
+
+out='' err='' rc=0
+capture "$command_under_test" --help
+assert_eq "$rc" 0 '--help exits successfully'
+assert_contains "$out" 'snapshot [PATH]' '--help documents snapshot API'
+assert_contains "$out" 'restore [PATH]' '--help documents restore API'
+assert_contains "$out" 'shutdown [PATH]' '--help documents shutdown API'
+assert_contains "$out" '--jobs N' '--help documents bounded restore concurrency'
+
+capture "$command_under_test" --about
+assert_eq "$rc" 0 '--about exits successfully'
+assert_eq "$(printf '%s\n' "$out" | wc -l | tr -d ' ')" 1 '--about is one line'
+
+state="$work/fleet.json"
+capture "$command_under_test" snapshot "$state"
+assert_eq "$rc" 0 'snapshot exits successfully'
+assert_eq "$err" '' 'snapshot has clean stderr'
+assert_file "$state" 'snapshot creates the requested state file'
+assert_eq "$(stat -c %a "$state")" 600 'snapshot is private'
+assert_eq "$(jq -r .schema "$state")" 'agent-tmux-sessions/v1' 'snapshot writes the v1 schema'
+assert_eq "$(jq -r .captured_at "$state")" '2026-09-02T16:30:00-04:00' 'snapshot uses the injected datetime'
+assert_eq "$(jq -r .host "$state")" 'test-host' 'snapshot records the host'
+assert_eq "$(jq '.agents | length' "$state")" 6 'snapshot records only agent panes'
+assert_eq "$(jq -r --arg cwd "$project_spaces" '.agents[] | select(.harness=="codex" and .cwd==$cwd) | .conversation_id' "$state")" "$codex_id" 'snapshot extracts an explicit Codex UUID'
+assert_eq "$(jq -r '.agents[] | select(.harness=="claude") | .conversation_id' "$state")" "$claude_id" 'snapshot resolves Claude --continue through native history'
+assert_eq "$(jq -r --arg cwd "$romantic" '.agents[] | select(.harness=="grok" and .cwd==$cwd) | .conversation_id' "$state")" "$grok_id" 'snapshot extracts an explicit Grok UUID'
+assert_eq "$(jq -r --arg cwd "$renamed_project" '.agents[] | select(.cwd==$cwd) | .conversation_id' "$state")" "$child_codex_id" 'snapshot resolves the foreground agent beneath tmux parent shell'
+assert_eq "$(jq -r --arg id "$codex_id" '.agents[] | select(.conversation_id==$id) | .cwd' "$state")" "$project_spaces" 'snapshot preserves a cwd containing spaces'
+assert_eq "$(jq '[.agents[] | select(.tmux_session=="alpha")] | length' "$state")" 2 'snapshot preserves multiple agents in one tmux session'
+if rg -q 'SECRET_MUST_NOT_PERSIST' "$state"; then fail 'snapshot excludes process arguments and secrets'; tests=$((tests + 1)); else pass 'snapshot excludes process arguments and secrets'; tests=$((tests + 1)); fi
+
+rm -f "$work/tmux.log"
+capture "$command_under_test" restore --dry-run "$state"
+assert_eq "$rc" 0 'restore --dry-run exits successfully'
+assert_eq "$err" '' 'restore --dry-run has clean stderr'
+assert_contains "$out" "codex resume --include-non-interactive --dangerously-bypass-approvals-and-sandbox" 'Codex restore uses full privileges'
+assert_contains "$out" "$codex_id" 'Codex restore names the exact conversation'
+assert_contains "$out" 'claude --rc --permission-mode bypassPermissions' 'Claude restore uses full privileges'
+assert_contains "$out" "$claude_id" 'Claude restore names the exact conversation'
+assert_contains "$out" 'grok --always-approve --permission-mode bypassPermissions --sandbox off' 'Grok restore explicitly disables its sandbox'
+assert_contains "$out" "$grok_id" 'Grok restore names the exact conversation'
+assert_contains "$out" "$project_spaces" 'restore preview preserves paths containing spaces'
+tmux_calls=0
+[[ -f "$work/tmux.log" ]] && tmux_calls="$(wc -l <"$work/tmux.log" | tr -d ' ')"
+assert_eq "$tmux_calls" 0 'restore --dry-run does not call tmux'
+
+rm -f "$work/tmux.log"
+capture "$command_under_test" restore "$state"
+assert_eq "$rc" 0 'restore executes successfully through injected tmux'
+assert_eq "$err" '' 'restore execution has clean stderr'
+assert_eq "$(rg -c '^restored-ready:' <<<"$out")" 6 'restore verifies every newly launched pane'
+assert_eq "$(rg -c '^new-session ' "$work/tmux.log")" 4 'restore creates each tmux session once'
+assert_eq "$(rg -c '^new-window ' "$work/tmux.log")" 1 'restore recreates later agent-bearing windows'
+assert_eq "$(rg -c '^split-window ' "$work/tmux.log")" 1 'restore recreates the second pane in a multi-agent session'
+first_readiness_line="$(rg -n '^capture-pane -p -t ' "$work/tmux.log" | head -n 1 | cut -d: -f1)"
+fifth_launch_line="$(rg -n '^(new-session|new-window|split-window) ' "$work/tmux.log" | sed -n '5p' | cut -d: -f1)"
+if [[ -n "$first_readiness_line" && -n "$fifth_launch_line" && "$first_readiness_line" -lt "$fifth_launch_line" ]]; then
+	bounded_restore=yes
+else
+	bounded_restore=no
+fi
+assert_eq "$bounded_restore" yes 'restore verifies one four-agent batch before launching the fifth agent'
+assert_contains "$(<"$work/tmux.log")" '--dangerously-bypass-approvals-and-sandbox' 'executed Codex launch retains full privileges'
+assert_contains "$(<"$work/tmux.log")" '--sandbox off' 'executed Grok launch explicitly disables its sandbox'
+if rg -q '^send-keys .*codex\|^send-keys .*claude\|^send-keys .*grok' "$work/tmux.log"; then
+	fail 'restore launches agents directly instead of typing through shell startup'; tests=$((tests + 1))
+else
+	pass 'restore launches agents directly instead of typing through shell startup'; tests=$((tests + 1))
+fi
+
+printf 'alpha\n' >"$work/existing_sessions"
+rm -f "$work/tmux.log"
+capture "$command_under_test" restore "$state"
+assert_eq "$rc" 0 'restore remains successful when a recorded session already exists'
+assert_contains "$out" 'joined-running: alpha (left untouched)' 'existing session is reported as untouched'
+assert_eq "$(rg -c '^new-session ' "$work/tmux.log")" 3 'restore creates only absent sessions'
+alpha_splits="$(rg '^split-window ' "$work/tmux.log" | rg -c 'alpha' || true)"
+alpha_splits="${alpha_splits:-0}"
+assert_eq "$alpha_splits" 0 'restore adds no pane to an existing multi-agent session'
+rm -f "$work/existing_sessions"
+
+blocked_state="$work/blocked.json"
+jq '{schema,captured_at,host,agents:[.agents[] | select(.harness=="codex")][0:1]}' \
+	"$state" >"$blocked_state"
+rm -f "$work/next_pane" "$work/tmux.log"
+export ATS_FAKE_BLOCK_HARNESS=codex
+capture "$command_under_test" restore "$blocked_state"
+unset ATS_FAKE_BLOCK_HARNESS
+assert_eq "$rc" 69 'restore fails when a new pane stops at a trust gate'
+assert_contains "$err" 'trust prompt' 'blocked restore identifies the trust gate'
+assert_contains "$err" 'alpha' 'blocked restore identifies the affected session'
+
+rm -f "$work/next_pane" "$work/tmux.log"
+export ATS_FAKE_PENDING_HARNESS=codex
+capture "$command_under_test" restore "$blocked_state"
+unset ATS_FAKE_PENDING_HARNESS
+assert_eq "$rc" 69 'restore fails when a new pane never becomes ready'
+assert_contains "$err" 'did not become ready' 'restore timeout identifies an unready pane'
+
+default_state="$XDG_STATE_HOME/agent_tmux_sessions/latest.json"
+capture "$command_under_test" snapshot
+assert_eq "$rc" 0 'snapshot without a path exits successfully'
+assert_file "$default_state" 'snapshot uses the documented default path'
+
+printf 'busy tool output\nesc to interrupt\n' >"$work/screen.1"
+rm -f "$work/tmux.log"
+capture "$command_under_test" shutdown "$work/shutdown.json"
+assert_eq "$rc" 75 'shutdown refuses a busy agent'
+assert_contains "$err" 'alpha' 'busy shutdown diagnostic names the session'
+assert_file "$work/shutdown.json" 'shutdown snapshots before refusing'
+if rg -q '^kill-session ' "$work/tmux.log"; then fail 'busy shutdown kills no session'; tests=$((tests + 1)); else pass 'busy shutdown kills no session'; tests=$((tests + 1)); fi
+
+printf '› Ask Codex to do anything\n' >"$work/screen.1"
+rm -f "$work/tmux.log"
+capture "$command_under_test" shutdown "$work/shutdown.json"
+assert_eq "$rc" 0 'shutdown exits successfully when every agent is idle'
+first_list="$(rg -n '^list-panes ' "$work/tmux.log" | head -n 1 | cut -d: -f1)"
+first_kill="$(rg -n '^kill-session ' "$work/tmux.log" | head -n 1 | cut -d: -f1)"
+tests=$((tests + 1))
+if [[ -n "$first_list" && -n "$first_kill" && "$first_list" -lt "$first_kill" ]]; then
+	pass 'shutdown records the snapshot before killing sessions'
+else
+	fail 'shutdown records the snapshot before killing sessions'
+fi
+assert_eq "$(rg -c '^kill-session ' "$work/tmux.log")" 4 'shutdown kills each tmux session once'
+
+printf '{"schema":"wrong"}\n' >"$work/wrong.json"
+capture "$command_under_test" restore --dry-run "$work/wrong.json"
+assert_eq "$rc" 65 'restore rejects an unknown schema'
+assert_contains "$err" 'schema' 'unknown-schema diagnostic is explicit'
+
+printf '\n'
+if (( fails == 0 )); then
+	printf 'All %d agent_tmux_sessions tests passed\n' "$tests"
+else
+	printf '%d of %d agent_tmux_sessions tests failed\n' "$fails" "$tests" >&2
+fi
+exit "$fails"

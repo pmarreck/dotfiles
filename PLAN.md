@@ -1,5 +1,47 @@
 # dotfiles — TODO / Plans
 
+## Active — crash-safe agent tmux fleet snapshots (2026-09-02)
+
+- [x] Specify `agent_tmux_sessions snapshot [path]`, `restore [path]`, and
+      `shutdown [path]` with failing CLI tests and an injectable tmux/history
+      boundary. The default state path must be discoverable, atomic, and safe
+      across an unclean reboot.
+      Curiosity poke: `shutdown` must snapshot successfully before sending any
+      termination input, and a partial shutdown must remain recoverable.
+      Completed 2026-09-02 17:01 EDT with 62 deterministic CLI assertions and
+      an injected tmux, process, history, clock, and host boundary.
+- [x] Snapshot every agent pane's tmux session, pane topology, canonical cwd,
+      harness, exact resumable conversation ID, and enough launch metadata to
+      restore renamed projects. Exclude ordinary shells unless explicitly
+      requested, and never persist API keys or other environment secrets.
+      Curiosity poke: one project can intentionally contain multiple harnesses,
+      as `romantic_collation` does, while project basenames can collide.
+      Completed 2026-09-02 16:59 EDT: live dogfood captured 25 agents across
+      24 sessions into private current and previous state files; every ID
+      matches the hand-audited recovery manifest and raw argv/env are absent.
+- [x] Restore all agents with explicit full-privilege flags, exact IDs, and
+      bounded concurrency. Inspect terminal state for trust, summary, login,
+      selector, failed-resume, or stale-input gates before reporting success.
+      Curiosity poke: a slow direnv activation can make a timeout fallback paste
+      a second launch command into an already-running Codex input buffer.
+      Completed 2026-09-02 17:01 EDT: startup is batched four at a time, direct
+      pane launches avoid shell/direnv input races, existing sessions remain
+      untouched, and blocked or unready panes make restore fail explicitly.
+- [x] Add Grok Build to `erect-recent-agent-stacks`, preserve the current exact
+      session metadata contract, and make `erect-agent-stack` use explicit Grok
+      `--always-approve --permission-mode bypassPermissions --sandbox off`
+      launch flags.
+      Curiosity poke: `--yolo` controls approval behavior, while sandbox choice
+      is a separate capability and must not be left to mutable configuration.
+      Completed 2026-09-02 16:48 EDT: native Grok `summary.json` histories join
+      cross-harness newest-session selection, and launches explicitly set all
+      three privilege controls.
+- [ ] Run focused red-green tests, the complete host suite, and the hermetic Nix
+      gate; update dirtree notes, commit the known-good unit, and push the three
+      already-ahead commits plus this work only after every gate passes.
+      Curiosity poke: tests need isolated tmux sockets and deterministic fixture
+      histories so they neither find nor kill Peter's live fleet.
+
 ## Active — harden both `reformat_spaces_to_tabs` implementations (2026-08-27)
 
 - [x] Define deterministic inference tests for the three most frequent widths,

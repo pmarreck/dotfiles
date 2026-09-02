@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # Enforce hyphens for top-level executable command names. The exact allowlist
-# freezes legacy exceptions so the convention cannot silently regress again.
+# freezes approved exceptions so the convention cannot silently regress again.
 
 set -u
 
@@ -41,7 +41,7 @@ fi
 
 if ! diff -u "$scratch/allowed" "$scratch/actual" >"$scratch/diff"; then
 	printf 'FAIL: top-level executable underscore exceptions changed.\n' >&2
-	printf 'Use hyphens for new executables. Audit compatibility before editing the legacy allowlist.\n' >&2
+	printf 'Use hyphens for new executables. Audit compatibility or obtain an explicit API decision before editing the allowlist.\n' >&2
 	cat "$scratch/diff" >&2
 	((fails++))
 fi
