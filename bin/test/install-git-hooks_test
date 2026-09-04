@@ -31,8 +31,16 @@ else
 fi
 
 ((tests++))
-if git -C "$HOME/dotfiles" ls-files --error-unmatch .githooks/pre-push >/dev/null 2>&1; then
-	ok "pre-push hook is tracked"
+if git -C "$HOME/dotfiles" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+	if git -C "$HOME/dotfiles" ls-files --error-unmatch .githooks/pre-push >/dev/null 2>&1; then
+		ok "pre-push hook is tracked"
+	else
+		bad "pre-push hook must travel with the repository"
+	fi
+elif [ -x "$HOME/dotfiles/.githooks/pre-push" ]; then
+	# Nix strips .git from an exact source archive. Presence there proves the
+	# committed artifact carries the hook even though its index is unavailable.
+	ok "pre-push hook travels in the source archive"
 else
 	bad "pre-push hook must travel with the repository"
 fi

@@ -17,7 +17,7 @@ paths=(
 )
 
 cd "$repo_root" || exit 2
-matches="$(git grep -n -i -E "$pattern" -- "${paths[@]}")"
+matches="$(rg -n -i -e "$pattern" -- "${paths[@]}")"
 status=$?
 
 if (( status > 1 )); then
