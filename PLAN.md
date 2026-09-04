@@ -2,19 +2,28 @@
 
 ## Active — cross-host Fastfetch alias (2026-09-04)
 
-- [ ] Add one `about='fastfetch'` alias, with a failing-first test that rejects
+- [x] Add one `about='fastfetch'` alias, with a failing-first test that rejects
       duplicate definitions and competing dotfiles commands/functions.
   - Curiosity poke: aliases exist only in interactive shells, so verify a fresh
     shell after deployment rather than treating source text as the final proof.
-- [ ] Run the focused and complete suites, commit and push only the alias/test
+- [x] Run the focused and complete suites, commit and push only the alias/test
       unit, then verify the installed dotfiles checkout on reachable Nix hosts.
   - Curiosity poke: the repository's pre-push gate is authoritative and must
     not inherit unrelated files from another worktree.
-- [ ] Replace the generated `.git/hooks/pre-push` adapter with a tracked
+- [x] Replace the generated `.git/hooks/pre-push` adapter with a tracked
       `.githooks/pre-push`, make installation select it through repo-local
       `core.hooksPath`, and activate it on every reachable dotfiles clone.
   - Curiosity poke: Git intentionally does not trust hooks merely because a
     clone contains them, so one explicit local configuration step remains.
+  - Completed 2026-09-04 10:18 EDT. Commit `789d28a` passed 183 host tests,
+    136 hermetic Nix-source tests, and exact-commit Mechatron CI. Thelio,
+    Framework, and Tiki use the tracked hook; Tiki's later unrelated work was
+    preserved rather than stashed for a test-only fast-forward.
+- [ ] Reconcile the existing dirty, 25-commit-behind M4Max dotfiles checkout,
+      then pull the alias and select `.githooks` there without discarding its
+      NVM/startup work.
+  - Curiosity poke: the Mac edits overlap the same startup files changed when
+    Volta was retired, so a blind stash/pull/pop would be a poor merge plan.
 
 ## Active — crash-safe agent tmux fleet snapshots (2026-09-02)
 
