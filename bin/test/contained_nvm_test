@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+
+set -u
+
+fails=0
+tests=0
+test_dir="$(mktemp -d --tmpdir contained_nvm.XXXXXX)"
+trap 'command rm -rf "$test_dir"' EXIT
+
+mkdir -p "$test_dir/nvm/versions/node/vtest/bin" "$test_dir/user-bin" "$test_dir/system-bin"
+touch "$test_dir/nvm/versions/node/vtest/bin/item"
+
+cat >"$test_dir/user-bin/find" <<'EOF'
+#!/usr/bin/env bash
+exit 88
+EOF
+cat >"$test_dir/system-bin/find" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod +x "$test_dir/user-bin/find" "$test_dir/system-bin/find"
+
+cat >"$test_dir/nvm/nvm.sh" <<'EOF'
+nvm() {
+	case "${1-}" in
+		probe)
+			local matches=("$NVM_TEST_GLOB"/*)
+			[[ ${#matches[@]} -eq 1 && "${matches[0]}" == "$NVM_TEST_GLOB/item" ]]
+			;;
+		probe-home)
+			[[ "$HOME" == "$NVM_DIR/home" && ! -e "$HOME/.npmrc" ]]
+			;;
+		probe-find)
+			command find
+			;;
+		use)
+			export NVM_BIN="$NVM_TEST_GLOB"
+			export PATH="$NVM_BIN:$PATH"
+			;;
+		fail)
+			return 7
+			;;
+		*)
+			return 0
+			;;
+	esac
+}
+EOF
+
+export NVM_DIR="$test_dir/nvm"
+export NVM_TEST_GLOB="$NVM_DIR/versions/node/vtest/bin"
+export NVM_SYSTEM_BIN="$test_dir/system-bin"
+export PATH="$test_dir/user-bin:$PATH"
+original_home="$HOME"
+original_path="$PATH"
+unset NPM_CONFIG_USERCONFIG npm_config_cache COREPACK_HOME NODE_REPL_HISTORY 2>/dev/null || :
+
+# shellcheck source=../src/contained_nvm.bash
+. "$HOME/dotfiles/bin/src/contained_nvm.bash"
+
+check() {
+	local label="$1"
+	shift
+	((tests++))
+	if "$@"; then
+		printf '✓ %s\n' "$label"
+	else
+		printf '✗ %s\n' "$label" >&2
+		((fails++))
+	fi
+}
+
+set -f
+check 'wrapper enables globbing for upstream nvm' nvm probe
+check 'wrapper restores noglob after success' bash -c '[[ "$1" == *f* ]]' _ "$-"
+
+before_path="$PATH"
+check 'nvm use succeeds through wrapper' nvm use
+check 'upstream PATH mutation survives wrapper' bash -c '[[ "$1" == "$2":* ]]' _ "$PATH" "$NVM_TEST_GLOB"
+
+status=0
+nvm fail || status=$?
+check 'upstream failure status is preserved' test "$status" -eq 7
+check 'wrapper restores noglob after failure' bash -c '[[ "$1" == *f* ]]' _ "$-"
+check 'wrapper remains installed for later calls' nvm probe
+check 'upstream nvm sees only its private HOME' nvm probe-home
+check 'real HOME is restored after invocation' test "$HOME" = "$original_home"
+check 'upstream nvm bypasses guarded user tools' nvm probe-find
+check 'user PATH order is restored after invocation' test "$PATH" = "$NVM_TEST_GLOB:$original_path"
+
+check 'npm config is contained' test "$NPM_CONFIG_USERCONFIG" = "$NVM_DIR/npmrc"
+check 'npm cache is contained' test "$npm_config_cache" = "$NVM_DIR/npm-cache"
+check 'Corepack state is contained' test "$COREPACK_HOME" = "$NVM_DIR/corepack"
+check 'Node REPL history is contained' test "$NODE_REPL_HISTORY" = "$NVM_DIR/node_repl_history"
+
+PATH="$before_path"
+
+if ((fails)); then
+	printf '%s of %s tests failed\n' "$fails" "$tests" >&2
+else
+	printf 'All %s tests passed\n' "$tests"
+fi
+exit "$fails"
