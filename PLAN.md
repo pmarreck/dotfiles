@@ -10,6 +10,11 @@
       unit, then verify the installed dotfiles checkout on reachable Nix hosts.
   - Curiosity poke: the repository's pre-push gate is authoritative and must
     not inherit unrelated files from another worktree.
+- [ ] Replace the generated `.git/hooks/pre-push` adapter with a tracked
+      `.githooks/pre-push`, make installation select it through repo-local
+      `core.hooksPath`, and activate it on every reachable dotfiles clone.
+  - Curiosity poke: Git intentionally does not trust hooks merely because a
+    clone contains them, so one explicit local configuration step remains.
 
 ## Active — crash-safe agent tmux fleet snapshots (2026-09-02)
 

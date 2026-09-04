@@ -108,6 +108,8 @@ done
 
 popd # $HOME
 
+"$DIR/bin/install-git-hooks" "$DIR"
+
 echo
 echo "note: Library/Application Support and Library/Services are not installed by default"
 echo "since they are macOS-only, please install manually."

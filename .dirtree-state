@@ -24,6 +24,7 @@ hide=[
 ]
 
 annotate=[
+	.githooks/pre-push = Tracked Git pre-push entry point for the complete dotfiles validity gate
 	.pathconfig = Canonical, idempotent PATH constructor and sole location allowed to export PATH
 	RULES.md = Durable dotfiles policy decisions, including the explicit decision not to add i18n to personal helper commands.
 	bin/agent_tmux_sessions = Atomic exact-ID snapshot, full-privilege restore, and idle-gated shutdown for tmux-hosted Codex, Claude, and Grok fleets.
@@ -128,6 +129,7 @@ annotate=[
 	bin/test/kill-steam-proton-pids_test = Killing layer with injected enumerator+kill cmd: dry-run signals nothing, normal run does, order, escalation, pid guards
 	bin/test/nas_ps1_test = static-content validation for bin/nas.ps1 (no pwsh required locally); checks param block, both protocol branches, safety helpers, mojibake hygiene; opportunistic pwsh parse if available
 	bin/test/nas_test = TDD coverage for bin/nas: pure helpers (_nas_fstab_line, _nas_nixos_snippet, _nas_auto_nfs_line), platform override, --help, --dry-run for all three OS branches
+	bin/test/no_volta_test = Prevents retired Volta shell and PATH configuration from returning
 	bin/test/npmrc_project_config_test = guards that no repo .npmrc sets prefix, and that npmrc still installs as ~/.npmrc
 	bin/test/path_export_policy_test = Push-gated classifier forbidding tracked PATH export commands outside .pathconfig
 	bin/test/pathconfig_code_bin_denylist_test = tests that denylisted $CODE project bin dirs never reach PATH, by discovery or inheritance

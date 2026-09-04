@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# install-git-hooks_test — a hook that silently fails to install is a gate that
-# does not exist, so installation must be idempotent AND self-verifying.
+# install-git-hooks_test — hooks belong in the tracked repository; installation
+# only selects that directory through Git's local configuration.
 #
 # Every case runs against a throwaway git repository rather than this one; an
 # installer tested only against an already-correct repo proves nothing.
@@ -24,55 +24,95 @@ fresh_repo() { # echoes a new repo path
 }
 
 ((tests++))
-r=$(fresh_repo a)
-"$INSTALLER" "$r" >/dev/null 2>&1
-if [ -x "$r/.git/hooks/pre-push" ]; then
-	ok "installs an executable pre-push hook"
+if [ -x "$HOME/dotfiles/.githooks/pre-push" ]; then
+	ok "repository owns an executable pre-push hook"
 else
-	bad "pre-push hook was not installed or is not executable"
+	bad "tracked .githooks/pre-push is missing or not executable"
 fi
 
 ((tests++))
-if grep -q 'pre-push-gate' "$r/.git/hooks/pre-push" 2>/dev/null; then
-	ok "installed hook invokes pre-push-gate"
+if git -C "$HOME/dotfiles" ls-files --error-unmatch .githooks/pre-push >/dev/null 2>&1; then
+	ok "pre-push hook is tracked"
 else
-	bad "installed hook does not reference pre-push-gate"
+	bad "pre-push hook must travel with the repository"
+fi
+
+r=$(fresh_repo a)
+mkdir -p "$r/.githooks" "$r/bin"
+printf '#!/usr/bin/env bash\nexec "$(git rev-parse --show-toplevel)/bin/pre-push-gate" "$@"\n' > "$r/.githooks/pre-push"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$r/bin/pre-push-gate"
+chmod +x "$r/.githooks/pre-push" "$r/bin/pre-push-gate"
+
+((tests++))
+"$INSTALLER" "$r" >/dev/null 2>&1
+configured=$(git -C "$r" config --local --get core.hooksPath)
+if [ "$configured" = .githooks ]; then
+	ok "selects the tracked hook directory through local Git config"
+else
+	bad "core.hooksPath should be .githooks, got [$configured]"
+fi
+
+((tests++))
+if [ ! -e "$r/.git/hooks/pre-push" ]; then
+	ok "does not generate an untracked pre-push adapter"
+else
+	bad "installer should not create .git/hooks/pre-push"
+fi
+
+((tests++))
+if grep -q 'pre-push-gate' "$r/.githooks/pre-push" 2>/dev/null; then
+	ok "tracked hook invokes pre-push-gate"
+else
+	bad "tracked hook does not reference pre-push-gate"
 fi
 
 # Idempotence: re-running must succeed and must not append a second copy.
 ((tests++))
-before=$(cat "$r/.git/hooks/pre-push" 2>/dev/null)
+before=$(git -C "$r" config --local --get core.hooksPath)
 "$INSTALLER" "$r" >/dev/null 2>&1; rc=$?
-after=$(cat "$r/.git/hooks/pre-push" 2>/dev/null)
+after=$(git -C "$r" config --local --get core.hooksPath)
 if [ "$rc" = 0 ] && [ "$before" = "$after" ]; then
 	ok "re-running the installer is idempotent"
 else
-	bad "installer is not idempotent (rc=$rc, content changed: $([ "$before" = "$after" ] && echo no || echo yes))"
+	bad "installer is not idempotent (rc=$rc, config changed: $([ "$before" = "$after" ] && echo no || echo yes))"
 fi
 
 # A pre-existing unrelated hook must not be destroyed silently.
 ((tests++))
 r2=$(fresh_repo b)
+mkdir -p "$r2/.githooks" "$r2/bin"
+printf '#!/usr/bin/env bash\nexec "$(git rev-parse --show-toplevel)/bin/pre-push-gate" "$@"\n' > "$r2/.githooks/pre-push"
+chmod +x "$r2/.githooks/pre-push"
 mkdir -p "$r2/.git/hooks"
 printf '#!/bin/sh\necho someone elses hook\n' > "$r2/.git/hooks/pre-push"
 chmod +x "$r2/.git/hooks/pre-push"
 out=$("$INSTALLER" "$r2" 2>&1); rc=$?
-if [ "$rc" != 0 ] || [ -n "$(glob ls "$r2/.git/hooks/pre-push.backup"* 2>/dev/null)" ]; then
-	ok "refuses to clobber a foreign hook, or preserves it"
+if [ "$rc" != 0 ] && grep -qi 'unmanaged' <<<"$out"; then
+	ok "refuses to bypass an unmanaged legacy hook"
 else
-	bad "an unrelated pre-push hook was overwritten with no backup and no error" "output: $out"
+	bad "installer silently bypassed an unmanaged legacy hook" "output: $out"
 fi
 
 # Self-verification must FAIL loudly when the install cannot take effect.
 ((tests++))
 r3=$(fresh_repo c)
-chmod -w "$r3/.git/hooks" 2>/dev/null
+mkdir -p "$r3/.githooks"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$r3/.githooks/pre-push"
+chmod +x "$r3/.githooks/pre-push"
+chmod -w "$r3/.git" 2>/dev/null
 out=$("$INSTALLER" "$r3" 2>&1); rc=$?
-chmod +w "$r3/.git/hooks" 2>/dev/null
+chmod +w "$r3/.git" 2>/dev/null
 if [ "$rc" != 0 ]; then
-	ok "reports failure when the hook cannot be written"
+	ok "reports failure when local Git configuration cannot be written"
 else
-	bad "installer reported success despite being unable to install" "output: $out"
+	bad "installer reported success despite being unable to configure hooks" "output: $out"
+fi
+
+((tests++))
+if rg -q 'bin/install-git-hooks' "$HOME/dotfiles/install_dotfiles"; then
+	ok "dotfiles installation activates repository-owned hooks"
+else
+	bad "install_dotfiles must activate the tracked hooks"
 fi
 
 ((tests++))
