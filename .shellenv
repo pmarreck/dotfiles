@@ -88,21 +88,8 @@ else
 	fi
 fi
 
-# --- Node toolchain: VOLTA OWNS IT; pnpm is the package manager only ---
-# (decision 2026-06-06; see the note synced to the Mac's ~/dotfiles/inbox)
-# Rules: no corepack; never `pnpm add -g` (use `volta install`); no `pnpm env`.
-export VOLTA_HOME="$HOME/.volta"
-export VOLTA_FEATURE_PNPM=1     # without this, Volta's pnpm shim has nothing behind it
+# Keep pnpm's mutable state in its XDG-style user directory.
 export PNPM_HOME="$HOME/.local/share/pnpm"
-# (PATH entries for these are added by .pathconfig)
-
-# --- toolchain guardrail (interactive only) — warn if a non-Volta pnpm shadows the shim ---
-if ${INTERACTIVE_SHELL:-false}; then
-	_pnpm="$(command -v pnpm 2>/dev/null)"
-	if [ -n "$_pnpm" ] && case "$_pnpm" in "$VOLTA_HOME"/*) false ;; *) true ;; esac; then
-		printf 'shellenv: WARNING pnpm on PATH is not the Volta shim (%s) — corepack/brew/standalone pnpm may conflict; Volta owns pnpm\n' "$_pnpm" >&2
-	fi
-	unset _pnpm
-fi
+# Its PATH entry is declared in .pathconfig.
 # (note: __SHELLENV_LOADED is set+exported at the TOP, intentionally, to prevent
 # BASH_ENV recursion — see the comment up there.)

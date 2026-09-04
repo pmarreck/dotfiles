@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+
+# Volta was deliberately retired; keep shell startup and helper code free of it.
+
+set -u
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+pattern='VOLTA_|\.volta(/|[^[:alnum:]_])|volta[[:space:]]+(install|run|which|pin|list)'
+paths=(
+	.bash_profile
+	.bashrc
+	.envconfig
+	.pathconfig
+	.profile
+	.shellenv
+	bin/src
+)
+
+cd "$repo_root" || exit 2
+matches="$(git grep -n -i -E "$pattern" -- "${paths[@]}")"
+status=$?
+
+if (( status > 1 )); then
+	printf 'not ok - Volta configuration scan failed with status %s\n' "$status" >&2
+	exit 2
+fi
+
+if [ -n "$matches" ]; then
+	printf 'not ok - retired Volta configuration remains:\n%s\n' "$matches" >&2
+	exit 1
+fi
+
+printf 'ok - shell configuration and helpers contain no retired Volta setup\n'

@@ -92,7 +92,6 @@ PATH_ADDITIONS=(
 	"$HOME/.cache/lm-studio/bin"
 	"$HOME/.npm-global/bin"
 	"$HOME/.local/share/pnpm/bin"
-	"$HOME/.volta/bin"
 )
 
 # macOS Nix: prefer Nix over system and Homebrew
