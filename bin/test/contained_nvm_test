@@ -35,7 +35,7 @@ nvm() {
 			;;
 		use)
 			export NVM_BIN="$NVM_TEST_GLOB"
-			export PATH="$NVM_BIN:$PATH"
+			PATH="$NVM_BIN:$PATH"
 			;;
 		fail)
 			return 7
@@ -50,7 +50,7 @@ EOF
 export NVM_DIR="$test_dir/nvm"
 export NVM_TEST_GLOB="$NVM_DIR/versions/node/vtest/bin"
 export NVM_SYSTEM_BIN="$test_dir/system-bin"
-export PATH="$test_dir/user-bin:$PATH"
+PATH="$test_dir/user-bin:$PATH"
 original_home="$HOME"
 original_path="$PATH"
 unset NPM_CONFIG_USERCONFIG npm_config_cache COREPACK_HOME NODE_REPL_HISTORY 2>/dev/null || :

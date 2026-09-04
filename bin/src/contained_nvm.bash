@@ -54,7 +54,7 @@ _contained_nvm_run() {
 		if [[ -z "$system_bin" && -d /run/current-system/sw/bin ]]; then
 			system_bin=/run/current-system/sw/bin
 		fi
-		[[ -n "$system_bin" ]] && export PATH="$system_bin:$PATH"
+		[[ -n "$system_bin" ]] && PATH="$system_bin:$PATH"
 
 		# Sourcing nvm.sh replaces the public wrapper until this invocation ends.
 		unset -f nvm
@@ -73,7 +73,7 @@ _contained_nvm_run() {
 
 	active_nvm_bin="${NVM_BIN-}"
 	export HOME="$real_home"
-	export PATH="$(_contained_nvm_restore_path "$real_path" "$active_nvm_bin")"
+	PATH="$(_contained_nvm_restore_path "$real_path" "$active_nvm_bin")"
 	$restore_noglob && set -f
 
 	# Reinstall the wrapper so every later invocation gets the same isolation.
