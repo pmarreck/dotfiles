@@ -10,14 +10,9 @@ trap 'command rm -rf "$test_dir"' EXIT
 mkdir -p "$test_dir/nvm/versions/node/vtest/bin" "$test_dir/user-bin" "$test_dir/system-bin"
 touch "$test_dir/nvm/versions/node/vtest/bin/item"
 
-cat >"$test_dir/user-bin/find" <<'EOF'
-#!/usr/bin/env bash
-exit 88
-EOF
-cat >"$test_dir/system-bin/find" <<'EOF'
-#!/usr/bin/env bash
-exit 0
-EOF
+bash_path="$(command -v bash)"
+printf '#!%s\nexit 88\n' "$bash_path" >"$test_dir/user-bin/find"
+printf '#!%s\nexit 0\n' "$bash_path" >"$test_dir/system-bin/find"
 chmod +x "$test_dir/user-bin/find" "$test_dir/system-bin/find"
 
 cat >"$test_dir/nvm/nvm.sh" <<'EOF'
