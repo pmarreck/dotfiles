@@ -88,6 +88,7 @@ annotate=[
 	bin/test/ALLOWED_SKIPS = skips the pre-push gate tolerates; anything else printing the loud SKIPPED marker blocks the push
 	bin/test/MIN_TEST_COUNT = committed floor for the pre-push gate; a count below this means discovery failed
 	bin/test/NOT_HERMETIC = Explicitly reviewed tests excluded from the Nix sandbox, with datetimestamp now admitted
+	bin/test/about_alias_test = Guards the single cross-host about-to-fastfetch alias
 	bin/test/agent_tmux_sessions_test = Hermetic CLI and fake-tmux coverage for fleet snapshots, exact restores, multi-pane/window topology, and safe shutdown.
 	bin/test/block-attribution_test = tests the global PreToolUse hook that blocks AI authorship trailers (hook at ~/.claude/hooks/block-attribution/)
 	bin/test/claude_update_alias_test = Regression test ensuring update_claude targets the PATH-winning npm prefix and narrowly allows Anthropic postinstall.

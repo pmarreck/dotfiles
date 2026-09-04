@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+
+# `about` is the human-facing, cross-host entry point for Fastfetch.
+
+set -u
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+aliases_file="$repo_root/.aliases"
+failures=0
+
+pass() { printf 'ok - %s\n' "$1"; }
+fail() { printf 'not ok - %s\n' "$1" >&2; failures=$((failures + 1)); }
+
+definition_count="$(rg -c '^alias about=' "$aliases_file" 2>/dev/null || true)"
+if [ "$definition_count" = 1 ]; then
+	pass 'about has exactly one alias definition'
+else
+	fail "about must have exactly one alias definition, got $definition_count"
+fi
+
+if rg -Fqx "alias about='fastfetch'" "$aliases_file"; then
+	pass 'about resolves directly to Fastfetch'
+else
+	fail 'about must alias fastfetch without extra shell evaluation'
+fi
+
+if [ ! -e "$repo_root/bin/about" ] && ! rg -q '^about\(\)|^function[[:space:]]+about' "$repo_root"/.bash* "$repo_root/bin/src" 2>/dev/null; then
+	pass 'no dotfiles command or function competes with the about alias'
+else
+	fail 'about must not shadow another dotfiles command or function'
+fi
+
+exit "$failures"

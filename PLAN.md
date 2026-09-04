@@ -1,5 +1,16 @@
 # dotfiles — TODO / Plans
 
+## Active — cross-host Fastfetch alias (2026-09-04)
+
+- [ ] Add one `about='fastfetch'` alias, with a failing-first test that rejects
+      duplicate definitions and competing dotfiles commands/functions.
+  - Curiosity poke: aliases exist only in interactive shells, so verify a fresh
+    shell after deployment rather than treating source text as the final proof.
+- [ ] Run the focused and complete suites, commit and push only the alias/test
+      unit, then verify the installed dotfiles checkout on reachable Nix hosts.
+  - Curiosity poke: the repository's pre-push gate is authoritative and must
+    not inherit unrelated files from another worktree.
+
 ## Active — crash-safe agent tmux fleet snapshots (2026-09-02)
 
 - [x] Specify `agent_tmux_sessions snapshot [path]`, `restore [path]`, and

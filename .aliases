@@ -199,6 +199,7 @@ alias hn='clx --nerdfonts --no-less-verify --comment-width 120'
 # others
 alias variables='compgen -v'
 alias hi="echo \"Hello, ${USER}!\""
+alias about='fastfetch'
 # letter count
 alias lc='wc -l'
 
