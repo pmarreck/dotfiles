@@ -1,5 +1,21 @@
 # dotfiles — TODO / Plans
 
+## Active — let ffpw select a usable Firefox profile (2026-09-06)
+
+- [x] Remove the `ffpw` alias that injects `--channel nightly`; an explicit
+      `ffpw --channel nightly` remains available through the CLI itself.
+  - Curiosity poke: prove the sourced alias file succeeds before accepting an
+    absent alias, or a syntax/startup failure could make the test pass vacuously.
+  - Completed 2026-09-06 11:06 EDT: the isolated source test failed first with
+    the exact Nightly alias, then passed after its one-line removal.
+- [x] Run the focused alias regression, full host suite, hermetic Nix check, and
+      pre-push gate; commit separately from the existing sleep-reminder commit.
+  - Curiosity poke: a new shell must inherit the bare executable from PATH, not
+    a function or second alias elsewhere in the startup chain.
+  - Completed 2026-09-06 11:11 EDT: 184 host test files, 137 hermetic test
+    files, and the independent 184-test pre-push gate pass. A fresh login shell
+    has no `ffpw` alias and resolves `/home/pmarreck/Code/ffpw/bin/ffpw` first.
+
 ## Active — sleep reminders address Peter, not agent work (2026-09-06)
 
 - [x] Clarify the 10 PM and later reminders: gently encourage Peter to rest

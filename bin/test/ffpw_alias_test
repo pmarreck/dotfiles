@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+
+# Bare ffpw must retain the CLI's capability-based profile selection. An alias
+# that injects a channel turns an ordinary lookup into an explicit-channel one.
+
+set -u
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+aliases_file="$repo_root/.aliases"
+# shellcheck disable=SC1091 # Path is derived from this test's repository root.
+source "$repo_root/bin/src/capture.bash"
+
+failures=0
+pass() { printf 'ok - %s\n' "$1"; }
+fail() { printf 'not ok - %s\n' "$1" >&2; failures=$((failures + 1)); }
+
+out=''
+err=''
+rc=0
+# shellcheck disable=SC2016 # This is a child Bash program, not caller expansion.
+capture env \
+	PATH="$PATH" \
+	HOME="${TMPDIR%/}/ffpw-alias-home" \
+	USER=ffpw-alias-test \
+	XDG_CONFIG_HOME="${TMPDIR%/}/ffpw-alias-home/.config" \
+	bash --noprofile --norc -c '
+		PLATFORM=linux
+		DISTRO=NixOS
+		needs() { :; }
+		is_nix_darwin() { return 1; }
+
+		. "$1"
+		source_rc=$?
+		if (( source_rc != 0 )); then
+			printf "failed to source %s\n" "$1" >&2
+			exit 2
+		fi
+
+		# Independent witness that the file reached its late alias definitions.
+		alias about >/dev/null || exit 3
+		if alias ffpw 2>/dev/null; then
+			exit 1
+		fi
+		exit 0
+	' bash "$aliases_file"
+
+if [[ "$rc" -eq 0 && -z "$out" && -z "$err" ]]; then
+	pass 'sourcing .aliases leaves bare ffpw unmodified'
+else
+	fail "bare ffpw is still rewritten (rc=$rc stdout=${out:-<empty>} stderr=${err:-<empty>})"
+fi
+
+exit "$failures"
