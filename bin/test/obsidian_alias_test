@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -u
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+failures=0
+for platform in linux mac; do
+	output=$(bash --noprofile --norc -c '
+		PLATFORM="$2"; DISTRO=NixOS
+		needs() { :; }
+		is_nix_darwin() { return 1; }
+		. "$1" || exit 2
+		shopt -s expand_aliases
+		systemd-run() { printf "linux"; printf " <%s>" "$@"; }
+		open() { printf "mac"; printf " <%s>" "$@"; }
+		eval obsidian
+	' bash "$repo_root/.aliases" "$platform" 2>&1)
+	rc=$?
+	if [[ "$platform" = linux ]]; then
+		expected='linux <--user> <--collect> <--quiet> <--> <obsidian> <obsidian://open?vault=Peter%20Marreck>'
+	else
+		expected='mac <-a> <Obsidian> <obsidian://open?vault=Peter%20Marreck>'
+	fi
+	if [[ "$rc" -eq 0 && "$output" = "$expected" ]]; then
+		printf 'ok - %s alias launches the named vault GUI\n' "$platform"
+	else
+		printf 'not ok - %s alias: rc=%s output=%s\n' "$platform" "$rc" "$output" >&2
+		failures=$((failures + 1))
+	fi
+done
+exit "$failures"

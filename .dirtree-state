@@ -133,6 +133,7 @@ annotate=[
 	bin/test/nas_test = TDD coverage for bin/nas: pure helpers (_nas_fstab_line, _nas_nixos_snippet, _nas_auto_nfs_line), platform override, --help, --dry-run for all three OS branches
 	bin/test/no_volta_test = Scans shipped shell configuration directly to prevent retired Volta setup from returning
 	bin/test/npmrc_project_config_test = guards that no repo .npmrc sets prefix, and that npmrc still installs as ~/.npmrc
+	bin/test/obsidian_alias_test = Tests Obsidian GUI alias dispatch to the existing vault on Linux and macOS
 	bin/test/path_export_policy_test = Push-gated classifier forbidding tracked PATH export commands outside .pathconfig
 	bin/test/pathconfig_code_bin_denylist_test = tests that denylisted $CODE project bin dirs never reach PATH, by discovery or inheritance
 	bin/test/pathconfig_foreign_path_test = regression tests: .pathconfig must preserve FOREIGN PATH injections (nix shell/develop, direnv) across its ORIG_PATH rebuild; set-based classifier with paired specificity case + e2e that forces on-the-fly nix instantiation of a run-unique derivation and asserts it resolves in the new interactive shell

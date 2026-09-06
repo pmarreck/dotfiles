@@ -239,4 +239,9 @@ alias codescan-proj='cd $CODE/codescan'
 alias setup_zig_repo='git init && link_AGENTS_here && cp -P AGENTS.md CLAUDE.md && link_ZIG_GUIDE_here && cp ../validate/.git/hooks/commit-msg .git/hooks/ && printf "%s\n" "AGENTS.md" "CLAUDE.md" "ZIG_RECENT_API_CHANGES*" >> .gitignore'
 alias dt='dirtree'
 alias keys='env | rg API_KEY'
-alias obsidian='cd "$CODE/Obsidian Vaults/Peter Marreck/"'
+# Open the existing vault; Linux uses the desktop environment even from SSH/tmux.
+if [ "$PLATFORM" = "mac" ]; then
+  alias obsidian='open -a Obsidian "obsidian://open?vault=Peter%20Marreck"'
+else
+  alias obsidian='systemd-run --user --collect --quiet -- obsidian "obsidian://open?vault=Peter%20Marreck"'
+fi

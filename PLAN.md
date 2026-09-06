@@ -1,5 +1,16 @@
 # dotfiles — TODO / Plans
 
+## Obsidian GUI alias (2026-09-06)
+
+- [x] Replace the directory-changing `obsidian` alias with a GUI launcher for
+      the existing Peter Marreck vault. Linux inherits the desktop environment
+      through the user service manager; macOS uses `open -a Obsidian`.
+      Curiosity poke: remote shells lack DISPLAY, and opening the app without
+      the vault URI can show the vault chooser instead of the intended notes.
+- [x] Prove both platform alias dispatches with a failing-first test and launch
+      the live Thelio GUI. Completed 2026-09-06 14:42 EDT; all 185 host test
+      files passed. Launch confirmation does not establish Sync completion.
+
 ## Active — let ffpw select a usable Firefox profile (2026-09-06)
 
 - [x] Remove the `ffpw` alias that injects `--channel nightly`; an explicit
