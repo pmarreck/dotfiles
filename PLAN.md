@@ -1,5 +1,15 @@
 # dotfiles — TODO / Plans
 
+## Active — sleep reminders address Peter, not agent work (2026-09-06)
+
+- [x] Clarify the 10 PM and later reminders: gently encourage Peter to rest
+      while continuing already-authorized work; retain stop/approval/budget limits.
+      Curiosity poke: a late-night classifier called `refuse` contradicts that intent.
+- [x] Cover both messages with injected-clock regression tests, update the guide,
+      and run the focused/full dotfiles test suites.
+      Completed 2026-09-06 09:24 EDT: 67 focused assertions and the full 183-test
+      pre-push gate pass. Both local Codex and Claude hooks call this live script.
+
 ## Active — cross-host Fastfetch alias (2026-09-04)
 
 - [x] Add one `about='fastfetch'` alias, with a failing-first test that rejects

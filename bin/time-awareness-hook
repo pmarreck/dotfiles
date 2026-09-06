@@ -70,7 +70,7 @@ _decide() {
 }
 
 # sleep_decide NOW_EPOCH HOUR LAST_SLEEP_EPOCH
-# prints: "<none|wind_down|refuse> <new_sleep_epoch>"
+# prints: "<none|wind_down|sleep_reminder> <new_sleep_epoch>"
 # Pure: no clock, no state file. The window wraps midnight, so it is expressed as
 # "NOT the daytime range" rather than a single comparison.
 _sleep_decide() {
@@ -85,7 +85,7 @@ _sleep_decide() {
 	if [ "$hour" -eq "$SLEEP_START_HOUR" ]; then
 		printf 'wind_down %s\n' "$now"
 	else
-		printf 'refuse %s\n' "$now"
+		printf 'sleep_reminder %s\n' "$now"
 	fi
 }
 
@@ -93,10 +93,12 @@ _sleep_decide() {
 _sleep_text() {
 	case "$1" in
 		wind_down)
-			printf '%s' "🌙 It is after 10 PM for Peter. Tell him to start wrapping up and heading toward sleep. Do not begin anything long-running or open-ended; prefer finishing or checkpointing what is already in flight." ;;
-		refuse)
-			printf '%s' "🌙 It is after 11 PM for Peter. Strongly discourage new work: decline to start new tasks unless he has already given explicit overnight instructions, say plainly that it can wait until morning, and recommend he go to sleep. Finishing or safely parking in-flight work is fine." ;;
+			printf '%s' "🌙 It is after 10 PM for Peter. Gently encourage him to wind down and rest. " ;;
+		sleep_reminder)
+			printf '%s' "🌙 It is late at night for Peter. Gently remind him to get some sleep and leave the work with you. " ;;
+		*) return ;;
 	esac
+	printf '%s' "This reminder addresses Peter's biological need for sleep; it is not an agent work cutoff. Continue already-authorized work independently, including explicitly authorized overnight tasks. Do not stop or refuse work merely because of this reminder. Avoid keeping Peter engaged or asking unnecessary questions. Respect explicit stop requests, approval requirements, scope, and budget limits."
 }
 
 # --- adapter helpers -------------------------------------------------------

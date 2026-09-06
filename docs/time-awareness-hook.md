@@ -88,15 +88,21 @@ sleep_decide(now_epoch, hour, last_sleep_epoch):
   if   5 <= hour < 22                       -> none      (state unchanged; daytime never stamps)
   elif (now_epoch - last_sleep) < 480       -> none      (debounced; state unchanged)
   elif hour == 22                           -> wind_down (new state: now_epoch)
-  else                                      -> refuse    (new state: now_epoch)
+  else                                      -> sleep_reminder (new state: now_epoch)
 ```
 
-- **wind_down** (22:00–22:59) — tell Peter to start wrapping up; don't begin
-  anything long-running or open-ended.
-- **refuse** (23:00–04:59) — strongly discourage new work; decline new tasks
-  unless he has already given explicit overnight instructions. Finishing or
-  safely parking in-flight work is still fine.
+- **wind_down** (22:00–22:59) — gently encourage Peter to wind down and rest.
+- **sleep_reminder** (23:00–04:59) — gently remind Peter that he needs sleep
+  and can leave authorized work with the agent.
 - **05:00 ends the window.** Peter's call: the warnings stop at 5 AM.
+
+Clarified by Peter on 2026-09-06 after an agent treated the reminder as its own
+stopping condition: the biological requirements belong to Peter. Both messages
+explicitly tell agents to continue already-authorized work, including explicitly
+authorized overnight tasks, without prolonging Peter's involvement. A reminder
+alone is never grounds for stopping or refusing work. Explicit stop requests,
+approval requirements, task scope and budget limits still apply. The old
+`refuse` classifier and contradictory work-cutoff wording have been removed.
 
 Two details that are easy to get wrong:
 
