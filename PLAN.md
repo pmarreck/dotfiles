@@ -1,5 +1,24 @@
 # dotfiles — TODO / Plans
 
+## Active — native Herdr erect-agent-stack (2026-09-10)
+
+- [x] Replace the tmux launcher with native Herdr discovery, workspace reuse
+      and unrestricted agent startup. Preserve native conversation IDs in a
+      private per-project launch record; never fresh-fallback on failed resume.
+- [x] Write isolated failing-first CLI tests for fresh/resume/reuse, ambiguous
+      targets, occupied shells, startup failures and read-only previews. Test
+      against the live server only without affecting existing agents.
+- [x] Update the shared skill and run full host and hermetic tests.
+      Keep fleet snapshot/restore tools outside this single-launcher migration.
+      Completed 2026-09-10 EDT. Herdr CLI v2 reuses live agents untouched and
+      records exact native IDs privately. First adoption requires an explicit
+      fresh/continue/resume choice; no missing-record or timeout fresh fallback.
+      --note emits only a human notification; trust dialogs require inspection.
+      185 host tests and 139 hermetic tests passed, including the launcher test
+      now promoted from NOT_HERMETIC. ShellCheck passed. Live dry-run correctly
+      planned a new workspace without creating it; a real reuse of corruption_probe
+      preserved its pane and native session ID. No new test agents were launched.
+
 ## Obsidian GUI alias (2026-09-06)
 
 - [x] Replace the directory-changing `obsidian` alias with a GUI launcher for

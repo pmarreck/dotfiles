@@ -1,246 +1,161 @@
 #!/usr/bin/env bash
-
-# Test the erect-agent-stack function
-erect_agent_stack_test() {
-  local fails=0 out status sock
-  local tmproot; tmproot=$(mktemp -d --tmpdir erect_agent_stack_test.XXXXXX)
-  tmproot=$(cd "$tmproot" && pwd -P)
-  mkdir -p "$tmproot/projalpha"
-  mkdir -p "$tmproot/projbeta"
-  mkdir -p "$tmproot/projgamma"
-  mkdir -p "$tmproot/projdelta"
-  # Derive the tmux socket from the mktemp directory, NOT from $$. PIDs recycle,
-  # so a PID-named socket can land on a server left behind by an earlier run —
-  # inheriting its sessions, and with them their wrong cwd. That is exactly how
-  # this test failed 9 times out of 12 concurrent runs while passing solo.
-  sock="erect_test_$(basename "$tmproot")"
-  _t() { tmux -L "$sock" "$@"; }
-  # Tear down on EVERY exit path, not just the happy one. The tmux server
-  # outlives this process otherwise; 53 such servers had accumulated, and that
-  # debris is what made the collision above reachable in the first place.
-  # Bake the values in now rather than deferring expansion: $sock and $tmproot are
-  # `local`, so by the time an EXIT trap fires the function has returned and both
-  # would expand to empty — silently running `tmux -L "" kill-server` and cleaning
-  # nothing, which is precisely how the server leak survived a first attempt at this.
-  trap "tmux -L '$sock' kill-server 2>/dev/null; rm -rf '$tmproot'" EXIT
-  _t kill-server 2>/dev/null
-
-  # --help exits 0 with usage
-  out=$(erect-agent-stack --help); status=$?
-  assert "$status" == "0" "--help exits 0"
-  ((fails+=$?))
-  assert "$out" =~ "usage" "--help prints usage"
-  ((fails+=$?))
-
-  # no args -> usage error 64
-  ERECT_TMUX_SOCKET="$sock" erect-agent-stack >/dev/null 2>&1; status=$?
-  assert "$status" == "64" "no args exits 64"
-  ((fails+=$?))
-
-  # missing project dir -> 66 (EX_NOINPUT)
-  ERECT_TMUX_SOCKET="$sock" erect-agent-stack "$tmproot/nope" >/dev/null 2>&1; status=$?
-  assert "$status" == "66" "missing project dir exits 66"
-  ((fails+=$?))
-
-  # CREATE branch: no session yet -> creates detached session, dry-launches claude
-  out=$(ERECT_TMUX_SOCKET="$sock" ERECT_DRY_RUN=1 erect-agent-stack "$tmproot/projalpha" 2>&1); status=$?
-  assert "$status" == "0" "create branch exits 0"
-  ((fails+=$?))
-  assert "$out" =~ "created" "reports created outcome"
-  ((fails+=$?))
-  assert "$out" =~ "claude --rc --permission-mode bypassPermissions --name projalpha --continue" \
-    "dry-run resumes the most recent conversation in the project directory"
-  ((fails+=$?))
-  assert "$(_t list-sessions -F '#S' 2>/dev/null | grep -cx projalpha)" == "1" "tmux session exists"
-  ((fails+=$?))
-  # tmux derives #{pane_current_path} from the pane shell's own working directory,
-  # which is only accurate once that shell has actually started. Asserting straight
-  # after session creation races it: under load tmux answers with the cwd of the
-  # process that started the server — this test's — which is why this check passed
-  # when run alone and failed 9 of 12 concurrent runs. Wait for the pane to execute
-  # something before reading its cwd, using the same wait-for handshake as below.
-  # This observes readiness rather than assuming it, so there is no sleep and no
-  # dependence on how loaded the machine happens to be.
-  _t send-keys -t projalpha "tmux -L $sock wait-for -S cwd_ready" Enter
-  _t wait-for cwd_ready
-  assert "$(_t display-message -pt projalpha '#{pane_current_path}')" == "$tmproot/projalpha" "session cwd = project dir"
-  ((fails+=$?))
-
-  # --fresh omits --continue
-  out=$(ERECT_TMUX_SOCKET="$sock" ERECT_DRY_RUN=1 erect-agent-stack --fresh "$tmproot/projalpha" 2>&1)
-  assert "$out" !=~ "--continue" "--fresh omits continue flag"
-  ((fails+=$?))
-
-  # JOINED-LAUNCHED branch: session exists, no agent marker -> no dup session
-  out=$(ERECT_TMUX_SOCKET="$sock" ERECT_DRY_RUN=1 erect-agent-stack "$tmproot/projalpha" 2>&1)
-  assert "$out" =~ "joined-launched" "existing agentless session reports joined-launched"
-  ((fails+=$?))
-  assert "$(_t list-sessions -F '#S' | grep -cx projalpha)" == "1" "no duplicate session created"
-  ((fails+=$?))
-
-  # JOINED-RUNNING branch: simulate a running Claude via its footer marker
-  _t send-keys -t projalpha "echo 'esc to interrupt'; tmux -L $sock wait-for -S marker_done" Enter
-  _t wait-for marker_done
-  out=$(ERECT_TMUX_SOCKET="$sock" ERECT_DRY_RUN=1 erect-agent-stack "$tmproot/projalpha" 2>&1)
-  assert "$out" =~ "joined-running" "session with agent marker reports joined-running"
-  ((fails+=$?))
-  assert "$out" !=~ "launch:" "joined-running must not launch anything"
-  ((fails+=$?))
-
-  # --ping delivered (dry) on a running agent
-  out=$(ERECT_TMUX_SOCKET="$sock" ERECT_DRY_RUN=1 erect-agent-stack --ping "hello agent" "$tmproot/projalpha" 2>&1)
-  assert "$out" =~ "ping: hello agent" "dry-run reports the ping payload"
-  ((fails+=$?))
-
-
-  # --- backend broadening (--agent / --checker / env-gating) ---
-  out=$(ERECT_TMUX_SOCKET="$sock" ERECT_DRY_RUN=1 erect-agent-stack --fresh --agent codex "$tmproot/projbeta" 2>&1)
-  assert "$out" =~ "launch: codex --dangerously-bypass-approvals-and-sandbox" "codex fresh uses danger flag"
-  ((fails+=$?))
-  [[ "$out" == *"projects.\\\"$tmproot/projbeta\\\".trust_level=\\\"trusted\\\""* ]]; status=$?
-  assert "$status" == "0" "Codex launch explicitly trusts the canonical project path"
-  ((fails+=$?))
-  out=$(ERECT_TMUX_SOCKET="$sock" ERECT_DRY_RUN=1 erect-agent-stack --agent codex "$tmproot/projbeta" 2>&1)
-  assert "$out" =~ "launch: codex resume --last --dangerously-bypass-approvals-and-sandbox" "codex resume uses resume subcommand"
-  ((fails+=$?))
-
-  out=$(ERECT_TMUX_SOCKET="$sock" ERECT_DRY_RUN=1 erect-agent-stack --fresh --agent gemini "$tmproot/projbeta" 2>&1)
-  assert "$out" =~ "launch: gemini --yolo" "gemini fresh uses --yolo"
-  ((fails+=$?))
-
-  out=$(ERECT_TMUX_SOCKET="$sock" ERECT_DRY_RUN=1 erect-agent-stack --fresh -a gemini "$tmproot/projbeta" 2>&1)
-  assert "$out" =~ "launch: gemini --yolo" "-a aliases --agent"
-  ((fails+=$?))
-
-  out=$(ERECT_TMUX_SOCKET="$sock" ERECT_DRY_RUN=1 erect-agent-stack --fresh --agent grok "$tmproot/projbeta" 2>&1)
-  assert "$out" =~ "launch: grok --always-approve --permission-mode bypassPermissions --sandbox off" \
-    "Grok fresh launch explicitly grants approvals and disables the sandbox"
-  ((fails+=$?))
-  out=$(ERECT_TMUX_SOCKET="$sock" ERECT_DRY_RUN=1 erect-agent-stack --agent grok "$tmproot/projbeta" 2>&1)
-  assert "$out" =~ "grok --always-approve --permission-mode bypassPermissions --sandbox off --resume" \
-    "Grok resume explicitly grants approvals and disables the sandbox"
-  ((fails+=$?))
-
-  out=$(ERECT_TMUX_SOCKET="$sock" ERECT_DRY_RUN=1 erect-agent-stack --fresh "$tmproot/projbeta" 2>&1)
-  assert "$out" =~ "launch: claude --rc" "default agent stays claude"
-  ((fails+=$?))
-
-  ERECT_TMUX_SOCKET="$sock" erect-agent-stack --agent bogus "$tmproot/projbeta" >/dev/null 2>&1; status=$?
-  assert "$status" == "64" "unknown agent exits 64"
-  ((fails+=$?))
-
-  ERECT_TMUX_SOCKET="$sock" GEMINI_API_KEY= erect-agent-stack --agent gemini "$tmproot/projbeta" >/dev/null 2>&1; status=$?
-  assert "$status" == "78" "gated agent without its env exits 78"
-  ((fails+=$?))
-
-  out=$(ERECT_TMUX_SOCKET="$sock" ERECT_DRY_RUN=1 erect-agent-stack --fresh --checker "$tmproot/projbeta" 2>&1)
-  assert "$out" =~ "launch: MFIC_ROLE=checker claude" "--checker prepends MFIC_ROLE=checker"
-  ((fails+=$?))
-
-  # Codex's first-run trust gate is accepted once, then its own chrome—not
-  # Claude's readiness markers—satisfies the boot gate.
-  _t set-environment -g PATH "$HOME/dotfiles/bin/test/fixtures/erect-agent-stack:$PATH"
-  _t set-environment -g ERECT_TMUX_SOCKET "$sock"
-  _t set-option -g default-command \
-    "exec env PATH='$HOME/dotfiles/bin/test/fixtures/erect-agent-stack:$PATH' bash --noprofile --norc"
-  out=$(PATH="$HOME/dotfiles/bin/test/fixtures/erect-agent-stack:$PATH" \
-    OPENAI_API_KEY=test ERECT_TMUX_SOCKET="$sock" ERECT_BOOT_TIMEOUT=5 \
-    erect-agent-stack --fresh --agent codex --no-attach "$tmproot/projgamma" 2>&1)
-  status=$?
-  assert "$status" == "0" "Codex chrome satisfies the boot-readiness gate"
-  ((fails+=$?))
-  _t wait-for -S fake_codex_stop
-
-  # A resumed Codex pane may be filled by prior conversation, but its persistent
-  # footer is definitive without confusing a foreground trust gate for readiness.
-  (
-    . "$HOME/dotfiles/bin/erect-agent-stack"
-    _eas_tmux() {
-      case "$1" in
-        capture-pane) printf 'prior conversation without startup header\n95%% context left\n' ;;
-        display-message) printf 'codex\n' ;;
-      esac
-    }
-    ERECT_BOOT_TIMEOUT=1 _eas_bootwait resumed-codex codex
-  )
-  status=$?
-  assert "$status" == "0" "Codex persistent chrome satisfies resumed-session readiness"
-  ((fails+=$?))
-
-  # Codex 0.146's idle footer no longer contains the older startup/context
-  # markers. Once the foreground process has become Codex's node wrapper, it is
-  # live and must not time out and paste a fallback launch into its input box.
-  (
-    # shellcheck source=bin/erect-agent-stack
-    . "$HOME/dotfiles/bin/erect-agent-stack"
-    # shellcheck disable=SC2329 # invoked indirectly by _eas_bootwait
-    _eas_tmux() {
-      case "$1" in
-        capture-pane) printf 'prior conversation\n› Improve documentation in @filename\n\ngpt-5.6-sol high · ~/Code/project · yolo\n' ;;
-        display-message) printf 'node\n' ;;
-        send-keys) return 74 ;;
-      esac
-    }
-    ERECT_BOOT_TIMEOUT=1 _eas_bootwait current-codex codex
-  )
-  status=$?
-  assert "$status" == "0" "Codex node process satisfies current 0.146 readiness"
-  ((fails+=$?))
-
-  # Launching through send-keys races interactive shell startup and direnv. The
-  # observed failure pasted a fallback `codex ...` command into an already-live
-  # Random session. Replace the pane process directly, and never guess that a
-  # readiness timeout means the resume failed.
-  local launch_log="$tmproot/direct-launch.log"
-  : >"$launch_log"
-  (
-    # shellcheck source=bin/erect-agent-stack
-    . "$HOME/dotfiles/bin/erect-agent-stack"
-    _eas_tmux() {
-      printf '%s\n' "$*" >>"$launch_log"
-      case "$1" in
-        capture-pane) printf 'Booting MCP server\n' ;;
-        display-message) printf 'codex\n' ;;
-      esac
-    }
-    _b_resume='codex resume --last --dangerously-bypass-approvals-and-sandbox'
-    _b_fresh='codex --dangerously-bypass-approvals-and-sandbox'
-    ERECT_BOOT_TIMEOUT=1 _eas_launch slow-project 0 codex
-  ) >/dev/null 2>&1
-  status=$?
-  assert "$status" == "69" "a still-booting agent times out without inventing success"
-  ((fails+=$?))
-  assert "$(grep -c '^respawn-pane -k -t slow-project ' "$launch_log" 2>/dev/null || true)" == "1" \
-    "agent launch directly replaces the pane shell exactly once"
-  ((fails+=$?))
-  assert "$(grep -c '^send-keys ' "$launch_log" 2>/dev/null || true)" == "0" \
-    "a readiness timeout never pastes a fallback command into the pane"
-  ((fails+=$?))
-
-  # Codex's paste-burst protection needs an explicit bracketed paste boundary;
-  # the following plain Enter must remain a distinct submit key.
-  local capture="$tmproot/codex-ping.bin"
-  local ready="codex_reader_ready_$$" done="codex_reader_done_$$"
-  local reader
-  reader="stty raw -echo; printf '\\033[?2004hesc to interrupt\\r\\n'; tmux -L '$sock' wait-for -S '$ready'; IFS= read -r -d '|' data; printf '%s' \"\$data\" > '$capture'; tmux -L '$sock' wait-for -S '$done'; stty sane"
-  _t new-session -d -s projdelta -c "$tmproot/projdelta"
-  _t send-keys -t projdelta "$reader" Enter
-  _t wait-for "$ready"
-  out=$(OPENAI_API_KEY=test ERECT_TMUX_SOCKET="$sock" \
-    erect-agent-stack --agent codex --ping "hello codex" --no-attach "$tmproot/projdelta" 2>&1)
-  status=$?
-  _t send-keys -t projdelta -l '|'
-  _t wait-for "$done"
-  local ping_hex
-  ping_hex=$(od -An -tx1 -v "$capture" | tr -d ' \n')
-  assert "$status" == "0" "Codex ping delivery exits 0"
-  ((fails+=$?))
-  assert "$ping_hex" == "1b5b3230307e68656c6c6f20636f6465781b5b3230317e0a" \
-    "Codex ping is bracketed paste followed by plain Enter"
-  ((fails+=$?))
-  # Teardown is handled by the EXIT trap installed at the top, so it also runs
-  # when an assertion aborts the script or the harness times it out.
-  return "$fails"
+# shellcheck disable=SC2329,SC2016
+# Hermetic CLI tests: fake only the Herdr process boundary, exercise real files/argv.
+set -u
+# Assertion callbacks are indirect; jq owns its $variables.
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+tmp="$(mktemp -d "${TMPDIR:-/tmp}/erect-herdr-test.XXXXXX")"
+trap 'rm -rf -- "$tmp"' EXIT
+export EAS_FIXTURE="$tmp" EAS_PROJECT="$tmp/a project"
+export ERECT_STATE_DIR="$tmp/state" HERDR_ENV=1
+export ERECT_HERDR="$root/bin/test/fixtures/erect-agent-stack/herdr"
+mkdir -p "$EAS_PROJECT"
+tool="$root/bin/erect-agent-stack"
+fails=0
+check() { if ! "$@" > "$tmp/check.out" 2> "$tmp/check.err"; then printf 'FAIL: %s\n' "$*" >&2; fails=$((fails+1)); fi; }
+reset_fixture() {
+ printf '{"result":{"agents":[]}}\n' > "$tmp/agents.json"
+ printf '{"result":{"workspaces":[]}}\n' > "$tmp/workspaces.json"
+ jq -n --arg cwd "$EAS_PROJECT" '{result:{panes:[{pane_id:"wOLD:p9",workspace_id:"wOLD",cwd:$cwd}]}}' > "$tmp/panes.json"
+ printf '{"result":{"process_info":{"shell_pid":10,"foreground_process_group_id":10,"foreground_processes":[{"pid":10,"name":"bash"}]}}}\n' > "$tmp/process.json"
+ : > "$tmp/calls"
 }
+run() { "$tool" "$@" > "$tmp/out" 2> "$tmp/err"; status=$?; }
+calls_are_readonly() { jq -se 'all(.[]; .[1] == "list" or .[1] == "get" or .[1] == "process-info")' "$tmp/calls" >/dev/null; }
+called() { jq -se --arg cmd "$1" 'any(.[]; (.[0:2]|join(" ")) == $cmd)' "$tmp/calls" >/dev/null; }
+reset_fixture
+run --help
+check test "$status" = 0
+check grep -q Herdr "$tmp/out"
+run --about
+check test "$status" = 0
+run
+check test "$status" = 64
+run --agent
+check test "$status" = 64
+run --bogus "$EAS_PROJECT"
+check test "$status" = 64
+run "$tmp/missing"
+check test "$status" = 66
+HERDR_ENV='' run --fresh "$EAS_PROJECT"
+check test "$status" = 78
+check test ! -s "$tmp/calls"
 
-erect_agent_stack_test
+# First adoption must not silently abandon an older, unrecorded conversation.
+run --no-attach "$EAS_PROJECT"
+check test "$status" = 69
+check calls_are_readonly
+check grep -q 'no saved' "$tmp/err"
+rmdir "$ERECT_STATE_DIR" 2>/dev/null || :
+
+run --dry-run --fresh --agent codex "$EAS_PROJECT"
+check test "$status" = 0
+check calls_are_readonly
+check test ! -e "$ERECT_STATE_DIR"
+check grep -q 'codex' "$tmp/out"
+check grep -q 'dry-run' "$tmp/out"
+
+reset_fixture
+run --fresh --agent codex --no-attach "$EAS_PROJECT"
+check test "$status" = 0
+check called 'workspace create'
+check called 'agent start'
+check jq -se 'any(.[]; .[0:2]==["workspace","create"] and index("--no-focus")!=null)' "$tmp/calls"
+check jq -se 'any(.[]; .[0:2]==["agent","start"] and index("wNEW:p7")!=null and index("--dangerously-bypass-approvals-and-sandbox")!=null)' "$tmp/calls"
+check grep -q created "$tmp/out"
+check test -d "$ERECT_STATE_DIR"
+
+# Auto-resume reads the saved exact identity rather than switching to Claude.
+reset_fixture
+run --no-attach "$EAS_PROJECT"
+check test "$status" = 0
+check jq -se 'any(.[]; .[0:2]==["agent","start"] and index("codex")!=null and index("resume")!=null and index("native-session-123")!=null)' "$tmp/calls"
+
+# Existing live agent is not restarted, even when --fresh is supplied.
+reset_fixture
+jq -n --arg cwd "$EAS_PROJECT" '{result:{agents:[{agent:"grok",agent_status:"working",cwd:$cwd,pane_id:"wLIVE:p3",workspace_id:"wLIVE",agent_session:{kind:"id",value:"grok-id"}}]}}' > "$tmp/agents.json"
+run --fresh --agent claude --no-attach "$EAS_PROJECT"
+check test "$status" = 0
+check calls_are_readonly
+check grep -q joined-running "$tmp/out"
+
+# A detected client at a trust/login dialog is alive, but not a ready stack.
+jq '.result.agents[0].agent_status="blocked"' "$tmp/agents.json" > "$tmp/blocked.json"
+mv "$tmp/blocked.json" "$tmp/agents.json"
+: > "$tmp/calls"
+run --no-attach "$EAS_PROJECT"
+check test "$status" = 69
+check calls_are_readonly
+check grep -q blocked "$tmp/err"
+
+# Existing shell workspace is retained.
+reset_fixture
+printf '{"result":{"workspaces":[{"workspace_id":"wOLD","label":"a-project"}]}}\n' > "$tmp/workspaces.json"
+run --fresh --agent claude --no-attach "$EAS_PROJECT"
+check test "$status" = 0
+check jq -se 'all(.[]; .[0:2]!=["workspace","create"])' "$tmp/calls"
+check jq -se 'any(.[]; .[0:2]==["agent","start"] and index("wOLD:p9")!=null)' "$tmp/calls"
+check grep -q joined-launched "$tmp/out"
+
+# An editor in an agentless pane must not receive a shell command.
+printf '{"result":{"process_info":{"shell_pid":10,"foreground_process_group_id":22,"foreground_processes":[{"pid":22,"name":"vim"}]}}}\n' > "$tmp/process.json"
+: > "$tmp/calls"
+run --fresh --agent claude "$EAS_PROJECT"
+check test "$status" = 69
+check calls_are_readonly
+
+# Ambiguous live projects are not resolved by focus or sidebar order.
+reset_fixture
+jq -n --arg cwd "$EAS_PROJECT" '{result:{agents:[{agent:"claude",cwd:$cwd,pane_id:"w1:p1"},{agent:"codex",cwd:$cwd,pane_id:"w2:p1"}]}}' > "$tmp/agents.json"
+run "$EAS_PROJECT"
+check test "$status" = 69
+check calls_are_readonly
+
+# Malformed discovery cannot be interpreted as an empty fleet.
+reset_fixture
+printf '{}\n' > "$tmp/agents.json"
+run --fresh "$EAS_PROJECT"
+check test "$status" = 69
+check calls_are_readonly
+
+# A start timeout sends exactly one start and no speculative resume/fresh/ping.
+reset_fixture
+EAS_FAIL_START=1 run --fresh "$EAS_PROJECT"
+check test "$status" = 69
+check jq -se '[.[]|select(.[0:2]==["agent","start"])]|length==1' "$tmp/calls"
+check jq -se 'all(.[]; .[0:2]!=["agent","prompt"] and .[0:2]!=["pane","run"])' "$tmp/calls"
+
+# Explicit resume selection and full permissions for all supported backends.
+for backend in claude codex grok gemini; do
+ reset_fixture
+ run --agent "$backend" --resume exact-id --no-attach "$EAS_PROJECT"
+ check test "$status" = 0
+ check jq -se --arg kind "$backend" 'any(.[]; .[0:2]==["agent","start"] and index($kind)!=null and index("exact-id")!=null)' "$tmp/calls"
+done
+
+reset_fixture
+run --fresh --checker "$EAS_PROJECT"
+check test "$status" = 0
+check jq -se 'any(.[]; .[0:2]==["workspace","create"] and index("MFIC_ROLE=checker")!=null)' "$tmp/calls"
+reset_fixture
+run --continue --agent claude "$EAS_PROJECT"
+check test "$status" = 0
+check jq -se 'any(.[]; .[0:2]==["agent","start"] and index("--continue")!=null)' "$tmp/calls"
+
+# Sourcing remains supported, and no terminal input is ever sent by the launcher.
+reset_fixture
+EAS_WRONG_ID=different run --resume intended --agent codex "$EAS_PROJECT"
+check test "$status" = 69
+check grep -q 'identity' "$tmp/err"
+
+reset_fixture
+printf '{"result":{"agents":[{}]}}\n' > "$tmp/agents.json"
+run --fresh "$EAS_PROJECT"
+check test "$status" = 69
+check calls_are_readonly
+
+bash -c 'source "$1"; erect-agent-stack --help' _ "$tool" > "$tmp/sourced" 2> "$tmp/source.err"
+check test "$?" = 0
+check grep -q Herdr "$tmp/sourced"
+if [ "$fails" = 0 ]; then printf 'erect-agent-stack Herdr tests passed\n'; fi
+exit "$fails"

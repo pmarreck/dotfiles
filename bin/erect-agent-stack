@@ -1,220 +1,265 @@
 #!/usr/bin/env bash
+# Persistent project agents through Herdr's JSON API. No terminal-key injection.
+_eas_herdr() { "${ERECT_HERDR:-herdr}" "$@"; }
+_eas_error() { printf 'erect-agent-stack: %s\n' "$*" >&2; }
+_eas_help() {
+ cat <<'EOF'
+usage: erect-agent-stack [OPTIONS] PROJECT
+Create/reuse a Herdr workspace and unrestricted agent at PROJECT (or ~/Code/NAME).
+Requires the intended Herdr session (HERDR_ENV=1), jq and coreutils on PATH.
 
-# Stand up (or join) a project's full agent stack in one shot:
-# tmux session named after the project dir, cwd'd into it, running an
-# unrestricted remoted Claude session of the same name. Idempotent:
-#   created          no session existed -> created + launched agent
-#   joined-running   session + agent already live -> touched nothing
-#   joined-launched  session existed agentless -> launched agent into it
-# Keystroke lore (hard-won 2026-06-11 and 2026-07-17): the launch command goes
-# to a SHELL, so it gets a plain Enter. Messages to a running Claude need kitty
-# CSI u submit ($'\e[13u'). Codex needs bracketed paste followed by plain Enter
-# so its paste-burst guard cannot reinterpret submission as a newline.
-# Env: ERECT_TMUX_SOCKET (tests: tmux -L socket), ERECT_DRY_RUN (print
-# launch/ping instead of sending), ERECT_BOOT_TIMEOUT (seconds, default 120).
+  --agent, -a KIND    claude, codex, grok or gemini; preserve saved backend,
+                     otherwise default Claude. Subscription login is supported.
+  --fresh            Start fresh if no live agent; never replace a live one.
+  --resume ID        Resume this exact native conversation.
+  --continue         Explicitly resume latest in this directory (weaker identity).
+  --name NAME        Unique Herdr agent/workspace name (default directory basename).
+  --checker          MFIC_ROLE=checker, only when creating a new workspace.
+  --note PATH        Existing project inbox note; show a human notification.
+                     Never writes a prompt. App monitors/hooks deliver the note.
+  --dry-run          Read-only preview; no workspace, state, focus or input writes.
+  --json             Machine-readable outcome, identifiers and state-file path.
+  --no-attach        Do not focus (default for automation).
+  --focus            Focus the resulting workspace explicitly.
+  -h, --help         This help.
+  --about            Version and platform.
 
-_eas_tmux() {
-	if [ -n "${ERECT_TMUX_SOCKET:-}" ]; then tmux -L "$ERECT_TMUX_SOCKET" "$@"; else tmux "$@"; fi
+Default: reuse a live agent unchanged; otherwise resume a saved exact ID.
+First adoption or an incomplete record requires --resume, --continue or --fresh;
+the tool never guesses that absence of its own record means no history exists.
+A failed resume NEVER falls back to a fresh conversation.
+Records: ${ERECT_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/erect-agent-stack}
+Herdr client: ${ERECT_HERDR:-herdr}; startup seconds: ${ERECT_BOOT_TIMEOUT:-30}.
+ERECT_DRY_RUN=1 is equivalent to --dry-run. Legacy --ping is retired; use --note
+and the llmsend skill for an explicitly authorized, inspected terminal wake.
+Outcomes: created | joined-launched | joined-running. Dry-run prefixes planned-.
+Exit: 64 usage, 66 missing input, 69 ambiguous/busy/unready, 74 state I/O, 78 setup.
+EOF
 }
-
-# _eas_backend <agent> <session-name>: resolve a backend into caller-visible
-# vars _b_bin / _b_gate / _b_fresh / _b_resume (bash dynamic scope). Returns 1
-# on an unknown agent. Danger flags verified from each CLI's own --help (2026-06-14):
-# codex --dangerously-bypass-approvals-and-sandbox, gemini --yolo. claude keeps the
-# original remoted bypass launch. Non-claude backends are gated on an API-key env var.
-_eas_backend() {
-	local agent="$1" n="$2" dir="$3" trust_override escaped_dir
-	case "$agent" in
-		claude)
-			_b_bin=claude; _b_gate=""   # default: no env gate (auth via config/login)
-			_b_fresh="claude --rc --permission-mode bypassPermissions --name $n"
-			_b_resume="$_b_fresh --continue" ;;
-		codex)
-			escaped_dir=${dir//\\/\\\\}
-			escaped_dir=${escaped_dir//\"/\\\"}
-			printf -v trust_override '%q' "projects.\"$escaped_dir\".trust_level=\"trusted\""
-			_b_bin=codex; _b_gate=OPENAI_API_KEY
-			_b_fresh="codex --dangerously-bypass-approvals-and-sandbox -c $trust_override"
-			_b_resume="codex resume --last --dangerously-bypass-approvals-and-sandbox -c $trust_override" ;;
-		gemini)
-			_b_bin=gemini; _b_gate=GEMINI_API_KEY
-			_b_fresh="gemini --yolo"
-			_b_resume="gemini --yolo --resume latest" ;;
-		grok)
-			_b_bin=grok; _b_gate=GROK_API_KEY
-			_b_fresh="grok --always-approve --permission-mode bypassPermissions --sandbox off"
-			_b_resume="$_b_fresh --resume" ;;
-		*) return 1 ;;
-	esac
+_eas_write_record() {
+ local temp
+ temp="$(mktemp "$state_dir/.record.XXXXXX")" || return 74
+ if ! printf '%s\n' "$record" > "$temp" || ! mv -f -- "$temp" "$state_file"; then
+  _eas_error "cannot save launch identity to $state_file (temporary record: $temp)"
+  return 74
+ fi
 }
-
-_eas_running() {
-	# An agent is "running" if the active pane's process is claude/node, or
-	# the pane is showing Claude Code chrome.
-	local n="$1" cmd
-	cmd=$(_eas_tmux list-panes -t "$n" -F '#{pane_current_command}' 2>/dev/null | head -1)
-	case "$cmd" in claude|node|codex|gemini|grok) return 0 ;; esac
-	_eas_tmux capture-pane -pt "$n" 2>/dev/null | grep -qE 'esc to interrupt|bypass permissions'
-}
-
-_eas_bootwait() {
-	# 120s default: direnv `use flake` projects evaluate nix before the shell
-	# accepts the queued launch line (observed live on entropy_shield, 2026-06-12).
-	local n="$1" agent="$2" t="${ERECT_BOOT_TIMEOUT:-120}" i=0 pane pane_lower pane_cmd
-	while [ "$i" -lt "$t" ]; do
-		pane=$(_eas_tmux capture-pane -pt "$n" 2>/dev/null)
-		if [ "$agent" = "codex" ]; then
-			pane_lower=${pane,,}
-			pane_cmd=$(_eas_tmux display-message -pt "$n" '#{pane_current_command}' 2>/dev/null | head -1)
-			if [[ "$pane_lower" == *"do you trust"* ]] && ! grep -qiE 'context left|esc to interrupt|OpenAI Codex' <<<"$pane"; then
-				# Broad fallback for Codex versions whose trust gate predates or ignores
-				# the explicit per-project trust override. Normal agent chrome guards
-				# against matching the same words inside conversation text.
-				_eas_tmux send-keys -t "$n" y
-				_eas_tmux send-keys -t "$n" Enter
-			elif { [[ "$pane_cmd" =~ ^(node|codex)$ ]] || grep -qiE 'context left|esc to interrupt|OpenAI Codex' <<<"$pane"; } && [[ "$pane" != *"Booting MCP server"* ]]; then
-				return 0
-			fi
-		elif grep -qE '❯|esc to interrupt|bypass permissions' <<<"$pane"; then
-			return 0
-		fi
-		sleep 1; i=$((i+1))
-	done
-	return 1
-}
-
-_eas_launch() {
-	local n="$1" fresh="$2" agent="$3"
-	local cmd="$_b_fresh"
-	[ "$fresh" = "0" ] && cmd="$_b_resume"
-	[ -n "${_b_checker:-}" ] && cmd="MFIC_ROLE=checker $cmd"
-	if [ -n "${ERECT_DRY_RUN:-}" ]; then
-		echo "launch: $cmd"
-		return 0
-	fi
-	# Replace the pane's shell directly. Queuing launch text into an interactive
-	# shell races .bashrc/direnv: a slow activation can consume the first command
-	# late, after the readiness timeout has already queued a second command. The
-	# duplicate then lands inside the resumed TUI's input box. respawn-pane runs
-	# one non-interactive shell command and has no startup input queue to race.
-	_eas_tmux respawn-pane -k -t "$n" "$cmd" || return 70
-	if ! _eas_bootwait "$n" "$agent"; then
-		# A timeout proves only that readiness was not observed. It does not prove
-		# resume failed, so never paste or respawn a speculative fresh launch.
-		# Callers that truly want a new conversation have the explicit --fresh flag.
-		echo "erect-agent-stack: agent did not boot in $n within ${ERECT_BOOT_TIMEOUT:-120}s" >&2
-		return 69
-	fi
-}
-
-_eas_ping() {
-	local n="$1" msg="$2" agent="$3" buffer
-	if [ -n "${ERECT_DRY_RUN:-}" ]; then
-		echo "ping: $msg"
-		return 0
-	fi
-	if [ "$agent" = "codex" ]; then
-		buffer="erect-agent-stack-ping-$$"
-		_eas_tmux set-buffer -b "$buffer" "$msg"
-		_eas_tmux paste-buffer -d -p -r -b "$buffer" -t "$n"
-		_eas_tmux send-keys -t "$n" Enter
-	else
-		_eas_tmux send-keys -t "$n" "$msg"
-		_eas_tmux send-keys -t "$n" $'\e[13u'
-	fi
-}
-
-erect-agent-stack() {
-	local fresh=1 resume_default=0 ping="" attach=auto project="" agent="claude"
-	local _b_bin _b_gate _b_fresh _b_resume _b_checker=""
-	while [ $# -gt 0 ]; do
-		case "$1" in
-			-h|--help)
-				echo "usage: erect-agent-stack [--agent claude|codex|gemini|grok] [--checker] [--fresh] [--ping <msg>] [--no-attach] <project-name-or-path>"
-				echo "Creates/joins tmux session named after the project dir and starts (or resumes)"
-				echo "a remoted unrestricted agent in it. Idempotent: created | joined-running |"
-				echo "joined-launched. Default dir root: ~/Code/<name>."
-				echo "--agent: backend (default claude); non-claude gated on its API-key env var + bin on PATH."
-				echo "Codex: first-run project trust is accepted automatically; --ping uses bracketed paste + Enter."
-				echo "--checker: boot the agent in MFIC adversarial-checker role (MFIC_ROLE=checker)."
-				echo "--fresh: skip --resume. --ping: deliver a message once the agent is up (LLMsend rules)."
-				return 0
-				;;
-			--agent|-a) agent="$2"; shift 2 ;;
-			--checker) _b_checker=1; shift ;;
-			--fresh) resume_default=1; shift ;;
-			--ping) ping="$2"; shift 2 ;;
-			--no-attach) attach=never; shift ;;
-			*) project="$1"; shift ;;
-		esac
-	done
-	if [ -z "$project" ]; then
-		echo "usage: erect-agent-stack [--agent claude|codex|gemini|grok] [--checker] [--fresh] [--ping <msg>] [--no-attach] <project-name-or-path>" >&2
-		return 64
-	fi
-	local dir
-	case "$project" in
-		*/*) dir="$project" ;;
-		*) dir="$HOME/Code/$project" ;;
-	esac
-	if [ ! -d "$dir" ]; then
-		echo "erect-agent-stack: no such project dir: $dir" >&2
-		return 66
-	fi
-	dir=$(cd "$dir" && pwd -P)
-	local name; name=$(basename "$dir")
-	# Resolve the backend (validates the agent name).
-	if ! _eas_backend "$agent" "$name" "$dir"; then
-		echo "erect-agent-stack: unknown agent: $agent (claude|codex|gemini|grok)" >&2
-		return 64
-	fi
-	# Availability (real launches only; dry-run is a pure preview): the gate env
-	# must be set and the bin on PATH, else it is unavailable -> 78.
-	if [ -z "${ERECT_DRY_RUN:-}" ]; then
-		if [ -n "$_b_gate" ] && [ -z "${!_b_gate:-}" ]; then
-			echo "erect-agent-stack: agent '$agent' unavailable: \$$_b_gate is unset" >&2
-			return 78
-		fi
-		if ! command -v "$_b_bin" >/dev/null 2>&1; then
-			echo "erect-agent-stack: agent '$agent' unavailable: '$_b_bin' not on PATH" >&2
-			return 78
-		fi
-	fi
-	local outcome rc=0
-	if _eas_tmux list-sessions -F '#S' 2>/dev/null | grep -qx "$name"; then
-		if _eas_running "$name"; then
-			outcome="joined-running"
-		else
-			outcome="joined-launched"
-			_eas_launch "$name" "$resume_default" "$agent" || rc=$?
-		fi
-	else
-		_eas_tmux new-session -d -s "$name" -c "$dir"
-		outcome="created"
-		_eas_launch "$name" "$resume_default" "$agent" || rc=$?
-	fi
-	[ "$rc" = "0" ] && [ -n "$ping" ] && _eas_ping "$name" "$ping" "$agent"
-	echo "$outcome: $name @ $dir"
-	# Join the session for a human at a real terminal; never for pipelines/agents.
-	if [ "$rc" = "0" ] && [ "$attach" != "never" ] && [ -t 0 ] && [ -t 1 ]; then
-		if [ -n "${TMUX:-}" ]; then
-			_eas_tmux switch-client -t "$name"
-		else
-			_eas_tmux attach-session -t "$name"
-		fi
-	fi
-	return "$rc"
-}
-
-# Run the function if this script is executed directly
+# A subshell contains the lock trap, umask and per-call state even when sourced.
+erect-agent-stack() (
+ local project="" agent="" mode=auto resume_id="" name="" note="" checker=0
+ local dry=0 json=0 focus=0 timeout="${ERECT_BOOT_TIMEOUT:-30}"
+ local dir hash state_dir state_file record="" saved="" lock="" outcome pane="" workspace=""
+ local agents workspaces panes matches count candidate info response native_id="" backend
+ local args=() create_args=()
+ [ "${ERECT_DRY_RUN:-0}" = 1 ] && dry=1
+ while [ "$#" -gt 0 ]; do
+  case "$1" in
+   -h|--help) _eas_help; return 0 ;;
+   --about) printf 'erect-agent-stack 2.0.0 — persistent Herdr project agents — %s %s\n' "$(uname -s)" "$(uname -m)"; return 0 ;;
+   --agent|-a|--resume|--name|--note)
+    [ "$#" -ge 2 ] && [ -n "$2" ] || { _eas_error "$1 requires a value"; return 64; }
+    case "$1" in
+     --agent|-a) agent="$2" ;;
+     --resume) mode=resume; resume_id="$2" ;;
+     --name) name="$2" ;;
+     --note) note="$2" ;;
+    esac
+    shift 2 ;;
+   --fresh) mode=fresh; shift ;;
+   --continue) mode='continue'; shift ;;
+   --checker) checker=1; shift ;;
+   --dry-run) dry=1; shift ;;
+   --json) json=1; shift ;;
+   --no-attach) focus=0; shift ;;
+   --focus) focus=1; shift ;;
+   --) shift; [ "$#" = 1 ] && [ -z "$project" ] || { _eas_error 'one project required'; return 64; }; project="$1"; shift ;;
+   -*) _eas_error "unknown/retired option: $1 (see --help)"; return 64 ;;
+   *) [ -z "$project" ] || { _eas_error 'one project required'; return 64; }; project="$1"; shift ;;
+  esac
+ done
+ [ -n "$project" ] || { _eas_help >&2; return 64; }
+ case "$agent" in ''|claude|codex|grok|gemini) ;; *) _eas_error "unsupported agent: $agent"; return 64 ;; esac
+ [[ "$timeout" =~ ^[1-9][0-9]{0,2}$ ]] && [ "$timeout" -le 300 ] || { _eas_error 'timeout must be 1..300 seconds'; return 64; }
+ if [ "$mode" = resume ]; then
+  [[ "$resume_id" =~ ^[a-zA-Z0-9_-]+$ ]] || { _eas_error 'invalid native session ID'; return 64; }
+ else
+  resume_id=""
+ fi
+ case "$project" in */*|.|..) dir="$project" ;; *) dir="$HOME/Code/$project" ;; esac
+ [ -d "$dir" ] || { _eas_error "no such project: $dir"; return 66; }
+ dir="$(cd "$dir" && pwd -P)" || return 66
+ [ "${HERDR_ENV:-}" = 1 ] || { _eas_error 'run inside the intended Herdr session'; return 78; }
+ if ! command -v "${ERECT_HERDR:-herdr}" >/dev/null || ! command -v jq >/dev/null || ! command -v sha256sum >/dev/null; then
+  _eas_error 'requires herdr, jq and sha256sum'; return 78
+ fi
+ hash="$(printf '%s' "$dir" | sha256sum)" || return 78
+ hash="${hash%% *}"
+ state_dir="${ERECT_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/erect-agent-stack}"
+ state_file="$state_dir/$hash.json"
+ if [ -n "$note" ]; then
+  [ -f "$note" ] || { _eas_error "missing note: $note"; return 66; }
+  note="$(realpath -- "$note")" || return 66
+  case "$note" in "$dir"/inbox/*.frontmatter.md) ;; *) _eas_error 'note must be a .frontmatter.md file inside the project inbox'; return 64 ;; esac
+ fi
+ if [ -z "$name" ]; then
+  name="$(basename "$dir")"
+  if ! [[ "$name" =~ ^[a-z][a-z0-9_-]{0,31}$ ]]; then
+   name="$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9_-]/-/g')"
+   name="p-${name:0:20}-${hash:0:8}"
+  fi
+ fi
+ [[ "$name" =~ ^[a-z][a-z0-9_-]{0,31}$ ]] || { _eas_error 'invalid Herdr name; use lowercase letters/digits/_/- (1..32, starts with a letter)'; return 64; }
+ umask 077
+ if [ "$dry" = 0 ]; then
+  mkdir -p -- "$state_dir" || return 74
+  lock="$state_dir/$hash.lock"
+  mkdir -- "$lock" 2>/dev/null || { _eas_error "launch locked: $lock; inspect its owner before recovering a stale lock"; return 69; }
+  trap 'rmdir -- "$lock" 2>/dev/null || :' EXIT
+ fi
+ if [ -f "$state_file" ]; then
+  saved="$(cat "$state_file")" || return 74
+  printf '%s' "$saved" | jq -e --arg cwd "$dir" '.schema=="erect-agent-stack/v1" and .cwd==$cwd and (.agent|IN("claude","codex","grok","gemini")) and ((.session_id==null) or (.session_id|type=="string" and test("^[a-zA-Z0-9_-]+$")))' >/dev/null || { _eas_error "invalid launch record: $state_file"; return 74; }
+ fi
+ agents="$(_eas_herdr agent list)" || return 69
+ printf '%s' "$agents" | jq -e '.result.agents|type=="array" and all(.[]; (.cwd|type=="string") and (.agent|type=="string") and (.pane_id|type=="string") and (.workspace_id|type=="string"))' >/dev/null || { _eas_error 'invalid agent-list response'; return 69; }
+ # Herdr cwd can be a symlink spelling; canonicalize each candidate locally.
+ matches='[]'
+ while IFS= read -r candidate; do
+  local current_dir
+  current_dir="$(printf '%s' "$candidate" | jq -r '.cwd // empty')"
+  if [ -d "$current_dir" ] && [ "$(cd "$current_dir" && pwd -P)" = "$dir" ]; then
+   matches="$(printf '%s' "$matches" | jq --argjson a "$candidate" '.+[$a]')" || return 69
+  fi
+ done < <(printf '%s' "$agents" | jq -c '.result.agents[]')
+ count="$(printf '%s' "$matches" | jq length)"
+ [ "$count" -le 1 ] || { _eas_error 'multiple live agents match this directory; inspect Herdr explicitly'; return 69; }
+ if [ "$count" = 1 ]; then
+  info="$(printf '%s' "$matches" | jq '.[0]')"
+  agent="$(printf '%s' "$info" | jq -r '.agent')"
+  pane="$(printf '%s' "$info" | jq -r '.pane_id')"
+  workspace="$(printf '%s' "$info" | jq -r '.workspace_id')"
+  case "$(printf '%s' "$info" | jq -r '.agent_status // "unknown"')" in
+   idle|done|working) ;;
+   *) _eas_error "existing agent in $pane is blocked or unknown; inspect it, do not relaunch"; return 69 ;;
+  esac
+  outcome=joined-running
+ else
+  if [ -z "$agent" ]; then
+   if [ -n "$saved" ]; then agent="$(printf '%s' "$saved" | jq -r '.agent')"; else agent=claude; fi
+  fi
+  if [ "$mode" = auto ]; then
+   if [ -n "$saved" ]; then
+    backend="$(printf '%s' "$saved" | jq -r '.agent')"
+    [ "$backend" = "$agent" ] || { _eas_error 'backend changed; specify --fresh or --resume explicitly'; return 64; }
+    resume_id="$(printf '%s' "$saved" | jq -r '.session_id // empty')"
+    [ -n "$resume_id" ] || { _eas_error 'saved launch has no exact ID; choose --resume ID, --continue or --fresh'; return 69; }
+    mode=resume
+   else
+    _eas_error 'no saved launch identity; choose --fresh, --continue, or --agent KIND --resume ID'
+    return 69
+   fi
+  fi
+  workspaces="$(_eas_herdr workspace list)" || return 69
+  printf '%s' "$workspaces" | jq -e '.result.workspaces|type=="array"' >/dev/null || return 69
+  matches='[]'
+  local label_conflict=0
+  while IFS= read -r candidate; do
+   local wid label matching
+   wid="$(printf '%s' "$candidate" | jq -r '.workspace_id')"
+   label="$(printf '%s' "$candidate" | jq -r '.label')"
+   panes="$(_eas_herdr pane list --workspace "$wid")" || return 69
+   printf '%s' "$panes" | jq -e '.result.panes|type=="array"' >/dev/null || return 69
+   matching=0
+   while IFS= read -r info; do
+    local pcwd
+    pcwd="$(printf '%s' "$info" | jq -r '.cwd // empty')"
+    if [ -d "$pcwd" ] && [ "$(cd "$pcwd" && pwd -P)" = "$dir" ]; then
+     matches="$(printf '%s' "$matches" | jq --argjson p "$info" '.+[$p]')" || return 69
+     matching=1
+    fi
+   done < <(printf '%s' "$panes" | jq -c '.result.panes[]')
+   [ "$label" = "$name" ] && [ "$matching" = 0 ] && label_conflict=1
+  done < <(printf '%s' "$workspaces" | jq -c '.result.workspaces[]')
+  count="$(printf '%s' "$matches" | jq length)"
+  [ "$count" -le 1 ] || { _eas_error 'multiple panes match the project; inspect Herdr explicitly'; return 69; }
+  printf '%s' "$agents" | jq -e --arg n "$name" 'any(.result.agents[]; .name==$n)' >/dev/null && { _eas_error 'agent name belongs to another directory; choose --name'; return 69; }
+  if [ "$count" = 1 ]; then
+   [ "$checker" = 0 ] || { _eas_error '--checker requires a new workspace environment'; return 64; }
+   info="$(printf '%s' "$matches" | jq '.[0]')"
+   pane="$(printf '%s' "$info" | jq -r '.pane_id')"
+   workspace="$(printf '%s' "$info" | jq -r '.workspace_id')"
+   printf '%s' "$info" | jq -e '(.agent // "")==""' >/dev/null || { _eas_error 'pane has an unlisted agent; retry discovery'; return 69; }
+   response="$(_eas_herdr pane process-info --pane "$pane")" || return 69
+   printf '%s' "$response" | jq -e '.result.process_info | .shell_pid as $s | ($s!=null) and (.foreground_process_group_id==$s) and (.foreground_processes|length==1 and .[0].pid==$s and (.[0].name|IN("bash","zsh","fish","sh","dash","pwsh")))' >/dev/null || { _eas_error "pane $pane is not a confirmed idle shell"; return 69; }
+   outcome=joined-launched
+  else
+   [ "$label_conflict" = 0 ] || { _eas_error 'workspace label belongs to another directory; choose --name'; return 69; }
+   outcome=created
+  fi
+  case "$agent" in
+   claude) args=(--dangerously-skip-permissions --name "$name")
+    [ "$mode" = resume ] && args+=(--resume "$resume_id")
+    [ "$mode" = continue ] && args+=(--continue) ;;
+   codex) args=(--dangerously-bypass-approvals-and-sandbox)
+    [ "$mode" = resume ] && args=(resume "$resume_id" "${args[@]}")
+    [ "$mode" = continue ] && args=(resume --last "${args[@]}") ;;
+   grok) args=(--always-approve --permission-mode bypassPermissions --sandbox off)
+    [ "$mode" = resume ] && args+=(--resume "$resume_id")
+    [ "$mode" = continue ] && args+=(--resume) ;;
+   gemini) args=(--yolo)
+    [ "$mode" = resume ] && args+=(--resume "$resume_id")
+    [ "$mode" = continue ] && args+=(--resume latest) ;;
+  esac
+  if [ "$dry" = 0 ]; then
+   if [ -z "$pane" ]; then
+    create_args=(workspace create --cwd "$dir" --label "$name" --no-focus)
+    [ "$checker" = 1 ] && create_args+=(--env MFIC_ROLE=checker)
+    response="$(_eas_herdr "${create_args[@]}")" || return 69
+    pane="$(printf '%s' "$response" | jq -er '.result.root_pane.pane_id')" || return 69
+    workspace="$(printf '%s' "$response" | jq -er '.result.workspace.workspace_id')" || return 69
+   fi
+   # Save pending exact resume identity before starting. Failed starts are never
+   # interpreted as permission for an automatic fresh launch on the next run.
+   record="$(jq -n --arg cwd "$dir" --arg agent "$agent" --arg id "$resume_id" '{schema:"erect-agent-stack/v1",cwd:$cwd,agent:$agent,session_id:(if $id=="" then null else $id end),status:"starting"}')"
+   _eas_write_record || return 74
+   if ! _eas_herdr agent start "$name" --kind "$agent" --pane "$pane" --timeout "$((10#$timeout*1000))" -- "${args[@]}" >/dev/null; then
+    _eas_error "agent not confirmed ready in $pane; inspect herdr agent read $pane. No restart or trust response was sent."
+    return 69
+   fi
+   response="$(_eas_herdr agent get "$pane")" || return 69
+   info="$(printf '%s' "$response" | jq -e '.result.agent | select(.agent!=null)')" || return 69
+   [ "$(printf '%s' "$info" | jq -r '.agent')" = "$agent" ] || { _eas_error 'backend identity changed during launch'; return 69; }
+   [ "$(printf '%s' "$info" | jq -r '.pane_id')" = "$pane" ] || { _eas_error 'pane identity changed during launch'; return 69; }
+   if [ "$mode" = resume ]; then
+    native_id="$(printf '%s' "$info" | jq -r '.agent_session.value // empty')"
+    if [ -n "$native_id" ] && [ "$native_id" != "$resume_id" ]; then
+     _eas_error "resume identity mismatch in $pane; inspect it before proceeding"
+     return 69
+    fi
+   fi
+  fi
+ fi
+ if [ "$dry" = 0 ]; then
+  native_id="$(printf '%s' "$info" | jq -r 'if .agent_session.kind=="id" then .agent_session.value // empty else empty end')"
+  record="$(jq -n --arg cwd "$dir" --arg agent "$agent" --arg id "$native_id" --arg pane "$pane" --arg workspace "$workspace" --arg name "$name" --arg mode "$mode" '{schema:"erect-agent-stack/v1",cwd:$cwd,agent:$agent,session_id:(if $id=="" then null else $id end),pane:$pane,workspace:$workspace,name:$name,launch_mode:$mode,status:"observed"}')"
+  _eas_write_record || return 74
+  [ -n "$native_id" ] || _eas_error "native ID not reported yet; rerun while the agent is live to refresh $state_file"
+  if [ -n "$note" ]; then
+   _eas_herdr notification show "Inbox: $name" --body "$note" --sound none >/dev/null || return 69
+  fi
+  if [ "$focus" = 1 ]; then _eas_herdr workspace focus "$workspace" >/dev/null || return 69; fi
+ else outcome="planned-$outcome"
+ fi
+ if [ "$json" = 1 ]; then
+  jq -n --arg outcome "$outcome" --arg cwd "$dir" --arg agent "$agent" --arg pane "$pane" --arg workspace "$workspace" --arg state_file "$state_file" --arg id "$native_id" --arg mode "$mode" --argjson dry_run "$([ "$dry" = 1 ] && printf true || printf false)" '{outcome:$outcome,cwd:$cwd,agent:$agent,pane:$pane,workspace:$workspace,state_file:$state_file,session_id:$id,mode:$mode,dry_run:$dry_run}'
+ else
+  [ "$dry" = 0 ] || printf 'dry-run: '
+  printf '%s: %s @ %s (%s, %s)\n' "$outcome" "$name" "$dir" "$agent" "${pane:-new pane}"
+ fi
+)
 if ! (return 0 2>/dev/null); then
-	# Check if we are running tests
-	if [ "$1" = "--test" ]; then
-		# Run tests from the test file
-		_test_file="$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
-		if [ -f "$_test_file" ]; then . "$_test_file" > /dev/null; fi
-	else
-		# If called directly, pass all arguments to the function
-		$(basename "${0##\-}") "$@"
-	fi
+ if [ "${1:-}" = --test ]; then
+  bash "$(dirname "${BASH_SOURCE[0]}")/test/erect-agent-stack_test"
+ else erect-agent-stack "$@"
+ fi
 fi

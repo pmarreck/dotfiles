@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Deterministic Herdr protocol fixture. Never invokes a real terminal or agent.
+set -u
+jq -cn --args '$ARGS.positional' -- "$@" >> "$EAS_FIXTURE/calls" || exit 98
+case "$1 $2" in
+  'agent list') cat "$EAS_FIXTURE/agents.json" ;;
+  'workspace list') cat "$EAS_FIXTURE/workspaces.json" ;;
+  'pane list') cat "$EAS_FIXTURE/panes.json" ;;
+  'pane process-info') cat "$EAS_FIXTURE/process.json" ;;
+  'workspace create')
+    jq -n --arg cwd "$EAS_PROJECT" '{result:{workspace:{workspace_id:"wNEW"},root_pane:{pane_id:"wNEW:p7",cwd:$cwd}}}' ;;
+  'agent start')
+    if [ "${EAS_FAIL_START:-0}" = 1 ]; then
+      printf 'blocked or timed out\n' >&2; exit 1
+    fi
+    kind=claude
+    native_id=native-session-123
+    pane=wNEW:p7
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --kind) kind="$2"; shift 2 ;;
+        --pane) pane="$2"; shift 2 ;;
+        --resume|resume)
+          if [ "$#" -gt 1 ] && [[ "$2" != -* ]]; then native_id="$2"; shift 2; else shift; fi ;;
+        *) shift ;;
+      esac
+    done
+    printf '%s' "$kind" > "$EAS_FIXTURE/kind"
+    printf '%s' "${EAS_WRONG_ID:-$native_id}" > "$EAS_FIXTURE/id"
+    printf '%s' "$pane" > "$EAS_FIXTURE/pane"
+    printf '{"result":{"type":"ok"}}\n' ;;
+  'agent get')
+    kind="$(cat "$EAS_FIXTURE/kind" 2>/dev/null || printf codex)"
+    jq -n --arg cwd "$EAS_PROJECT" --arg kind "$kind" --arg id "$(cat "$EAS_FIXTURE/id")" --arg pane "$(cat "$EAS_FIXTURE/pane")" '{result:{agent:{agent:$kind,agent_status:"idle",cwd:$cwd,pane_id:$pane,workspace_id:"wNEW",agent_session:{kind:"id",value:$id}}}}' ;;
+  'agent focus'|'workspace focus'|'notification show') printf '{"result":{"type":"ok"}}\n' ;;
+  *) printf 'unexpected Herdr mutation: %s\n' "$*" >&2; exit 99 ;;
+esac

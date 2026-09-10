@@ -31,7 +31,6 @@ git_commit_ai_test
 # ── Requires a real terminal, tmux server, or interactive session ────────────
 sessions_test
 kill-session_test
-erect-agent-stack_test
 apply-hooks_test
 newterm_test
 shell_startup_test
