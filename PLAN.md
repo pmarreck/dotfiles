@@ -1,5 +1,27 @@
 # dotfiles — TODO / Plans
 
+## Active: live wall-clock `times` command (2026-09-16)
+
+- [x] Establish and record the repository's intent from the README, flake,
+      rules, current implementation, and Peter's confirmation.
+  - Curiosity poke: keep the personal dotfiles boundary explicit so a helper
+    change does not silently turn into public-product compatibility work.
+  - Completed 2026-09-16 12:50 EDT: `INTENT.md` now records the one-owner
+    purpose, cross-host outcomes, scope boundary, constraints, and test evidence.
+- [ ] Characterize `timed`, then add failing-first tests for invocation as
+      `times`, exact local `YYYYMMDDHHMMSS.d` formatting, calendar rollover,
+      non-interactive line prefixes, and live PTY output.
+  - Curiosity poke: Bash already owns `times` as a builtin, and aliases do not
+    preserve their original name in the child process.
+- [ ] Implement the smallest shared mode switch while preserving `timed` output,
+      command exit status, final elapsed-time report, and terminal cleanup.
+  - Curiosity poke: derive the calendar fields and fractional digit from one
+    clock sample so a second-boundary race cannot produce an impossible stamp.
+- [ ] Run focused tests, ShellCheck, the complete host suite, and the hermetic
+      Nix check; update dirtree notes and commit the known-good unit.
+  - Curiosity poke: a regex-only PTY check can accept malformed dates, so pair
+    it with fixed-epoch formatter tests.
+
 ## Active — native Herdr erect-agent-stack (2026-09-10)
 
 - [x] Replace the tmux launcher with native Herdr discovery, workspace reuse
