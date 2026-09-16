@@ -400,6 +400,120 @@ EOF
 	assert_equal "" "$pty_error" "Times PTY: expect and command have clean diagnostic stderr"
 }
 
+test_prefix_option_validation() {
+	printf "\n=== Testing fixed-width prefix option validation ===\n"
+
+	local out err rc
+	capture "$REPO_ROOT/bin/timed" --prefix
+	assert_exit_code 1 "$rc" "Prefix: missing width fails"
+	assert_contains "$err" "--prefix requires an argument" \
+		"Prefix: missing width explains the required argument"
+	assert_equal "" "$out" "Prefix: missing width has clean stdout"
+
+	capture "$REPO_ROOT/bin/timed" --prefix 0 true
+	assert_exit_code 1 "$rc" "Prefix: zero width fails"
+	assert_contains "$err" "--prefix must be a positive integer" \
+		"Prefix: zero width explains the accepted range"
+	assert_equal "" "$out" "Prefix: invalid width has clean stdout"
+}
+
+test_prefix_field_formatting() {
+	printf "\n=== Testing fixed-width prefix rendering ===\n"
+
+	local field="<missing>"
+	if declare -f fit_prefix_field >/dev/null 2>&1; then
+		field=$(fit_prefix_field "1.2s" 8)
+	fi
+	assert_equal "1.2s    " "$field" "Prefix field: elapsed status fills exact width"
+
+	field="<missing>"
+	if declare -f fit_prefix_field >/dev/null 2>&1; then
+		field=$(fit_prefix_field "20260916172500.3" 17)
+	fi
+	assert_equal "20260916172500.3 " "$field" \
+		"Prefix field: timestamp reserves a separator column"
+
+	field="<missing>"
+	if declare -f fit_prefix_field >/dev/null 2>&1; then
+		field=$(fit_prefix_field "123456789" 6)
+	fi
+	assert_equal ">6789 " "$field" "Prefix field: overflow keeps width and recent digits"
+
+	field="<missing>"
+	if declare -f live_precision_for_interval >/dev/null 2>&1; then
+		field=$(live_precision_for_interval "0.01")
+	fi
+	assert_equal "2" "$field" "Prefix field: a fast interval keeps hundredths"
+
+	field="<missing>"
+	if declare -f live_precision_for_interval >/dev/null 2>&1; then
+		field=$(live_precision_for_interval "0.1")
+	fi
+	assert_equal "1" "$field" "Prefix field: the default interval keeps tenths"
+
+	field="<missing>"
+	if declare -f live_precision_for_interval >/dev/null 2>&1; then
+		field=$(live_precision_for_interval "1")
+	fi
+	assert_equal "0" "$field" "Prefix field: a one-second interval drops decimals"
+}
+
+test_prefix_quiet_stream() {
+	printf "\n=== Testing quiet fixed-width stdout stream ===\n"
+
+	local out err rc
+	local stream_file="$TEST_TEMP_DIR/prefix-stream.out"
+	local error_file="$TEST_TEMP_DIR/prefix-stream.err"
+	"$REPO_ROOT/bin/timed" --quiet --prefix 3 --prefix 5 --no-color \
+		--no-resources bash -c 'printf "alpha\n\nbeta\n"; exit 42' \
+		>"$stream_file" 2>"$error_file"
+	rc=$?
+	out=$(od -An -v -t x1 "$stream_file" | tr -d ' \n')
+	err=$(cat "$error_file")
+	assert_exit_code 42 "$rc" "Prefix stream: preserves the child exit status"
+	assert_equal '2020202020616c7068610a20202020200a2020202020626574610a' "$out" \
+		"Prefix stream: later width wins and preserves every complete line byte"
+	assert_contains "$err" "exit" "Prefix stream: final timing report remains on stderr"
+
+	capture "$REPO_ROOT/bin/timed" --quiet --prefix 4 --no-color \
+		bash -c 'printf alpha'
+	assert_exit_code 0 "$rc" "Prefix stream: unterminated command succeeds"
+	assert_equal "    alpha" "$out" \
+		"Prefix stream: preserves an unterminated final line without inventing a newline"
+}
+
+test_prefix_live_pty() {
+	printf "\n=== Testing fixed-width prefix in a real PTY ===\n"
+
+	local output
+	output=$(TIMES_COMMAND="$REPO_ROOT/bin/times" expect <<'EOF' 2>"$TEST_TEMP_DIR/prefix-pty.err"
+log_user 0
+set timeout 3
+spawn -noecho $env(TIMES_COMMAND) --prefix 17 --interactive --no-color --no-resources bash -c {stty -echo; printf al; IFS= read -r gate; printf "pha\nbeta\n"; exit 42}
+expect {
+	-re {[0-9]{14}\.[0-9] } { send -- "\r" }
+	timeout { exit 124 }
+	eof { exit 125 }
+}
+expect {
+	-re {[0-9]{14}\.[0-9] alpha\r\n {17}beta\r\n} { puts "aligned" }
+	timeout { exit 126 }
+	eof { exit 127 }
+}
+expect eof
+set child_status [wait]
+exit [lindex $child_status 3]
+EOF
+	)
+	local exit_code=$?
+	local diagnostic
+	diagnostic=$(cat "$TEST_TEMP_DIR/prefix-pty.err")
+	assert_exit_code 42 "$exit_code" "Prefix PTY: preserves child failure status"
+	assert_equal "aligned" "$output" \
+		"Prefix PTY: one writer aligns a timed line and the immediately following line"
+	assert_equal "" "$diagnostic" "Prefix PTY: expect has clean diagnostic stderr"
+}
+
 test_force_interactive_mode() {
 	printf "\n=== Testing force interactive mode ===\n"
 
@@ -597,6 +711,10 @@ run_all_tests() {
 	test_times_timestamp_formatting
 	test_times_non_interactive_line_prefix
 	test_times_live_pty
+	test_prefix_option_validation
+	test_prefix_field_formatting
+	test_prefix_quiet_stream
+	test_prefix_live_pty
     test_force_interactive_mode
     test_conflicting_interactive_flags
     test_help_and_version

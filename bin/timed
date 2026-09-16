@@ -26,6 +26,14 @@ UPDATE_INTERVAL="0.1"  # Default to 10Hz (100ms) updates
 NON_INTERACTIVE=0
 FORCE_INTERACTIVE=0
 FORCE_NON_INTERACTIVE=0
+PREFIX_WIDTH=0
+PREFIX_STATUS_VISIBLE=0
+PREFIX_STATUS_FIELD=""
+COMMAND_PID=""
+STREAM_DIR=""
+STREAM_FIFO=""
+STREAM_FD_OPEN=0
+STREAM_INPUT_FD_OPEN=0
 
 # Color codes (will be disabled if NO_COLOR=1)
 COLOR_GRAY=""
@@ -76,6 +84,7 @@ OPTIONS:
 		-r, --no-resources  Don't show resource usage statistics
 		-s, --static        Show timer updates on new lines (don't update inline)
 		-i, --interval SEC  Update interval in seconds (default: 0.1, min: 0.01)
+		--prefix N         Reserve an exact N-column status gutter on stdout
 		--interactive     Force interactive timer behavior even when stdout is not a TTY
 		--non-interactive Force line-prefixed output even when stdout is a TTY
 
@@ -83,6 +92,8 @@ NOTES:
 		When stdout is not a TTY, $SCRIPT_NAME prefixes each stdout line with
 		$prefix_description
 		instead of emitting the inline timer (unless --quiet is set).
+		--prefix filters child stdout one line at a time, so the child sees a pipe.
+		Child stderr retains its original channel. N includes one separator column.
 
 FORMATS:
 		default    Traditional time-like output with resource usage
@@ -182,6 +193,180 @@ format_live_display() {
 		fi
 }
 
+live_precision_for_interval() {
+		awk -v interval="$1" 'BEGIN {
+			if (interval >= 1) print 0
+			else if (interval >= 0.1) print 1
+			else print 2
+		}'
+}
+
+# Fit a live label into an exact-width gutter. The final column is always a
+# separator. When the label is too wide, keep its least-significant end because
+# elapsed seconds and wall-clock subsecond fields change there.
+fit_prefix_field() {
+		local formatted=$1
+		local width=$2
+		local content_width=$((width - 1))
+
+		if [[ $content_width -le 0 ]]; then
+				printf ' '
+				return
+		fi
+
+		if [[ ${#formatted} -gt $content_width ]]; then
+				if [[ $content_width -eq 1 ]]; then
+						formatted=">"
+				else
+						formatted=">${formatted: -$((content_width - 1))}"
+				fi
+		fi
+
+		printf "%-${content_width}s " "$formatted"
+}
+
+blank_prefix_field() {
+		printf "%${1}s" ""
+}
+
+clear_prefix_status() {
+		if [[ $PREFIX_STATUS_VISIBLE -eq 0 ]]; then
+				return
+		fi
+
+		if [[ -n "$COLOR_RESET" ]]; then
+				printf '\r\033[K' >&2
+		else
+				printf "\r%${PREFIX_WIDTH}s\r" "" >&2
+		fi
+		PREFIX_STATUS_VISIBLE=0
+}
+
+render_prefix_status() {
+		local start_epoch=$1
+		local current_time formatted precision
+		current_time=$(get_time_ns)
+		precision=$(live_precision_for_interval "$UPDATE_INTERVAL")
+		formatted=$(format_live_display "$start_epoch" "$current_time" "$precision")
+		PREFIX_STATUS_FIELD=$(fit_prefix_field "$formatted" "$PREFIX_WIDTH")
+
+		if [[ $UPDATE_INLINE -eq 0 ]]; then
+				printf "%s%s%s\n" "$COLOR_GRAY" "$PREFIX_STATUS_FIELD" "$COLOR_RESET" >&2
+				PREFIX_STATUS_VISIBLE=0
+				return
+		fi
+
+		if [[ $PREFIX_STATUS_VISIBLE -eq 1 ]]; then
+				printf '\r' >&2
+		fi
+		printf "%s%s%s" "$COLOR_GRAY" "$PREFIX_STATUS_FIELD" "$COLOR_RESET" >&2
+		PREFIX_STATUS_VISIBLE=1
+}
+
+emit_prefixed_line() {
+		local line=$1
+		local has_newline=$2
+		local field
+
+		if [[ $PREFIX_STATUS_VISIBLE -eq 1 ]]; then
+				field=$PREFIX_STATUS_FIELD
+				clear_prefix_status
+		else
+				field=$(blank_prefix_field "$PREFIX_WIDTH")
+		fi
+
+		printf '%s%s' "$field" "$line"
+		if [[ $has_newline -eq 1 ]]; then
+				printf '\n'
+		fi
+}
+
+cleanup_stream_files() {
+		if [[ $STREAM_FD_OPEN -eq 1 ]]; then
+				exec 3<&-
+				STREAM_FD_OPEN=0
+		fi
+		if [[ $STREAM_INPUT_FD_OPEN -eq 1 ]]; then
+				exec 5<&-
+				STREAM_INPUT_FD_OPEN=0
+		fi
+		if [[ -n "$STREAM_FIFO" ]]; then
+				rm -f -- "$STREAM_FIFO"
+				STREAM_FIFO=""
+		fi
+		if [[ -n "$STREAM_DIR" ]]; then
+				rmdir -- "$STREAM_DIR" 2>/dev/null || true
+				STREAM_DIR=""
+		fi
+}
+
+# Run the command behind a FIFO so one process owns both timer and stdout
+# rendering. This deliberately buffers at most one logical output line.
+run_prefixed_stream() {
+		local start_epoch=$1
+		shift
+
+		STREAM_DIR=$(mktemp --tmpdir -d timed_stream.XXXXXX) || return 1
+		STREAM_FIFO="$STREAM_DIR/stdout"
+		mkfifo "$STREAM_FIFO" || {
+				cleanup_stream_files
+				return 1
+		}
+		exec 5<&0
+		STREAM_INPUT_FD_OPEN=1
+
+		(
+				exec 4>"$STREAM_FIFO"
+				"$@" <&5 >&4
+				local command_status=$?
+				exec 4>&-
+				exit "$command_status"
+		) &
+		COMMAND_PID=$!
+		exec 5<&-
+		STREAM_INPUT_FD_OPEN=0
+
+		exec 3<"$STREAM_FIFO"
+		STREAM_FD_OPEN=1
+
+		local line=""
+		local pending=""
+		local read_status=0
+		while true; do
+				line=""
+				if IFS= read -r -t "$UPDATE_INTERVAL" line <&3; then
+					emit_prefixed_line "${pending}${line}" 1
+					pending=""
+					continue
+				else
+						read_status=$?
+				fi
+
+				pending="${pending}${line}"
+				if [[ $read_status -gt 128 ]]; then
+						if [[ $QUIET_MODE -eq 0 ]]; then
+							render_prefix_status "$start_epoch"
+						fi
+						continue
+				fi
+
+				if [[ -n "$pending" ]]; then
+						emit_prefixed_line "$pending" 0
+				fi
+				break
+		done
+
+		clear_prefix_status
+		exec 3<&-
+		STREAM_FD_OPEN=0
+
+		wait "$COMMAND_PID"
+		local command_status=$?
+		COMMAND_PID=""
+		cleanup_stream_files
+		return "$command_status"
+}
+
 # Get current time with nanosecond precision (cross-platform)
 get_time_ns() {
 		# Try GNU date first (Linux and GNU coreutils on Mac)
@@ -221,15 +406,9 @@ run_timer() {
 				# Sample the clock once so timestamp fields cannot straddle a second.
 				local current_time=$(get_time_ns)
 
-				# Format with appropriate precision based on update interval
-				local precision=1
-				if (( $(echo "$interval >= 1" | awk '{print ($1 >= 1)}') )); then
-						precision=0  # No decimals for 1s+ intervals
-				elif (( $(echo "$interval >= 0.1" | awk '{print ($1 >= 0.1)}') )); then
-						precision=1  # 1 decimal for 100ms+ intervals
-				else
-						precision=2  # 2 decimals for <100ms intervals
-				fi
+				# Format with appropriate precision based on update interval.
+				local precision
+				precision=$(live_precision_for_interval "$interval")
 
 				local formatted=$(format_live_display "$start_epoch" "$current_time" "$precision")
 				local display="${formatted} "
@@ -296,10 +475,18 @@ cleanup() {
 				wait "$TIMER_PID" 2>/dev/null
 		fi
 
+		if [[ -n "$COMMAND_PID" ]] && kill -0 "$COMMAND_PID" 2>/dev/null; then
+				kill "$COMMAND_PID" 2>/dev/null
+				wait "$COMMAND_PID" 2>/dev/null
+				COMMAND_PID=""
+		fi
+		clear_prefix_status
+		cleanup_stream_files
+
 		# Clear the timer line if we were updating inline
-		if [[ $QUIET_MODE -eq 0 ]] && [[ $UPDATE_INLINE -eq 1 ]] && [[ $NO_COLOR -eq 0 ]]; then
+		if [[ $PREFIX_WIDTH -eq 0 ]] && [[ $QUIET_MODE -eq 0 ]] && [[ $UPDATE_INLINE -eq 1 ]] && [[ $NO_COLOR -eq 0 ]]; then
 				printf "\r\033[K" >&2
-		elif [[ $QUIET_MODE -eq 0 ]] && [[ $UPDATE_INLINE -eq 1 ]]; then
+		elif [[ $PREFIX_WIDTH -eq 0 ]] && [[ $QUIET_MODE -eq 0 ]] && [[ $UPDATE_INLINE -eq 1 ]]; then
 				# Without ANSI codes, just use carriage return
 				printf "\r" >&2
 		fi
@@ -448,6 +635,18 @@ timed_main() {
 								UPDATE_INTERVAL="$2"
 								shift 2
 								;;
+						--prefix)
+								if [[ -z "${2:-}" ]]; then
+										printf "Error: --prefix requires an argument\n" >&2
+										return 1
+								fi
+								if [[ ! "$2" =~ ^[1-9][0-9]*$ ]]; then
+										printf "Error: --prefix must be a positive integer\n" >&2
+										return 1
+								fi
+								PREFIX_WIDTH="$2"
+								shift 2
+								;;
 						--)
 								shift
 								break
@@ -509,7 +708,7 @@ timed_main() {
 		START_TIME=$(get_time_ns)
 
 		# Start background timer if not in quiet mode and interactive
-		if [[ $QUIET_MODE -eq 0 ]] && [[ $NON_INTERACTIVE -eq 0 ]]; then
+		if [[ $PREFIX_WIDTH -eq 0 ]] && [[ $QUIET_MODE -eq 0 ]] && [[ $NON_INTERACTIVE -eq 0 ]]; then
 				# Export UPDATE_INTERVAL so the background process can see it
 				export UPDATE_INTERVAL
 				run_timer "$START_TIME" &
@@ -519,11 +718,14 @@ timed_main() {
 		# Execute the command with resource tracking if available
 		local resource_output=""
 		local resource_tempfile=""
-		local gnu_time_cmd=""
+		local -a gnu_time_cmd=()
 
 		local use_line_prefix=0
 		if [[ $NON_INTERACTIVE -eq 1 ]] && [[ $QUIET_MODE -eq 0 ]]; then
 				use_line_prefix=1
+		fi
+		if [[ $PREFIX_WIDTH -gt 0 ]]; then
+				use_line_prefix=0
 		fi
 
 		export TIMED_ACTIVE=1
@@ -535,30 +737,36 @@ timed_main() {
 				# Check for GNU time command (avoid shell builtin)
 				if command -v gtime >/dev/null 2>&1; then
 						# gtime is typically GNU time on macOS when installed via homebrew
-						gnu_time_cmd="gtime"
+						gnu_time_cmd=(gtime)
 				elif [[ -x /usr/bin/time ]] && /usr/bin/time -f "" true 2>/dev/null; then
 						# System time command is GNU time
-						gnu_time_cmd="/usr/bin/time"
+						gnu_time_cmd=(/usr/bin/time)
 				elif command -v gawk >/dev/null 2>&1 && env time -f "" true 2>/dev/null; then
 						# Can use env to bypass shell builtin if GNU time is available
-						gnu_time_cmd="env time"
+						gnu_time_cmd=(env time)
 				fi
 
-				if [[ -n "$gnu_time_cmd" ]]; then
+				if [[ ${#gnu_time_cmd[@]} -gt 0 ]]; then
 						# Use GNU time with custom format
 						resource_tempfile=$(mktemp --tmpdir timed_resources.XXXXXX)
-						if [[ $use_line_prefix -eq 1 ]]; then
-								$gnu_time_cmd -f "user:%U sys:%S maxrss:%M" -o "$resource_tempfile" "$@" | prefix_stdout_lines "$START_TIME"
+						if [[ $PREFIX_WIDTH -gt 0 ]]; then
+								run_prefixed_stream "$START_TIME" "${gnu_time_cmd[@]}" -f "user:%U sys:%S maxrss:%M" -o "$resource_tempfile" "$@"
+								EXIT_CODE=$?
+						elif [[ $use_line_prefix -eq 1 ]]; then
+								"${gnu_time_cmd[@]}" -f "user:%U sys:%S maxrss:%M" -o "$resource_tempfile" "$@" | prefix_stdout_lines "$START_TIME"
 								EXIT_CODE=${PIPESTATUS[0]}
 						else
-								$gnu_time_cmd -f "user:%U sys:%S maxrss:%M" -o "$resource_tempfile" "$@" 2>&1
+								"${gnu_time_cmd[@]}" -f "user:%U sys:%S maxrss:%M" -o "$resource_tempfile" "$@" 2>&1
 								EXIT_CODE=$?
 						fi
 						resource_output=$(cat "$resource_tempfile" 2>/dev/null)
 						rm -f "$resource_tempfile"
 				else
 						# Run without resource tracking (BSD time output is too messy to parse reliably)
-						if [[ $use_line_prefix -eq 1 ]]; then
+						if [[ $PREFIX_WIDTH -gt 0 ]]; then
+								run_prefixed_stream "$START_TIME" "$@"
+								EXIT_CODE=$?
+						elif [[ $use_line_prefix -eq 1 ]]; then
 								"$@" | prefix_stdout_lines "$START_TIME"
 								EXIT_CODE=${PIPESTATUS[0]}
 						else
@@ -568,7 +776,10 @@ timed_main() {
 				fi
 		else
 				# Run without resource tracking
-				if [[ $use_line_prefix -eq 1 ]]; then
+				if [[ $PREFIX_WIDTH -gt 0 ]]; then
+						run_prefixed_stream "$START_TIME" "$@"
+						EXIT_CODE=$?
+				elif [[ $use_line_prefix -eq 1 ]]; then
 						"$@" | prefix_stdout_lines "$START_TIME"
 						EXIT_CODE=${PIPESTATUS[0]}
 				else
@@ -591,7 +802,7 @@ timed_main() {
 		local duration=$(calculate_duration "$START_TIME" "$END_TIME")
 
 		# Clear timer line if we were showing it inline
-		if [[ $QUIET_MODE -eq 0 ]] && [[ $UPDATE_INLINE -eq 1 ]]; then
+		if [[ $PREFIX_WIDTH -eq 0 ]] && [[ $QUIET_MODE -eq 0 ]] && [[ $UPDATE_INLINE -eq 1 ]]; then
 				if [[ $NO_COLOR -eq 0 ]]; then
 						printf "\r\033[K" >&2
 				else

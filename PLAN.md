@@ -31,12 +31,39 @@
     files, and all 140 hermetic test files pass. `timed_test` graduated from the
     hermetic exclusion list. ShellCheck reports no new diagnostic classes or
     counts and two fewer SC2155 findings than `HEAD`.
-- [ ] After the core `times` change is green, specify and test `--prefix N` for
-      both commands so child output stays aligned when live status shares the
-      terminal cursor.
-  - Curiosity poke: padding child stdout without coordinating stderr can double
-    the indent on a line that already contains a live timer, while piping the
-    child can change its TTY-sensitive behavior.
+- [x] Add the accepted `--prefix N` line-filter mode to both commands. Reserve
+      exactly N columns, serialize live status and child stdout through one
+      renderer, and document that the child sees a pipe. Use a blank gutter
+      before the first tick and left-truncate an overlong status with `>`.
+  - Curiosity poke: child stderr retains its original channel, while stdout is
+    line-buffered; verify the real shared-terminal cursor behavior independently
+    through a PTY rather than inferring it from separately captured streams.
+  - Completed 2026-09-16 17:49 EDT: the exact-width renderer now owns live
+    status and child stdout, preserves stdin and exit status, accumulates partial
+    lines across ticks, and retains every newline byte. An independent Expect
+    PTY drives a partial line across a timer tick and verifies both aligned rows.
+- [x] Run the focused red-green cycle, ShellCheck comparison, complete host
+      suite, and hermetic Nix check; update dirtree notes and commit the green
+      prefix unit.
+  - Curiosity poke: preserve command exit status, unterminated final lines, empty
+    lines, and exact width when repeated `--prefix` options or quiet mode apply.
+  - Completed 2026-09-16 17:51 EDT: 80 focused assertions, all 185 host test
+    files, and all 140 hermetic test files pass. ShellCheck has no new diagnostic
+    class or count versus `HEAD`; six old unused-variable findings and one old
+    source-follow finding disappeared from the test file.
+
+## Pending: host-selected project binaries (2026-09-16)
+
+- [ ] After the `timed`/`times` work, read the
+      `cross-platform-project-build-arch` skill and coordinate the approved
+      `.pathconfig` migration without launching a fleet migration.
+  - Curiosity poke: preserve portable project scripts and host-selected native
+    precedence while removing stale `result/bin` and `zig-out/bin` entries.
+- [ ] Add failing-first classifier and startup tests for OS/architecture aliases,
+      WSL, foreign-target exclusion, paths with spaces, repeated sourcing, and
+      stale PATH entries before changing discovery.
+  - Curiosity poke: shell command hashing can retain a removed wrong-platform
+    path after the textual PATH value is corrected.
 
 ## Active — native Herdr erect-agent-stack (2026-09-10)
 
