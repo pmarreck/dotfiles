@@ -200,6 +200,8 @@ alias hn='clx --nerdfonts --no-less-verify --comment-width 120'
 alias variables='compgen -v'
 alias hi="echo \"Hello, ${USER}!\""
 alias about='fastfetch'
+# Bash has a `times` builtin, so use an explicit path to reach our executable.
+alias times='"$HOME/bin/times"'
 # letter count
 alias lc='wc -l'
 

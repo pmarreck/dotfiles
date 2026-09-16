@@ -8,6 +8,10 @@ set -o pipefail
 # Global variables
 SCRIPT_NAME=$(basename "${0##\-}")
 VERSION="2.0.0"
+LIVE_TIME_MODE="elapsed"
+if [[ "$SCRIPT_NAME" == "times" ]]; then
+		LIVE_TIME_MODE="timestamp"
+fi
 TIMER_PID=""
 START_TIME=""
 END_TIME=""
@@ -50,10 +54,17 @@ setup_colors() {
 
 # Show usage information
 show_usage() {
+		local description="Enhanced timing utility that shows elapsed time in real-time while a command runs."
+		local prefix_description="the elapsed time"
+		if [[ "$LIVE_TIME_MODE" == "timestamp" ]]; then
+			description="Enhanced timing utility that shows a live local timestamp while a command runs."
+			prefix_description="the current local timestamp"
+		fi
+
 		cat << EOF
 Usage: $SCRIPT_NAME [OPTIONS] COMMAND [ARGS...]
 
-Enhanced timing utility that shows elapsed time in real-time while a command runs.
+$description
 
 OPTIONS:
 		-h, --help          Show this help message
@@ -69,7 +80,8 @@ OPTIONS:
 		--non-interactive Force line-prefixed output even when stdout is a TTY
 
 NOTES:
-		When stdout is not a TTY, timed prefixes each stdout line with the elapsed time
+		When stdout is not a TTY, $SCRIPT_NAME prefixes each stdout line with
+		$prefix_description
 		instead of emitting the inline timer (unless --quiet is set).
 
 FORMATS:
@@ -136,6 +148,40 @@ format_duration() {
 		fi
 }
 
+# Format one sampled epoch value as a local wall-clock timestamp. Calendar and
+# fractional fields come from the same sample, including at second boundaries.
+format_live_timestamp() {
+		local epoch=$1
+		local epoch_seconds=${epoch%%.*}
+		local fraction=""
+		if [[ "$epoch" == *.* ]]; then
+			fraction=${epoch#*.}
+		fi
+		fraction="${fraction}0"
+
+		local calendar=""
+		calendar=$(MUTE_GNU_WRAPPER_WARNINGS=1 date -d "@$epoch_seconds" '+%Y%m%d%H%M%S' 2>/dev/null) ||
+			calendar=$(MUTE_GNU_WRAPPER_WARNINGS=1 date -r "$epoch_seconds" '+%Y%m%d%H%M%S' 2>/dev/null) ||
+			calendar=$(perl -MPOSIX=strftime -e 'print strftime("%Y%m%d%H%M%S", localtime($ARGV[0]))' "$epoch_seconds" 2>/dev/null) ||
+			return 1
+
+		printf '%s.%s' "$calendar" "${fraction:0:1}"
+}
+
+format_live_display() {
+		local start_epoch=$1
+		local current_epoch=$2
+		local precision=${3:-3}
+
+		if [[ "$LIVE_TIME_MODE" == "timestamp" ]]; then
+			format_live_timestamp "$current_epoch"
+		else
+			local elapsed
+			elapsed=$(calculate_duration "$start_epoch" "$current_epoch")
+			format_duration "$elapsed" "$precision"
+		fi
+}
+
 # Get current time with nanosecond precision (cross-platform)
 get_time_ns() {
 		# Try GNU date first (Linux and GNU coreutils on Mac)
@@ -172,9 +218,8 @@ run_timer() {
 		while true; do
 				sleep "$interval"
 
-				# Calculate actual elapsed time
+				# Sample the clock once so timestamp fields cannot straddle a second.
 				local current_time=$(get_time_ns)
-				local elapsed=$(calculate_duration "$start_epoch" "$current_time")
 
 				# Format with appropriate precision based on update interval
 				local precision=1
@@ -186,7 +231,7 @@ run_timer() {
 						precision=2  # 2 decimals for <100ms intervals
 				fi
 
-				local formatted=$(format_duration "$elapsed" "$precision")
+				local formatted=$(format_live_display "$start_epoch" "$current_time" "$precision")
 				local display="${formatted} "
 
 				if [[ $UPDATE_INLINE -eq 1 ]]; then
@@ -215,8 +260,7 @@ prefix_stdout_lines() {
 
 		while IFS= read -r line; do
 				local current_time=$(get_time_ns)
-				local elapsed=$(calculate_duration "$start_epoch" "$current_time")
-				local formatted=$(format_duration "$elapsed")
+				local formatted=$(format_live_display "$start_epoch" "$current_time")
 				printf "%s %s\n" "$formatted" "$line"
 		done
 }

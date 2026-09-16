@@ -34,7 +34,6 @@ kill-session_test
 apply-hooks_test
 newterm_test
 shell_startup_test
-timed_test
 ask_test
 
 # ── Requires the user's live system configuration or account layout ──────────

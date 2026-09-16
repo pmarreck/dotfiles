@@ -3,6 +3,10 @@
 # Test suite for timed command
 # Run with: timed --test
 
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+# shellcheck source=../src/capture.bash
+. "$REPO_ROOT/bin/src/capture.bash"
+
 # Test helper functions
 setup_test() {
     TEST_COUNT=0
@@ -72,6 +76,25 @@ assert_not_contains() {
         printf "  Actual: %s\n" "$haystack" >&2
         return 1
     fi
+}
+
+assert_matches() {
+	local actual="$1"
+	local pattern="$2"
+	local test_name="${3:-Test}"
+
+	((TEST_COUNT++))
+	if [[ "$actual" =~ $pattern ]]; then
+		((PASS_COUNT++))
+		printf "✓ %s\n" "$test_name"
+		return 0
+	else
+		((FAIL_COUNT++))
+		printf "✗ %s\n" "$test_name" >&2
+		printf "  Expected pattern: %s\n" "$pattern" >&2
+		printf "  Actual:           %s\n" "$actual" >&2
+		return 1
+	fi
 }
 
 assert_exit_code() {
@@ -252,7 +275,7 @@ EOF
 	chmod +x "$TEST_TEMP_DIR/line_script.sh"
 
 	local output
-	output=$(timed_main --no-resources "$TEST_TEMP_DIR/line_script.sh" 2>/dev/null)
+	output=$(timed_main --no-resources bash "$TEST_TEMP_DIR/line_script.sh" 2>/dev/null)
 
 	local line_count
 	line_count=$(printf '%s' "$output" | sed -n '$=')
@@ -261,6 +284,8 @@ EOF
 	local first_line second_line
 	first_line=$(printf '%s\n' "$output" | sed -n '1p')
 	second_line=$(printf '%s\n' "$output" | sed -n '2p')
+	assert_matches "$first_line" '^[0-9]+(m [0-9]+)?\.[0-9]{3}s alpha$' \
+		"Non-interactive timed: prefix remains elapsed time"
 
 	if [[ "$first_line" == *" alpha" ]]; then
 		assert_equal 0 0 "Non-interactive: prefix has space before alpha"
@@ -273,6 +298,106 @@ EOF
 	else
 		assert_equal 0 1 "Non-interactive: prefix has space before beta"
 	fi
+}
+
+test_times_entrypoint() {
+	printf "\n=== Testing times entry point ===\n"
+
+	local target
+	target=$(readlink "$REPO_ROOT/bin/times" 2>/dev/null)
+	assert_equal "timed" "$target" "Times: executable is a relative symlink to timed"
+
+	local alias_home="$TEST_TEMP_DIR/times-alias-home"
+	mkdir -p "$alias_home"
+	ln -s "$REPO_ROOT/bin" "$alias_home/bin"
+
+	local out err rc
+	capture env \
+		HOME="$alias_home" \
+		PLATFORM=linux \
+		DISTRO=NixOS \
+		bash --noprofile --norc -c '
+			needs() { :; }
+			is_nix_darwin() { return 1; }
+			. "$1" || exit 2
+			alias times >/dev/null || exit 3
+			shopt -s expand_aliases
+			eval "times --version"
+		' bash "$REPO_ROOT/.aliases"
+	assert_exit_code 0 "$rc" "Times: alias overrides the Bash builtin"
+	assert_equal "times version 2.0.0" "$out" "Times: alias preserves the times invocation name"
+	assert_equal "" "$err" "Times: alias/version check has clean stderr"
+
+	capture "$REPO_ROOT/bin/times" --help
+	assert_exit_code 0 "$rc" "Times: help succeeds"
+	assert_contains "$out" "local timestamp" "Times: help describes the live timestamp"
+	assert_equal "" "$err" "Times: help has clean stderr"
+}
+
+test_times_timestamp_formatting() {
+	printf "\n=== Testing times timestamp formatting ===\n"
+
+	local formatted
+	formatted=$(TZ=UTC format_live_timestamp "0.099999999")
+	assert_equal "19700101000000.0" "$formatted" "Times format: pads the epoch timestamp"
+
+	formatted=$(TZ=UTC format_live_timestamp "1704153599.999999999")
+	assert_equal "20240101235959.9" "$formatted" "Times format: truncates to one tenth before midnight"
+
+	formatted=$(TZ=UTC format_live_timestamp "1704153600.000000000")
+	assert_equal "20240102000000.0" "$formatted" "Times format: rolls the calendar date at midnight"
+}
+
+test_times_non_interactive_line_prefix() {
+	printf "\n=== Testing times non-interactive line prefix ===\n"
+
+	cat > "$TEST_TEMP_DIR/times-lines.sh" << 'EOF'
+#!/usr/bin/env bash
+printf "alpha\nbeta\n"
+EOF
+	chmod +x "$TEST_TEMP_DIR/times-lines.sh"
+
+	local out err rc
+	capture "$REPO_ROOT/bin/times" --no-color --no-resources bash "$TEST_TEMP_DIR/times-lines.sh"
+	assert_exit_code 0 "$rc" "Times non-interactive: command succeeds"
+
+	local first_line second_line
+	first_line=$(printf '%s\n' "$out" | sed -n '1p')
+	second_line=$(printf '%s\n' "$out" | sed -n '2p')
+	assert_matches "$first_line" '^[0-9]{14}\.[0-9] alpha$' \
+		"Times non-interactive: first line has a timestamp"
+	assert_matches "$second_line" '^[0-9]{14}\.[0-9] beta$' \
+		"Times non-interactive: second line has a timestamp"
+	assert_contains "$err" "real" "Times non-interactive: final elapsed report remains on stderr"
+}
+
+test_times_live_pty() {
+	printf "\n=== Testing times live PTY display ===\n"
+
+	local output
+	output=$(TIMES_COMMAND="$REPO_ROOT/bin/times" expect <<'EOF' 2>"$TEST_TEMP_DIR/times-pty.err"
+log_user 0
+set timeout 2
+spawn -noecho $env(TIMES_COMMAND) --interactive --no-color --no-resources bash -c {IFS= read -r line}
+expect {
+	-re {([0-9]{14}\.[0-9]) } {
+		puts $expect_out(1,string)
+		send -- "\r"
+	}
+	timeout { exit 124 }
+	eof { exit 125 }
+}
+expect eof
+set child_status [wait]
+exit [lindex $child_status 3]
+EOF
+)
+	local exit_code=$?
+	local pty_error
+	pty_error=$(cat "$TEST_TEMP_DIR/times-pty.err")
+	assert_exit_code 0 "$exit_code" "Times PTY: live command exits successfully"
+	assert_matches "$output" '^[0-9]{14}\.[0-9]$' "Times PTY: live display emits one timestamp"
+	assert_equal "" "$pty_error" "Times PTY: expect and command have clean diagnostic stderr"
 }
 
 test_force_interactive_mode() {
@@ -293,7 +418,7 @@ EOF
 	chmod +x "$TEST_TEMP_DIR/force_interactive.sh"
 
 	local output
-	output=$(timed_main --interactive --no-resources "$TEST_TEMP_DIR/force_interactive.sh" 2>/dev/null)
+	output=$(timed_main --interactive --no-resources bash "$TEST_TEMP_DIR/force_interactive.sh" 2>/dev/null)
 
 	assert_equal $'alpha\nbeta' "$output" "Force interactive: stdout not prefixed"
 }
@@ -354,7 +479,7 @@ EOF
 
     local output
     # Capture all output with quiet mode to avoid timer interference
-    output=$(timed_main -q "$TEST_TEMP_DIR/test_script.sh" arg1 "arg with spaces" 2>&1)
+    output=$(timed_main -q bash "$TEST_TEMP_DIR/test_script.sh" arg1 "arg with spaces" 2>&1)
     local exit_code=$?
 
     assert_exit_code 42 "$exit_code" "Complex command: preserves exit code"
@@ -396,7 +521,7 @@ EOF
     chmod +x "$TEST_TEMP_DIR/signal_test.sh"
 
     # Start the timed command in background using the sourced function
-    timed_main -q "$TEST_TEMP_DIR/signal_test.sh" 2>/dev/null &
+    timed_main -q bash "$TEST_TEMP_DIR/signal_test.sh" 2>/dev/null &
     local pid=$!
 
     # Give it a moment to start
@@ -454,8 +579,8 @@ run_all_tests() {
     setup_test
 
     # Source the timed script to get access to internal functions
-    if [[ -f "$HOME/dotfiles/bin/timed" ]]; then
-        . "$HOME/dotfiles/bin/timed"
+    if [[ -f "$REPO_ROOT/bin/timed" ]]; then
+        . "$REPO_ROOT/bin/timed"
     fi
 
     # Run all test functions
@@ -468,6 +593,10 @@ run_all_tests() {
     test_no_resources_flag
     test_static_mode
     test_non_interactive_line_prefix
+	test_times_entrypoint
+	test_times_timestamp_formatting
+	test_times_non_interactive_line_prefix
+	test_times_live_pty
     test_force_interactive_mode
     test_conflicting_interactive_flags
     test_help_and_version

@@ -8,19 +8,35 @@
     change does not silently turn into public-product compatibility work.
   - Completed 2026-09-16 12:50 EDT: `INTENT.md` now records the one-owner
     purpose, cross-host outcomes, scope boundary, constraints, and test evidence.
-- [ ] Characterize `timed`, then add failing-first tests for invocation as
+- [x] Characterize `timed`, then add failing-first tests for invocation as
       `times`, exact local `YYYYMMDDHHMMSS.d` formatting, calendar rollover,
       non-interactive line prefixes, and live PTY output.
   - Curiosity poke: Bash already owns `times` as a builtin, and aliases do not
     preserve their original name in the child process.
-- [ ] Implement the smallest shared mode switch while preserving `timed` output,
+  - Completed 2026-09-16 13:00 EDT: the old implementation failed 16 of 60
+    assertions; the red cases cover the relative entry point, builtin override,
+    fixed epochs around midnight, piped lines, and an `expect` PTY.
+- [x] Implement the smallest shared mode switch while preserving `timed` output,
       command exit status, final elapsed-time report, and terminal cleanup.
   - Curiosity poke: derive the calendar fields and fractional digit from one
     clock sample so a second-boundary race cannot produce an impossible stamp.
-- [ ] Run focused tests, ShellCheck, the complete host suite, and the hermetic
+  - Completed 2026-09-16 13:02 EDT: `bin/times` is a relative symlink, the shell
+    alias overrides Bash's builtin through an explicit path, and shared live
+    rendering selects elapsed or local wall-clock output from the invoked name.
+- [x] Run focused tests, ShellCheck, the complete host suite, and the hermetic
       Nix check; update dirtree notes and commit the known-good unit.
   - Curiosity poke: a regex-only PTY check can accept malformed dates, so pair
     it with fixed-epoch formatter tests.
+  - Completed 2026-09-16 13:16 EDT: 60 focused assertions, all 185 host test
+    files, and all 140 hermetic test files pass. `timed_test` graduated from the
+    hermetic exclusion list. ShellCheck reports no new diagnostic classes or
+    counts and two fewer SC2155 findings than `HEAD`.
+- [ ] After the core `times` change is green, specify and test `--prefix N` for
+      both commands so child output stays aligned when live status shares the
+      terminal cursor.
+  - Curiosity poke: padding child stdout without coordinating stderr can double
+    the indent on a line that already contains a live timer, while piping the
+    child can change its TTY-sensitive behavior.
 
 ## Active — native Herdr erect-agent-stack (2026-09-10)
 
