@@ -324,6 +324,11 @@ else
 	trap - DEBUG
 fi
 
+# Shell refresh must be a function in this process; the executable form cannot
+# mutate its parent shell.
+# shellcheck disable=SC1091
+. "$HOME/dotfiles/bin/rehash"
+
 # aliases- source these on every interactive shell because they do not inherit
 $INTERACTIVE_SHELL && . "$HOME/.aliases"
 

@@ -1,33 +1,108 @@
 #!/usr/bin/env bash
 
-# Test the rehash function
-test_rehash() {
-  # Save the current environment state
-  local old_skip_dotfile_tests="$SKIP_DOTFILE_TESTS"
-  local old_test_verbose="$TEST_VERBOSE"
-  local old_expand_test_verbose="$GLOB_TEST_VERBOSE"
-  local old_last_dotfile_run="$LAST_DOTFILE_RUN"
-  
-  # Set a test value for LAST_DOTFILE_RUN
-  export LAST_DOTFILE_RUN="test_value"
-  
-  # Run rehash
-  rehash
-  
-  # Verify that SKIP_DOTFILE_TESTS was unset after rehash
-  assert "$SKIP_DOTFILE_TESTS" == ""
-  
-  # Verify that LAST_DOTFILE_RUN was preserved
-  assert "$LAST_DOTFILE_RUN" == "test_value"
-  
-  # Restore the environment
-  export SKIP_DOTFILE_TESTS="$old_skip_dotfile_tests"
-  export TEST_VERBOSE="$old_test_verbose"
-  export GLOB_TEST_VERBOSE="$old_expand_test_verbose"
-  export LAST_DOTFILE_RUN="$old_last_dotfile_run"
+set -u
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+# shellcheck disable=SC1091
+. "$REPO_ROOT/bin/src/capture.bash"
+
+tests=0
+fails=0
+work_dir=$(mktemp -d --tmpdir rehash_test.XXXXXX)
+trap 'rm -rf "$work_dir"' EXIT
+
+check_equal() {
+	local expected=$1
+	local actual=$2
+	local label=$3
+	((tests++))
+	if [[ "$actual" == "$expected" ]]; then
+		printf '✓ %s\n' "$label"
+	else
+		printf '✗ %s\n  expected: %q\n  actual:   %q\n' \
+			"$label" "$expected" "$actual" >&2
+		((fails++))
+	fi
 }
 
-# Run the test if this script is executed directly
-if ! (return 0 2>$NULL); then
-  test_rehash
+check_contains() {
+	local actual=$1
+	local expected=$2
+	local label=$3
+	((tests++))
+	if [[ "$actual" == *"$expected"* ]]; then
+		printf '✓ %s\n' "$label"
+	else
+		printf '✗ %s\n  missing: %q\n  actual:  %q\n' \
+			"$label" "$expected" "$actual" >&2
+		((fails++))
+	fi
+}
+
+test_parent_shell_refresh() {
+	local fixture_home="$work_dir/home"
+	mkdir -p "$fixture_home/bin" "$fixture_home/dotfiles"
+	# shellcheck disable=SC2329 # Invoked indirectly through the refreshed alias below.
+	rehash_fixture_times() { printf 'fixture-times %s\n' "$*"; }
+	# shellcheck disable=SC2016
+	printf '%s\n' \
+		'REHASH_FIXTURE_FLAGS="$SKIP_DOTFILE_TESTS:$TEST_VERBOSE:$GLOB_TEST_VERBOSE"' \
+		"alias times='rehash_fixture_times'" >"$fixture_home/.aliases"
+	: >"$fixture_home/dotfiles/.pathconfig"
+	: >"$fixture_home/dotfiles/.envconfig"
+
+	# Only a function in this process can refresh this process's aliases.
+	# shellcheck disable=SC1091
+	. "$REPO_ROOT/bin/rehash"
+	local original_home=$HOME
+	HOME="$fixture_home"
+	unalias times 2>/dev/null || :
+	SKIP_DOTFILE_TESTS="original-skip"
+	TEST_VERBOSE="original-test"
+	GLOB_TEST_VERBOSE="original-glob"
+	LAST_DOTFILE_RUN="preserve-me"
+
+	local output status refreshed alias_definition
+	rehash >"$work_dir/rehash.out"
+	status=$?
+	output=$(cat "$work_dir/rehash.out")
+	alias_definition=$(alias times 2>/dev/null)
+	shopt -s expand_aliases
+	refreshed=$(eval 'times --version' 2>"$work_dir/times.err")
+
+	check_equal 0 "$status" "rehash: parent-shell refresh succeeds"
+	check_equal "alias times='rehash_fixture_times'" "$alias_definition" \
+		"rehash: refresh installs the times override"
+	check_equal "fixture-times --version" "$refreshed" \
+		"rehash: times no longer reaches the Bash builtin"
+	check_equal "true:false:false" "$REHASH_FIXTURE_FLAGS" \
+		"rehash: sourced files observe the temporary quiet settings"
+	check_equal "original-skip:original-test:original-glob" \
+		"$SKIP_DOTFILE_TESTS:$TEST_VERBOSE:$GLOB_TEST_VERBOSE" \
+		"rehash: restores the caller's test settings"
+	check_equal "preserve-me" "$LAST_DOTFILE_RUN" \
+		"rehash: preserves LAST_DOTFILE_RUN"
+	check_contains "$output" "Shell environment refreshed" \
+		"rehash: confirms the parent-shell refresh"
+
+	HOME=$original_home
+}
+
+test_direct_execution_is_truthful() {
+	local out err rc
+	capture "$REPO_ROOT/bin/rehash"
+	check_equal 2 "$rc" "rehash: direct execution rejects a child-only refresh"
+	check_equal "" "$out" "rehash: direct execution has clean stdout"
+	check_contains "$err" "source" \
+		"rehash: direct execution explains how to refresh the current shell"
+}
+
+test_parent_shell_refresh
+test_direct_execution_is_truthful
+
+if (( fails == 0 )); then
+	printf 'All %d rehash tests passed!\n' "$tests"
+else
+	printf '%d of %d rehash tests failed!\n' "$fails" "$tests" >&2
 fi
+exit "$fails"

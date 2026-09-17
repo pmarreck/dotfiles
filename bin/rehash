@@ -1,50 +1,60 @@
 #!/usr/bin/env bash
 
-# Minimalist rehash function for shell refreshing
+# Refresh aliases and environment in the current shell. This file must be
+# sourced by shell startup because a child process cannot mutate its parent.
 rehash() {
-	# Skip all tests and hooks during rehash
+	local had_skip=${SKIP_DOTFILE_TESTS+x}
+	local old_skip=${SKIP_DOTFILE_TESTS-}
+	local had_test_verbose=${TEST_VERBOSE+x}
+	local old_test_verbose=${TEST_VERBOSE-}
+	local had_glob_verbose=${GLOB_TEST_VERBOSE+x}
+	local old_glob_verbose=${GLOB_TEST_VERBOSE-}
+	local had_last_run=${LAST_DOTFILE_RUN+x}
+	local old_last_run=${LAST_DOTFILE_RUN-}
+	local status=0
+
 	export SKIP_DOTFILE_TESTS=true
 	export TEST_VERBOSE=false
 	export GLOB_TEST_VERBOSE=false
-	
-	# Save current environment settings
-	local OLD_LAST_DOTFILE_RUN="${LAST_DOTFILE_RUN:-}"
-	
-	# Clear source tracking
 	unset _SOURCED_FILES
-	
-	# Source only the essential files
-	if [[ -f "$HOME/dotfiles/bin/aliases.sh" ]]; then
-		source "$HOME/dotfiles/bin/aliases.sh"
+
+	if [[ -f "$HOME/.pathconfig" ]]; then
+		# shellcheck disable=SC1091
+		. "$HOME/.pathconfig" || status=$?
 	fi
-	
-	if [[ -f "$HOME/dotfiles/.pathconfig" ]]; then
-		source "$HOME/dotfiles/.pathconfig"
+	if [[ $status -eq 0 && -f "$HOME/.envconfig" ]]; then
+		# shellcheck disable=SC1091
+		. "$HOME/.envconfig" || status=$?
 	fi
-	
-	if [[ -f "$HOME/dotfiles/.envconfig" ]]; then
-		source "$HOME/dotfiles/.envconfig"
+	if [[ $status -eq 0 && -f "$HOME/.aliases" ]]; then
+		# shellcheck disable=SC1091
+		. "$HOME/.aliases" || status=$?
 	fi
-	
-	# Restore saved variables
-	export LAST_DOTFILE_RUN="${OLD_LAST_DOTFILE_RUN}"
-	
-	# Clean up
-	unset SKIP_DOTFILE_TESTS
-	
-	# Inform user
-	echo "Shell environment refreshed without running tests."
+
+	if [[ -n "$had_skip" ]]; then export SKIP_DOTFILE_TESTS="$old_skip"; else unset SKIP_DOTFILE_TESTS; fi
+	if [[ -n "$had_test_verbose" ]]; then export TEST_VERBOSE="$old_test_verbose"; else unset TEST_VERBOSE; fi
+	if [[ -n "$had_glob_verbose" ]]; then export GLOB_TEST_VERBOSE="$old_glob_verbose"; else unset GLOB_TEST_VERBOSE; fi
+	if [[ -n "$had_last_run" ]]; then export LAST_DOTFILE_RUN="$old_last_run"; else unset LAST_DOTFILE_RUN; fi
+
+	if [[ $status -ne 0 ]]; then
+		printf 'rehash: shell refresh failed with status %d\n' "$status" >&2
+		return "$status"
+	fi
+	printf 'Shell environment refreshed without running tests.\n'
 }
 
-# Run the function if this script is executed directly
 if ! (return 0 2>/dev/null); then
-	# Check if we are running tests
-	if [ "$1" = "--test" ]; then
-		# Run tests from the test file
-		_test_file="$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
-		if [ -f "$_test_file" ]; then . "$_test_file" > /dev/null; fi
-	else
-		# If called directly, pass all arguments to the function
-		$(basename "${0##\-}") "$@"
-	fi
+	case "${1:-}" in
+		--test)
+			exec "$HOME/dotfiles/bin/test/rehash_test"
+			;;
+		-h|--help)
+			printf 'Usage: source ~/.bashrc; rehash\nRefresh aliases and environment in the current shell.\n'
+			exit 0
+			;;
+		*)
+			printf 'rehash: direct execution cannot refresh its parent shell; source ~/.bashrc once, then run rehash\n' >&2
+			exit 2
+			;;
+	esac
 fi

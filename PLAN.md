@@ -2,6 +2,29 @@
 
 ## Active: live wall-clock `times` command (2026-09-16)
 
+- [x] Reproduce Peter's second live report through the real interactive shell
+      startup path: `times COMMAND` still reaches Bash's builtin and prints four
+      process-time fields instead of invoking `bin/times`.
+  - Curiosity poke: the existing test sources `.aliases` directly with
+    `expand_aliases`; prove whether normal startup omits that file, disables
+    alias expansion, or later startup code replaces the alias.
+  - Completed 2026-09-16 22:38 EDT: the four fields are Bash builtin output.
+    Fresh shells already load the override, while Peter's long-lived shell
+    predates it. The intended refresh command was an external subprocess and
+    sourced nonexistent `bin/aliases.sh`; the replacement test failed 6 of 9
+    checks and reproduced `times` falling through to the builtin.
+- [x] Repair command resolution with the smallest persistent shell-surface
+      change, rerun the focused startup and PTY controls plus both complete
+      gates, update dirtree notes, and commit the green bug fix.
+  - Curiosity poke: test both a fresh interactive shell and the already-running
+    shell upgrade path without relying on command hashing or manual re-sourcing.
+  - Completed 2026-09-16 22:45 EDT: `.bashrc` now loads `rehash` as a function
+    in the parent shell, and `rehash` sources the real `.aliases` after path and
+    environment refresh while restoring the caller's settings. Direct execution
+    rejects its former false-success path with the one-time recovery command.
+    Ten hermetic refresh checks, all three host startup quadrants, 80 `timed`
+    assertions, all 185 host test files, and all 140 hermetic files pass.
+
 - [x] Establish and record the repository's intent from the README, flake,
       rules, current implementation, and Peter's confirmation.
   - Curiosity poke: keep the personal dotfiles boundary explicit so a helper
