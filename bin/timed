@@ -34,6 +34,7 @@ STREAM_DIR=""
 STREAM_FIFO=""
 STREAM_FD_OPEN=0
 STREAM_INPUT_FD_OPEN=0
+STREAM_TTY_FD_OPEN=0
 
 # Color codes (will be disabled if NO_COLOR=1)
 COLOR_GRAY=""
@@ -92,7 +93,8 @@ NOTES:
 		When stdout is not a TTY, $SCRIPT_NAME prefixes each stdout line with
 		$prefix_description
 		instead of emitting the inline timer (unless --quiet is set).
-		--prefix filters child stdout one line at a time, so the child sees a pipe.
+		Interactive --prefix gives child stdout a PTY to preserve line buffering.
+		Non-interactive --prefix filters child stdout through a pipe.
 		Child stderr retains its original channel. N includes one separator column.
 
 FORMATS:
@@ -290,6 +292,10 @@ cleanup_stream_files() {
 				exec 5<&-
 				STREAM_INPUT_FD_OPEN=0
 		fi
+		if [[ $STREAM_TTY_FD_OPEN -eq 1 ]]; then
+				exec 6>&-
+				STREAM_TTY_FD_OPEN=0
+		fi
 		if [[ -n "$STREAM_FIFO" ]]; then
 				rm -f -- "$STREAM_FIFO"
 				STREAM_FIFO=""
@@ -314,10 +320,25 @@ run_prefixed_stream() {
 		}
 		exec 5<&0
 		STREAM_INPUT_FD_OPEN=1
+		local use_stdout_pty=0
+		if [[ $NON_INTERACTIVE -eq 0 && -t 1 ]]; then
+			if ! command -v luajit >/dev/null 2>&1; then
+				printf 'timed: interactive --prefix requires luajit\n' >&2
+				cleanup_stream_files
+				return 126
+			fi
+			exec 6>&1
+			STREAM_TTY_FD_OPEN=1
+			use_stdout_pty=1
+		fi
 
 		(
 				exec 4>"$STREAM_FIFO"
-				"$@" <&5 >&4
+				if [[ $use_stdout_pty -eq 1 ]]; then
+					"${BASH_SOURCE[0]%/*}/src/timed_pty_stdout.lua" 6 "$@" <&5 >&4
+				else
+					"$@" <&5 >&4
+				fi
 				local command_status=$?
 				exec 4>&-
 				exit "$command_status"
@@ -325,6 +346,10 @@ run_prefixed_stream() {
 		COMMAND_PID=$!
 		exec 5<&-
 		STREAM_INPUT_FD_OPEN=0
+		if [[ $STREAM_TTY_FD_OPEN -eq 1 ]]; then
+			exec 6>&-
+			STREAM_TTY_FD_OPEN=0
+		fi
 
 		exec 3<"$STREAM_FIFO"
 		STREAM_FD_OPEN=1
@@ -335,6 +360,9 @@ run_prefixed_stream() {
 		while true; do
 				line=""
 				if IFS= read -r -t "$UPDATE_INTERVAL" line <&3; then
+					if [[ $use_stdout_pty -eq 1 && "$line" == *$'\r' ]]; then
+						line=${line%$'\r'}
+					fi
 					emit_prefixed_line "${pending}${line}" 1
 					pending=""
 					continue

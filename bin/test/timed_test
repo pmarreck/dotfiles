@@ -514,6 +514,49 @@ EOF
 	assert_equal "" "$diagnostic" "Prefix PTY: expect has clean diagnostic stderr"
 }
 
+test_prefix_preserves_child_tty_stdout() {
+	printf "\n=== Testing child stdout terminal semantics under a fixed prefix ===\n"
+
+	cat >"$TEST_TEMP_DIR/stdout-kind.c" <<'EOF'
+#include <stdio.h>
+#include <unistd.h>
+
+int main(void) {
+	puts(isatty(STDOUT_FILENO) ? "child-stdout=tty" : "child-stdout=pipe");
+	puts("second-line");
+	return 0;
+}
+EOF
+	cc -O2 -o "$TEST_TEMP_DIR/stdout-kind" "$TEST_TEMP_DIR/stdout-kind.c" || return 1
+
+	local output
+	output=$(TIMED_COMMAND="$REPO_ROOT/bin/timed" \
+		FIXTURE_COMMAND="$TEST_TEMP_DIR/stdout-kind" expect <<'EOF' \
+		2>"$TEST_TEMP_DIR/prefix-child-tty.err"
+log_user 0
+set timeout 3
+spawn -noecho $env(TIMED_COMMAND) --prefix 8 --interactive --quiet --no-color --no-resources $env(FIXTURE_COMMAND)
+expect {
+	-re { {8}child-stdout=([a-z]+)\r\n {8}second-line\r\n} {
+		puts $expect_out(1,string)
+	}
+	timeout { exit 124 }
+	eof { exit 125 }
+}
+expect eof
+set child_status [wait]
+exit [lindex $child_status 3]
+EOF
+	)
+	local exit_code=$?
+	local diagnostic
+	diagnostic=$(cat "$TEST_TEMP_DIR/prefix-child-tty.err")
+	assert_exit_code 0 "$exit_code" "Prefix child TTY: command exits successfully"
+	assert_equal "tty" "$output" \
+		"Prefix child TTY: an interactive child retains line-buffered stdout semantics"
+	assert_equal "" "$diagnostic" "Prefix child TTY: expect has clean diagnostic stderr"
+}
+
 test_force_interactive_mode() {
 	printf "\n=== Testing force interactive mode ===\n"
 
@@ -715,6 +758,7 @@ run_all_tests() {
 	test_prefix_field_formatting
 	test_prefix_quiet_stream
 	test_prefix_live_pty
+	test_prefix_preserves_child_tty_stdout
     test_force_interactive_mode
     test_conflicting_interactive_flags
     test_help_and_version

@@ -2,6 +2,26 @@
 
 ## Active: live wall-clock `times` command (2026-09-16)
 
+- [x] Reproduce Peter's live `--prefix` stall: a streaming child emits its
+      first complete line, but later lines do not reach the terminal before
+      interruption, while unprefixed mode continues normally.
+  - Curiosity poke: distinguish a renderer read-loop deadlock from child
+    block-buffering caused by replacing its terminal stdout with a FIFO.
+  - Completed 2026-09-16 23:12 EDT: a real-PTY C fixture proved the child saw
+    `stdout=pipe`; the new assertion failed 1 of 83 focused checks. The static
+    C child's first write escaped while later stdio rows remained buffered.
+- [x] Repair prefixed streaming without restoring concurrent cursor writes;
+      run focused PTY controls, both complete gates, update evidence and notes,
+      and commit the green fix.
+  - Curiosity poke: verify sustained complete lines, delayed partial lines,
+    stdin custody, child failure, interruption, and exact gutter width.
+  - Completed 2026-09-16 23:20 EDT: interactive prefix mode now gives only
+    child stdout a LuaJIT-managed PTY, copies the terminal dimensions, and
+    leaves stdin/stderr separate; captured output retains the byte-exact pipe
+    path. The real static `xattr-stream` emitted its full framed table with and
+    without resource collection. All 83 focused assertions, 185 host test
+    files, and 140 hermetic files pass; ShellCheck adds no diagnostics.
+
 - [x] Reproduce Peter's second live report through the real interactive shell
       startup path: `times COMMAND` still reaches Bash's builtin and prints four
       process-time fields instead of invoking `bin/times`.
