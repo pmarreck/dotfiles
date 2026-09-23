@@ -30,11 +30,14 @@
   - Completed 2026-09-23 10:57 EDT: native conversation times drive ranking;
     exact newer unavailable records and project-relevant corruption fail
     closed, while unrelated moved paths and hash mismatches remain warnings.
-- [ ] After the CLI is green, update and validate the shared
+- [x] After the CLI is green, update and validate the shared
       `erect-agent-stack` skill; run focused, host, and hermetic gates, update
       dirtree notes, commit, reply through LLMsend, and Trash the handled note.
   - Curiosity poke: preserve every existing launch path and never convert a
     discovery error or ambiguity into an implicit fresh launch.
+  - Completed 2026-09-23 10:59 EDT: focused, host, and hermetic gates passed;
+    dotfiles commit `1fbee99` and skill commit `03ffbe7` were reported in the
+    LLMsend reply, and the handled note was moved recoverably to Trash.
 - [ ] Follow up separately on restore-record fidelity: preserve the requested
       resume ID apart from any observed/verified native ID, never treat an
       update prompt or delayed startup as restored context, and reinspect after
