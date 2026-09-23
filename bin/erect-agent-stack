@@ -8,6 +8,8 @@ usage: erect-agent-stack [OPTIONS] PROJECT
 Create/reuse a Herdr workspace and unrestricted agent at PROJECT (or ~/Code/NAME).
 Requires the intended Herdr session (HERDR_ENV=1), jq and coreutils on PATH.
 
+  --latest-context   Read native stores and print the most recently saved backend.
+                     With --json, report session, time, evidence and warnings.
   --agent, -a KIND    claude, codex, grok or gemini; preserve saved backend,
                      otherwise default Claude. Subscription login is supported.
   --fresh            Start fresh if no live agent; never replace a live one.
@@ -47,7 +49,7 @@ _eas_write_record() {
 # A subshell contains the lock trap, umask and per-call state even when sourced.
 erect-agent-stack() (
  local project="" agent="" mode=auto resume_id="" name="" note="" checker=0
- local dry=0 json=0 focus=0 timeout="${ERECT_BOOT_TIMEOUT:-30}"
+ local dry=0 json=0 focus=0 latest_context=0 launch_option=0 timeout="${ERECT_BOOT_TIMEOUT:-30}"
  local dir hash state_dir state_file record="" saved="" lock="" outcome pane="" workspace=""
  local agents workspaces panes matches count candidate info response native_id="" backend
  local args=() create_args=()
@@ -55,7 +57,8 @@ erect-agent-stack() (
  while [ "$#" -gt 0 ]; do
   case "$1" in
    -h|--help) _eas_help; return 0 ;;
-   --about) printf 'erect-agent-stack 2.0.0 — persistent Herdr project agents — %s %s\n' "$(uname -s)" "$(uname -m)"; return 0 ;;
+   --about) printf 'erect-agent-stack 2.1.0 — persistent Herdr project agents — %s %s\n' "$(uname -s)" "$(uname -m)"; return 0 ;;
+   --latest-context) latest_context=1; shift ;;
    --agent|-a|--resume|--name|--note)
     [ "$#" -ge 2 ] && [ -n "$2" ] || { _eas_error "$1 requires a value"; return 64; }
     case "$1" in
@@ -64,20 +67,34 @@ erect-agent-stack() (
      --name) name="$2" ;;
      --note) note="$2" ;;
     esac
+    launch_option=1
     shift 2 ;;
-   --fresh) mode=fresh; shift ;;
-   --continue) mode='continue'; shift ;;
-   --checker) checker=1; shift ;;
-   --dry-run) dry=1; shift ;;
+   --fresh) mode=fresh; launch_option=1; shift ;;
+   --continue) mode='continue'; launch_option=1; shift ;;
+   --checker) checker=1; launch_option=1; shift ;;
+   --dry-run) dry=1; launch_option=1; shift ;;
    --json) json=1; shift ;;
-   --no-attach) focus=0; shift ;;
-   --focus) focus=1; shift ;;
+   --no-attach) focus=0; launch_option=1; shift ;;
+   --focus) focus=1; launch_option=1; shift ;;
    --) shift; [ "$#" = 1 ] && [ -z "$project" ] || { _eas_error 'one project required'; return 64; }; project="$1"; shift ;;
    -*) _eas_error "unknown/retired option: $1 (see --help)"; return 64 ;;
    *) [ -z "$project" ] || { _eas_error 'one project required'; return 64; }; project="$1"; shift ;;
   esac
  done
  [ -n "$project" ] || { _eas_help >&2; return 64; }
+ [ "$latest_context" = 0 ] || [ "$launch_option" = 0 ] || { _eas_error '--latest-context cannot combine with launch options'; return 64; }
+ case "$project" in */*|.|..) dir="$project" ;; *) dir="$HOME/Code/$project" ;; esac
+ [ -d "$dir" ] || { _eas_error "no such project: $dir"; return 66; }
+ dir="$(cd "$dir" && pwd -P)" || return 66
+ if [ "$latest_context" = 1 ]; then
+  command -v node >/dev/null || { _eas_error '--latest-context requires Node.js with node:sqlite'; return 78; }
+  local discovery_script
+  discovery_script="$(dirname "${BASH_SOURCE[0]}")/src/agent_context_discovery.mjs"
+  if [ "$json" = 1 ]; then node "$discovery_script" "$dir"
+  else node "$discovery_script" --text "$dir"
+  fi
+  return $?
+ fi
  case "$agent" in ''|claude|codex|grok|gemini) ;; *) _eas_error "unsupported agent: $agent"; return 64 ;; esac
  [[ "$timeout" =~ ^[1-9][0-9]{0,2}$ ]] && [ "$timeout" -le 300 ] || { _eas_error 'timeout must be 1..300 seconds'; return 64; }
  if [ "$mode" = resume ]; then
@@ -85,9 +102,6 @@ erect-agent-stack() (
  else
   resume_id=""
  fi
- case "$project" in */*|.|..) dir="$project" ;; *) dir="$HOME/Code/$project" ;; esac
- [ -d "$dir" ] || { _eas_error "no such project: $dir"; return 66; }
- dir="$(cd "$dir" && pwd -P)" || return 66
  [ "${HERDR_ENV:-}" = 1 ] || { _eas_error 'run inside the intended Herdr session'; return 78; }
  if ! command -v "${ERECT_HERDR:-herdr}" >/dev/null || ! command -v jq >/dev/null || ! command -v sha256sum >/dev/null; then
   _eas_error 'requires herdr, jq and sha256sum'; return 78

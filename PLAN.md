@@ -1,5 +1,47 @@
 # dotfiles — TODO / Plans
 
+## Active: latest saved agent-context discovery (2026-09-23)
+
+- [x] Characterize the bounded native metadata stores for Codex, Claude Code,
+      Grok Build, and Gemini; add red-first provider fixtures and classifier-set
+      assertions before implementation.
+  - Curiosity poke: distinguish a missing store, unreadable/corrupt store,
+    absent project match, stale index row, unavailable transcript, moved-path
+    evidence, and a non-resumable child session. Treat Grok native
+    `summary.json` activity as newer evidence than a stale search-index row;
+    the 2026-09-23 `romantic_collation` counterexample differs by 16 days.
+  - Completed 2026-09-23 10:57 EDT: provider fixtures cover root and child
+    records, stale and missing indexes, exact and moved paths, legacy hashes,
+    spaces, symlinks, nanosecond ordering, ties, corrupt stores, and scan caps.
+- [x] Add `erect-agent-stack --latest-context [--json] PROJECT` as a read-only
+      discovery mode requiring neither Herdr nor a saved launch record.
+  - Curiosity poke: rank native conversation timestamps rather than filesystem
+    mtimes; refuse an automatic winner for equal timestamps or ambiguous cwd
+    proof, and preserve spaces without underscore/hyphen guessing.
+  - Completed 2026-09-23 10:57 EDT: discovery branches before every Herdr and
+    launch-state operation; plain output is the canonical backend and JSON is
+    the evidence-bearing interface.
+- [x] Report canonical backend, native session ID, conversation timestamp,
+      source path, evidence/confidence, warnings, and excluded child sessions;
+      keep history reads bounded and perform no network, reindex, spawn, or
+      launch mutation.
+  - Curiosity poke: a provider database can name a session whose native record
+    has moved or disappeared, so evidence and availability must stay separate.
+  - Completed 2026-09-23 10:57 EDT: native conversation times drive ranking;
+    exact newer unavailable records and project-relevant corruption fail
+    closed, while unrelated moved paths and hash mismatches remain warnings.
+- [ ] After the CLI is green, update and validate the shared
+      `erect-agent-stack` skill; run focused, host, and hermetic gates, update
+      dirtree notes, commit, reply through LLMsend, and Trash the handled note.
+  - Curiosity poke: preserve every existing launch path and never convert a
+    discovery error or ambiguity into an implicit fresh launch.
+- [ ] Follow up separately on restore-record fidelity: preserve the requested
+      resume ID apart from any observed/verified native ID, never treat an
+      update prompt or delayed startup as restored context, and reinspect after
+      a timeout before considering any relaunch.
+  - Curiosity poke: model requested, observed, and verified launch state so a
+    blank `agent_session` cannot erase exact operator intent or imply success.
+
 ## Active: live wall-clock `times` command (2026-09-16)
 
 - [x] Reproduce Peter's live `--prefix` stall: a streaming child emits its

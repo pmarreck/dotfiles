@@ -1,0 +1,187 @@
+#!/usr/bin/env bash
+# Native-store fixtures exercise the read-only discovery boundary without Herdr.
+# shellcheck disable=SC2016
+set -u
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+tmp="$(mktemp -d "${TMPDIR:-/tmp}/erect-context-test.XXXXXX")"
+trap 'rm -rf -- "$tmp"' EXIT
+project="$tmp/a project"
+other_project="$tmp/a-project"
+project_link="$tmp/project link"
+mkdir -p "$project" "$other_project"
+ln -s "$project" "$project_link"
+
+fixtures="$tmp/providers"
+node "$root/bin/test/fixtures/erect-agent-stack/write_context_fixtures.mjs" "$fixtures" "$project" "$other_project"
+export ERECT_CONTEXT_CODEX_HOME="$fixtures/codex"
+export ERECT_CONTEXT_CLAUDE_HOME="$fixtures/claude"
+export ERECT_CONTEXT_GROK_HOME="$fixtures/grok"
+export ERECT_CONTEXT_GEMINI_HOME="$fixtures/gemini"
+export ERECT_STATE_DIR="$tmp/state-must-not-exist"
+export ERECT_HERDR="$tmp/herdr-must-not-run"
+export HERDR_ENV=''
+
+tool="$root/bin/erect-agent-stack"
+fails=0
+status=0
+check() {
+	if ! "$@" >"$tmp/check.out" 2>"$tmp/check.err"; then
+		printf 'FAIL: %s\n' "$*" >&2
+		fails=$((fails + 1))
+	fi
+}
+run_json() {
+	"$tool" --latest-context --json "$1" >"$tmp/out" 2>"$tmp/err"
+	status=$?
+}
+manifest() {
+	find "$fixtures" -type f -print0 | sort -z | xargs -0 sha256sum
+}
+
+manifest >"$tmp/before"
+run_json "$project_link"
+manifest >"$tmp/after"
+check test "$status" = 0
+check cmp -s "$tmp/before" "$tmp/after"
+check test ! -e "$ERECT_STATE_DIR"
+check jq -e --arg project "$project" '
+	.schema == "erect-agent-stack/latest-context/v1" and
+	.status == "found" and .project == $project and
+	.latest.backend == "gemini" and
+	.latest.session_id == "gemini-root" and
+	.latest.conversation_timestamp == "2026-09-13T10:00:00.000Z" and
+	.latest.confidence == "exact" and
+	(.latest.source_path | endswith("session-current-gemini.jsonl"))
+' "$tmp/out"
+
+# Classifiers are asserted over complete sets so one convenient match cannot
+# hide a rejected supported source or an accidentally admitted sibling path.
+check jq -e '
+	([.providers.codex.candidates[].session_id] | sort) == ["codex-cli","codex-exec","codex-vscode"] and
+	([.providers.claude.candidates[].session_id] | sort) == ["claude-root"] and
+	([.providers.grok.candidates[].session_id] | sort) == ["grok-native"] and
+	([.providers.gemini.candidates[].session_id] | sort) == ["gemini-legacy","gemini-root"] and
+	([.excluded_children[] | [.backend,.session_id]] | sort) ==
+		[["claude","claude-child-1"],["claude","claude-child-2"],["codex","codex-child"],["gemini","gemini-child"]] and
+	([.warnings[].code] | index("codex_native_record_missing")) != null and
+	([.warnings[].code] | index("claude_moved_index_record")) != null and
+	([.warnings[].code] | index("claude_index_record_unavailable")) != null and
+	([.warnings[].code] | index("grok_stale_search_index")) != null and
+	([.warnings[] | select(.code == "grok_search_record_unavailable" and .session_id == "grok-index-only") | .conversation_timestamp] | index("2026-09-11T00:00:00.000Z")) != null and
+	([.warnings[].code] | index("gemini_project_hash_mismatch")) != null
+' "$tmp/out"
+check test "$(rg -o 'not inspected' "$tmp/out" | wc -l)" = 0
+
+# Human output is deliberately composable and returns only the canonical name.
+"$tool" --json --latest-context "$project" >"$tmp/reordered" 2>"$tmp/reordered.err"
+check test "$?" = 0
+check jq -e '.latest.backend == "gemini"' "$tmp/reordered"
+"$tool" --latest-context "$project" >"$tmp/text" 2>"$tmp/text.err"
+check test "$?" = 0
+check test "$(cat "$tmp/text")" = gemini
+check test ! -s "$tmp/text.err"
+
+# A newer exact Claude index record cannot be treated like an unrelated moved
+# Mac path when its native transcript is missing.
+claude_index="$fixtures/claude/projects/legacy-directory-name/sessions-index.json"
+jq '(.entries[] | select(.sessionId == "claude-index-only") | .modified) = "2026-09-30T00:00:00.000Z"' "$claude_index" >"$tmp/claude-newer"
+mv "$tmp/claude-newer" "$claude_index"
+run_json "$project"
+check test "$status" = 74
+check jq -e '.status == "incomplete" and .latest == null' "$tmp/out"
+jq '(.entries[] | select(.sessionId == "claude-index-only") | .modified) = "2026-09-08T00:00:00.000Z"' "$claude_index" >"$tmp/claude-restored"
+mv "$tmp/claude-restored" "$claude_index"
+
+# Equal actual conversation timestamps have no automatic winner.
+gemini_record="$fixtures/gemini/tmp/a-project-slug/chats/session-current-gemini.jsonl"
+jq -c 'if .sessionId == "gemini-root" then .lastUpdated = "2026-09-12T12:00:00.000Z" else . end' "$gemini_record" >"$tmp/gemini-tie"
+mv "$tmp/gemini-tie" "$gemini_record"
+run_json "$project"
+check test "$status" = 69
+check jq -e '
+	.status == "ambiguous" and .latest == null and
+	([.latest_candidates[].backend] | sort) == ["gemini","grok"]
+' "$tmp/out"
+
+# Native sub-millisecond precision breaks an apparent millisecond tie.
+grok_summary="$fixtures/grok/sessions/$(node -p 'encodeURIComponent(process.argv[1])' "$project")/grok-native/summary.json"
+jq '.updated_at = "2026-09-12T12:00:00.000000001Z"' "$grok_summary" >"$tmp/grok-nanosecond"
+mv "$tmp/grok-nanosecond" "$grok_summary"
+run_json "$project"
+check test "$status" = 0
+check jq -e '
+	.status == "found" and .latest.backend == "grok" and
+	.latest.conversation_timestamp == "2026-09-12T12:00:00.000000001Z"
+' "$tmp/out"
+jq '.updated_at = "2026-09-12T12:00:00.000Z"' "$grok_summary" >"$tmp/grok-restored"
+mv "$tmp/grok-restored" "$grok_summary"
+
+# A malformed native record in an exact provider-owned project directory can
+# conceal a newer conversation and therefore fails closed.
+cp "$grok_summary" "$tmp/grok-valid"
+printf '{broken\n' >"$grok_summary"
+run_json "$project"
+check test "$status" = 74
+check jq -e '.status == "incomplete" and ([.warnings[].code] | index("grok_summary_unreadable")) != null' "$tmp/out"
+mv "$tmp/grok-valid" "$grok_summary"
+
+cp "$gemini_record" "$tmp/gemini-valid"
+printf '{broken\n' >"$gemini_record"
+run_json "$project"
+check test "$status" = 74
+check jq -e '.status == "incomplete" and ([.warnings[].code] | index("gemini_session_metadata_missing")) != null' "$tmp/out"
+mv "$tmp/gemini-valid" "$gemini_record"
+
+# A newer exact index record whose native context disappeared also prevents a
+# false winner; its age makes it materially different from an old stale row.
+jq -c 'if .sessionId == "gemini-root" then .lastUpdated = "2026-09-13T10:00:00.000Z" else . end' "$gemini_record" >"$tmp/gemini-restored"
+mv "$tmp/gemini-restored" "$gemini_record"
+node --input-type=module - "$fixtures/codex/state_5.sqlite" <<'EOF'
+import { DatabaseSync } from "node:sqlite";
+const db = new DatabaseSync(process.argv[2]);
+db.prepare("UPDATE threads SET updated_at = ?, updated_at_ms = ? WHERE id = ?").run(1789952400, 1789952400000, "codex-unavailable");
+db.close();
+EOF
+run_json "$project"
+check test "$status" = 74
+check jq -e '
+	.status == "incomplete" and .latest == null and
+	([.warnings[] | select(.code == "codex_native_record_missing") | .session_id] | index("codex-unavailable")) != null
+' "$tmp/out"
+
+# Bounded scanning fails closed instead of silently returning a partial winner.
+ERECT_CONTEXT_MAX_FILES=1 "$tool" --latest-context --json "$project" >"$tmp/bounded.out" 2>"$tmp/bounded.err"
+check test "$?" = 74
+check jq -e '.status == "incomplete" and .providers.claude.status == "unreadable"' "$tmp/bounded.out"
+ERECT_CONTEXT_MAX_FILES=bogus "$tool" --latest-context --json "$project" >"$tmp/invalid-limit.out" 2>"$tmp/invalid-limit.err"
+check test "$?" = 74
+check jq -e '.status == "incomplete" and (.error | contains("ERECT_CONTEXT_MAX_FILES"))' "$tmp/invalid-limit.out"
+
+# A corrupt provider store prevents a global claim even when others are valid.
+printf 'not a sqlite database\n' >"$fixtures/codex/state_5.sqlite"
+run_json "$project"
+check test "$status" = 74
+check jq -e '.status == "incomplete" and .latest == null and .providers.codex.status == "unreadable"' "$tmp/out"
+
+# All genuinely absent provider stores is a proved no-history result.
+export ERECT_CONTEXT_CODEX_HOME="$tmp/missing/codex"
+export ERECT_CONTEXT_CLAUDE_HOME="$tmp/missing/claude"
+export ERECT_CONTEXT_GROK_HOME="$tmp/missing/grok"
+export ERECT_CONTEXT_GEMINI_HOME="$tmp/missing/gemini"
+run_json "$project"
+check test "$status" = 1
+check jq -e '
+	.status == "none" and .latest == null and
+	([.providers[].status] | unique) == ["missing"]
+' "$tmp/out"
+
+# Discovery options cannot smuggle launch behavior into the read-only mode.
+"$tool" --latest-context --fresh "$project" >"$tmp/mixed.out" 2>"$tmp/mixed.err"
+check test "$?" = 64
+check grep -q 'cannot combine' "$tmp/mixed.err"
+
+if [ "$fails" = 0 ]; then
+	printf 'erect-agent-stack native latest-context tests passed\n'
+fi
+exit "$fails"

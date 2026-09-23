@@ -22,6 +22,7 @@
         suiteTools = (with pkgs; [
           bash coreutils gnused gnugrep gawk findutils diffutils
           jq ripgrep fd tmux expect git openssh
+          nodejs_24  # erect-agent-stack native context discovery uses node:sqlite
           gzip gnutar zip unzip xz bc file which
           (luajit.withPackages (luaPackages: [ luaPackages.lua-cjson ]))
           perl
