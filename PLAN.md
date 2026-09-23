@@ -1,5 +1,23 @@
 # dotfiles — TODO / Plans
 
+## Completed: retire extracted tree generator (2026-09-23)
+
+- [x] Verify that `~/Code/gen_fake_fs_tree` supersedes the dotfiles generator,
+      run its suite, and install its package before removing the duplicate
+      `bin/gen-fake-tree` and `bin/test/gen-fake-tree_test`.
+  - Curiosity poke: preserve command availability and the shared dictionary;
+    verify package-relative data and tests without relying on the old copy.
+  - Completed 2026-09-23 12:43 EDT: project revision `76987aff` adds path
+    resolution, optional Zig parsing, packaging and tests to the same generator.
+    Its full suite (three files), build and installed-package self-test passed.
+    Installed with `nix profile install ~/Code/gen_fake_fs_tree` on Thelio.
+- [x] Run the dotfiles suite after removal, retain recoverability, and commit
+      the cleanup. Record the replacement installation command for other hosts.
+  - Completed 2026-09-23 12:43 EDT: all 185 remaining host test files and the
+    sandboxed Nix check passed. README records separate installation. Retired
+    files are in `~/.Trash/gen-fake-tree-extracted.xcSsm6` and Git history;
+    shared dictionaries remain because other commands use them.
+
 ## Active: latest saved agent-context discovery (2026-09-23)
 
 - [x] Characterize the bounded native metadata stores for Codex, Claude Code,

@@ -29,6 +29,7 @@ annotate=[
 	.pathconfig = Canonical, idempotent PATH constructor and sole location allowed to export PATH
 	INTENT.md = Canonical purpose, scope, constraints, and success evidence for Peter's dotfiles
 	PLAN.md = Running dotfiles work plan with dated completion evidence and queued cross-project coordination.
+	README = Setup instructions and separately packaged fixture generator
 	RULES.md = Durable dotfiles policy decisions, including the explicit decision not to add i18n to personal helper commands.
 	bin/agent_tmux_sessions = Atomic exact-ID snapshot, full-privilege restore, and idle-gated shutdown for tmux-hosted Codex, Claude, and Grok fleets.
 	bin/base85 = LuaJIT base85 encode/decode (Z85/ZeroMQ default, Adobe ASCII85 via -A); stdin only, --encode/--decode/auto-detect alphabet+direction; Z85 arbitrary-length via BLIP-pad wrapper (-p/-P to force/disable)

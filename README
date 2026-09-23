@@ -19,3 +19,8 @@ Clone this repo right inside your home directory (so, at ~/dotfiles).
 Run ./dotfiles/install_dotfiles . This will symlink all the relevant files into ~, ~/bin/ ~/lib and ~/Scripts, making those dirs if they don't exist yet.
 
 Open a new Terminal to make sure you're golden.
+
+The deterministic fixture generator now lives in its own project:
+https://github.com/pmarreck/gen_fake_fs_tree
+Install it separately with `nix profile install github:pmarreck/gen_fake_fs_tree`.
+For a local checkout, use `nix profile install ~/Code/gen_fake_fs_tree`.
