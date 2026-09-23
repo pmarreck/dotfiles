@@ -38,7 +38,7 @@ source_dir="$repo_root/systemd/user"
 unit_dir="${FLEET_STATUS_SYSTEMD_USER_DIR:-$HOME/.config/systemd/user}"
 systemctl_command="${FLEET_STATUS_SYSTEMCTL:-systemctl}"
 
-if [[ "$(uname -s)" != "Linux" ]]; then
+if [[ "${FLEET_STATUS_PLATFORM:-$(uname -s)}" != "Linux" ]]; then
 	printf 'Error: systemd user timers are Linux-only; see docs/fleet-status.md for launchd guidance.\n' >&2
 	exit 1
 fi

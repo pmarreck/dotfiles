@@ -1,5 +1,29 @@
 # dotfiles — TODO / Plans
 
+## Active — bc output and GitHub reconciliation (2026-09-22)
+
+- [x] Add a failing shell-startup check for `BC_LINE_LENGTH=0`, then set it in `.profile` and verify long binary output stays on one line.
+  Curiosity poke: a Bash login shell and a sourced `.profile` must both receive the setting without clobbering a deliberate per-command override.
+  Completed 2026-09-22 EDT: the fresh-shell regression first showed unset output with continuation backslashes; `.profile` now exports 0 and the focused test passes.
+- [x] Fetch and compare `origin/master` with this checkout; identify upstream fixes and overlapping files before integration.
+  Curiosity poke: 30 remote commits included NVM, Volta, and test updates overlapping the local shell edits.
+  Completed 2026-09-22 EDT: saved the original dirty worktree in a recoverable stash, fast-forwarded `master`, and retained the stash while resolving overlaps.
+- [x] Reproduce and repair the failing test files until the complete host and Nix suites pass, keeping unrelated user state recoverable.
+  Curiosity poke: distinguish stale assertions and host dependencies from actual command defects.
+  Completed 2026-09-22 22:27 EDT: `./test` passed all 185 host files; `nix build .#checks.aarch64-darwin.test --no-link` passed all 138 sandbox-eligible files. The top-level runner was added after a failing contract test; direct `ask_local` now works without startup-provided `SED`.
+- [ ] Review and commit the outstanding local work in passing units, then push `master` and verify exact remote HEAD and Mechatron CI.
+  Curiosity poke: no commit may include credentials or silently absorb unrelated edits.
+
+## Active — ask_local command (2026-09-22)
+
+- [x] Reproduce direct `ask_local` invocation failing to answer with an isolated CLI test.
+  Curiosity poke: the command must work without interactive-shell functions and preserve arguments with spaces.
+  Completed 2026-09-22 21:47 EDT: direct invocation returned status 0 with no output, no HTTP request, and four failing assertions.
+- [x] Route the command to the active local oMLX server and installed model; run focused and full tests and update the dirtree note.
+  Curiosity poke: local authentication must use the oMLX key and tests must not touch live conversation history.
+  Completed 2026-09-22 21:57 EDT: focused CLI test and ShellCheck pass; a real request returned OK with isolated history. The full host suite passed 162/171 files; `ask_local_test` passed. Nine other files failed: `darktide-sync-mods_test`, `erect-recent-agent-stacks_test`, `executable-names_test`, `fleet-status-nightly_test`, `getfile_test`, `nethogs_test`, `overview_test`, `pathconfig_bash_prepend_test`, and `x_test`.
+- [ ] Commit the `ask_local` unit after the repository suite passes.
+
 ## Active — let ffpw select a usable Firefox profile (2026-09-06)
 
 - [x] Remove the `ffpw` alias that injects `--channel nightly`; an explicit
@@ -808,16 +832,40 @@ ASCII `^[A-Z][a-z]`, retaining acronyms and one-letter uppercase words.
 
 ## Active — shell helper argument correctness (2026-07-27)
 
-- [ ] ACTION REQUIRED (Peter) — `nixos-rebuild switch` on thelio to actually
-  drop volta. The config edit is made and evaluates clean, but I deliberately
-  did NOT rebuild: `/etc/nixos` has uncommitted in-flight changes to
-  `configuration.nix`, `hardware-configuration.nix`, `flake.lock` and several
-  `mechatron-prime/` files from other work, and a switch would apply all of them
-  together. My edit is two lines in
-  `system76_thelio_nixos/configuration.nix`: drop `volta`, and `nodejs_24` →
-  `nodejs` (unversioned, so it rides nixpkgs' default forward instead of sitting
-  at 24 forever; `nodejs_latest` is 26.5.0 if the bleeding edge is wanted).
-  Backup of the pre-edit file is in this session's scratchpad.
+- [ ] ACTION REQUIRED (Einstein/thelio + other NixOS boxes) — bring NixOS onto the
+  fleet-wide **mise** standard (decided 2026-08-26, superseding the earlier "drop
+  volta, `nodejs_24` → `nodejs`" plan). Add `mise` to `environment.systemPackages`
+  AND enable `programs.nix-ld` (so mise's prebuilt node binaries run on NixOS), then
+  `mise use -g node@lts`. NOT a per-OS diff — mise everywhere, identical interface.
+  Handed to Einstein via
+  `/home/pmarreck/inbox/2026-08-26-from-reclip@M4Max-node-toolchain-mise.md`; fold
+  into the pending thelio rebuild (which still carries other in-flight `/etc/nixos`
+  changes, so Peter reviews the combined switch).
+- [x] macOS: Volta fully uninstalled (2026-08-25/26). Root cause of "node broke":
+  `~/.volta` had been deleted, leaving a dead `~/.volta/bin` PATH entry + a dangling
+  `$VOLTA_HOME` across `.bashrc`/`.profile`/`.bash_profile`/`.envconfig`/`.shellenv`/
+  `.pathconfig` — the Volta shims that supplied global node were gone. Removed every
+  Volta ref from those six files, plus `~/.zshrc` and stale comments in
+  `~/.config/nix/flake.nix`. Volta is EOL since Nov 2025 (volta-cli#2080; maintainers
+  point to mise).
+- [ ] STALE PLIST PATHS — two LaunchAgents bake a frozen PATH snapshot containing
+  dead `~/.volta/bin`: `~/Library/LaunchAgents/com.github.facebook.watchman.plist`
+  and `~/Library/LaunchAgents/com.reclip.server.plist` (the latter hardcodes
+  `~/.volta/tools/image/node/24.17.0/bin` — Volta's actual node, now gone; if that
+  service needs node it is currently broken). These are GENERATED artifacts — fix by
+  regenerating them after the mise migration so they capture a clean PATH, not by
+  hand-editing. Peter to confirm what generates each.
+- [~] macOS Node manager: nvm was an INTERIM (2026-08-25: Node v24.19.0 via nvm 0.40.7
+  + a `.pathconfig` resolver that exposed node to non-interactive hook shells).
+  SUPERSEDED 2026-08-26 by the fleet-wide **mise** decision: mise installed via Nix
+  (`pkgs.mise` in flake.nix), `mise use -g node@lts`, shims on PATH via `.pathconfig`.
+  Phase 1 (flake + drop `.tool-versions` from installer + `~/.zshrc` + Volta sweep)
+  DONE; Phase 2 (mise global config + symlink, `.pathconfig`/`.bashrc` cutover to mise
+  shims/activate, nvm removal, verify) pending `darwin-rebuild switch`. This RESOLVES
+  the CCBC deviation below — new policy: **Nix installs mise; mise manages the
+  runtimes; per-project overridable; committed config**. bun/deno available
+  side-by-side (bun already in flake) for wasm/speed. `shell_startup_test` stays the
+  control (node/npm across all 3 shell quadrants).
 - [x] CCBC — Peter named the "Country/Community Boundary Conflict": Nix is the
   country, language communities value ease-of-use over strict determinism, and
   the treaty is that Nix owns everything up to the project boundary while the

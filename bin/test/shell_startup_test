@@ -2,7 +2,7 @@
 # shell_startup_test — assert the "env bucket" loads across bash's startup
 # quadrants. The env bucket = everything a *script* needs regardless of
 # interactivity: ~/bin on PATH (so `needs` & friends resolve), $EDITOR/$VISUAL,
-# and pnpm. Interactive-only decoration (prompt/aliases) is NOT tested.
+# node/npm, and pnpm. Interactive-only decoration (prompt/aliases) is NOT tested.
 #
 # Direct run:  bin/test/shell_startup_test   (progress -> stdout, fails -> stderr)
 # Exit code  = number of failed quadrants.
@@ -23,7 +23,7 @@ BASE_PATH="/run/current-system/sw/bin:/usr/bin:/bin"
 ME="$(id -un)"
 
 # One-line probe emitting the env facts we assert on.
-PROBE='printf "needs=%s editor=%s hasbin=%s pnpm=%s\n" "$(command -v needs >/dev/null 2>&1 && echo ok || echo MISSING)" "${EDITOR:-UNSET}" "$(case ":$PATH:" in *":$HOME/bin:"*) echo yes ;; *) echo no ;; esac)" "$(command -v pnpm >/dev/null 2>&1 && echo ok || echo MISSING)"'
+PROBE='printf "needs=%s editor=%s node=%s npm=%s hasbin=%s pnpm=%s\n" "$(command -v needs >/dev/null 2>&1 && echo ok || echo MISSING)" "${EDITOR:-UNSET}" "$(command -v node >/dev/null 2>&1 && echo ok || echo MISSING)" "$(command -v npm >/dev/null 2>&1 && echo ok || echo MISSING)" "$(case ":$PATH:" in *":$HOME/bin:"*) echo yes ;; *) echo no ;; esac)" "$(command -v pnpm >/dev/null 2>&1 && echo ok || echo MISSING)"'
 
 fails=0
 
@@ -47,7 +47,7 @@ clean_run() {
 
 check() { # <label> <probe-output>
 	local label="$1" out="$2"
-	if [[ "$out" == *"needs=ok"* && "$out" == *"hasbin=yes"* && "$out" != *"editor=UNSET"* ]]; then
+	if [[ "$out" == *"needs=ok"* && "$out" == *"hasbin=yes"* && "$out" != *"editor=UNSET"* && "$out" == *"node=ok"* && "$out" == *"npm=ok"* ]]; then
 		echo "✓ $label  [$out]"
 	else
 		echo "✗ $label  [${out:-<no output>}]" >&2

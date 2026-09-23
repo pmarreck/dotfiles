@@ -84,6 +84,27 @@ fi
 # Declarative list of PATH additions.
 # Order: entries LATER in the list end up CLOSER to the FRONT of PATH (last prepend wins).
 # Non-existent dirs are silently skipped.
+
+# nvm-managed Node, exposed on PATH for ALL shells. The old global Node shim
+# disappeared, so node vanished from NON-interactive shells (Claude Code hooks,
+# `#!/usr/bin/env node` scripts, `ssh host cmd`) — those never source nvm.sh, they
+# only inherit the PATH this file builds. Sourcing nvm.sh in .bashrc covers only
+# interactive shells; resolving the default node's bin dir HERE covers the rest.
+# Self-updating: the NEWEST installed nvm Node wins (sort -V, portable across
+# GNU + Apple sort), so a later `nvm install` is picked up with no edit to this
+# file. The `nvm` command itself (install/use/ls) still comes from nvm.sh in .bashrc.
+_nvm_node_bin=""
+_nvm_versions_dir="${NVM_DIR:-$HOME/.nvm}/versions/node"
+if [ ! -d "$_nvm_versions_dir" ] && [ -d "$HOME/.config/nvm/versions/node" ]; then
+	_nvm_versions_dir="$HOME/.config/nvm/versions/node"
+fi
+if [ -d "$_nvm_versions_dir" ]; then
+	_nvm_newest="$(command ls "$_nvm_versions_dir" 2>/dev/null | sort -V | tail -n1)"
+	[ -n "$_nvm_newest" ] && _nvm_node_bin="$_nvm_versions_dir/$_nvm_newest/bin"
+	unset _nvm_newest
+fi
+unset _nvm_versions_dir
+
 PATH_ADDITIONS=(
 	# User-local bins (XDG, pip --user, etc.)
 	"$HOME/.local/bin"
@@ -91,6 +112,7 @@ PATH_ADDITIONS=(
 	"$HOME/.cargo/bin"
 	"$HOME/.cache/lm-studio/bin"
 	"$HOME/.npm-global/bin"
+	"$_nvm_node_bin"  # nvm's newest Node (empty string when none installed → skipped)
 	"$HOME/.local/share/pnpm/bin"
 )
 

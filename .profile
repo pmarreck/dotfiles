@@ -3,6 +3,9 @@
 # .profile must remain POSIX-compliant, use shellcheck to verify
 # There is currently 1 exception to this rule: the use of ${BASH_SOURCE[0]} for debugging
 
+# Keep long bc results, including binary output, on one line.
+export BC_LINE_LENGTH=0
+
 # Current-shell predicates must be sourced so they can inspect caller locals,
 # functions, and aliases; an executable subprocess cannot observe that state.
 . "$HOME/dotfiles/bin/src/defined_helpers.sh"

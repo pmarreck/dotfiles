@@ -6,11 +6,6 @@ if ! command -v rg >/dev/null 2>&1; then
     exit 1
 fi
 
-if ! command -v strings >/dev/null 2>&1; then
-    echo "Error: 'strings' is not installed." >&2
-    exit 1
-fi
-
 # Show a list of all commands that support the --about flag, with their descriptions
 overview() {
   if [[ "$1" == "--about" ]]; then
@@ -63,13 +58,9 @@ overview() {
                  # If it is a script, simple grep/rg should work.
                  # If it is a binary, we need strings.
 
-                 # We can just always use strings? running strings on text file is fine too,
-                 # just less efficient maybe.
-                 # But 'rg' is fast.
-
-                 # Let's try rg directly first. If rg detects binary, it might fail or print "Binary file matches".
-                 # To be safe and thorough as requested:
-                 if strings "$path" 2>/dev/null | rg -F -q -- "--about"; then
+                 # Search text and binary bytes without depending on macOS
+                 # developer tools, whose license gate can disable `strings`.
+                 if rg -a -F -q -- "--about" "$path" 2>/dev/null; then
                      is_safe=true
                  fi
              fi

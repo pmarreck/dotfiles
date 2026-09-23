@@ -481,7 +481,7 @@ expect_contains 'in-place conversion reports its inferred width' 'indent size: 4
 expect_files_equal 'in-place conversion leaves a pre-existing .new path untouched' \
 	"$scratch/in-place.expected-sidecar" "$scratch/in-place/with spaces.txt.new"
 replacement_count="$(find "$scratch/in-place" -maxdepth 1 -type f \
-	-name 'with spaces.txt.tmp.*' -print | wc -l)"
+	-name 'with spaces.txt.tmp.*' -print | awk 'END { print NR }')"
 expect_value 'in-place conversion removes its unique temporary file' \
 	'0' "$replacement_count"
 

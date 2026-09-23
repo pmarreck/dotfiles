@@ -6,11 +6,13 @@ test_run_test_suite() {
 	local actual
 	local output
 	local compatibility_runner
+	local top_level_runner
 	local runner
 	local tmpdir
 
 	runner="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)/run_test_suite"
 	compatibility_runner="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)/test_dotfiles"
+	top_level_runner="$(dirname "$(dirname "$runner")")/test"
 	tmpdir=$(mktemp -d --tmpdir run_test_suite_test.XXXXXX)
 	trap 'rm -rf "$tmpdir"' EXIT
 
@@ -105,6 +107,16 @@ test_run_test_suite() {
 		printf '✓ test_dotfiles forwards to run_test_suite\n'
 	else
 		printf '✗ test_dotfiles should forward to run_test_suite\nStatus: %s\nOutput: %q\n' "$actual" "$output" >&2
+		(( fails++ ))
+	fi
+
+	(( tests++ ))
+	output=$(HOME="$tmpdir/home" "$top_level_runner" --test-dir "$tmpdir/passing" 2>&1)
+	actual=$?
+	if [[ "$actual" == 0 && "$output" == *'All 1 test files passed'* ]]; then
+		printf '✓ ./test runs the complete-suite runner\n'
+	else
+		printf '✗ ./test should forward to run_test_suite\nStatus: %s\nOutput: %q\n' "$actual" "$output" >&2
 		(( fails++ ))
 	fi
 

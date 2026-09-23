@@ -108,7 +108,7 @@ if [[ "$out" == *'Claude, Codex, or Grok'* ]]; then status=0; else status=1; fi
 check "$status" == 0 '--help documents all three supported harnesses'
 capture "$tool" --about
 check "$rc" == 0 '--about succeeds'
-check "$(wc -l <<<"$out")" == 1 '--about is one line'
+check "$(awk 'END { print NR }' <<<"$out")" == 1 '--about is one line'
 
 capture run_tool --since 2026-08-01T00:00:00Z --dry-run --simple
 check "$rc" == 0 'dry-run succeeds'

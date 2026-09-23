@@ -3,8 +3,7 @@
 #
 # `code` MUST be a sourced shell function (it cd's the interactive shell, which a
 # PATH executable cannot do), so — like edit_test — we source it and stub the
-# editor hop. Resolution is: glob -i "$CODE/*<query>*/" | head -1  (dirs only,
-# case-insensitive, code-point-first, depends on the `glob` script).
+# editor hop. Resolution covers direct child dirs in code-point order.
 #
 # Verifies:
 #   - a specific partial name cd's into that project dir
@@ -35,7 +34,7 @@ fi
 
 # Fake $CODE tree.
 FAKE=$(mktemp -d --tmpdir code_test.XXXXXX)
-mkdir -p "$FAKE"/zedland "$FAKE"/my_ZED_tool "$FAKE"/notzed "$FAKE"/widget_proj
+mkdir -p "$FAKE"/zedland "$FAKE"/my_ZED_tool "$FAKE"/notzed "$FAKE"/widget_proj "$FAKE/my project [meta]"
 touch "$FAKE"/loose_zed_file.txt   # a FILE matching 'zed' — must be ignored
 export CODE="$FAKE"
 trap 'rm -rf "$FAKE"' EXIT
@@ -81,6 +80,11 @@ if [ "$logged" = "$want" ] && [ "$res" = "pwd=/tmp" ]; then echo "[PASS] --edit 
 ((tests++))
 ( code >/dev/null 2>&1 ); rc=$?
 if [ "$rc" = "2" ]; then echo "[PASS] no-arg usage rc=2"; else echo "[FAIL] no-arg rc=$rc (want 2)" >&2; ((fails++)); fi
+
+# 8: spaced paths and pattern characters are treated as literal query text
+((tests++))
+got=$(run_cd 'project [meta]'); want8=$(norm "$FAKE/my project [meta]")
+if [ "$got" = "$want8" ]; then echo "[PASS] spaced literal query -> $got"; else echo "[FAIL] spaced literal query -> '$got' (want '$want8')" >&2; ((fails++)); fi
 
 echo
 if [ "$fails" -eq 0 ]; then echo "All $tests code tests passed"; else echo "$fails of $tests code tests failed" >&2; fi

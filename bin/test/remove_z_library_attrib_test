@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-set -euo pipefail
+set -u
 
 tests=0
 fails=0
@@ -74,10 +74,35 @@ test_removes_alt_suffix_from_files() {
 	unset tmpdir
 }
 
+test_collision_preserves_all_files() {
+	((++tests))
+	tmpdir=$(mktemp --tmpdir -d remove_z_lib.XXXXXX)
+	local cwd output status
+	cwd=$(pwd)
+	cd "$tmpdir" || return 1
+	printf 'original\n' > 'Collision.pdf'
+	printf 'source\n' > 'Collision (Z-Library).pdf'
+	printf 'other\n' > 'Other (Z-Library).pdf'
+	output=$(remove_z_library_attrib 2>&1)
+	status=$?
+	if (( status != 0 )) && [[ -f 'Collision (Z-Library).pdf' ]] && \
+		[[ -f 'Other (Z-Library).pdf' ]] && [[ ! -e 'Other.pdf' ]] && \
+		[[ $(<Collision.pdf) == 'original' ]] && [[ "$output" == *Collision.pdf* ]]; then
+		echo 'PASS existing destination blocks all renames without data loss'
+	else
+		echo 'FAIL existing destination was overwritten or a prior file was renamed' >&2
+		((fails+=1))
+	fi
+	cd "$cwd" || return 1
+	rm -rf "$tmpdir"
+	unset tmpdir
+}
+
 main() {
 	test_removes_suffix_from_files_with_spaces
 	test_removes_alt_suffix_from_files
 	test_noop_when_no_matches
+	test_collision_preserves_all_files
 
 	if (( fails == 0 )); then
 		echo "All $tests tests passed"

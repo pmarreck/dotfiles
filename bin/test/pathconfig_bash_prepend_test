@@ -68,25 +68,31 @@ else
 	((fails++))
 fi
 
-# Test 4: NixOS's raw system profile contains a deliberately non-setuid sudo;
-# its privileged wrapper must remain ahead of it after the declarative rebuild.
+# Test 4: A privileged wrapper must remain ahead of a raw sudo binary.
+# Use disposable executables so this contract is testable outside NixOS.
 ((tests++))
 echo "Testing: NixOS sudo resolves to the privileged wrapper after .pathconfig..."
+sudo_fixture=$(mktemp -d "${TMPDIR:-/tmp}/pathconfig-sudo.XXXXXX") || exit 1
+mkdir -p "$sudo_fixture/wrappers/bin" "$sudo_fixture/raw/bin"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$sudo_fixture/wrappers/bin/sudo"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$sudo_fixture/raw/bin/sudo"
+chmod +x "$sudo_fixture/wrappers/bin/sudo" "$sudo_fixture/raw/bin/sudo"
 # The child shell intentionally expands HOME after env -i establishes it.
 # shellcheck disable=SC2016
 sudo_path=$(env -i HOME="$HOME" OSTYPE="linux-gnu" \
-	PATH="/run/wrappers/bin:/run/current-system/sw/bin:/usr/bin:/bin" \
+	PATH="$sudo_fixture/wrappers/bin:$sudo_fixture/raw/bin:/run/current-system/sw/bin:/usr/bin:/bin" \
 	"$BOOTSTRAP_BASH" --noprofile --norc -c '
 		. "$HOME/.pathconfig" 2>/dev/null
 		type -P sudo
 	' 2>/dev/null)
 
-if [[ "$sudo_path" == "/run/wrappers/bin/sudo" ]]; then
+if [[ "$sudo_path" == "$sudo_fixture/wrappers/bin/sudo" ]]; then
 	echo "✓ Test passed: sudo resolves to the privileged wrapper"
 else
-	echo "✗ Test failed: sudo resolves to '$sudo_path' (expected /run/wrappers/bin/sudo)" >&2
+	echo "✗ Test failed: sudo resolves to '$sudo_path' (expected $sudo_fixture/wrappers/bin/sudo)" >&2
 	((fails++))
 fi
+rm -rf "$sudo_fixture"
 
 # Test 5: NixOS owns its system-path ordering.  If the system profile did not
 # supply the raw profile, .pathconfig must not inject it ahead of its wrappers.
