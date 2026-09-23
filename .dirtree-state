@@ -126,6 +126,7 @@ annotate=[
 	bin/test/fleet-status-repository-profile_test = Classifier-set tests for repository documents, CI badges, and cached metadata enrichment.
 	bin/test/fleet-status-scheduler_test = Injected-clock classifier set for adaptive network scheduling.
 	bin/test/frontmatter_test = Covers JSON and legacy extraction, body exclusion, stdin, malformed input, output modes, and clean errors.
+	bin/test/fun_intro_cache_test = Deterministic cache regeneration, ANSI byte fidelity, timeout, and startup bypass checks
 	bin/test/fun_intro_test = tests for capability-bucketed fun_intro cache (image_capable/image_incapable, hardlink invariant)
 	bin/test/get-all-git-stati_test = CLI coverage for root scoping, repeated/spaced roots, help, and status output.
 	bin/test/glob_ownership_test = Prevents dotfiles from regaining a duplicate glob implementation while preserving project-bin discovery

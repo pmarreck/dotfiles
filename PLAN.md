@@ -8,9 +8,10 @@
 - [x] Fetch and compare `origin/master` with this checkout; identify upstream fixes and overlapping files before integration.
   Curiosity poke: 30 remote commits included NVM, Volta, and test updates overlapping the local shell edits.
   Completed 2026-09-22 EDT: saved the original dirty worktree in a recoverable stash, fast-forwarded `master`, and retained the stash while resolving overlaps.
-- [x] Reproduce and repair the failing test files until the complete host and Nix suites pass, keeping unrelated user state recoverable.
+- [ ] Reproduce and repair the failing test files until the complete host and Nix suites pass, keeping unrelated user state recoverable.
   Curiosity poke: distinguish stale assertions and host dependencies from actual command defects.
-  Completed 2026-09-22 22:27 EDT: `./test` passed all 185 host files; `nix build .#checks.aarch64-darwin.test --no-link` passed all 138 sandbox-eligible files. The top-level runner was added after a failing contract test; direct `ask_local` now works without startup-provided `SED`.
+  Host verification 2026-09-22 22:27 EDT: `./test` passed all 185 host files; `nix build .#checks.aarch64-darwin.test --no-link` passed all 138 sandbox-eligible files. The top-level runner was added after a failing contract test; direct `ask_local` now works without startup-provided `SED`.
+  Thelio's exact-SHA Linux check failed because the isolated bc fixture lacked the Nix Bash path expected by `.pathconfig`; the fixture now supplies it. Rerun host and both Nix targets before checking this off.
 - [ ] Review and commit the outstanding local work in passing units, then push `master` and verify exact remote HEAD and Mechatron CI.
   Curiosity poke: no commit may include credentials or silently absorb unrelated edits.
 
