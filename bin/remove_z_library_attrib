@@ -1,21 +1,37 @@
 #!/usr/bin/env bash
 
-shopt -s extglob
-
 remove_z_library_attrib() {
-	local files=()
-
-	# Use glob's null-separated output so filenames with spaces stay intact
-	mapfile -d '' -t files < <(glob -0 '* @(\(Z-Library\)|\(z-library.sk, 1lib.sk, z-lib.sk\)).*')
-
-	if [[ ${#files[@]} -eq 0 ]]; then
-		return 0
-	fi
-
-	local file
-	for file in "${files[@]}"; do
-		mv -- "$file" "${file/ @(\(Z-Library\)|\(z-library.sk, 1lib.sk, z-lib.sk\))/}"
-	done
+	# Keep glob settings local to the command; the caller may have globbing disabled.
+	(
+		set +f
+		shopt -s nullglob
+		local source name target prior
+		local -a sources=() targets=()
+		for source in ./*; do
+			name=${source#./}
+			case "$name" in
+				*' (Z-Library).'* ) target=${name/ (Z-Library)./.} ;;
+				*' (z-library.sk, 1lib.sk, z-lib.sk).'* ) target=${name/ (z-library.sk, 1lib.sk, z-lib.sk)./.} ;;
+				* ) continue ;;
+			esac
+			if [[ -e "./$target" || -L "./$target" ]]; then
+				printf 'Destination already exists: %s\n' "$target" >&2
+				return 1
+			fi
+			for prior in "${targets[@]}"; do
+				if [[ "$prior" == "$target" ]]; then
+					printf 'Multiple sources target: %s\n' "$target" >&2
+					return 1
+				fi
+			done
+			sources+=("$source")
+			targets+=("$target")
+		done
+		local i
+		for ((i=0; i<${#sources[@]}; i++)); do
+			mv -n -- "${sources[i]}" "./${targets[i]}" || return
+		done
+	)
 }
 
 # Run the function if this script is executed directly

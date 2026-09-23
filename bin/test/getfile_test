@@ -39,7 +39,7 @@ if PATH="$mock_bin:$PATH" MOCK_HEADERS="$known_length_headers" MOCK_PAYLOAD="$pa
 	pv_calls=0
 	pv_args=""
 	if [ -f "$pv_log" ]; then
-		pv_calls=$(wc -l < "$pv_log")
+		pv_calls=$(awk 'END { print NR }' "$pv_log")
 		pv_args=$(<"$pv_log")
 	fi
 	if [[ "$(<"$extracted_stream")" == "${payload}${payload}" && "$pv_calls" -ge 3 && \
@@ -63,7 +63,7 @@ unknown_extracted_stream="$tmpdir/unknown-extracted-stream"
 unknown_headers=$'HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n'
 if PATH="$mock_bin:$PATH" MOCK_HEADERS="$unknown_headers" MOCK_PAYLOAD="$payload" \
 	PV_LOG="$unknown_pv_log" EXTRACTED_STREAM="$unknown_extracted_stream" getfile --unzip 'mock://unknown-a.zip' 'mock://unknown-b.zip' 2>/dev/null; then
-	unknown_pv_calls=$(wc -l < "$unknown_pv_log")
+	unknown_pv_calls=$(awk 'END { print NR }' "$unknown_pv_log")
 	unknown_pv_args=$(<"$unknown_pv_log")
 	if [[ "$(<"$unknown_extracted_stream")" == "${payload}${payload}" && "$unknown_pv_calls" == 2 && "$unknown_pv_args" != *'-s '* ]]; then
 		echo "✓ --unzip omits aggregate ETA when Content-Length is unavailable"

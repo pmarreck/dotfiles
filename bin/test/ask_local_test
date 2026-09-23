@@ -1,5 +1,109 @@
 #!/usr/bin/env bash
 
-# Test for ask_local
-echo "Test for ask_local is not yet implemented"
-exit 0
+# A direct command must not depend on the invoking shell exporting this helper.
+unset -f needs 2>/dev/null || :
+unset SED
+
+test_dir=$(mktemp -d --tmpdir ask_local_test.XXXXXX) || exit 1
+trap 'rm -rf "$test_dir"' EXIT
+mkdir -p "$test_dir/data"
+
+# shellcheck disable=SC2329
+mock_curl() {
+	local output_file='' data_file='' url='' authorization=''
+	while (( $# )); do
+		case "$1" in
+			-o|-d)
+				if [[ "$1" == -o ]]; then output_file="$2"; else data_file="${2#@}"; fi
+				shift 2
+				;;
+			-H)
+				if [[ "$2" == Authorization:* ]]; then authorization="$2"; fi
+				shift 2
+				;;
+			-w|-X|--max-time)
+				shift 2
+				;;
+			-*)
+				shift
+				;;
+			*)
+				url="$1"
+				shift
+				;;
+		esac
+	done
+	printf '%s\n' "$url" > "$ASK_LOCAL_URL_CAPTURE"
+	printf '%s\n' "$authorization" > "$ASK_LOCAL_AUTH_CAPTURE"
+	cp "$data_file" "$ASK_LOCAL_REQUEST_CAPTURE"
+	printf '%s\n' '{"choices":[{"message":{"content":"local answer"}}]}' > "$output_file"
+	printf '200'
+}
+
+# shellcheck disable=SC2329
+glow() { cat; }
+export -f mock_curl glow
+
+export ASK_LOCAL_URL_CAPTURE="$test_dir/url"
+export ASK_LOCAL_AUTH_CAPTURE="$test_dir/auth"
+export ASK_LOCAL_REQUEST_CAPTURE="$test_dir/request.json"
+
+output=$(XDG_DATA_HOME="$test_dir/data" CURL=mock_curl \
+	DEFAULT_LOCAL_AI_MODEL='test-local-model' OMLX_API_KEY='test-local-key' \
+	OPENAI_URL='' CONTINUE_CONVERSATION=false \
+	bash "$HOME/dotfiles/bin/ask_local" 'question with spaces' 2>"$test_dir/stderr")
+status=$?
+
+fails=0
+if (( status != 0 )) || [[ "$output" != 'local answer' ]]; then
+	printf 'FAIL: direct ask_local returned status %s and output %q\n' "$status" "$output" >&2
+	printf 'Captured stderr: %s\n' "$(<"$test_dir/stderr")" >&2
+	(( fails++ ))
+fi
+if [[ ! -f "$ASK_LOCAL_URL_CAPTURE" ]] || \
+	[[ $(<"$ASK_LOCAL_URL_CAPTURE") != 'http://localhost:8000/v1/chat/completions' ]]; then
+	printf 'FAIL: ask_local did not call the local oMLX endpoint\n' >&2
+	(( fails++ ))
+fi
+if [[ ! -f "$ASK_LOCAL_AUTH_CAPTURE" ]] || \
+	[[ $(<"$ASK_LOCAL_AUTH_CAPTURE") != 'Authorization: Bearer test-local-key' ]]; then
+	printf 'FAIL: ask_local did not use the local API key\n' >&2
+	(( fails++ ))
+fi
+if [[ ! -f "$ASK_LOCAL_REQUEST_CAPTURE" ]] || \
+	! jq -e '.model == "test-local-model" and .messages[-1].content == "question with spaces"' \
+		"$ASK_LOCAL_REQUEST_CAPTURE" >/dev/null; then
+	printf 'FAIL: ask_local did not forward the model and complete question\n' >&2
+	(( fails++ ))
+fi
+if [[ -s "$test_dir/stderr" ]]; then
+	printf 'FAIL: ask_local wrote unexpected stderr\n' >&2
+	(( fails++ ))
+fi
+
+default_output=$(XDG_DATA_HOME="$test_dir/data" CURL=mock_curl \
+	DEFAULT_LOCAL_AI_MODEL='' OMLX_MODEL='' OMLX_API_KEY='test-local-key' \
+	OPENAI_URL='' CONTINUE_CONVERSATION=false \
+	bash "$HOME/dotfiles/bin/ask_local" 'default model' 2>"$test_dir/default-stderr")
+default_status=$?
+if (( default_status != 0 )) || [[ "$default_output" != 'local answer' ]] || \
+	! jq -e '.model == "gemma4-heretical-mlx-8bit"' \
+		"$ASK_LOCAL_REQUEST_CAPTURE" >/dev/null || \
+	[[ -s "$test_dir/default-stderr" ]]; then
+	printf 'FAIL: ask_local did not select the installed default model\n' >&2
+	printf 'Captured stderr: %s\n' "$(<"$test_dir/default-stderr")" >&2
+	(( fails++ ))
+fi
+
+missing_key_output=$(OMLX_API_KEY='' bash "$HOME/dotfiles/bin/ask_local" 'question' 2>&1)
+missing_key_status=$?
+if (( missing_key_status == 0 )) || \
+	[[ "$missing_key_output" != 'ask_local: OMLX_API_KEY is not set' ]]; then
+	printf 'FAIL: missing local key did not produce a clear error\n' >&2
+	(( fails++ ))
+fi
+
+if (( fails == 0 )); then
+	printf 'PASS: direct ask_local reaches oMLX and reports missing authentication\n'
+fi
+exit "$fails"

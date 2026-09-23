@@ -1,25 +1,29 @@
 #!/usr/bin/env bash
 
-. $HOME/dotfiles/bin/ask
+# shellcheck disable=SC1091
+. "$HOME/dotfiles/bin/ask"
 
-# export DEFAULT_LOCAL_AI_MODEL="athene-v2:latest"
-export DEFAULT_LOCAL_AI_MODEL=${DEFAULT_LOCAL_AI_MODEL:-gpt-oss:20b}
-export DEFAULT_LOCAL_AI_HOST="localhost:11434"
+export DEFAULT_LOCAL_AI_MODEL=${DEFAULT_LOCAL_AI_MODEL:-${OMLX_MODEL:-gemma4-heretical-mlx-8bit}}
+export DEFAULT_LOCAL_AI_HOST=${DEFAULT_LOCAL_AI_HOST:-${OMLX_HOST:-localhost:8000}}
 
 function ask_local() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "${BASH_SOURCE[0]}" && return
+	if [[ -z "${OMLX_API_KEY:-}" ]]; then
+		printf 'ask_local: OMLX_API_KEY is not set\n' >&2
+		return 1
+	fi
 	OPENAI_MODEL="$DEFAULT_LOCAL_AI_MODEL" \
 	OPENAI_HOST="$DEFAULT_LOCAL_AI_HOST" \
-	OPENAI_PATH="/api/chat" \
-	OPENAI_PROTOCOL="http" \
-	OPENAI_API_KEY="fake" \
+	OPENAI_PATH="${OMLX_PATH:-/v1/chat/completions}" \
+	OPENAI_PROTOCOL="${OMLX_PROTOCOL:-http}" \
+	OPENAI_URL='' \
+	OPENAI_API_KEY="$OMLX_API_KEY" \
 	OPENAI_TIMEOUT=600 \
 	LLM_SYSTEM_PROMPT="You are a helpful AI assistant named WOPR." \
 	TOOLING_CAPABLE="${TOOLING_CAPABLE:-false}" \
 	ask "$@"
 }
 
-# Export the function so it can be used by find -exec
-
-# Run the function, passing along any args, if this file was run directly (such as via sudo) instead of as an include
-# Sometimes, $0 contains a leading dash to indicate an interactive (or is it login?) shell,
+if ! (return 0 2>/dev/null); then
+	ask_local "$@"
+fi

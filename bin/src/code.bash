@@ -6,11 +6,8 @@
 #   code zed --edit   open that dir in your editor instead (via `edit`, which picks
 #                     $VISUAL on an interactive terminal else $EDITOR)
 #
-# Resolution is `glob -i "$CODE/*<query>*/" | head -1`: the trailing slash keeps it
-# to DIRECTORIES, -i is case-insensitive, and glob's code-point ordering makes the
-# first match deterministic — so a sufficiently specific partial lands you exactly
-# where you meant. Must be a sourced function (a PATH executable can't cd the shell).
-# Depends on the `glob` script.
+# Resolve direct child directories in byte order with a literal,
+# case-insensitive query. Must be sourced to change the caller's directory.
 
 code() {
 	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
@@ -38,8 +35,16 @@ code() {
 	fi
 
 	local target
-	target=$(glob -i "$base/*${query}*/" 2>/dev/null | head -1)
-	target="${target%/}"
+	target=$(
+		set +f
+		shopt -s nullglob nocaseglob
+		LC_ALL=C
+		for candidate in "$base"/*"$query"*/; do
+			[[ -d "$candidate" ]] || continue
+			printf '%s\n' "${candidate%/}"
+			break
+		done
+	)
 
 	if [ -z "$target" ] || [ ! -d "$target" ]; then
 		echo "code: no directory under $base matches '$query'" >&2

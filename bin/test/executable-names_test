@@ -33,7 +33,7 @@ fi
 	shopt -s nullglob
 	for path in "$bin_dir"/*; do
 		name="${path##*/}"
-		if [[ -f "$path" && -x "$path" && "$name" == *_* ]]; then
+		if [[ ( -L "$path" || ( -f "$path" && -x "$path" ) ) && "$name" == *_* ]]; then
 			printf '%s\n' "$name"
 		fi
 	done

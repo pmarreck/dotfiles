@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+
+set -u
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+test_home=$(mktemp -d --tmpdir bc_line_length.XXXXXX) || exit 1
+trap 'rm -rf "$test_home"' EXIT
+ln -s "$repo_root" "$test_home/dotfiles"
+ln -s "$repo_root/.pathconfig" "$test_home/.pathconfig"
+ln -s "$repo_root/bin" "$test_home/bin"
+mkdir -p "$test_home/.nix-profile/bin"
+ln -s "$(command -v bash)" "$test_home/.nix-profile/bin/bash"
+
+output=$(
+	unset BC_LINE_LENGTH
+	HOME="$test_home" PATH="$test_home/bin:$PATH" \
+	BASH_ENV='' SHELL_STARTUP_BENCHMARK=1 bash --noprofile --norc -c '
+		INTERACTIVE_SHELL=false
+		LOGIN_SHELL=false
+		unset DEBUG_SHELLCONFIG DEBUG_PATHCONFIG
+		SED=sed
+		. "$HOME/dotfiles/.profile" || exit
+		printf "setting=%s\n" "${BC_LINE_LENGTH-<unset>}"
+		printf "obase=2; 2^200\n" | bc
+	' 2>&1
+)
+status=$?
+
+expected="setting=0"$'\n'"1$(printf '%0200d' 0)"
+if (( status != 0 )) || [[ "$output" != "$expected" ]]; then
+	printf 'FAIL: .profile did not make bc print one unwrapped binary line (status %s)\n' "$status" >&2
+	printf 'Observed prefix: %q\n' "${output:0:300}" >&2
+	exit 1
+fi
+
+printf 'PASS: .profile exports unwrapped bc output\n'

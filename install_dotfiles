@@ -22,7 +22,6 @@ declare -a dotfiles=(
     .profile
     .secrets.gpg
     .shellenv
-    .tool-versions
     .wezterm.lua
 )
 echo "List of dotfiles to install:"

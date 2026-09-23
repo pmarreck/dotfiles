@@ -118,12 +118,13 @@ read_value() {
 }
 
 linux_counters() {
-	local interface state rx tx speed
+	local path interface state rx tx speed
 	if [[ ! -d "$NET_CLASS_DIR" ]]; then
 		echo "nethogs: network-interface directory not found: $NET_CLASS_DIR" >&2
 		exit 1
 	fi
-	while IFS= read -r interface; do
+	while IFS= read -r path; do
+		interface=${path##*/}
 		[[ "$interface" == "lo" ]] && continue
 		state=$(read_value "$NET_CLASS_DIR/$interface/operstate")
 		[[ "$state" == "down" ]] && continue
@@ -131,7 +132,7 @@ linux_counters() {
 		tx=$(read_value "$NET_CLASS_DIR/$interface/statistics/tx_bytes")
 		speed=$(read_value "$NET_CLASS_DIR/$interface/speed")
 		printf '%s\t%s\t%s\t%s\n' "$interface" "$rx" "$tx" "$speed"
-	done < <(find "$NET_CLASS_DIR" -mindepth 1 -maxdepth 1 -printf '%f\n' | sort)
+	done < <(find "$NET_CLASS_DIR" -mindepth 1 -maxdepth 1 -print | LC_ALL=C sort)
 }
 
 macos_counters() {

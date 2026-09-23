@@ -65,6 +65,7 @@ expect_eq "about is one line with version, platform, and architecture" "true" \
 FLEET_STATUS_SYSTEMD_USER_DIR="$unit_dir" \
 FLEET_STATUS_SYSTEMCTL="$fake_systemctl" \
 FLEET_STATUS_SYSTEMCTL_LOG="$systemctl_log" \
+FLEET_STATUS_PLATFORM=Linux \
 	"$installer" >"$scratch/install.out" 2>"$scratch/install.err"
 first_status=$?
 expect_eq "installer succeeds" "0" "$first_status"
@@ -78,6 +79,7 @@ expect_eq "installer reloads and enables the timer" \
 FLEET_STATUS_SYSTEMD_USER_DIR="$unit_dir" \
 FLEET_STATUS_SYSTEMCTL="$fake_systemctl" \
 FLEET_STATUS_SYSTEMCTL_LOG="$systemctl_log" \
+FLEET_STATUS_PLATFORM=Linux \
 	"$installer" >"$scratch/reinstall.out" 2>"$scratch/reinstall.err"
 expect_eq "reinstall is idempotent" "0" "$?"
 expect_eq "idempotent reinstall keeps stderr clean" "" "$(cat "$scratch/reinstall.err")"
@@ -89,9 +91,17 @@ printf 'hands off\n' >"$conflict_dir/fleet-status.service"
 FLEET_STATUS_SYSTEMD_USER_DIR="$conflict_dir" \
 FLEET_STATUS_SYSTEMCTL="$fake_systemctl" \
 FLEET_STATUS_SYSTEMCTL_LOG="$systemctl_log" \
+FLEET_STATUS_PLATFORM=Linux \
 	"$installer" >"$scratch/conflict.out" 2>"$scratch/conflict.err"
 expect_eq "installer refuses to overwrite a conflicting file" "1" "$?"
 expect_eq "conflicting file remains intact" "hands off" "$(cat "$conflict_dir/fleet-status.service")"
+
+FLEET_STATUS_PLATFORM=Darwin \
+FLEET_STATUS_SYSTEMD_USER_DIR="$scratch/darwin/systemd/user" \
+	"$installer" >"$scratch/darwin.out" 2>"$scratch/darwin.err"
+expect_eq "installer rejects macOS" "1" "$?"
+expect_eq "macOS rejection creates no unit directory" "false" \
+	"$(test -e "$scratch/darwin/systemd/user" && printf true || printf false)"
 
 if (( fails == 0 )); then
 	printf 'All %d fleet-status nightly tests passed\n' "$tests"

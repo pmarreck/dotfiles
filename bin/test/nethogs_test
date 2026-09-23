@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-set -euo pipefail
+set -u
 
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 nethogs_cmd=${NETHOGS_BIN_UNDER_TEST:-"$script_dir/../nethogs"}

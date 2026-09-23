@@ -43,6 +43,7 @@ nvm() {
 EOF
 
 export NVM_DIR="$test_dir/nvm"
+unset NVM_BIN
 export NVM_TEST_GLOB="$NVM_DIR/versions/node/vtest/bin"
 export NVM_SYSTEM_BIN="$test_dir/system-bin"
 PATH="$test_dir/user-bin:$PATH"

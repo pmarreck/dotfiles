@@ -6,6 +6,10 @@ if ! type assert &>/dev/null; then
 	. "$HOME/dotfiles/bin/test/test_utils"
 fi
 
+# The X11 package also installs an x command; exercise this project's CLI.
+x() { "$HOME/dotfiles/bin/x" "$@"; }
+xn() { "$HOME/dotfiles/bin/xn" "$@"; }
+
 # Test the x function
 test_x() {
 	local fails=0
@@ -25,36 +29,28 @@ test_x() {
 	# Test newline flag
 	(( tests++ ))
 	result="$(x +n 2 abc)"
-	echo "DEBUG +n test: '$(hexdump -C <<< "$result")'" >&2
 	expected="$(printf "abcabc\n")"
-	echo "DEBUG +n expected: '$(hexdump -C <<< "$expected")'" >&2
 	assert "$result" == "$expected" "The +n flag should add a newline"
 	(( fails += $? ))
 
 	# Test escaped newlines in string using ANSI-C quoting
 	(( tests++ ))
 	result="$(x 2 $'abc\n')"
-	echo "DEBUG escaped newline test: '$(hexdump -C <<< "$result")'" >&2
 	expected="$(printf "abc\nabc\n")"
-	echo "DEBUG escaped expected: '$(hexdump -C <<< "$expected")'" >&2
 	assert "$result" == "$expected" "Escaped newlines should be interpreted correctly"
 	(( fails += $? ))
 
 	# Test string with existing newline and +n flag
 	(( tests++ ))
 	result="$(x +n 2 $'abc\n')"
-	echo "DEBUG +n with newline test: '$(hexdump -C <<< "$result")'" >&2
 	expected="$(printf "abc\nabc\n")"
-	echo "DEBUG +n with newline expected: '$(hexdump -C <<< "$expected")'" >&2
 	assert "$result" == "$expected" "No extra newline should be added if string already ends with one"
 	(( fails += $? ))
 
 	# Test xn function (which should call x with +n)
 	(( tests++ ))
 	result="$(xn 2 abc)"
-	echo "DEBUG xn test: '$(hexdump -C <<< "$result")'" >&2
 	expected="$(printf "abcabc\n")"
-	echo "DEBUG xn expected: '$(hexdump -C <<< "$expected")'" >&2
 	assert "$result" == "$expected" "xn should add a newline"
 	(( fails += $? ))
 

@@ -2,6 +2,9 @@
 
 . "${HOME}/dotfiles/bin/src/truthy.sh"
 
+# Direct CLI calls may bypass .shellenv, which normally selects GNU or BSD sed.
+SED=${SED:-sed}
+
 # Function to get local zip code
 get_zip() {
 	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return;

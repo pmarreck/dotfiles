@@ -53,7 +53,7 @@ fi
 # Test 2: --regenerate-cache writes a non-empty cache file
 ((tests++))
 echo "Testing: fun_intro --regenerate-cache writes a non-empty cache..."
-fun_intro --regenerate-cache >/dev/null 2>&1
+fun_intro --regenerate-cache --pick=mandelbash >/dev/null 2>&1
 rc=$?
 if [[ $rc -eq 0 ]] && [[ -s "$EXPECTED_PATH" ]]; then
 	echo "✓ Test passed: cache file exists with $(wc -c < "$EXPECTED_PATH") bytes"

@@ -2,8 +2,8 @@
 
 xn() {
 	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-	# Just call x with all arguments and add the +n parameter
-	x +n "$@"
+	# Resolve the sibling script so an unrelated x earlier in PATH cannot shadow it.
+	"$(dirname -- "${BASH_SOURCE[0]}")/x" +n "$@"
 }
 
 # Run the function if this script is executed directly

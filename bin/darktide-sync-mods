@@ -41,7 +41,13 @@ darktide-sync-mods() {
 	# on size + mtime with a 2s window (NTFS/FAT timestamp granularity), and
 	# force sane perms on the Linux side.
 	local rsync_opts=(-rt --modify-window=2 --no-perms --no-owner --no-group \
-	            --chmod=Du=rwx,Fu=rw --info=progress2 --human-readable)
+	            --chmod=Du=rwx,Fu=rw)
+	if rsync --help 2>/dev/null | rg -q -- '--info='; then
+		rsync_opts+=(--info=progress2 --human-readable)
+	else
+		# macOS ships OpenRsync, whose older option set still supports --progress.
+		rsync_opts+=(--progress)
+	fi
 	[ "$delete" = 1 ] && rsync_opts+=(--delete)
 
 	echo "Syncing Darktide mods:  Windows → Linux"
