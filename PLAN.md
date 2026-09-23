@@ -8,12 +8,13 @@
 - [x] Fetch and compare `origin/master` with this checkout; identify upstream fixes and overlapping files before integration.
   Curiosity poke: 30 remote commits included NVM, Volta, and test updates overlapping the local shell edits.
   Completed 2026-09-22 EDT: saved the original dirty worktree in a recoverable stash, fast-forwarded `master`, and retained the stash while resolving overlaps.
-- [ ] Reproduce and repair the failing test files until the complete host and Nix suites pass, keeping unrelated user state recoverable.
+- [x] Reproduce and repair the failing test files until the complete host and Nix suites pass, keeping unrelated user state recoverable.
   Curiosity poke: distinguish stale assertions and host dependencies from actual command defects.
   Host verification 2026-09-22 22:27 EDT: `./test` passed all 185 host files; `nix build .#checks.aarch64-darwin.test --no-link` passed all 138 sandbox-eligible files. The top-level runner was added after a failing contract test; direct `ask_local` now works without startup-provided `SED`.
-  Thelio's exact-SHA Linux check failed because the isolated bc fixture lacked the Nix Bash path expected by `.pathconfig`; the fixture now supplies it. Rerun host and both Nix targets before checking this off.
-- [ ] Review and commit the outstanding local work in passing units, then push `master` and verify exact remote HEAD and Mechatron CI.
+  Completed 2026-09-22 22:44 EDT: Thelio's first exact-SHA Linux check exposed a missing Nix Bash fixture path. After the fixture correction and deterministic cache-test adjustment, all 185 host tests, the 138-test macOS Nix check, the pre-push gate, and the exact-SHA Thelio Linux check passed.
+- [x] Review and commit the outstanding local work in passing units, then push `master` and verify exact remote HEAD and Mechatron CI.
   Curiosity poke: no commit may include credentials or silently absorb unrelated edits.
+  Completed 2026-09-22 22:44 EDT: code commits `a34fbed7` and `0730b331` reached `origin/master`; fresh fetch matched local HEAD, and Mechatron reported success for `0730b331` with a PASSING badge.
 
 ## Active — ask_local command (2026-09-22)
 
@@ -23,7 +24,8 @@
 - [x] Route the command to the active local oMLX server and installed model; run focused and full tests and update the dirtree note.
   Curiosity poke: local authentication must use the oMLX key and tests must not touch live conversation history.
   Completed 2026-09-22 21:57 EDT: focused CLI test and ShellCheck pass; a real request returned OK with isolated history. The full host suite passed 162/171 files; `ask_local_test` passed. Nine other files failed: `darktide-sync-mods_test`, `erect-recent-agent-stacks_test`, `executable-names_test`, `fleet-status-nightly_test`, `getfile_test`, `nethogs_test`, `overview_test`, `pathconfig_bash_prepend_test`, and `x_test`.
-- [ ] Commit the `ask_local` unit after the repository suite passes.
+- [x] Commit the `ask_local` unit after the repository suite passes.
+  Completed 2026-09-22 22:32 EDT in `a34fbed7`, after the full host and macOS Nix checks passed.
 
 ## Active — let ffpw select a usable Firefox profile (2026-09-06)
 
