@@ -109,6 +109,12 @@ popd # $HOME
 
 "$DIR/bin/install-git-hooks" "$DIR"
 
+# Claude Code user-global policy hooks are installed as links to tracked files,
+# so a new machine receives the same policy the suite verifies.
+mkdir -p "$HOME/.claude/hooks/block-attribution"
+ln -sfv "$DIR/bin/block-attribution-hook" \
+	"$HOME/.claude/hooks/block-attribution/block-attribution.sh"
+
 echo
 echo "note: Library/Application Support and Library/Services are not installed by default"
 echo "since they are macOS-only, please install manually."

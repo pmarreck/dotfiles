@@ -118,7 +118,10 @@ echo "pre-push-gate: running the suite (floor: $min_tests tests)…" >&2
 # is Stopped rather than failing — observed 2026-07-27. A test suite must never
 # be able to read the controlling terminal; enforce that here structurally
 # instead of trusting every test to behave.
-"$runner" >"$report" 2>&1 </dev/null
+# fd 3 bypasses the captured report so the suite can show live completion
+# progress. The final, deterministic report remains intact for validation and
+# is preserved on failure.
+RUN_TEST_SUITE_PROGRESS_FD=3 "$runner" 3>&2 >"$report" 2>&1 </dev/null
 runner_status=$?
 
 pass_count="$(grep -cE '^PASS ' "$report" || true)"

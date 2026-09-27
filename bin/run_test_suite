@@ -36,6 +36,10 @@ run_test_suite() {
 	local failed=0
 	local total
 	local index=0
+	# Progress is deliberately separate from the deterministic report below.
+	# The pre-push gate sends this fd straight to the terminal while retaining
+	# stdout/stderr as the failure report. Direct runs default to stderr.
+	local progress_fd="${RUN_TEST_SUITE_PROGRESS_FD:-2}"
 	# Tests are isolated per subprocess, so they parallelize. On the 128-thread
 	# Thelio, 16 workers measured 32.96s versus 41.05s at 8 workers for 172 tests.
 	# Keep the pool explicitly bounded: using every core made a tmux-dependent test
@@ -123,13 +127,19 @@ run_test_suite() {
 		done
 		(
 			local_file="${test_files[$slot]}"
+			local_name="${local_file##*/}"
+			printf 'started [%s/%s]: %s\n' "$((slot + 1))" "$total" "$local_name" >&"$progress_fd"
 			if [[ ! -x "$local_file" ]]; then
-				printf '126' >"$work_dir/$slot.status"
+				local_status=126
+				printf '%s' "$local_status" >"$work_dir/$slot.status"
 				: >"$work_dir/$slot.out"
 			else
 				(cd "$repo_root" && "$local_file") >"$work_dir/$slot.out" 2>&1
-				printf '%s' "$?" >"$work_dir/$slot.status"
+				local_status=$?
+				printf '%s' "$local_status" >"$work_dir/$slot.status"
 			fi
+			printf 'completed [%s/%s]: %s (exit %s)\n' \
+				"$((slot + 1))" "$total" "$local_name" "$local_status" >&"$progress_fd"
 		) &
 		(( running++ ))
 	done
