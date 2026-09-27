@@ -15,7 +15,8 @@ Requires the intended Herdr session (HERDR_ENV=1), jq and coreutils on PATH.
   --fresh            Start fresh if no live agent; never replace a live one.
   --resume ID        Resume this exact native conversation.
   --continue         Explicitly resume latest in this directory (weaker identity).
-  --name NAME        Unique Herdr agent/workspace name (default directory basename).
+  --name NAME        Explicit Herdr name; collisions fail rather than rename it.
+                     Default: lowercase/sanitized basename, hash only on collision.
   --checker          MFIC_ROLE=checker, only when creating a new workspace.
   --note PATH        Existing project inbox note; show a human notification.
                      Never writes a prompt. App monitors/hooks deliver the note.
@@ -52,6 +53,7 @@ erect-agent-stack() (
  local dry=0 json=0 focus=0 latest_context=0 launch_option=0 timeout="${ERECT_BOOT_TIMEOUT:-30}"
  local dir hash state_dir state_file record="" saved="" lock="" outcome pane="" workspace=""
  local agents workspaces panes matches count candidate info response native_id="" backend
+ local automatic_name=0 saved_name="" occupied_labels='[]'
  local args=() create_args=()
  [ "${ERECT_DRY_RUN:-0}" = 1 ] && dry=1
  while [ "$#" -gt 0 ]; do
@@ -116,11 +118,10 @@ erect-agent-stack() (
   case "$note" in "$dir"/inbox/*.frontmatter.md) ;; *) _eas_error 'note must be a .frontmatter.md file inside the project inbox'; return 64 ;; esac
  fi
  if [ -z "$name" ]; then
-  name="$(basename "$dir")"
-  if ! [[ "$name" =~ ^[a-z][a-z0-9_-]{0,31}$ ]]; then
-   name="$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9_-]/-/g')"
-   name="p-${name:0:20}-${hash:0:8}"
-  fi
+  automatic_name=1
+  name="$(basename "$dir" | LC_ALL=C tr '[:upper:]' '[:lower:]' | LC_ALL=C sed 's/[^a-z0-9_-]/-/g')"
+  [[ "$name" =~ ^[a-z] ]] || name="p-$name"
+  name="${name:0:32}"
  fi
  [[ "$name" =~ ^[a-z][a-z0-9_-]{0,31}$ ]] || { _eas_error 'invalid Herdr name; use lowercase letters/digits/_/- (1..32, starts with a letter)'; return 64; }
  umask 077
@@ -133,6 +134,12 @@ erect-agent-stack() (
  if [ -f "$state_file" ]; then
   saved="$(cat "$state_file")" || return 74
   printf '%s' "$saved" | jq -e --arg cwd "$dir" '.schema=="erect-agent-stack/v1" and .cwd==$cwd and (.agent|IN("claude","codex","grok","gemini")) and ((.session_id==null) or (.session_id|type=="string" and test("^[a-zA-Z0-9_-]+$")))' >/dev/null || { _eas_error "invalid launch record: $state_file"; return 74; }
+  saved_name="$(printf '%s' "$saved" | jq -r '.name // empty')"
+  # Keep existing handles stable; normalization is for previously unnamed projects.
+  if [ "$automatic_name" = 1 ] && [[ "$saved_name" =~ ^[a-z][a-z0-9_-]{0,31}$ ]]; then
+   name="$saved_name"
+   automatic_name=0
+  fi
  fi
  agents="$(_eas_herdr agent list)" || return 69
  printf '%s' "$agents" | jq -e '.result.agents|type=="array" and all(.[]; (.cwd|type=="string") and (.agent|type=="string") and (.pane_id|type=="string") and (.workspace_id|type=="string"))' >/dev/null || { _eas_error 'invalid agent-list response'; return 69; }
@@ -149,6 +156,7 @@ erect-agent-stack() (
  [ "$count" -le 1 ] || { _eas_error 'multiple live agents match this directory; inspect Herdr explicitly'; return 69; }
  if [ "$count" = 1 ]; then
   info="$(printf '%s' "$matches" | jq '.[0]')"
+  name="$(printf '%s' "$info" | jq -r --arg fallback "$name" '.name // $fallback')"
   agent="$(printf '%s' "$info" | jq -r '.agent')"
   pane="$(printf '%s' "$info" | jq -r '.pane_id')"
   workspace="$(printf '%s' "$info" | jq -r '.workspace_id')"
@@ -176,7 +184,6 @@ erect-agent-stack() (
   workspaces="$(_eas_herdr workspace list)" || return 69
   printf '%s' "$workspaces" | jq -e '.result.workspaces|type=="array"' >/dev/null || return 69
   matches='[]'
-  local label_conflict=0
   while IFS= read -r candidate; do
    local wid label matching
    wid="$(printf '%s' "$candidate" | jq -r '.workspace_id')"
@@ -192,11 +199,23 @@ erect-agent-stack() (
      matching=1
     fi
    done < <(printf '%s' "$panes" | jq -c '.result.panes[]')
-   [ "$label" = "$name" ] && [ "$matching" = 0 ] && label_conflict=1
+   if [ "$matching" = 0 ]; then
+    occupied_labels="$(printf '%s' "$occupied_labels" | jq --arg label "$label" '.+[$label]')" || return 69
+   fi
   done < <(printf '%s' "$workspaces" | jq -c '.result.workspaces[]')
   count="$(printf '%s' "$matches" | jq length)"
   [ "$count" -le 1 ] || { _eas_error 'multiple panes match the project; inspect Herdr explicitly'; return 69; }
-  printf '%s' "$agents" | jq -e --arg n "$name" 'any(.result.agents[]; .name==$n)' >/dev/null && { _eas_error 'agent name belongs to another directory; choose --name'; return 69; }
+  # Inspect both namespaces before allocation. Never retry with a different name
+  # after a start failure: the first start may already own a live conversation.
+  local occupied_names
+  occupied_names="$(printf '%s' "$agents" | jq --argjson labels "$occupied_labels" '[.result.agents[].name]+$labels')" || return 69
+  if printf '%s' "$occupied_names" | jq -e --arg n "$name" 'index($n)!=null' >/dev/null; then
+   [ "$automatic_name" = 1 ] || { _eas_error 'agent name or workspace label belongs to another directory; choose --name'; return 69; }
+   name="${name:0:23}-${hash:0:8}"
+   if printf '%s' "$occupied_names" | jq -e --arg n "$name" 'index($n)!=null' >/dev/null; then
+    _eas_error 'hashed name also belongs to another directory; choose --name'; return 69
+   fi
+  fi
   if [ "$count" = 1 ]; then
    [ "$checker" = 0 ] || { _eas_error '--checker requires a new workspace environment'; return 64; }
    info="$(printf '%s' "$matches" | jq '.[0]')"
@@ -207,7 +226,6 @@ erect-agent-stack() (
    printf '%s' "$response" | jq -e '.result.process_info | .shell_pid as $s | ($s!=null) and (.foreground_process_group_id==$s) and (.foreground_processes|length==1 and .[0].pid==$s and (.[0].name|IN("bash","zsh","fish","sh","dash","pwsh")))' >/dev/null || { _eas_error "pane $pane is not a confirmed idle shell"; return 69; }
    outcome=joined-launched
   else
-   [ "$label_conflict" = 0 ] || { _eas_error 'workspace label belongs to another directory; choose --name'; return 69; }
    outcome=created
   fi
   case "$agent" in

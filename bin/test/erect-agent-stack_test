@@ -154,6 +154,70 @@ run --fresh "$EAS_PROJECT"
 check test "$status" = 69
 check calls_are_readonly
 
+# Readable defaults do not acquire hashes merely because normalization is needed.
+export ERECT_STATE_DIR="$tmp/naming-state"
+for pair in 'BLIP:blip' 'a project:a-project' 'valid_name:valid_name' '123tools:p-123tools' 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789:abcdefghijklmnopqrstuvwxyz012345'; do
+ export EAS_PROJECT="$tmp/names/${pair%%:*}"
+ mkdir -p "$EAS_PROJECT"
+ reset_fixture
+ run --dry-run --fresh "$EAS_PROJECT"
+ check test "$status" = 0
+ check grep -Fq "planned-created: ${pair#*:} @" "$tmp/out"
+ check calls_are_readonly
+ check test ! -e "$ERECT_STATE_DIR"
+done
+
+export EAS_PROJECT="$tmp/names/BLIP"
+project_hash="$(printf '%s' "$EAS_PROJECT" | sha256sum)"
+project_hash="${project_hash%% *}"
+fallback="blip-${project_hash:0:8}"
+mkdir -p "$tmp/other"
+reset_fixture
+jq -n --arg cwd "$tmp/other" '{result:{agents:[{name:"blip",agent:"codex",cwd:$cwd,pane_id:"wOTHER:p1",workspace_id:"wOTHER"}]}}' > "$tmp/agents.json"
+run --dry-run --fresh "$EAS_PROJECT"
+check test "$status" = 0
+check grep -Fq "planned-created: $fallback @" "$tmp/out"
+check calls_are_readonly
+# Explicit names are never silently changed to work around a collision.
+run --dry-run --fresh --name blip "$EAS_PROJECT"
+check test "$status" = 69
+check calls_are_readonly
+run --dry-run --fresh --name BLIP "$EAS_PROJECT"
+check test "$status" = 64
+
+# A workspace label owned by another directory also requires disambiguation.
+reset_fixture
+printf '{"result":{"workspaces":[{"workspace_id":"wOTHER","label":"blip"}]}}\n' > "$tmp/workspaces.json"
+jq -n --arg cwd "$tmp/other" '{result:{panes:[{cwd:$cwd,pane_id:"wOTHER:p1",workspace_id:"wOTHER"}]}}' > "$tmp/panes.json"
+run --fresh --json "$EAS_PROJECT"
+check test "$status" = 0
+check jq -se --arg n "$fallback" 'any(.[]; .[0:3]==["agent","start",$n])' "$tmp/calls"
+check jq -se --arg n "$fallback" 'any(.[]; .[0:2]==["workspace","create"] and .[index("--label")+1]==$n)' "$tmp/calls"
+check jq -e --arg n "$fallback" '.name==$n' "$ERECT_STATE_DIR/$project_hash.json"
+
+# Keep the saved name even when its original collision has disappeared.
+reset_fixture
+run --dry-run "$EAS_PROJECT"
+check test "$status" = 0
+check grep -Fq "planned-created: $fallback @" "$tmp/out"
+
+# Do not allocate an already-occupied fallback either.
+export ERECT_STATE_DIR="$tmp/fallback-state"
+reset_fixture
+jq -n --arg cwd "$tmp/other" --arg fallback "$fallback" '{result:{agents:["blip",$fallback]|map({name:.,agent:"codex",cwd:$cwd,pane_id:"wOTHER:p1",workspace_id:"wOTHER"})}}' > "$tmp/agents.json"
+run --fresh "$EAS_PROJECT"
+check test "$status" = 69
+check calls_are_readonly
+
+# Rejoining preserves the actual legacy name, even over an explicit --name.
+reset_fixture
+jq -n --arg cwd "$EAS_PROJECT" '{result:{agents:[{name:"p-blip-legacy",agent:"codex",agent_status:"idle",cwd:$cwd,pane_id:"wOLD:p1",workspace_id:"wOLD",agent_session:{kind:"id",value:"kept-id"}}]}}' > "$tmp/agents.json"
+run --name requested-new-name "$EAS_PROJECT"
+check test "$status" = 0
+check grep -Fq 'joined-running: p-blip-legacy @' "$tmp/out"
+check jq -e '.name=="p-blip-legacy" and .session_id=="kept-id"' "$ERECT_STATE_DIR/$project_hash.json"
+check calls_are_readonly
+
 bash -c 'source "$1"; erect-agent-stack --help' _ "$tool" > "$tmp/sourced" 2> "$tmp/source.err"
 check test "$?" = 0
 check grep -q Herdr "$tmp/sourced"
