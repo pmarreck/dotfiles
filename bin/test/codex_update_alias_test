@@ -38,13 +38,13 @@ work="$(mktemp -d --tmpdir codex_update_alias_test.XXXXXX)"
 trap 'rm -rf "$work"' EXIT
 mkdir -p "$work/active/bin" "$work/active/lib/node_modules/@openai/codex/bin" "$work/tools"
 ln -s ../lib/node_modules/@openai/codex/bin/codex.js "$work/active/bin/codex"
-cat >"$work/active/lib/node_modules/@openai/codex/bin/codex.js" <<'EOF'
-#!/usr/bin/env bash
+cat >"$work/active/lib/node_modules/@openai/codex/bin/codex.js" <<EOF
+#!$BASH
 printf 'codex-cli fixture\n'
 EOF
 chmod +x "$work/active/lib/node_modules/@openai/codex/bin/codex.js"
 cat >"$work/tools/npm" <<EOF
-#!/usr/bin/env bash
+#!$BASH
 printf '%s\n' "\$@" >'$work/npm-args'
 EOF
 chmod +x "$work/tools/npm"

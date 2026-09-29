@@ -4,6 +4,7 @@
 
 - [x] Add and test a fast, per-session hook with Peter's ahead-of-upstream cadence (1/5/10/>15 commits), a quieter behind notice, and a cached-ref caveat (done 2026-09-28 22:54 EDT).
 - [x] Wire it into Codex and Claude hook events and verify the full suite (187/187 host tests and the sandboxed Nix check); commit the known-good dotfiles change (done 2026-09-28 22:54 EDT).
+- [x] Merge two concurrent remote commits and repair their Codex-updater test fixture for the Linux Nix sandbox; rerun its focused test and the sandboxed check (done 2026-09-28 23:00 EDT).
 
 ## Completed: retire extracted tree generator (2026-09-23)
 
