@@ -6,7 +6,7 @@
 - [x] Add bounded, activity-sensitive Git fetch scheduling (maximum 15 days), safe execution, and failure/worktree tests (done 2026-09-29 12:18 EDT).
 - [x] Publish the latest Fleet Status and append-only Fleet Status History under ~/Code with deterministic separators (done 2026-09-29 12:18 EDT).
 - [ ] Activate the built Thelio NixOS user timer after approval for dry-activation's unrelated desktop-service restarts; remove the shadowing imperative unit links recoverably and verify persistence.
-- [ ] Send Mechatron CI the final deployment status; the initial FYI has been delivered.
+- [x] Send Mechatron CI the tested implementation and pending-activation status (done 2026-09-29 12:23 EDT).
 
 ## Active: Git remote drift reminder (2026-09-28)
 
