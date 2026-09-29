@@ -10,6 +10,14 @@ test_date_difference_days() {
   assert "$(date_difference_days 1972-04-05 2024-09-24)" == "19165" "Peter's days alive test"
   (( fails += $? ))
 
+  (( tests++ ))
+  assert "$(TZ=America/New_York date_difference_days 2024-03-09 2024-03-11)" == "2" "spring DST does not shorten a calendar-day count"
+  (( fails += $? ))
+
+  (( tests++ ))
+  assert "$(TZ=America/New_York date_difference_days 2024-11-02 2024-11-04)" == "2" "fall DST does not lengthen a calendar-day count"
+  (( fails += $? ))
+
   if [ $fails -gt 0 ]; then
     red_text "$fails of $tests date_difference_days tests failed!\n" >&2
   else
