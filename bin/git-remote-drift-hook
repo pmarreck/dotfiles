@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+# Event-driven, rate-limited reminder about divergence from a cached upstream ref.
+# No network I/O: a hook must stay fast, and this cannot claim live GitHub state.
+set -u
+
+interval() {
+	local ahead="$1" behind="$2"
+	if [ "$ahead" -gt 15 ]; then printf '300\n'
+	elif [ "$ahead" -ge 10 ]; then printf '600\n'
+	elif [ "$ahead" -ge 5 ]; then printf '1200\n'
+	elif [ "$ahead" -ge 1 ]; then printf '3600\n'
+	elif [ "$behind" -ge 1 ]; then printf '7200\n'
+	else printf 'none\n'; fi
+}
+
+usage() {
+	printf '%s\n' 'git-remote-drift-hook — remind active agents about unpushed or behind commits' \
+		'Usage: git-remote-drift-hook [--interval AHEAD BEHIND | --help]' \
+		'Hook mode reads event JSON on stdin. Counts use local cached upstream refs; no fetch.'
+}
+
+case "${1:-}" in
+	--interval)
+		if [ "$#" -ne 3 ] || ! [[ "$2" =~ ^[0-9]+$ && "$3" =~ ^[0-9]+$ ]]; then
+			usage >&2; exit 2
+		fi
+		interval "$2" "$3"; exit ;;
+	--help|-h) usage; exit ;;
+	--about) printf '%s\n' 'git-remote-drift-hook: active-session Git divergence reminder (Bash, cross-platform)'; exit ;;
+	'') ;;
+	*) usage >&2; exit 2 ;;
+esac
+
+command -v git >/dev/null 2>&1 || exit 0
+command -v jq >/dev/null 2>&1 || exit 0
+
+input=''
+if [ ! -t 0 ]; then input="$(cat 2>/dev/null || true)"; fi
+session="$(printf '%s' "$input" | jq -r '.session_id // .sessionId // .thread_id // .threadId // .conversation_id // "default"' 2>/dev/null)" || exit 0
+event="$(printf '%s' "$input" | jq -r '.hook_event_name // .hookEventName // .event // "PostToolUse"' 2>/dev/null)" || exit 0
+cwd="$(printf '%s' "$input" | jq -r --arg cwd "$PWD" '.cwd // .current_working_directory // .workspace_dir // .workspaceRoot // $cwd' 2>/dev/null)" || exit 0
+root="$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null)" || exit 0
+branch="$(git -C "$root" symbolic-ref --quiet --short HEAD 2>/dev/null)" || exit 0
+upstream="$(git -C "$root" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null)" || exit 0
+counts="$(git -C "$root" rev-list --left-right --count "${upstream}...HEAD" 2>/dev/null)" || exit 0
+read -r behind ahead <<< "$counts"
+[[ "$behind" =~ ^[0-9]+$ && "$ahead" =~ ^[0-9]+$ ]] || exit 0
+due="$(interval "$ahead" "$behind")"
+
+now="${GIT_REMOTE_DRIFT_NOW:-$(date +%s)}"
+[[ "$now" =~ ^[0-9]+$ ]] || exit 0
+state_dir="${GIT_REMOTE_DRIFT_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/git-remote-drift-hook}"
+mkdir -p "$state_dir" 2>/dev/null || exit 0
+key="$(printf '%s\000%s\000%s\000%s' "$session" "$root" "$branch" "$upstream" | git hash-object --stdin 2>/dev/null)" || exit 0
+state_file="$state_dir/$key"
+last=0
+last_due=none
+if [ -f "$state_file" ]; then
+	read -r last last_due < "$state_file" || true
+	[[ "$last" =~ ^[0-9]+$ ]] || last=0
+fi
+
+# Record convergence so the next new commit gets an immediate reminder.
+emit=0
+changed=0
+if [ "$due" = none ]; then
+	if [ "$last" -ne 0 ] || [ "$last_due" != none ]; then changed=1; fi
+	last=0
+	last_due=none
+elif [ "$last" -eq 0 ] || [ "$last_due" = none ] || { [[ "$last_due" =~ ^[0-9]+$ ]] && [ "$due" -lt "$last_due" ]; } || [ $((now - last)) -ge "$due" ]; then
+	emit=1
+	changed=1
+	last="$now"
+	last_due="$due"
+fi
+
+if [ "$changed" -eq 1 ]; then
+	tmp="$state_file.tmp.$$"
+	if printf '%s %s\n' "$last" "$last_due" > "$tmp" 2>/dev/null; then
+		mv -f "$tmp" "$state_file" 2>/dev/null || true
+	fi
+fi
+[ "$emit" -eq 1 ] || exit 0
+
+if [ "$ahead" -gt 0 ]; then
+	word=commits; [ "$ahead" -eq 1 ] && word=commit
+	msg="ALERT: We are ahead of remote by $ahead $word. When we next reach a passing test suite, consider a push."
+	if [ "$behind" -gt 0 ]; then msg="$msg We are also behind by $behind commit(s); reconcile before pushing."; fi
+else
+	msg="NOTICE: We are behind remote by $behind commit(s). Fetch and reconcile when convenient."
+fi
+msg="$msg Counted against cached remote-tracking ref $upstream; it may be stale until fetched."
+jq -cn --arg event "$event" --arg msg "$msg" \
+	'{hookSpecificOutput:{hookEventName:$event,additionalContext:$msg}}'

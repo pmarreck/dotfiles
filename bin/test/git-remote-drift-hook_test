@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+set -u
+
+hook="$HOME/dotfiles/bin/git-remote-drift-hook"
+fails=0
+check() {
+	local name="$1" actual="$2" expected="$3"
+	if [ "$actual" != "$expected" ]; then
+		printf 'FAIL %s: expected [%s], got [%s]\n' "$name" "$expected" "$actual" >&2
+		fails=$((fails + 1))
+	fi
+}
+contains() {
+	local name="$1" actual="$2" expected="$3"
+	case "$actual" in *"$expected"*) ;; *) printf 'FAIL %s: missing [%s]\n' "$name" "$expected" >&2; fails=$((fails + 1));; esac
+}
+
+# Tier decisions are classified over the complete interesting boundary set.
+for row in '0 0 none' '0 1 7200' '1 0 3600' '4 0 3600' '5 0 1200' '9 0 1200' '10 0 600' '15 0 600' '16 0 300' '35 0 300' '5 3 1200'; do
+	read -r ahead behind expected <<< "$row"
+	check "tier $ahead/$behind" "$($hook --interval "$ahead" "$behind" 2>/dev/null)" "$expected"
+done
+
+scratch="$(mktemp -d "${TMPDIR:-/tmp}/git-remote-drift-test.XXXXXX")"
+trap 'if command -v rm-safe >/dev/null 2>&1; then rm-safe -r "$scratch" >/dev/null 2>&1; else rm -rf "$scratch"; fi' EXIT
+mkdir -p "$scratch/state" "$scratch/outside"
+git init --bare "$scratch/remote.git" >/dev/null 2>&1
+git clone -q "$scratch/remote.git" "$scratch/repo" 2>/dev/null
+git -C "$scratch/repo" config user.name Test
+git -C "$scratch/repo" config user.email test@example.invalid
+git -C "$scratch/repo" checkout -qb yolo
+git -C "$scratch/repo" commit -q --allow-empty -m init
+git -C "$scratch/repo" push -q -u origin yolo
+
+run() {
+	local now="$1" session="$2" dir="${3:-$scratch/repo}"
+	printf '{"hook_event_name":"PostToolUse","session_id":"%s","cwd":"%s"}' "$session" "$dir" |
+		GIT_REMOTE_DRIFT_NOW="$now" GIT_REMOTE_DRIFT_STATE_DIR="$scratch/state" "$hook" 2>/dev/null
+}
+message() { jq -r '.hookSpecificOutput.additionalContext // empty' <<< "$1"; }
+check 'no divergence' "$(run 1000 one)" ''
+check 'non-repo silent' "$(run 1000 one "$scratch/outside")" ''
+
+commit() { git -C "$scratch/repo" commit -q --allow-empty -m "change-$1"; }
+commit 1
+o="$(run 1000 one)"
+contains 'ahead alert' "$(message "$o")" 'ALERT: We are ahead of remote by 1 commit.'
+contains 'push guidance' "$(message "$o")" 'When we next reach a passing test suite, consider a push.'
+contains 'cached tracking caveat' "$(message "$o")" 'cached'
+check 'one-hour debounce' "$(run 4599 one)" ''
+contains 'one-hour expiry' "$(message "$(run 4600 one)")" 'ahead of remote by 1 commit'
+commit 2; commit 3; commit 4; commit 5
+contains 'tier escalation immediate' "$(message "$(run 4601 one)")" 'ahead of remote by 5 commits'
+check '20-minute debounce' "$(run 5800 one)" ''
+contains '20-minute expiry' "$(message "$(run 5801 one)")" 'ahead of remote by 5 commits'
+for n in 6 7 8 9 10; do commit "$n"; done
+contains '10-commit escalation' "$(message "$(run 5802 one)")" 'ahead of remote by 10 commits'
+for n in 11 12 13 14 15 16; do commit "$n"; done
+contains '16-commit escalation' "$(message "$(run 5803 one)")" 'ahead of remote by 16 commits'
+check '5-minute debounce' "$(run 6102 one)" ''
+contains '5-minute expiry' "$(message "$(run 6103 one)")" 'ahead of remote by 16 commits'
+contains 'per-session isolation' "$(message "$(run 6104 two)")" 'ahead of remote by 16 commits'
+
+git -C "$scratch/repo" push -q origin yolo
+check 'push resets state' "$(run 6105 one)" ''
+commit fresh
+contains 'new work alerts immediately' "$(message "$(run 6106 one)")" 'ahead of remote by 1 commit'
+
+git clone -q -b yolo "$scratch/remote.git" "$scratch/behind"
+git clone -q -b yolo "$scratch/remote.git" "$scratch/other"
+git -C "$scratch/other" -c user.name=Test -c user.email=test@example.invalid commit -q --allow-empty -m remote-change
+git -C "$scratch/other" push -q origin yolo
+git -C "$scratch/repo" fetch -q origin yolo
+o="$(run 6107 three)"
+contains 'divergence mentions behind' "$(message "$o")" 'behind by 1'
+check 'behind-only tier' "$($hook --interval 0 1)" 7200
+git -C "$scratch/behind" fetch -q origin yolo
+o="$(run 7000 four "$scratch/behind")"
+contains 'behind-only notice' "$(message "$o")" 'NOTICE: We are behind remote by 1'
+check 'behind-only cooldown' "$(run 14199 four "$scratch/behind")" ''
+contains 'behind-only cadence' "$(message "$(run 14200 four "$scratch/behind")")" 'behind remote by 1'
+
+git init -q "$scratch/no-upstream"
+git -C "$scratch/no-upstream" -c user.name=Test -c user.email=test@example.invalid commit -q --allow-empty -m init
+check 'no upstream silent' "$(run 7000 five "$scratch/no-upstream")" ''
+
+printf '%s\n' "git-remote-drift-hook: $fails failures"
+exit "$fails"

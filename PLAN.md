@@ -1,5 +1,10 @@
 # dotfiles — TODO / Plans
 
+## Active: Git remote drift reminder (2026-09-28)
+
+- [x] Add and test a fast, per-session hook with Peter's ahead-of-upstream cadence (1/5/10/>15 commits), a quieter behind notice, and a cached-ref caveat (done 2026-09-28 22:54 EDT).
+- [x] Wire it into Codex and Claude hook events and verify the full suite (187/187 host tests and the sandboxed Nix check); commit the known-good dotfiles change (done 2026-09-28 22:54 EDT).
+
 ## Completed: retire extracted tree generator (2026-09-23)
 
 - [x] Verify that `~/Code/gen_fake_fs_tree` supersedes the dotfiles generator,
