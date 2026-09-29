@@ -29,6 +29,11 @@ export IMAGE_CAPABLE=false
 # Provision expect hermetically from the local nix store instead: no network, no
 # system change, no dependency on what happens to be installed on this machine.
 if ! command -v expect >/dev/null 2>&1; then
+	# The suite keeps each test's ordinary output ordered until the end. Use its
+	# dedicated progress fd so a first run cannot silently spend minutes building
+	# this dependency from the local Nix inputs.
+	printf 'fun_intro_cache_test: expect missing; provisioning nixpkgs#expect offline...\n' \
+		>&"${RUN_TEST_SUITE_PROGRESS_FD:-2}"
 	_expect_store=$(nix build --offline --no-link --print-out-paths nixpkgs#expect 2>/dev/null)
 	if [ -n "$_expect_store" ] && [ -x "$_expect_store/bin/expect" ]; then
 		PATH="$_expect_store/bin:$PATH"

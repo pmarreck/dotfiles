@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+
+# Claude Code PreToolUse hook: reject generated commands containing an AI
+# authorship trailer. Ordinary mentions and human co-author trailers are valid.
+
+set -u
+
+command_text="$(jq -r '.tool_input.command // ""')" || exit 2
+if printf '%s\n' "$command_text" | grep -qiE 'Co-Authored-By:.*Claude'; then
+	printf 'Blocked AI authorship trailer.\n' >&2
+	exit 2
+fi
+
+exit 0

@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+
+# Update the Codex installation that this shell actually resolves. npm's global
+# prefix can differ from the prefix containing `codex` (notably after nvm use),
+# so a bare `npm install -g` can update one copy while another keeps running.
+
+set -u
+
+codex_bin="$(type -P codex 2>/dev/null)"
+if [[ -z "$codex_bin" ]]; then
+	printf 'update-codex: codex is not on PATH\n' >&2
+	exit 1
+fi
+
+link_target="$(readlink "$codex_bin" 2>/dev/null || true)"
+if [[ "$link_target" == *'@openai/codex/bin/codex.js' ]]; then
+	prefix="${codex_bin%/bin/codex}"
+	if [[ "$prefix" == "$codex_bin" || -z "$prefix" ]]; then
+		printf 'update-codex: cannot determine npm prefix from %s\n' "$codex_bin" >&2
+		exit 1
+	fi
+	npm_bin="$(type -P npm 2>/dev/null)"
+	if [[ -z "$npm_bin" ]]; then
+		printf 'update-codex: npm is required to update %s\n' "$codex_bin" >&2
+		exit 1
+	fi
+	printf 'Updating active npm Codex installation: %s\n' "$codex_bin"
+	"$npm_bin" install --global --prefix "$prefix" @openai/codex@latest || exit
+	hash -r
+	"$prefix/bin/codex" --version
+else
+	printf 'Updating active standalone Codex installation: %s\n' "$codex_bin"
+	"$codex_bin" update
+	"$codex_bin" --version
+fi

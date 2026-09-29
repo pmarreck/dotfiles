@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 
-# Guards the Codex updater aliases and their single-install architecture.
-# Remote Control launches CODEX_HOME/packages/standalone/current, so the PATH
-# CLI must use that same standalone installation and its native self-updater.
+# Guards the Codex updater aliases and verifies that the updater targets the
+# npm installation selected by PATH, not npm's possibly different global prefix.
 
 set -u
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 aliases_file="$repo_root/.aliases"
+updater="$repo_root/bin/update-codex"
 failures=0
 
 pass() {
@@ -22,22 +22,40 @@ fail() {
 upgrade_line="$(rg '^alias upgrade_codex=' "$aliases_file")"
 update_line="$(rg '^alias update_codex=' "$aliases_file")"
 
-if [[ "$upgrade_line" != *'npm install'* ]]; then
-	pass 'Codex updater does not create a second npm-managed installation'
+if [[ "$upgrade_line" == *'update-codex'* ]]; then
+	pass 'Codex updater delegates to the installation-aware wrapper'
 else
-	fail 'Codex updater must not use npm; Remote Control uses the standalone package store'
-fi
-
-if [[ "$upgrade_line" == *'command codex update'* ]]; then
-	pass 'Codex updater drives the standalone native self-updater'
-else
-	fail 'Codex updater must run command codex update'
+	fail 'Codex updater must delegate to update-codex'
 fi
 
 if [[ "$update_line" == *'upgrade_codex'* ]]; then
 	pass 'update_codex resolves to the same updater as upgrade_codex'
 else
 	fail 'update_codex must alias upgrade_codex so both names update identically'
+fi
+
+work="$(mktemp -d --tmpdir codex_update_alias_test.XXXXXX)"
+trap 'rm -rf "$work"' EXIT
+mkdir -p "$work/active/bin" "$work/active/lib/node_modules/@openai/codex/bin" "$work/tools"
+ln -s ../lib/node_modules/@openai/codex/bin/codex.js "$work/active/bin/codex"
+cat >"$work/active/lib/node_modules/@openai/codex/bin/codex.js" <<'EOF'
+#!/usr/bin/env bash
+printf 'codex-cli fixture\n'
+EOF
+chmod +x "$work/active/lib/node_modules/@openai/codex/bin/codex.js"
+cat >"$work/tools/npm" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$@" >'$work/npm-args'
+EOF
+chmod +x "$work/tools/npm"
+
+if PATH="$work/active/bin:$work/tools:$PATH" "$updater" >/dev/null \
+	&& grep -Fxq -- '--prefix' "$work/npm-args" \
+	&& grep -Fxq -- "$work/active" "$work/npm-args" \
+	&& grep -Fxq -- '@openai/codex@latest' "$work/npm-args"; then
+	pass 'npm updater targets the Codex prefix selected by PATH'
+else
+	fail 'npm updater did not target the active Codex installation'
 fi
 
 exit "$failures"

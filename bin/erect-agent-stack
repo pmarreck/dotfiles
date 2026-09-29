@@ -92,8 +92,11 @@ erect-agent-stack() (
   command -v node >/dev/null || { _eas_error '--latest-context requires Node.js with node:sqlite'; return 78; }
   local discovery_script
   discovery_script="$(dirname "${BASH_SOURCE[0]}")/src/agent_context_discovery.mjs"
-  if [ "$json" = 1 ]; then node "$discovery_script" "$dir"
-  else node "$discovery_script" --text "$dir"
+  # node:sqlite remains marked experimental in supported Node releases. That
+  # runtime notice is not a discovery warning and must not corrupt composable
+  # text output or JSON callers' clean stderr contract.
+  if [ "$json" = 1 ]; then NODE_NO_WARNINGS=1 node "$discovery_script" "$dir"
+  else NODE_NO_WARNINGS=1 node "$discovery_script" --text "$dir"
   fi
   return $?
  fi

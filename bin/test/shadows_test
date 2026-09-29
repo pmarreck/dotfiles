@@ -36,6 +36,30 @@ else
 	echo "✓ Test passed: shadows does not self-report"
 fi
 
+# A filtered query must inspect only the named command, not enumerate every PATH directory.
+filter_probe_file="$(mktemp --tmpdir="$tmpdir" filter-probe.XXXXXX)"
+compgen() {
+	if [[ "$1" == "-G" ]]; then
+		printf 'PATH enumeration attempted\n' >> "$filter_probe_file"
+		return 0
+	fi
+	builtin compgen "$@"
+}
+((tests++))
+echo "Testing: filtered query avoids an unrelated full PATH audit..."
+output="$(shadows shadows)"
+status=$?
+unset -f compgen
+if [[ "$output" == "Nothing shadows shadows" ]] && (( status == 0 )) && [[ ! -s "$filter_probe_file" ]]; then
+	echo "✓ Test passed: filtered query avoids full PATH enumeration"
+else
+	echo "✗ Test failed: filtered query performed a full PATH enumeration" >&2
+	echo "  Output: $output" >&2
+	echo "  Exit: $status" >&2
+	echo "  Probe calls: $(wc -l < "$filter_probe_file")" >&2
+	((fails++))
+fi
+
 # shellcheck disable=SC2329 # Invoked by the EXIT trap.
 cleanup() {
 	unalias cd 2>/dev/null
@@ -225,6 +249,46 @@ fi
 PATH="$OLDPATH"
 rm -rf "$tmpdir2"
 
+# No argument must retain the complete-report behavior across provider classes.
+tmpdir_all="$(mktemp -d --tmpdir)"
+dir_all_early="$tmpdir_all/early"
+dir_all_late="$tmpdir_all/late"
+mkdir -p "$dir_all_early" "$dir_all_late"
+for path in \
+	"$dir_all_early/shadows_all_alias" \
+	"$dir_all_early/shadows_all_function" \
+	"$dir_all_early/shadows_all_binary" \
+	"$dir_all_late/shadows_all_binary"; do
+	printf '#!/usr/bin/env bash\n:\n' > "$path"
+	chmod +x "$path"
+done
+alias shadows_all_alias=':'
+# shellcheck disable=SC2329 # Inspected and invoked indirectly by shadows.
+shadows_all_function() { :; }
+OLDPATH="$PATH"
+PATH="$dir_all_early:$dir_all_late:$PATH"
+hash -r 2>/dev/null
+((tests++))
+echo "Testing: argument-free shadows reports every provider class..."
+all_warn_file="$(mktemp --tmpdir="$tmpdir_all" all-warn.XXXXXX)"
+output="$(shadows 2>"$all_warn_file")"
+status=$?
+if [[ "$output" == *"alias shadows_all_alias shadows:"* ]] && \
+	[[ "$output" == *"function shadows_all_function shadows:"* ]] && \
+	[[ "$output" == *"$dir_all_early/shadows_all_binary shadows: $dir_all_late/shadows_all_binary"* ]] && \
+	(( status >= 3 )); then
+	echo "✓ Test passed: argument-free report includes all provider classes"
+else
+	echo "✗ Test failed: argument-free report omitted a provider class" >&2
+	echo "  Output: $output" >&2
+	echo "  Exit: $status" >&2
+	((fails++))
+fi
+unalias shadows_all_alias
+unset -f shadows_all_function
+PATH="$OLDPATH"
+rm -rf "$tmpdir_all"
+
 # Filter argument narrows output to matching name
 alias cd='echo alias-cd'
 ((tests++))
@@ -311,6 +375,65 @@ else
 	echo "✗ Test failed: help text does not document filter argument" >&2
 	echo "  Output: $output" >&2
 	((fails++))
+fi
+
+# Linux-only MFIC: independently count kernel interactions while aliases/functions,
+# PATH directories, and directory entries all double. Linear work must stay below 3x.
+if [[ "$(uname -s)" == "Linux" ]] && command -v strace >/dev/null 2>&1; then
+	perf_root="$(mktemp -d --tmpdir)"
+	perf_runner="$perf_root/run-shadows-scale"
+	# shellcheck disable=SC2016 # The generated runner expands these at runtime.
+	printf '%s\n' \
+		'#!/usr/bin/env bash' \
+		'source "$1"' \
+		'scale="$2"' \
+		'scale_path="$3"' \
+		'for ((i=0; i<scale; i++)); do eval "shadows_scale_fn_$i(){ :; }"; done' \
+		'PATH="$scale_path"' \
+		'shadows >/dev/null' \
+		'exit $?' > "$perf_runner"
+	chmod +x "$perf_runner"
+
+	make_scale_path() {
+		local scale="$1"
+		local root="$2"
+		local result=""
+		local i dir
+		for ((i=0; i<scale; i++)); do
+			dir="$root/d$i"
+			mkdir -p "$dir"
+			printf '#!/usr/bin/env bash\n:\n' > "$dir/shadows_scale_bin_$i"
+			chmod +x "$dir/shadows_scale_bin_$i"
+			result+="${result:+:}$dir"
+		done
+		ln -s "$(type -P find)" "$root/d0/find"
+		ln -s "$(type -P stat)" "$root/d0/stat"
+		printf '%s\n' "$result"
+	}
+
+	small_path="$(make_scale_path 40 "$perf_root/small")"
+	large_path="$(make_scale_path 80 "$perf_root/large")"
+	small_trace="$perf_root/small.strace"
+	large_trace="$perf_root/large.strace"
+	strace -qq -f -c -o "$small_trace" bash "$perf_runner" "$script_dir/bin/src/shadows.bash" 40 "$small_path"
+	small_status=$?
+	strace -qq -f -c -o "$large_trace" bash "$perf_runner" "$script_dir/bin/src/shadows.bash" 80 "$large_path"
+	large_status=$?
+	small_calls="$(awk '$NF == "newfstatat" { print $4 }' "$small_trace")"
+	large_calls="$(awk '$NF == "newfstatat" { print $4 }' "$large_trace")"
+	((tests++))
+	echo "Testing: shadows kernel-work scaling remains linear..."
+	if (( small_status == 0 && large_status == 0 )) && \
+		[[ "$small_calls" =~ ^[0-9]+$ && "$large_calls" =~ ^[0-9]+$ ]] && \
+		(( large_calls < small_calls * 3 )); then
+		echo "✓ Test passed: doubling all inputs grows filesystem probes by less than 3x ($small_calls → $large_calls calls)"
+	else
+		echo "✗ Test failed: doubling all inputs is superlinear ($small_calls → $large_calls filesystem probes)" >&2
+		((fails++))
+	fi
+	rm -rf "$perf_root"
+else
+	echo "Skipping: Linux strace scaling control unavailable"
 fi
 
 if (( fails == 0 )); then	echo "All $tests tests passed"
