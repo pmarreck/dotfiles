@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+
+set -u
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+scratch="$(mktemp -d "${TMPDIR:-/tmp}/repo-maintenance-test.XXXXXX")" || exit 1
+trap 'rm -rf "$scratch"' EXIT
+
+PACKAGE_PATH="$repo_root/lib/?.lua;;" luajit -e '
+	package.path = assert(os.getenv("PACKAGE_PATH"))
+	local m = require("repo_maintenance")
+	local day = 86400
+	local now = 100 * day
+	assert(m.interval_days(0) == 1)
+	assert(m.interval_days(1) == 1)
+	assert(m.interval_days(2) == 2)
+	assert(m.interval_days(5) == 3)
+	assert(m.interval_days(100) == 15)
+	assert(m.interval_days(nil) == 1)
+	assert(m.due(now, 100, now - 14 * day, 0) == false)
+	assert(m.due(now, 100, now - 15 * day, 0) == true)
+	assert(m.due(now, 0, now - day, 0) == true)
+	assert(m.due(now, 100, now + day, 0) == true)
+	assert(m.due(now, 100, nil, 10) == true)
+	assert(m.due(now, 100, nil, 11) == false)
+	assert(m.due(now, 100, nil, 11, now - 1) == true)
+	local first_due = m.initial_due_epoch(now, 100, 11)
+	assert(first_due > now and first_due <= now + 14 * day)
+	assert(m.due(now + 14 * day, 200, nil, 11, first_due) == true)
+	local classified = m.classify_paths({
+		"README.md", "docs/notes.rst", "LICENSE", "src/main.zig",
+		"docs/generate.lua", ".github/workflows/ci.yml",
+	})
+	assert(classified.non_documentation == 3)
+	assert(classified.documentation == 3)
+	local report = m.render_history("2026-09-29 03:15 EDT", {
+		{ name = "alpha", status = "fetched", remotes = "origin", non_documentation = 2 },
+		{ name = "beta", status = "failed", remotes = "upstream", non_documentation = 0 },
+	}, "1 unpushed (alpha)")
+	assert(report:find("<!-- repo-maintenance:begin -->", 1, true))
+	assert(report:find("2026-09-29 03:15 EDT", 1, true))
+	assert(report:find("1 unpushed (alpha)", 1, true))
+	assert(report:find("<!-- repo-maintenance:end -->", 1, true))
+	local quiet = m.render_history("2026-09-29 03:15 EDT", {
+		{ name = "dirty", status = "not due", remotes = "origin", non_documentation = 2 },
+	}, "No fleet status changes.")
+	assert(quiet:find("No repositories due", 1, true))
+	assert(quiet:find("| dirty | not due | origin | 2 |", 1, true))
+	local chosen, deferred = m.select_due({
+		{ key = "recent", last_success_epoch = 20 },
+		{ key = "unseen-b" },
+		{ key = "old", last_success_epoch = 10 },
+		{ key = "unseen-a" },
+	}, 2)
+	assert(#chosen == 2 and chosen[1].key == "unseen-a" and chosen[2].key == "unseen-b")
+	assert(#deferred == 2 and deferred[1].key == "old" and deferred[2].key == "recent")
+' >"$scratch/out" 2>"$scratch/err"
+status=$?
+if (( status != 0 )); then
+	printf 'FAIL repo-maintenance domain test (exit %s)\n' "$status" >&2
+	exit 1
+fi
+if [[ -s "$scratch/out" || -s "$scratch/err" ]]; then
+	printf 'FAIL repo-maintenance domain test emitted output\n' >&2
+	exit 1
+fi
+printf 'All repo-maintenance domain tests passed\n'

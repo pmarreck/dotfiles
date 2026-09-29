@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+
+set -u
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+cli="$repo_root/bin/repo-maintenance"
+scratch="$(mktemp -d "${TMPDIR:-/tmp}/repo-maintenance-cli.XXXXXX")" || exit 1
+trap 'rm -rf "$scratch"' EXIT
+root="$scratch/projects"
+remote="$scratch/remote.git"
+seed="$scratch/seed"
+repo="$root/project"
+state="$scratch/state"
+latest="$scratch/Fleet Status.md"
+history="$scratch/Fleet Status History.md"
+mkdir -p "$root"
+git init -q --bare -b main "$remote"
+git init -q -b main "$seed"
+git -C "$seed" config user.name FleetTest
+git -C "$seed" config user.email fleet@example.invalid
+printf 'initial\n' >"$seed/README.md"
+git -C "$seed" add README.md
+git -C "$seed" commit -q -m initial
+git -C "$seed" remote add origin "$remote"
+git -C "$seed" push -q -u origin main
+git clone -q "$remote" "$repo"
+printf 'remote change\n' >>"$seed/README.md"
+git -C "$seed" commit -qam remote-change
+git -C "$seed" push -q origin main
+fixture_now="$(git -C "$seed" show -s --format=%ct HEAD)"
+printf 'local source\n' >"$repo/code.zig"
+printf 'local docs\n' >"$repo/NOTES.md"
+
+REPO_MAINTENANCE_NOW_EPOCH="$fixture_now" \
+	"$cli" --root "$root" --state-dir "$state" --report-path "$latest" \
+	--history-path "$history" >"$scratch/first.out" 2>"$scratch/first.err"
+first_status=$?
+if (( first_status != 0 )); then
+	printf 'FAIL initial repo maintenance exited %s\n' "$first_status" >&2
+	exit 1
+fi
+if [[ -s "$scratch/first.err" ]]; then
+	printf 'FAIL initial repo maintenance emitted stderr\n' >&2
+	exit 1
+fi
+if [[ "$(git -C "$repo" rev-list --count HEAD..origin/main)" != 1 ]]; then
+	printf 'FAIL fetch did not update origin/main\n' >&2
+	exit 1
+fi
+if ! test -f "$latest" || ! test -f "$history"; then
+	printf 'FAIL latest report or history missing\n' >&2
+	exit 1
+fi
+if ! rg -q '\| project \| fetched \| origin \| 1 \|' "$history"; then
+	printf 'FAIL history omitted fetch/non-doc outcome\n' >&2
+	exit 1
+fi
+if ! jq -e '.repos | length == 1' "$state/current.json" >/dev/null 2>&1; then
+	printf 'FAIL fleet snapshot missing\n' >&2
+	exit 1
+fi
+
+REPO_MAINTENANCE_NOW_EPOCH="$fixture_now" \
+	"$cli" --root "$root" --state-dir "$state" --report-path "$latest" \
+	--history-path "$history" >"$scratch/second.out" 2>"$scratch/second.err"
+if (( $? != 0 )) || [[ -s "$scratch/second.err" ]]; then
+	printf 'FAIL second repo maintenance run\n' >&2
+	exit 1
+fi
+if [[ "$(rg -c '<!-- repo-maintenance:begin -->' "$history")" != 2 ]] || \
+	! rg -q 'No repositories due' "$history"; then
+	printf 'FAIL history did not append a second bounded run\n' >&2
+	exit 1
+fi
+
+git -C "$repo" remote set-url origin "$scratch/missing.git"
+REPO_MAINTENANCE_NOW_EPOCH="$((fixture_now + 86400))" \
+	"$cli" --root "$root" --state-dir "$state" --report-path "$latest" \
+	--history-path "$history" >"$scratch/failed.out" 2>"$scratch/failed.err"
+if (( $? == 0 )); then
+	printf 'FAIL unsuccessful fetch returned success\n' >&2
+	exit 1
+fi
+if ! rg -q '\| project \| failed \| origin \| 1 \|' "$history" || \
+	[[ ! -f "$state/.repo-maintenance.lock" ]]; then
+	printf 'FAIL fetch failure was hidden or persistent lock file missing\n' >&2
+	exit 1
+fi
+REPO_MAINTENANCE_NOW_EPOCH="$((fixture_now + 86400))" \
+	"$cli" --root "$root" --state-dir "$state" --report-path "$latest" \
+	--history-path "$history" >"$scratch/retry.out" 2>"$scratch/retry.err"
+if (( $? == 0 )) || rg -q 'already running|lock needs inspection' "$scratch/retry.err"; then
+	printf 'FAIL failed prior run left a held lock\n' >&2
+	exit 1
+fi
+git clone -q "$remote" "$root/second-project"
+REPO_MAINTENANCE_NOW_EPOCH="$((fixture_now + 86400))" \
+	"$cli" --root "$root" --state-dir "$state" --max-fetches 1 --dry-run \
+	>"$scratch/capped.out" 2>"$scratch/capped.err"
+if (( $? != 0 )) || [[ -s "$scratch/capped.err" ]] || \
+	! rg -q 'Fetches due: 2; attempted: 0; deferred: 1' "$scratch/capped.out"; then
+	printf 'FAIL bounded dry-run did not defer excess fetches\n' >&2
+	exit 1
+fi
+printf 'All repo-maintenance CLI tests passed\n'

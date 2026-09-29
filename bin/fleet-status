@@ -32,7 +32,7 @@ Options:
   --max-names N     Names shown per one-line category before +N more (default: 4).
   --state-dir DIR   Persist snapshots in DIR (default: $XDG_STATE_HOME/fleet-status).
   --report-path PATH
-                    Publish Markdown to PATH (default: $HOME/Documents/Fleet Status.md).
+                    Publish Markdown to PATH (default: $HOME/Code/Fleet Status.md).
   --publish-if-viewed-or-weekly
                     Publish visibly after a read or seven days; state still updates.
   --no-save         Do not update persisted current/previous snapshots.
@@ -54,9 +54,11 @@ local publish_if_viewed_or_weekly = false
 local state_home = os.getenv("XDG_STATE_HOME")
 if not state_home or state_home == "" then state_home = home .. "/.local/state" end
 local state_dir = state_home .. "/fleet-status"
+local custom_state_dir = false
 local report_path = os.getenv("FLEET_STATUS_REPORT_PATH")
+local explicit_report_path = report_path ~= nil and report_path ~= ""
 if not report_path or report_path == "" then
-	report_path = home .. "/Documents/Fleet Status.md"
+	report_path = home .. "/Code/Fleet Status.md"
 end
 local index = 1
 while index <= #arg do
@@ -120,6 +122,7 @@ while index <= #arg do
 			io.stderr:write("Error: --state-dir requires a directory.\n")
 			os.exit(2)
 		end
+		custom_state_dir = true
 		index = index + 2
 	elseif value == "--report-path" then
 		report_path = arg[index + 1]
@@ -127,6 +130,7 @@ while index <= #arg do
 			io.stderr:write("Error: --report-path requires a path.\n")
 			os.exit(2)
 		end
+		explicit_report_path = true
 		index = index + 2
 	elseif value:match("^%-%-report%-path=") then
 		report_path = value:sub(#"--report-path=" + 1)
@@ -134,6 +138,7 @@ while index <= #arg do
 			io.stderr:write("Error: --report-path requires a path.\n")
 			os.exit(2)
 		end
+		explicit_report_path = true
 		index = index + 1
 	elseif value == "--publish-if-viewed-or-weekly" then
 		publish_if_viewed_or_weekly = true
@@ -156,6 +161,9 @@ while index <= #arg do
 		help()
 		os.exit(2)
 	end
+end
+if custom_state_dir and not explicit_report_path then
+	report_path = state_dir .. "/report.md"
 end
 
 if tier ~= "1" and tier ~= "2" and not all_tiers then

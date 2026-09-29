@@ -123,9 +123,19 @@ If a scheduled refresh or probe fails, the last complete per-repository
 observation remains in the report with its original check timestamp instead of
 being replaced by a false `unknown` result.
 
-Collection uses Git plumbing and porcelain v2. It performs no fetch and uses no
-Linux-only `/proc` paths or LuaJIT FFI syscall constants, so the same collector
-works on Linux and macOS.
+Collection uses Git plumbing and porcelain v2. `fleet-status` itself performs no
+fetch and uses no Linux-only `/proc` paths or LuaJIT FFI syscall constants.
+`repo-maintenance` is the nightly driver: it fetches due remotes first, then
+runs the collector. Both commands work on Linux and macOS with Nix-provided
+dependencies.
+
+`repo-maintenance --dry-run` shows the exact due/deferred set without network
+fetches or report writes. `--max-fetches N` overrides the default cap of 20
+sequential fetches per run. Never-fetched remotes take priority, then remotes
+with the oldest successful fetch timestamp; deferred work stays due for the
+next run. The classifier reuses the collector's single NUL-delimited Git
+status pass, so non-documentation counts do not trigger a second exhaustive
+scan of large worktrees.
 
 ## Architecture
 
@@ -163,10 +173,16 @@ per-repository cache are the carry-forward data model. An append-only NDJSON
 journal would add replay and retention cost without improving the requested
 daily report or recovery behavior, so none is written.
 
-Every saved run also publishes the same Markdown bytes to the visible
-`$HOME/Documents/Fleet Status.md` path. Override that destination with
+Saved runs publish the same Markdown bytes to the visible
+`$HOME/Code/Fleet Status.md` path when the viewed-or-weekly gate is due. The
+nightly driver appends each run's fetch results, non-documentation uncommitted
+work, and fleet delta to `$HOME/Code/Fleet Status History.md`. Blocks start with
+`<!-- repo-maintenance:begin -->` and end with `<!-- repo-maintenance:end -->`.
+Override the latest-report destination with
 `--report-path PATH` or `FLEET_STATUS_REPORT_PATH`; the XDG directory remains
-the authoritative JSON and network-cache location.
+the authoritative JSON and network-cache location. A custom `--state-dir`
+without an explicit report path confines publication to that state directory;
+this prevents isolated tests from overwriting a real report.
 
 Writes use a same-directory temporary file followed by atomic rename. A failed
 or interrupted collection cannot replace `current.json`. An atomic state lock
@@ -177,7 +193,10 @@ also remains usable if an old rendering snapshot is malformed.
 
 ## Nightly scheduling
 
-Linux uses the committed systemd user units:
+The Thelio declares the systemd user service and timer in
+`/etc/nixos/system76_thelio_nixos/fleet-status.nix`. After a NixOS switch,
+`systemctl --user status fleet-status.timer` shows the active schedule.
+Other Linux hosts can install the committed fallback units:
 
 ```text
 install-fleet-status-timer
@@ -187,20 +206,27 @@ systemctl --user status fleet-status.timer
 The installer links the exact committed service and timer into
 `~/.config/systemd/user/`, refuses to overwrite any conflicting file or
 symlink, reloads the user manager, and enables the timer immediately. The timer
-runs `fleet-status --all --publish-if-viewed-or-weekly` at approximately 03:15
+runs `repo-maintenance` at approximately 03:15
 local time, catches missed runs after suspend/offline periods, and adds a small
-randomized delay. Structured local state is collected daily, while slow network
-fields follow the per-repository hot/quiet schedule above. When the visible
+randomized delay. A repository's fetch interval is
+`min(15, floor(days_since_latest_local_commit / 2) + 1)` days. The first due day
+is staggered with BLAKE3 of its checkout path plus remote URL; later due dates use the last
+successful fetch. At most 20 remotes are attempted per run. Fetches are
+sequential, noninteractive, limited to 120 seconds each, and never merge or
+change a checkout. Structured local state is
+collected daily, while slow network fields follow the per-repository hot/quiet
+schedule above. When the visible
 report has been accessed, the next daily timer republishes it. If it remains
 unread, visible publication occurs after seven days. Missing reports and
 backward clock movement also trigger publication.
+On Thelio, the NixOS user unit is the declarative owner; the installer is for
+hosts without that module.
 Use `fleet-status --tier 1` interactively when only the fast loss-risk answer
 is wanted.
 
 The macOS equivalent is a `launchd` user LaunchAgent under
 `~/Library/LaunchAgents/` with separate `ProgramArguments` entries for the
-absolute path to `~/dotfiles/bin/fleet-status`, `--all`, and
-`--publish-if-viewed-or-weekly`, plus:
+absolute path to `~/dotfiles/bin/repo-maintenance`, plus:
 
 ```xml
 <key>StartCalendarInterval</key>
@@ -212,7 +238,8 @@ absolute path to `~/dotfiles/bin/fleet-status`, `--all`, and
 ```
 
 Set `StandardOutPath` and `StandardErrorPath` to files under the user Library
-if launch diagnostics are desired. Supply a PATH containing LuaJIT, Git, `gh`,
-`curl`, `mechatron-ci`, and the standard macOS `find`/`xargs`; no GNU-only
-flags, `/proc`, or platform-specific FFI constants are used. The repository
+if launch diagnostics are desired. Supply a PATH containing LuaJIT, Git,
+`b3sum`, GNU `gtimeout`, `gh`, `curl`, `mechatron-ci`, and the standard macOS
+`find`/`xargs`; no Linux-only `/proc` API is used, and the lock uses the
+cross-platform `flock` call. The repository
 documents this mapping but does not install a LaunchAgent.

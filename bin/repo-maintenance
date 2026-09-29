@@ -1,0 +1,245 @@
+#!/usr/bin/env luajit
+
+local script_dir = arg[0]:match("^(.*)/[^/]+$") or "."
+package.path = script_dir .. "/../lib/?.lua;" .. package.path
+
+local fleet = require("fleet_status")
+local maintenance = require("repo_maintenance")
+local runtime = require("fleet_status.runtime")
+local ffi = require("ffi")
+ffi.cdef[[
+	void *fopen(const char *path, const char *mode);
+	int fileno(void *stream);
+	int flock(int fd, int operation);
+	int fclose(void *stream);
+]]
+
+local home = assert(os.getenv("HOME"), "HOME is required")
+local state_home = os.getenv("XDG_STATE_HOME") or (home .. "/.local/state")
+local state_dir = state_home .. "/fleet-status"
+local report_path = home .. "/Code/Fleet Status.md"
+local history_path = home .. "/Code/Fleet Status History.md"
+local roots = {}
+local dry_run = false
+local max_fetches = 20
+local now_epoch = tonumber(os.getenv("REPO_MAINTENANCE_NOW_EPOCH")) or os.time()
+local lock_file
+
+local function unlock()
+	if lock_file then ffi.C.fclose(lock_file); lock_file = nil end
+end
+
+local function help()
+	io.write([[Usage: repo-maintenance [OPTIONS]
+
+Fetch due Git remotes, collect fleet status, and append a dated report.
+
+  --root PATH          Repository root (repeatable; default: ~/Code).
+  --state-dir PATH     Structured state directory.
+  --report-path PATH   Latest Markdown report path.
+  --history-path PATH  Append-only Markdown history path.
+  --max-fetches N      Cap network fetches per run (default: 20).
+  --dry-run            Show due repositories without fetching or writing.
+  -h, --help           Show this help.
+  --about              Show version and platform.
+]])
+end
+
+local function fail(message)
+	unlock()
+	io.stderr:write("Error: " .. message .. "\n")
+	os.exit(1)
+end
+
+local custom_state = false
+local report_explicit = false
+local history_explicit = false
+local index = 1
+while index <= #arg do
+	local option = arg[index]
+	if option == "-h" or option == "--help" then help(); os.exit(0) end
+	if option == "--about" then
+		io.write("repo-maintenance 0.1.0 — Git fleet upkeep on ", jit.os, "/", jit.arch, "\n")
+		os.exit(0)
+	end
+	if option == "--dry-run" then
+		dry_run = true
+		index = index + 1
+	elseif option == "--max-fetches" then
+		max_fetches = tonumber(arg[index + 1])
+		if not max_fetches or max_fetches < 1 or max_fetches % 1 ~= 0 then
+			fail("--max-fetches requires a positive integer")
+		end
+		index = index + 2
+	elseif option == "--root" or option == "--state-dir"
+		or option == "--report-path" or option == "--history-path" then
+		local value = arg[index + 1]
+		if not value or value == "" then fail(option .. " requires a path") end
+		if option == "--root" then roots[#roots + 1] = value end
+		if option == "--state-dir" then state_dir = value; custom_state = true end
+		if option == "--report-path" then report_path = value; report_explicit = true end
+		if option == "--history-path" then history_path = value; history_explicit = true end
+		index = index + 2
+	else
+		fail("unknown option: " .. option)
+	end
+end
+if #roots == 0 then roots[1] = home .. "/Code" end
+if custom_state and not report_explicit then report_path = state_dir .. "/report.md" end
+if custom_state and not history_explicit then history_path = state_dir .. "/history.md" end
+if report_path == history_path then fail("latest and history paths must differ") end
+
+local baseline, collect_err = fleet.collect_roots(roots, { max_tier = 2, now_epoch = now_epoch })
+if not baseline then fail(collect_err) end
+local state_path = state_dir .. "/repo-maintenance.json"
+local saved, load_err = fleet.load_json_file(state_path)
+if load_err then fail(load_err) end
+saved = saved or { schema_version = 1, repos = {} }
+if saved.schema_version ~= 1 or type(saved.repos) ~= "table" then
+	fail("unsupported repo-maintenance state: " .. state_path)
+end
+
+local function digest(identity)
+	local command = "printf %s " .. runtime.shell_quote(identity) .. " | b3sum"
+	local output, ok = runtime.run_command(command)
+	local hex = output:match("^([0-9a-f]+)")
+	if not ok or not hex or #hex ~= 64 then return nil end
+	return hex, assert(tonumber(hex:sub(1, 8), 16))
+end
+
+local function latest_commit_age(repo)
+	local latest = tonumber(repo.last_commit_epoch)
+	for _, branch in ipairs(repo.branches or {}) do
+		local epoch = tonumber(branch.last_commit_epoch)
+		if epoch and (not latest or epoch > latest) then latest = epoch end
+	end
+	if not latest then return nil end
+	return math.max(0, math.floor((now_epoch - latest) / 86400))
+end
+
+local function remote_names(repo)
+	local present, chosen = {}, {}
+	for _, name in ipairs(repo.remotes or {}) do present[name] = true end
+	for _, name in ipairs({ "origin", "upstream" }) do
+		if present[name] then chosen[#chosen + 1] = name end
+	end
+	for _, branch in ipairs(repo.branches or {}) do
+		local name = type(branch.upstream) == "string"
+			and branch.upstream:match("^([^/]+)/") or nil
+		if name and present[name] and name ~= "origin" and name ~= "upstream"
+			and not present["chosen:" .. name] then
+			chosen[#chosen + 1] = name
+			present["chosen:" .. name] = true
+		end
+	end
+	return chosen
+end
+
+local results = {}
+local candidates = {}
+local failures = 0
+if not dry_run then
+	local _, created = runtime.run_command("mkdir -p " .. runtime.shell_quote(state_dir))
+	if not created then fail("cannot create state directory") end
+	lock_file = ffi.C.fopen(state_dir .. "/.repo-maintenance.lock", "a+")
+	if lock_file == nil then fail("cannot open repo-maintenance lock") end
+	if ffi.C.flock(ffi.C.fileno(lock_file), 2 + 4) ~= 0 then
+		fail("repo maintenance is already running")
+	end
+end
+
+for _, repo in ipairs(baseline.repos) do
+	local names = remote_names(repo)
+	local age = latest_commit_age(repo)
+	local dirty_count = tonumber(repo.non_documentation_dirty_count) or "unknown"
+	local had_due = false
+	for _, name in ipairs(names) do
+		local url, found = runtime.run_git(repo.path, "remote get-url " .. runtime.shell_quote(name))
+		if found then
+			local key, slot = digest(tostring(#repo.path) .. ":" .. repo.path .. runtime.trim(url))
+			if not key then fail("b3sum failed for " .. repo.name) end
+			local record = saved.repos[key] or { remotes = {} }
+			local remote = record.remotes[name] or {}
+			remote.first_due_epoch = remote.first_due_epoch
+				or maintenance.initial_due_epoch(now_epoch, age, slot)
+			record.remotes[name] = remote
+			saved.repos[key] = record
+			if maintenance.due(now_epoch, age, remote.last_success_epoch,
+				slot, remote.first_due_epoch) then
+				had_due = true
+				candidates[#candidates + 1] = {
+					key = key .. ":" .. name,
+					repo = repo, name = name, remote = remote,
+					record = record, dirty_count = dirty_count,
+					last_success_epoch = remote.last_success_epoch,
+				}
+			end
+		end
+	end
+	if not had_due and (dirty_count == "unknown" or dirty_count > 0) then
+		results[#results + 1] = {
+			name = repo.name,
+			status = #names == 0 and "no remote" or "not due",
+			remotes = #names > 0 and table.concat(names, ", ") or "—",
+			non_documentation = dirty_count,
+		}
+	end
+end
+
+local chosen, deferred = maintenance.select_due(candidates, max_fetches)
+local timeout = jit.os == "OSX" and "gtimeout" or "timeout"
+for _, candidate in ipairs(chosen) do
+	local status = "due"
+	if not dry_run then
+		local command = "GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND='ssh -o BatchMode=yes' "
+			.. timeout .. " 120 git -C " .. runtime.shell_quote(candidate.repo.path)
+			.. " -c gc.auto=0 fetch --quiet --no-tags " .. runtime.shell_quote(candidate.name)
+		local _, ok = runtime.run_command(command)
+		status = ok and "fetched" or "failed"
+		if ok then candidate.remote.last_success_epoch = now_epoch else failures = failures + 1 end
+		candidate.record.remotes[candidate.name] = candidate.remote
+	end
+	results[#results + 1] = {
+		name = candidate.repo.name, status = status, remotes = candidate.name,
+		non_documentation = candidate.dirty_count,
+	}
+end
+for _, candidate in ipairs(deferred) do
+	results[#results + 1] = {
+		name = candidate.repo.name, status = "deferred", remotes = candidate.name,
+		non_documentation = candidate.dirty_count,
+	}
+end
+
+if dry_run then
+	io.write(maintenance.render_history(os.date("%Y-%m-%d %H:%M %Z", now_epoch), results, "dry run"))
+	os.exit(0)
+end
+
+local saved_ok, save_err = fleet.write_atomic(state_path, fleet.encode_json(saved) .. "\n")
+if not saved_ok then fail(save_err) end
+
+local command = "FLEET_STATUS_NOW_EPOCH=" .. tostring(now_epoch)
+	.. " " .. runtime.shell_quote(script_dir .. "/fleet-status")
+	.. " --all --publish-if-viewed-or-weekly --state-dir " .. runtime.shell_quote(state_dir)
+	.. " --report-path " .. runtime.shell_quote(report_path)
+for _, root in ipairs(roots) do command = command .. " --root " .. runtime.shell_quote(root) end
+local summary, collected = runtime.run_command(command)
+summary = runtime.trim(summary)
+if not collected then summary = "fleet-status collection failed"; failures = failures + 1 end
+
+local directory = history_path:match("^(.*)/[^/]+$")
+if not directory then fail("history path needs a parent directory") end
+local _, made = runtime.run_command("mkdir -p " .. runtime.shell_quote(directory))
+if not made then fail("cannot create history directory") end
+local existing = runtime.read_file(history_path)
+local file, open_err = io.open(history_path, "ab")
+if not file then fail(tostring(open_err)) end
+local block = maintenance.render_history(os.date("%Y-%m-%d %H:%M %Z", now_epoch), results, summary)
+local written, write_err = file:write((existing and "\n" or "# Fleet Status History\n\n") .. block)
+local closed, close_err = file:close()
+if not written or not closed then fail(tostring(write_err or close_err)) end
+
+unlock()
+io.write(summary, "\n")
+if failures > 0 then fail(tostring(failures) .. " maintenance operation(s) failed") end

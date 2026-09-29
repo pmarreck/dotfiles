@@ -34,8 +34,8 @@ expect_eq() {
 	((fails++))
 }
 
-expect_eq "daily service applies the viewed-or-weekly refresh policy" "true" \
-	"$(test -f "$service" && rg -q '^ExecStart=%h/dotfiles/bin/fleet-status --all --publish-if-viewed-or-weekly$' "$service" && printf true || printf false)"
+expect_eq "daily service runs repository maintenance" "true" \
+	"$(test -f "$service" && rg -q '^ExecStart=/run/current-system/sw/bin/nix develop %h/dotfiles -c %h/dotfiles/bin/repo-maintenance$' "$service" && printf true || printf false)"
 expect_eq "timer is nightly and catches missed runs" "true" \
 	"$(test -f "$timer" &&
 		rg -Fxq 'OnCalendar=*-*-* 03:15:00' "$timer" &&
@@ -48,9 +48,12 @@ expect_eq "documentation names the macOS scheduler equivalent" "true" \
 		rg -q 'separate `ProgramArguments` entries' "$docs" && printf true || printf false)"
 expect_eq "documentation names both persisted artifacts" "true" \
 	"$(test -f "$docs" && rg -q 'current\.json' "$docs" && rg -q 'report\.md' "$docs" && printf true || printf false)"
-expect_eq "documentation names the visible report and refresh policy" "true" \
-	"$(test -f "$docs" && rg -Fq '$HOME/Documents/Fleet Status.md' "$docs" &&
+expect_eq "documentation names both Code reports and refresh policy" "true" \
+	"$(test -f "$docs" && rg -Fq '$HOME/Code/Fleet Status.md' "$docs" &&
+		rg -Fq '$HOME/Code/Fleet Status History.md' "$docs" &&
 		rg -q 'accessed.*next daily' "$docs" && rg -q 'seven days' "$docs" && printf true || printf false)"
+expect_eq "CLI help names the current default report path" "true" \
+	"$("$fleet" --help | rg -Fq 'default: $HOME/Code/Fleet Status.md' && printf true || printf false)"
 expect_eq "fractional max-names is rejected by the integer contract" "2" \
 	"$("$fleet" --max-names 1.5 --no-save >"$scratch/fractional.out" 2>"$scratch/fractional.err"; printf '%s' "$?")"
 expect_eq "fractional max-names diagnostic is cleanly captured" \

@@ -11,7 +11,7 @@
   };
 
   outputs = { self, nixpkgs, flake-utils, glob }:
-    flake-utils.lib.eachDefaultSystem (system:
+    flake-utils.lib.eachSystem [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" ] (system:
       let
         pkgs = import nixpkgs { inherit system; };
 
@@ -21,7 +21,7 @@
         # to be installed on the machine running it.
         suiteTools = (with pkgs; [
           bash coreutils gnused gnugrep gawk findutils diffutils
-          jq ripgrep fd tmux expect git openssh
+          jq ripgrep fd tmux expect git openssh b3sum
           nodejs_24  # erect-agent-stack native context discovery uses node:sqlite
           gzip gnutar zip unzip xz bc file which
           (luajit.withPackages (luaPackages: [ luaPackages.lua-cjson ]))

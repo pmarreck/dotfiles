@@ -46,10 +46,17 @@ git_in "$scan_root/orphan-check-fails" commit -q -am "at risk" || exit 1
 git_in "$scan_root/orphan-check-fails" remote add origin https://example.invalid/orphan.git
 
 init_repo "$scan_root/dirty repo"
+printf 'source\n' >"$scan_root/dirty repo/source.zig"
+git_in "$scan_root/dirty repo" add source.zig
+git_in "$scan_root/dirty repo" commit -q -m source
+git_in "$scan_root/dirty repo" mv source.zig docs.md
 printf 'modified\n' >>"$scan_root/dirty repo/tracked"
 printf 'staged\n' >"$scan_root/dirty repo/staged"
 git_in "$scan_root/dirty repo" add staged
 printf 'untracked\n' >"$scan_root/dirty repo/untracked"
+printf 'documentation\n' >"$scan_root/dirty repo/README.md"
+printf 'documentation\n' >"$scan_root/dirty repo/notes
+odd.md"
 
 init_repo "$scan_root/dirty-check-fails"
 git_in "$scan_root/dirty-check-fails" remote add origin https://example.invalid/dirty.git
@@ -169,8 +176,10 @@ expect_eq "portable discovery prunes each direct fleet child" "true" \
 	"$(rg -q -- '! -path .* -prune -type d -print0' "$find_log" \
 		&& printf true || printf false)"
 expect_eq "partitions dirty state exactly" \
-	'{"modified":1,"staged":1,"status":"known","untracked":1}' \
+	'{"modified":1,"staged":2,"status":"known","untracked":3}' \
 	"$(jq -cS '.repos[] | select(.name == "dirty repo") | .dirty' "$json" 2>/dev/null)"
+expect_eq "classifies dirty files including rename source and newline docs" "4" \
+	"$(jq -r '.repos[] | select(.name == "dirty repo") | .non_documentation_dirty_count' "$json" 2>/dev/null)"
 expect_eq "classifies detached HEADs over the full safe/risky set" \
 	'[{"name":"orphan-check-fails","orphaned":0,"status":"unknown"},{"name":"orphaned","orphaned":1,"status":"known"},{"name":"safe-detached","orphaned":0,"status":"known"}]' \
 	"$(jq -c '[.repos[] | select(.detached_head) | {name, orphaned: (.orphaned_commits | length), status: .orphaned_status}] | sort_by(.name)' "$json" 2>/dev/null)"
@@ -180,6 +189,8 @@ expect_eq "reports the exact orphaned commit" \
 expect_eq "failed dirty plumbing is unknown rather than falsely clean" \
 	'{"modified":null,"staged":null,"status":"unknown","untracked":null}' \
 	"$(jq -cS '.repos[] | select(.name == "dirty-check-fails") | .dirty' "$json" 2>/dev/null)"
+expect_eq "failed dirty plumbing cannot claim zero non-documentation changes" "null" \
+	"$(jq -r '.repos[] | select(.name == "dirty-check-fails") | .non_documentation_dirty_count' "$json" 2>/dev/null)"
 expect_eq "other failed Tier 1 plumbing is field-level unknown" \
 	'{"branches_status":"unknown","no_remote":null,"remote_status":"unknown","stash_count":null,"stash_status":"unknown"}' \
 	"$(jq -cS '.repos[] | select(.name == "dirty-check-fails") | {branches_status,remote_status,no_remote,stash_status,stash_count}' "$json" 2>/dev/null)"

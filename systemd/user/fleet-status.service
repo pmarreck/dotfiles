@@ -1,9 +1,11 @@
 [Unit]
-Description=Collect local Git fleet loss-risk status
+Description=Maintain Git remotes and collect fleet status
 Documentation=file:%h/dotfiles/docs/fleet-status.md
 
 [Service]
 Type=oneshot
 Environment=PATH=%h/bin:/run/current-system/sw/bin:/etc/profiles/per-user/%u/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=%h/dotfiles/bin/fleet-status --all --publish-if-viewed-or-weekly
+# The installer is a fallback for Linux hosts without the NixOS user module.
+# Run inside the flake so b3sum/LuaJIT remain declared even before a system switch.
+ExecStart=/run/current-system/sw/bin/nix develop %h/dotfiles -c %h/dotfiles/bin/repo-maintenance
 Nice=10

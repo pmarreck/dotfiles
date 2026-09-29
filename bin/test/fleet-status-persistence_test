@@ -12,6 +12,7 @@ scan_root="$scratch/root with spaces"
 repo="$scan_root/solo"
 state="$scratch/state"
 visible_report="$scratch/Documents/Fleet Status.md"
+implicit_report="$scratch/implicit/Documents/Fleet Status.md"
 mkdir -p "$repo"
 git -C "$repo" init -q -b main
 printf 'initial\n' >"$repo/tracked"
@@ -62,6 +63,15 @@ expect_eq "first run publishes the same report in Documents" "true" \
 	"$(test -f "$visible_report" && cmp -s "$state/report.md" "$visible_report" && printf true || printf false)"
 expect_eq "visible report publication leaves no partial temporary" "0" \
 	"$(fd --max-depth 1 --type f --glob 'Fleet Status.md.tmp.*' "$scratch/Documents" | wc -l | tr -d ' ')"
+
+HOME="$scratch/implicit" FLEET_STATUS_FIND="$(type -P find)" \
+	"$fleet" --tier 1 --root "$scan_root" \
+	--state-dir "$scratch/implicit-state" >"$scratch/implicit.out" 2>"$scratch/implicit.err"
+expect_eq "custom state directory never publishes to implicit home report" "false" \
+	"$(test -e "$implicit_report" && printf true || printf false)"
+expect_eq "custom state directory still saves its report" "true" \
+	"$(test -f "$scratch/implicit-state/report.md" && printf true || printf false)"
+expect_eq "implicit report test stderr is clean" "" "$(cat "$scratch/implicit.err")"
 expect_eq "first run has no synthetic previous snapshot" "false" \
 	"$(test -e "$state/previous.json" && printf true || printf false)"
 

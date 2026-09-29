@@ -1,7 +1,7 @@
 local cjson = require("cjson")
 
 --- Construct the local Git adapter from an injected process/filesystem port.
-local function new(runtime, repository_profile)
+local function new(runtime, repository_profile, maintenance)
 local M = {}
 local run_git = runtime.run_git
 local run_command = runtime.run_command
@@ -10,29 +10,64 @@ local trim = runtime.trim
 local file_times = runtime.file_times
 local read_file = runtime.read_file
 
+local function after_spaces(record, count)
+	local position = 0
+	for _ = 1, count do
+		position = record:find(" ", position + 1, true)
+		if not position then return nil end
+	end
+	return record:sub(position + 1)
+end
+
 local function collect_dirty(repo)
-	local output, ok = run_git(repo, "status --porcelain=v2 --branch --untracked-files=all")
+	local output, ok = run_git(repo, "status --porcelain=v2 -z --branch --untracked-files=all")
 	if not ok then
 		return {
 			status = "unknown",
 			staged = cjson.null,
 			modified = cjson.null,
 			untracked = cjson.null,
-		}
+		}, cjson.null
 	end
 	local dirty = { status = "known", staged = 0, modified = 0, untracked = 0 }
-	for line in output:gmatch("[^\n]+") do
-		if line:sub(1, 2) == "? " then
+	local non_documentation = 0
+	local uncertain = false
+	local cursor = 1
+	local function next_record()
+		local finish = output:find("\0", cursor, true)
+		if not finish then return nil end
+		local record = output:sub(cursor, finish - 1)
+		cursor = finish + 1
+		return record
+	end
+	while true do
+		local record = next_record()
+		if not record then break end
+		local kind = record:sub(1, 2)
+		local path, old_path
+		if kind == "? " then
 			dirty.untracked = dirty.untracked + 1
+			path = record:sub(3)
 		else
-			local xy = line:match("^[12u] ([^ ]+) ")
+			local xy = record:match("^[12u] ([^ ]+) ")
 			if xy then
 				if xy:sub(1, 1) ~= "." then dirty.staged = dirty.staged + 1 end
 				if xy:sub(2, 2) ~= "." then dirty.modified = dirty.modified + 1 end
+				local spaces = kind == "1 " and 8 or (kind == "2 " and 9 or 10)
+				path = after_spaces(record, spaces)
+				if kind == "2 " then old_path = next_record() end
+			end
+		end
+		if kind == "? " or kind == "1 " or kind == "2 " or kind == "u " then
+			if not path or (kind == "2 " and not old_path) then
+				uncertain = true
+			elseif not maintenance.is_document(path)
+				or (old_path and not maintenance.is_document(old_path)) then
+				non_documentation = non_documentation + 1
 			end
 		end
 	end
-	return dirty
+	return dirty, uncertain and cjson.null or non_documentation
 end
 
 local function age_days(now_epoch, commit_epoch)
@@ -243,11 +278,13 @@ local function collect_repo(repo, now_epoch)
 		collect_orphaned_commits(repo, detached, head_sha)
 	local branches, branches_status = collect_branches(repo, now_epoch)
 	local worktrees, worktrees_status = collect_worktrees(repo, now_epoch)
+	local dirty, non_documentation_dirty_count = collect_dirty(repo)
 
 	return {
 		name = name,
 		path = repo,
-		dirty = collect_dirty(repo),
+		dirty = dirty,
+		non_documentation_dirty_count = non_documentation_dirty_count,
 		detached_head = detached,
 		orphaned_commits = orphaned_commits,
 		orphaned_status = orphaned_status,

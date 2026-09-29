@@ -1,5 +1,13 @@
 # dotfiles — TODO / Plans
 
+## Active: repository maintenance and fleet report repair (2026-09-29)
+
+- [x] Reproduce the test-fixture overwrite, isolate custom-state reports, and publish a fresh fleet report (done 2026-09-29 12:18 EDT).
+- [x] Add bounded, activity-sensitive Git fetch scheduling (maximum 15 days), safe execution, and failure/worktree tests (done 2026-09-29 12:18 EDT).
+- [x] Publish the latest Fleet Status and append-only Fleet Status History under ~/Code with deterministic separators (done 2026-09-29 12:18 EDT).
+- [ ] Activate the built Thelio NixOS user timer after approval for dry-activation's unrelated desktop-service restarts; remove the shadowing imperative unit links recoverably and verify persistence.
+- [ ] Send Mechatron CI the final deployment status; the initial FYI has been delivered.
+
 ## Active: Git remote drift reminder (2026-09-28)
 
 - [x] Add and test a fast, per-session hook with Peter's ahead-of-upstream cadence (1/5/10/>15 commits), a quieter behind notice, and a cached-ref caveat (done 2026-09-28 22:54 EDT).
