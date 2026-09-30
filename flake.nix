@@ -31,7 +31,8 @@
           imagemagick  # magick
           ffmpeg       # ffmpeg, ffprobe
           tokei        # fleet-status local primary-language fallback
-        ]) ++ [ glob.packages.${system}.default ];
+        ]) ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.procps ]
+          ++ [ glob.packages.${system}.default ];
       in {
         checks = {
           test = pkgs.stdenv.mkDerivation {

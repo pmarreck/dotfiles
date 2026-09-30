@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# Protect the invoking shell/agent by default. Native pkill does the matching.
+
+pkill_guard() {
+	local allow=false ended=false value_next=false unsafe_bsd=false
+	local arg cluster flag candidate real='' native_signal=''
+	local -a args=()
+	case "${1:-}" in
+		-h|--help)
+			printf '%s\n' 'Usage: pkill [--allow-ancestors] [native pkill arguments...]' \
+				'Excludes all ancestor processes by default (Linux -A; macOS native default).' \
+				'--allow-ancestors disables that protection and prints a warning.' \
+				'Arguments after -- are literal; native options, signals and exit codes are preserved.' \
+				'On macOS, native -a/-v require --allow-ancestors. See man pkill for native options.'
+			return 0 ;;
+		--about) printf 'pkill guard 1.0: default ancestor protection (%s, %s).\n' "$OSTYPE" "$MACHTYPE"; return 0 ;;
+	esac
+	case "$OSTYPE" in
+		linux*|darwin*) ;;
+		*) printf 'pkill-guard: unsupported platform %s; refusing unprotected execution.\n' "$OSTYPE" >&2; return 78 ;;
+	esac
+	for arg in "$@"; do
+		if "$ended"; then args+=("$arg"); continue; fi
+		if "$value_next"; then args+=("$arg"); value_next=false; continue; fi
+		case "$arg" in
+			--allow-ancestors) allow=true; continue ;;
+			--) ended=true ;;
+			--queue|--pgroup|--group|--pid|--parent|--session|--terminal|--euid|--uid|--pidfile|--runstates|--older|--signal|--ns|--nslist|--cgroup|--env)
+				value_next=true ;;
+			--*) ;; # Unknown native options remain the real tool's responsibility.
+			-?*)
+				# A native signal is not an option cluster (e.g. -USR1 versus -U).
+				if ! kill -l "${arg#-}" >/dev/null 2>&1; then
+					cluster="${arg#-}"
+					while [[ -n "$cluster" ]]; do
+						flag="${cluster:0:1}"; cluster="${cluster:1}"
+						case "$flag" in
+							a|v) unsafe_bsd=true ;;
+							q|g|G|p|P|s|t|u|U|F|r|O)
+								[[ -n "$cluster" ]] || value_next=true
+								break ;;
+						esac
+					done
+				fi ;;
+		esac
+		args+=("$arg")
+	done
+	if [[ "$OSTYPE" == darwin* ]] && "$unsafe_bsd" && ! "$allow"; then
+		printf 'pkill-guard: native -a/-v can include ancestors; explicitly use --allow-ancestors to proceed.\n' >&2
+		return 77
+	fi
+	# PATH may expose this same wrapper through several links. Skip all of them.
+	while IFS= read -r candidate; do
+		[[ -x "$candidate" && ! "$candidate" -ef "${BASH_SOURCE[0]}" ]] || continue
+		real="$candidate"; break
+	done <<< "$(type -a -p pkill 2>/dev/null)"
+	if [[ -z "$real" ]]; then
+		printf 'pkill-guard: no native pkill found after excluding this wrapper.\n' >&2
+		return 127
+	fi
+	if "$allow"; then
+		printf 'pkill-guard: WARNING: ancestor protection disabled by --allow-ancestors.\n' >&2
+		if [[ "$OSTYPE" == darwin* ]]; then
+			# BSD requires a signal to remain the first native argument.
+			if [[ "${args[0]:-}" == -?* ]] && kill -l "${args[0]#-}" >/dev/null 2>&1; then
+				native_signal="${args[0]}"
+				args=("${args[@]:1}")
+				exec "$real" "$native_signal" -a "${args[@]}"
+			fi
+			exec "$real" -a "${args[@]}"
+		fi
+	elif [[ "$OSTYPE" == linux* ]]; then
+		exec "$real" --ignore-ancestors "${args[@]}"
+	fi
+	exec "$real" "${args[@]}"
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+	pkill_guard "$@"
+fi
