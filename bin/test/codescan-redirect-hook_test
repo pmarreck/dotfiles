@@ -20,17 +20,21 @@ mkdir -p "$scratch/parent/.codescan" "$scratch/parent/indexed/.git" \
 	"$scratch/parent/worktree" "$scratch/parent/indexed/nested/.git" \
 	"$scratch/parent/partial/.git" "$scratch/parent/partial/.codescan" \
 	"$scratch/parent/repo with spaces/.git" "$scratch/parent/no-config/.git" \
-	"$scratch/parent/no-config/.codescan"
+	"$scratch/parent/no-config/.codescan" "$scratch/parent/fake/.git" \
+	"$scratch/parent/jj/.jj/repo" "$scratch/parent/jj/.jj/working_copy"
+for folder in indexed missing empty partial no-config 'repo with spaces' indexed/nested; do
+	git init -q "$scratch/parent/$folder" || exit 1
+done
 printf 'fixture index' > "$scratch/parent/.codescan/index.sqlite3"
 printf 'fixture index' > "$scratch/parent/indexed/.codescan/index.sqlite3"
 printf '[embedding]\n' > "$scratch/parent/indexed/.codescan/config.ini"
 printf '[embedding]\n' > "$scratch/parent/partial/.codescan/config.ini"
 printf 'fixture index' > "$scratch/parent/no-config/.codescan/index.sqlite3"
-printf 'gitdir: fixture\n' > "$scratch/parent/worktree/.git"
+git init -q --separate-git-dir="$scratch/worktree-git" "$scratch/parent/worktree" || exit 1
 ln -s "$scratch/parent/indexed" "$scratch/alias"
 # Isolated PATH proves command availability without invoking the real indexer.
 mkdir -p "$scratch/tools" "$scratch/no-codescan"
-for tool in bash jq cat dirname mkdir sha256sum; do
+for tool in bash jq cat dirname mkdir sha256sum git; do
 	ln -s "$(command -v "$tool")" "$scratch/tools/$tool"
 	ln -s "$(command -v "$tool")" "$scratch/no-codescan/$tool"
 done
@@ -64,7 +68,7 @@ expect() {
 	fi
 }
 # A set classification, including adjacent repos, nested repos and worktrees.
-for row in 'missing setup' 'empty setup' 'partial setup' 'no-config setup' 'jj setup' 'worktree setup' 'indexed ready' 'indexed/src ready' 'indexed/nested setup' '. silent'; do
+for row in 'missing setup' 'empty setup' 'partial setup' 'no-config setup' 'jj setup' 'worktree setup' 'indexed ready' 'indexed/src ready' 'indexed/nested setup' 'fake silent' '. silent'; do
 	read -r folder expected <<< "$row"
 	expect "repo $folder" "$expected" "$scratch/parent/$folder" Read "repo-$folder"
 done

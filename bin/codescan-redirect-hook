@@ -29,6 +29,15 @@ while :; do
 	[[ -n "$dir" ]] || dir=/
 done
 [[ -n "$root" ]] || exit 0
+# A stray empty .git directory is a boundary, not proof of a repository.
+# Never walk past it into an unrelated ancestor index.
+if [[ -d "$root/.jj/repo" && -d "$root/.jj/working_copy" ]]; then
+	:
+else
+	actual_root="$(git -C "$root" rev-parse --show-toplevel 2>/dev/null)" || exit 0
+	actual_root="$(cd -- "$actual_root" 2>/dev/null && pwd -P)" || exit 0
+	[[ "$actual_root" == "$root" ]] || exit 0
+fi
 
 mode=setup
 if [[ -r "$root/.codescan/index.sqlite3" && -s "$root/.codescan/index.sqlite3" &&
