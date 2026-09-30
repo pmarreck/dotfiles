@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+set -u
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+source "$repo_root/bin/src/capture.bash"
+hook="${CODESCAN_HOOK_UNDER_TEST:-$repo_root/bin/codescan-redirect-hook}"
+scratch="$(mktemp -d "${TMPDIR:-/tmp}/codescan-hook-test.XXXXXX")"
+trap 'if command -v rm-safe >/dev/null 2>&1; then rm-safe -r "$scratch" >/dev/null 2>&1; fi' EXIT
+fails=0
+check() {
+	if [[ "$2" != "$3" ]]; then
+		printf 'FAIL %s: expected [%s], got [%s]\n' "$1" "$3" "$2" >&2
+		fails=$((fails + 1))
+	fi
+}
+mkdir -p "$scratch/parent/.codescan" "$scratch/parent/indexed/.git" \
+	"$scratch/parent/indexed/.codescan" "$scratch/parent/indexed/src" \
+	"$scratch/parent/missing/.git" "$scratch/parent/empty/.git" \
+	"$scratch/parent/empty/.codescan" "$scratch/parent/jj/.jj" \
+	"$scratch/parent/worktree" "$scratch/parent/indexed/nested/.git" \
+	"$scratch/parent/partial/.git" "$scratch/parent/partial/.codescan" \
+	"$scratch/parent/repo with spaces/.git" "$scratch/parent/no-config/.git" \
+	"$scratch/parent/no-config/.codescan"
+printf 'fixture index' > "$scratch/parent/.codescan/index.sqlite3"
+printf 'fixture index' > "$scratch/parent/indexed/.codescan/index.sqlite3"
+printf '[embedding]\n' > "$scratch/parent/indexed/.codescan/config.ini"
+printf '[embedding]\n' > "$scratch/parent/partial/.codescan/config.ini"
+printf 'fixture index' > "$scratch/parent/no-config/.codescan/index.sqlite3"
+printf 'gitdir: fixture\n' > "$scratch/parent/worktree/.git"
+ln -s "$scratch/parent/indexed" "$scratch/alias"
+# Isolated PATH proves command availability without invoking the real indexer.
+mkdir -p "$scratch/tools" "$scratch/no-codescan"
+for tool in bash jq cat dirname mkdir sha256sum; do
+	ln -s "$(command -v "$tool")" "$scratch/tools/$tool"
+	ln -s "$(command -v "$tool")" "$scratch/no-codescan/$tool"
+done
+printf '#!/usr/bin/env bash\nexit 99\n' > "$scratch/tools/codescan"
+chmod +x "$scratch/tools/codescan"
+
+invoke() {
+	local cwd="$1" tool="$2" session="$3" kind="${4:-Explore}" path="${5:-$scratch/tools}"
+	local payload
+	payload="$(jq -n --arg cwd "$cwd" --arg tool "$tool" --arg session "$session" --arg kind "$kind" \
+		'{cwd:$cwd,tool_name:$tool,session_id:$session,tool_input:{subagent_type:$kind}}')"
+	(cd "$scratch/parent/indexed" && printf '%s' "$payload" |
+		PATH="$path" XDG_STATE_HOME="$scratch/state" bash "$hook")
+}
+expect() {
+	local name="$1" expected="$2"; shift 2
+	local out err rc actual
+	capture invoke "$@"
+	check "$name exit" "$rc" 0
+	check "$name stderr" "$err" ''
+	actual="$(jq -r '.hookSpecificOutput.additionalContext // empty' <<< "$out" 2>/dev/null)"
+	case "$expected" in
+		ready) [[ "$actual" == *'CODESCAN CONFIGURED'* ]] || { printf 'FAIL %s: configured reminder absent\n' "$name"; fails=$((fails + 1)); } ;;
+		setup) [[ "$actual" == *'Consider initializing codescan'* ]] || { printf 'FAIL %s: setup suggestion absent\n' "$name"; fails=$((fails + 1)); }
+			[[ "$out" != *'CODESCAN AVAILABLE'* && "$out" != *'indexed by codescan'* ]] || { printf 'FAIL %s: false index claim\n' "$name"; fails=$((fails + 1)); } ;;
+		silent) check "$name stdout" "$out" '' ;;
+	esac
+	if [[ -n "$out" ]]; then
+		check "$name advisory" "$(jq -r '.hookSpecificOutput.permissionDecision // "absent"' <<< "$out" 2>/dev/null)" absent
+		check "$name event" "$(jq -r '.hookSpecificOutput.hookEventName // empty' <<< "$out" 2>/dev/null)" PreToolUse
+	fi
+}
+# A set classification, including adjacent repos, nested repos and worktrees.
+for row in 'missing setup' 'empty setup' 'partial setup' 'no-config setup' 'jj setup' 'worktree setup' 'indexed ready' 'indexed/src ready' 'indexed/nested setup' '. silent'; do
+	read -r folder expected <<< "$row"
+	expect "repo $folder" "$expected" "$scratch/parent/$folder" Read "repo-$folder"
+done
+expect 'same session cooldown' silent "$scratch/parent/missing" Read repo-missing
+expect 'another session' setup "$scratch/parent/missing" Read another-session
+expect 'symlink resolves indexed repo' ready "$scratch/alias/src" Grep alias-session
+expect 'irrelevant tool' silent "$scratch/parent/missing" Write write-session
+expect 'irrelevant subagent' silent "$scratch/parent/missing" Agent build-session build
+expect 'exploration subagent' setup "$scratch/parent/missing" Agent explore-session
+expect 'missing executable' silent "$scratch/parent/indexed" Read no-exe Explore "$scratch/no-codescan"
+# Setup transition bypasses cooldown, but filesystem evidence does not prove freshness.
+printf 'fixture index' > "$scratch/parent/missing/.codescan-db"
+mkdir -p "$scratch/parent/missing/.codescan"
+mv "$scratch/parent/missing/.codescan-db" "$scratch/parent/missing/.codescan/index.sqlite3"
+printf '[embedding]\n' > "$scratch/parent/missing/.codescan/config.ini"
+expect 'newly initialized' ready "$scratch/parent/missing" Read repo-missing
+expect 'initialized cooldown' silent "$scratch/parent/missing" Read repo-missing
+expect 'another repo same session' ready "$scratch/parent/indexed" Read repo-missing
+expect 'spaces in project path' setup "$scratch/parent/repo with spaces" Read spaced-session
+for tool in Read Grep Glob Agent; do
+	expect "navigation tool $tool" ready "$scratch/parent/indexed" "$tool" "tool-$tool"
+done
+# cwd is optional, but an explicit invalid cwd must not use the shell's repo.
+out='' err='' rc=0
+fallback() {
+	(cd "$scratch/parent/indexed/src" && printf '{"tool_name":"Read"}' |
+		PATH="$scratch/tools" XDG_STATE_HOME="$scratch/state" bash "$hook")
+}
+capture fallback
+check 'cwd fallback exit' "$rc" 0
+check 'cwd fallback stderr' "$err" ''
+check 'cwd fallback reminder' "$(jq -r '.hookSpecificOutput.additionalContext | startswith("CODESCAN CONFIGURED")' <<< "$out")" true
+local_bad_json() { printf 'not json' | XDG_STATE_HOME="$scratch/state" bash "$hook"; }
+out='' err='' rc=0
+capture local_bad_json
+check 'malformed input exit' "$rc" 0
+check 'malformed input stdout' "$out" ''
+check 'malformed input stderr' "$err" ''
+invalid_cwd() { printf '{"tool_name":"Read","cwd":123}' | bash "$hook"; }
+capture invalid_cwd
+check 'invalid cwd exit' "$rc" 0
+check 'invalid cwd stdout' "$out" ''
+check 'invalid cwd stderr' "$err" ''
+printf 'codescan-redirect-hook: %s failures\n' "$fails"
+exit "$fails"

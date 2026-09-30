@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# Advisory Claude PreToolUse hook. Never inherit an index across repo boundaries.
+set -u
+
+case "${1:-}" in
+	--help|-h) printf 'codescan-redirect-hook: read Claude PreToolUse JSON on stdin; suggest repo-local codescan, once per session and setup state. Never blocks tools.\n'; exit 0 ;;
+	--about) printf 'codescan-redirect-hook 1.0: repository-scoped codescan advice (portable Bash).\n'; exit 0 ;;
+esac
+command -v jq >/dev/null 2>&1 || exit 0
+command -v codescan >/dev/null 2>&1 || exit 0
+input="$(cat)"
+jq -e 'type == "object"' >/dev/null 2>&1 <<< "$input" || exit 0
+tool="$(jq -r '.tool_name // empty' <<< "$input" 2>/dev/null)"
+case "$tool" in Grep|Glob|Read|Agent) ;; *) exit 0 ;; esac
+if [[ "$tool" == Agent ]]; then
+	kind="$(jq -r '.tool_input.subagent_type // empty' <<< "$input" 2>/dev/null)"
+	case "$kind" in Explore|general-purpose) ;; *) exit 0 ;; esac
+fi
+cwd="$(jq -er 'if .cwd == null then "" elif (.cwd | type) == "string" then .cwd else error("invalid cwd") end' <<< "$input" 2>/dev/null)" || exit 0
+dir="$(cd -- "${cwd:-$PWD}" 2>/dev/null && pwd -P)" || exit 0
+root=''
+while :; do
+	if [[ -d "$dir/.git" || -f "$dir/.git" || -d "$dir/.jj" ]]; then
+		root="$dir"
+		break
+	fi
+	[[ "$dir" == / ]] && break
+	dir="${dir%/*}"
+	[[ -n "$dir" ]] || dir=/
+done
+[[ -n "$root" ]] || exit 0
+
+mode=setup
+if [[ -r "$root/.codescan/index.sqlite3" && -s "$root/.codescan/index.sqlite3" &&
+	( -r "$root/.codescan/config.ini" || -r "$root/.codescan/config" ) ]]; then
+	mode=configured
+fi
+session="$(jq -r '.session_id // empty' <<< "$input" 2>/dev/null)"
+# One advisory per repo/session/setup state, including concurrent hook calls.
+# No clock dependency, database opening, network access or implicit indexing.
+if [[ -n "$session" ]]; then
+	key="$(printf '%s\0%s\0%s' "$session" "$root" "$mode" | sha256sum 2>/dev/null)" || exit 0
+	key="${key%% *}"
+	state="${XDG_STATE_HOME:-$HOME/.local/state}/codescan-redirect-hook"
+	mkdir -p -- "$state" 2>/dev/null || exit 0
+	mkdir -- "$state/$key" 2>/dev/null || exit 0
+fi
+if [[ "$mode" == setup ]]; then
+	message="Codescan is not fully set up in this repository ($root). Consider initializing codescan from that repo root with codescan init, then indexing it. Ask Peter before starting an expensive index or model setup. Built-in tools remain available."
+else
+	case "$tool" in
+		Read) suggestion='codescan read-file <path> [--from N --to N] (or MCP read_file)' ;;
+		Grep) suggestion='codescan search "query" --regex (or MCP search)' ;;
+		Glob) suggestion='codescan symbols --file <path> (or MCP symbols)' ;;
+		Agent) suggestion='codescan search "query" --kind fn --include-body' ;;
+	esac
+	message="CODESCAN CONFIGURED: Repo-local configuration and index found at $root/.codescan. Prefer $suggestion when applicable. This filesystem check does not prove the index is fresh or the service is healthy; check codescan status if needed. Built-in tools remain available for unsupported or out-of-index operations."
+fi
+jq -n --arg message "$message" '{hookSpecificOutput:{hookEventName:"PreToolUse",additionalContext:$message}}'
+exit 0
