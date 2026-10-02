@@ -6,6 +6,20 @@ read -ra GREP_QUIET_ARRAY <<< "${GREP_QUIET:-grep -q}" # rehydrate exported stri
 # arguments to the editor without changing their count, contents, or order.
 edit() {
 	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	# Persistent Linux terminals can outlive desktop login. Recover the current
+	# display only for a local GUI request; never replace an explicit/SSH display.
+	if [[ -n "${VISUAL:-}" && -z "${SSH_CONNECTION:-}" &&
+		-z "${DISPLAY:-}" && -z "${WAYLAND_DISPLAY:-}" ]] && [[ "$(uname -s)" == Linux ]]; then
+		local -x DISPLAY="${DISPLAY-}" WAYLAND_DISPLAY="${WAYLAND_DISPLAY-}"
+		local desktop_env line
+		desktop_env="$(systemctl --user show-environment 2>/dev/null)" || desktop_env=""
+		while IFS= read -r line; do
+			case "$line" in
+				DISPLAY=*) DISPLAY="${line#DISPLAY=}" ;;
+				WAYLAND_DISPLAY=*) WAYLAND_DISPLAY="${line#WAYLAND_DISPLAY=}" ;;
+			esac
+		done <<< "$desktop_env"
+	fi
 	if [ $# -eq 0 ]; then
 		set -- "."
 	fi

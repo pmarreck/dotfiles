@@ -154,6 +154,50 @@ unset -f collision
 rm -rf "$tmp_dir"
 rm -f /tmp/edit_test_stdout.$$ /tmp/edit_test_stderr.$$
 
+# Isolate platform/session adapters and record the environment presented to the
+# editor. No desktop, service manager, or real editor participates in these cases.
+__edit_display_case() (
+	local os="$1" display="$2" wayland="$3" ssh="$4" visual="$5"
+	local manager_env="$6" manager_rc="$7" expected_display="$8" expected_wayland="$9"
+	local captured_display="" captured_wayland="" captured_args=()
+	uname() { printf '%s\n' "$os"; }
+	systemctl() { printf '%s\n' "$manager_env"; return "$manager_rc"; }
+	choose_editor() {
+		captured_display="${DISPLAY-}"
+		captured_wayland="${WAYLAND_DISPLAY-}"
+		captured_args=("$@")
+	}
+	export DISPLAY="$display" WAYLAND_DISPLAY="$wayland" SSH_CONNECTION="$ssh" VISUAL="$visual"
+	edit "$repo_dir" "file with spaces.txt" || return 1
+	[[ "$captured_display" == "$expected_display" && "$captured_wayland" == "$expected_wayland" ]] || return 1
+	[[ "${#captured_args[@]}" == 2 && "${captured_args[0]}" == "$repo_dir" && "${captured_args[1]}" == 'file with spaces.txt' ]] || return 1
+	[[ "$DISPLAY" == "$display" && "$WAYLAND_DISPLAY" == "$wayland" ]]
+)
+source "$repo_dir/bin/src/capture.bash"
+desktop_env=$'DISPLAY=:7\nWAYLAND_DISPLAY=wayland-3\nUNRELATED=ignored'
+for scenario in linux mac x11 wayland ssh terminal x11_only wayland_only unavailable hostile; do
+	((tests++))
+	out="" err="" rc=0
+	case "$scenario" in
+		linux) capture __edit_display_case Linux '' '' '' zeditor "$desktop_env" 0 :7 wayland-3 ;;
+		mac) capture __edit_display_case Darwin '' '' '' zed "$desktop_env" 0 '' '' ;;
+		x11) capture __edit_display_case Linux localhost:10.0 '' '' zeditor "$desktop_env" 0 localhost:10.0 '' ;;
+		wayland) capture __edit_display_case Linux '' wayland-9 '' zeditor "$desktop_env" 0 '' wayland-9 ;;
+		ssh) capture __edit_display_case Linux '' '' remote zeditor "$desktop_env" 0 '' '' ;;
+		terminal) capture __edit_display_case Linux '' '' '' '' "$desktop_env" 0 '' '' ;;
+		x11_only) capture __edit_display_case Linux '' '' '' zeditor 'DISPLAY=:8' 0 :8 '' ;;
+		wayland_only) capture __edit_display_case Linux '' '' '' zeditor 'WAYLAND_DISPLAY=wayland-4' 0 '' wayland-4 ;;
+		unavailable) capture __edit_display_case Linux '' '' '' zeditor "$desktop_env" 1 '' '' ;;
+		hostile) capture __edit_display_case Linux '' '' '' zeditor $'UNRELATED=$(exit 99)\nDISPLAY=:5\nWAYLAND_DISPLAY=wayland-2' 0 :5 wayland-2 ;;
+	esac
+	if [[ "$rc" == 0 && -z "$out" && -z "$err" ]]; then
+		printf '[PASS] edit desktop environment: %s\n' "$scenario"
+	else
+		printf '[FAIL] edit desktop environment: %s (status %s)\n' "$scenario" "$rc" >&2
+		((fails++))
+	fi
+done
+
 if (( fails == 0 )); then
 	echo "edit_test PASSED: all $tests tests passed"
 else
