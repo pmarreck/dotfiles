@@ -9,6 +9,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 guard="$repo_root/bin/rg"
 find_guard="$repo_root/bin/find"
 fd_guard="$repo_root/bin/fd"
+bfs_guard="$repo_root/bin/bfs"
 shell_guard="$repo_root/bin/src/rg_guard_env.bash"
 tmp="$(mktemp -d --tmpdir rg_guard_test.XXXXXX)"
 fake_bin="$tmp/bin"
@@ -36,6 +37,8 @@ printf '%s\n' \
 chmod +x "$fake_bin/rg"
 ln -s rg "$fake_bin/find"
 ln -s rg "$fake_bin/fd"
+ln -s rg "$fake_bin/bfs"
+printf '/nix/store\0' >"$tmp/files0-store"
 
 test_path="$fake_bin:/run/current-system/sw/bin:/usr/bin:/bin"
 tests=0
@@ -200,6 +203,47 @@ fi
 # shellcheck disable=SC2016 # $1 belongs to the child Bash.
 expect "exported agent-shell function also outranks bundled fd" 77 'function' 'REFUSING' \
 	env PATH="$test_path" bash -c '. "$1"; bash -c "type -t fd; fd . /nix/store"' bash "$shell_guard"
+
+expect "ordinary bfs traversal delegates unchanged" 0 'delegated:bfs' '' \
+	env PATH="$test_path" "$bfs_guard" "$safe_root" -name needle
+
+expect "bfs strategy flag before a safe path still delegates" 0 'delegated:bfs' '' \
+	env PATH="$test_path" "$bfs_guard" -S dfs "$safe_root" -type f
+
+expect "bfs blocks an explicit Nix store starting point" 77 '' 'REFUSING' \
+	env PATH="$test_path" "$bfs_guard" /nix/store -name '*.nix'
+
+expect "bfs blocks home as an exact traversal starting point" 77 '' 'Use fsearch' \
+	env PATH="$test_path" "$bfs_guard" "$HOME" -name '*.nix'
+
+expect "bfs blocks a store path that follows a search strategy flag" 77 '' 'REFUSING' \
+	env PATH="$test_path" "$bfs_guard" -S bfs /nix/store -type f
+
+expect "bfs blocks a store path that follows an expression" 77 '' 'REFUSING' \
+	env PATH="$test_path" "$bfs_guard" -name needle /nix/store
+
+expect "bfs allows a /nix/store pattern that is not a search root" 0 'arg=</nix/store>' '' \
+	env PATH="$test_path" "$bfs_guard" "$safe_root" -name /nix/store
+
+expect "bfs blocks a store root supplied through -f" 77 '' 'REFUSING' \
+	env PATH="$test_path" "$bfs_guard" -f /nix/store -type f
+
+expect "bfs blocks a store root listed in -files0-from" 77 '' 'REFUSING' \
+	env PATH="$test_path" "$bfs_guard" -files0-from "$tmp/files0-store"
+
+expect "bfs does not treat an -exec argument as a search root" 0 'delegated:bfs' '' \
+	env PATH="$test_path" "$bfs_guard" "$safe_root" -exec echo /nix/store {} \;
+
+expect "bfs blocks an implicit traversal from inside the Nix store" 77 '' 'REFUSING' \
+	env PATH="$test_path" bash -c 'cd /nix/store && exec "$1" -name needle' bash "$bfs_guard"
+
+if command -v unshare >/dev/null 2>&1; then
+	expect "sudo-provenance root may run bfs but receives a severe warning" 0 'delegated:bfs' 'STRONGLY ADVISED AGAINST' \
+		unshare -Ur env SUDO_USER=pmarreck PATH="$test_path" "$bfs_guard" /nix/store -type f
+fi
+
+expect "exported agent-shell function also outranks bundled bfs" 77 'function' 'REFUSING' \
+	env PATH="$test_path" bash -c '. "$1"; bash -c "type -t bfs; bfs /nix/store -type f"' bash "$shell_guard"
 
 if (( fails == 0 )); then
 	printf 'All %s search guard tests passed\n' "$tests"

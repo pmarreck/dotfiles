@@ -15,4 +15,8 @@ fd() {
 	"$HOME/bin/fd" "$@"
 }
 
-export -f rg find fd
+bfs() {
+	"$HOME/bin/bfs" "$@"
+}
+
+export -f rg find fd bfs

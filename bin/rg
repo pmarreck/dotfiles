@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# Multicall safety wrapper around ripgrep, find, and fd. A recursive /nix/store
+# Multicall safety wrapper around ripgrep, find, fd, and bfs. A recursive /nix/store
 # scan can monopolize ZFS and make the entire workstation unresponsive, so
 # ordinary invocations cannot use the store as a search root. The emergency
 # escape hatch requires actual sudo provenance—not merely an already-root
@@ -316,6 +316,108 @@ collect_fd_search_roots() {
 	fi
 }
 
+# bfs mixes flags, paths, and expression primaries in any order. A path after
+# -name or -S is still a traversal root. Arguments of primaries and of -exec
+# are not.
+collect_bfs_search_roots() {
+	local arg entry
+	local consume_next=none
+	local no_search=false
+	GUARD_ROOTS=()
+
+	for arg in "$@"; do
+		case "$consume_next" in
+			exec)
+				if [[ "$arg" == ';' || "$arg" == '+' ]]; then
+					consume_next=none
+				fi
+				continue
+				;;
+			option)
+				consume_next=none
+				continue
+				;;
+			option2)
+				consume_next=option
+				continue
+				;;
+			root)
+				GUARD_ROOTS+=("$arg")
+				consume_next=none
+				continue
+				;;
+			files0)
+				consume_next=none
+				if [[ "$arg" != - && -f "$arg" && -r "$arg" ]]; then
+					while IFS= read -r -d '' entry; do
+						[[ -n "$entry" ]] && GUARD_ROOTS+=("$entry")
+					done <"$arg"
+				fi
+				continue
+				;;
+		esac
+
+		case "$arg" in
+			--help | --version)
+				no_search=true
+				continue
+				;;
+			-H | -L | -P | -E | -X | -d | -s | -x | -color | -nocolor | \
+			-daystart | -depth | -follow | -ignore_readdir_race | \
+			-noignore_readdir_race | -mount | -noerror | -nohidden | \
+			-noleaf | -status | -unique | -warn | -nowarn | -xdev | \
+			-O | -O[0-9] | -O[0-9][0-9] | -j[0-9]*)
+				continue
+				;;
+			-j | -D | -S | -regextype | -maxdepth | -mindepth)
+				consume_next=option
+				continue
+				;;
+			-f)
+				consume_next=root
+				continue
+				;;
+			-files0-from)
+				consume_next=files0
+				continue
+				;;
+			-exec | -execdir | -ok | -okdir)
+				consume_next="exec"
+				continue
+				;;
+			-fprintf)
+				consume_next=option2
+				continue
+				;;
+			-name | -iname | -lname | -ilname | -path | -ipath | \
+			-wholename | -iwholename | -regex | -iregex | \
+			-amin | -atime | -anewer | -cmin | -ctime | -cnewer | \
+			-mmin | -mtime | -mnewer | -newer | -newer?? | \
+			-Bmin | -Btime | -Bnewer | -asince | -csince | -msince | -Bsince | \
+			-user | -group | -uid | -gid | -perm | -size | -type | -xtype | \
+			-links | -inum | -samefile | -fstype | -context | -printf | -fprint)
+				consume_next=option
+				continue
+				;;
+			'!' | '(' | ')' | ',')
+				continue
+				;;
+			-*)
+				continue
+				;;
+			*)
+				GUARD_ROOTS+=("$arg")
+				;;
+		esac
+	done
+
+	"$no_search" && {
+		GUARD_ROOTS=()
+		return 0
+	}
+	(( ${#GUARD_ROOTS[@]} == 0 )) && GUARD_ROOTS=(.)
+}
+
 print_refusal() {
 	local dangerous_root="$1"
 	local root_kind="$2"
@@ -355,7 +457,7 @@ if (( $# == 1 )) && [[ "$1" == --test ]]; then
 fi
 
 case "$INVOKED_AS" in
-	rg | find | fd) ;;
+	rg | find | fd | bfs) ;;
 	*)
 		printf 'search-guard: unsupported invocation name: %s\n' "$INVOKED_AS" >&2
 		exit 64
@@ -372,6 +474,7 @@ case "$INVOKED_AS" in
 	rg) collect_rg_search_roots "$@" ;;
 	find) collect_find_search_roots "$@" ;;
 	fd) collect_fd_search_roots "$@" ;;
+	bfs) collect_bfs_search_roots "$@" ;;
 esac
 
 for root in "${GUARD_ROOTS[@]}"; do
