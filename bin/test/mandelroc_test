@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# mandelroc is mandelbash ported to Roc and run through jumpscript, which
+# compiles it once and reuses the cached native binary. The Bash original is
+# the oracle: the output must match it byte for byte.
+set -u
+
+bin_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+test_count=0
+fail_count=0
+pass() { echo "✓ $1"; ((test_count++)); }
+fail() { echo "✗ $1" >&2; ((test_count++)); ((fail_count++)); }
+
+if ! command -v jumpscript >/dev/null 2>&1; then
+	fail "jumpscript is not on PATH; mandelroc needs it to compile and run"
+	echo "mandelroc_test: ${fail_count}/${test_count} failed" >&2
+	exit 1
+fi
+
+cache="$(mktemp -d)"
+trap 'rm -rf "${cache}"' EXIT
+
+# mandelbash tees into /tmp/m<pid> and never removes it; exec keeps the PID
+# known so the leftover can be cleaned up.
+expected="$(bash -c 'echo $$; exec "$1"' _ "${bin_dir}/mandelbash"; echo x)"
+orig_pid="${expected%%$'\n'*}"
+rm -f "/tmp/m${orig_pid}"
+expected="${expected#*$'\n'}"
+
+cold="$(JUMPSCRIPT_CACHE="${cache}" "${bin_dir}/mandelroc" 2>"${cache}/cold.err"; echo x)"
+if [[ "${cold}" == "${expected}" ]]; then
+	pass "cold run matches mandelbash byte for byte"
+else
+	fail "cold run differs from mandelbash ($(wc -c <<<"${cold}") vs $(wc -c <<<"${expected}") bytes); stderr: $(<"${cache}/cold.err")"
+fi
+
+artifact="$(find "${cache}/Roc" -type f -path '*/bin/mandelroc' 2>/dev/null)"
+if [[ -n "${artifact}" ]]; then
+	pass "jumpscript cached a native binary"
+	before="$(ls -li "${artifact}")"
+	warm="$(JUMPSCRIPT_CACHE="${cache}" "${bin_dir}/mandelroc" 2>&1; echo x)"
+	[[ "${warm}" == "${expected}" ]] && pass "warm run matches mandelbash" || fail "warm run differs from mandelbash"
+	[[ "$(ls -li "${artifact}")" == "${before}" ]] && pass "warm run reused the cached binary" || fail "warm run rebuilt the binary"
+else
+	fail "no cached native binary under ${cache}/Roc"
+fi
+
+if (( fail_count )); then
+	echo "mandelroc_test: ${fail_count}/${test_count} failed" >&2
+	exit 1
+fi

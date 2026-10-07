@@ -1,0 +1,93 @@
+#!/usr/bin/env -S jumpscript Roc
+# mandelbash (BruXy's Bash Mandelbrot) in Roc. jumpscript compiles it to a
+# native binary on first run and reuses the cached binary afterward.
+# Output matches mandelbash byte for byte (bin/test/mandelroc_test).
+
+# Fixed point with 14 fractional bits: 16384 is 1.0. Bash's >> on a signed
+# 64-bit value is an arithmetic shift, i.e. floor division by a power of two.
+scale : I64
+scale = 16384
+
+max_iter : I64
+max_iter = 32
+
+escape_bound : I64
+escape_bound = 1073741824
+
+rows : I64
+rows = 13
+
+cols : I64
+cols = 80
+
+letters : List(Str)
+letters = ["B", "A", "S", "H"]
+
+esc : Str
+esc = "\u(1b)"
+
+## Escape-time iteration count for the point (re, im) in fixed point, with
+## mandelbash's exact quirks: the counter advances on every test, including
+## the failing one, and the bound checks s*j (not s+j) before each step.
+iterations : I64, I64 -> I64
+iterations = |re, im| {
+	var $b = 0
+	var $r = 0
+	var $i = 0
+	var $s = 0
+	var $j = 0
+	var $going = Bool.True
+	while $going {
+		b = $b
+		$b = b + 1
+		if b < max_iter and $s * $j <= escape_bound {
+			$s = ($r * $r).div_floor_by(scale)
+			$j = ($i * $i).div_floor_by(scale)
+			next_r = $s - $j + re
+			$i = ($r * $i).div_floor_by(scale // 2) + im
+			$r = next_r
+		} else {
+			$going = Bool.False
+		}
+	}
+	$b
+}
+
+## The picture: 13 rows top to bottom, then the first 12 again in reverse to
+## mirror the set's lower half, each row ending ESC[m ESC( CR LF. Escaped
+## points are colored letters cycling through B, A, S, H across the image.
+render : {} -> Str
+render = |{}| {
+	var $out = ""
+	var $mirror = ""
+	var $letter = 0
+	var $im = -scale
+	for row in 1..=rows {
+		var $line = ""
+		var $re = -2 * scale
+		for _col in 1..=cols {
+			b = iterations($re, $im)
+			if b >= max_iter {
+				$line = Str.concat($line, " ")
+			} else {
+				color = (b + 3) % 8 + 30
+				letter = letters.get(($letter % 4).to_u64()) ?? "?"
+				$letter = $letter + 1
+				$line = Str.concat($line, "${esc}[01;${color.to_str()}m${letter}")
+			}
+			$re = $re + 512
+		}
+		$line = Str.concat($line, "${esc}[m${esc}(\r\n")
+		$out = Str.concat($out, $line)
+		if row < rows {
+			$mirror = Str.concat($line, $mirror)
+		}
+		$im = $im + 1311
+	}
+	Str.concat($out, $mirror)
+}
+
+main! = |_args| {
+	echo!(render({}))
+	Ok({})
+}
