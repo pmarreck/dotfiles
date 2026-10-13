@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+
+# Test launchd-keep-disabled as a classifier over a set of labels: exactly the
+# labels that are not currently disabled must be (re-)disabled and booted out.
+launchd_keep_disabled_test() {
+  local fails=0 tmpdir out status expected actual
+  tmpdir=$(mktemp -d --tmpdir launchd_keep_disabled_test.XXXXXX)
+
+  # Fake launchctl: serves a fixed print-disabled table, records mutations.
+  cat > "$tmpdir/fake-launchctl" <<EOF
+#!/usr/bin/env bash
+case "\$1" in
+	print-disabled)
+		printf '\tdisabled services = {\n'
+		printf '\t\t"com.example.already-off" => disabled\n'
+		printf '\t\t"com.example.turned-back-on" => enabled\n'
+		printf '\t\t"com.example.unrelated" => enabled\n'
+		printf '\t}\n'
+		;;
+	disable|bootout) printf '%s\n' "\$*" >> "$tmpdir/calls.txt" ;;
+esac
+exit 0
+EOF
+  chmod +x "$tmpdir/fake-launchctl"
+  local env=(LAUNCHD_KEEP_DISABLED_LAUNCHCTL="$tmpdir/fake-launchctl" LAUNCHD_KEEP_DISABLED_DOMAIN="gui/999")
+
+  # All requested labels already disabled: no mutations, exit 0.
+  out=$(env "${env[@]}" launchd-keep-disabled com.example.already-off 2>&1)
+  status=$?
+  assert "$status" == "0" "already-disabled labels should exit 0"
+  ((fails+=$?))
+  assert "$( [ -e "$tmpdir/calls.txt" ] && echo yes || echo no )" == "no" "already-disabled labels must not be touched"
+  ((fails+=$?))
+  assert "$out" =~ "1 already disabled, 0 re-disabled" "should summarize the no-op"
+  ((fails+=$?))
+
+  # Mixed set: explicitly enabled and absent (default-enabled) labels are
+  # re-disabled and booted out; the already-disabled and unrequested ones are not.
+  out=$(env "${env[@]}" launchd-keep-disabled com.example.already-off com.example.turned-back-on com.example.never-listed 2>&1)
+  status=$?
+  assert "$status" == "1" "re-disabling anything should exit 1 so the drift is noticed"
+  ((fails+=$?))
+  expected=$(printf '%s\n' \
+    "disable gui/999/com.example.never-listed" \
+    "disable gui/999/com.example.turned-back-on" \
+    "bootout gui/999/com.example.never-listed" \
+    "bootout gui/999/com.example.turned-back-on" | sort)
+  actual=$(sort "$tmpdir/calls.txt" 2>/dev/null)
+  # bootout, not kill: a disabled job that is still loaded can be relaunched
+  # on demand by its launch events until it is unloaded (observed 2026-10-13).
+  assert "$actual" == "$expected" "should disable and boot out exactly the labels that were not disabled"
+  ((fails+=$?))
+  assert "$out" =~ "RE-ENABLED: com.example.turned-back-on" "should loudly name a label that drifted back on"
+  ((fails+=$?))
+  assert "$out" =~ "1 already disabled, 2 re-disabled" "should summarize the mixed set"
+  ((fails+=$?))
+
+  # No labels is a usage error.
+  out=$(env "${env[@]}" launchd-keep-disabled 2>&1)
+  status=$?
+  assert "$status" == "2" "no labels should be a usage error"
+  ((fails+=$?))
+
+  rm -rf "$tmpdir"
+  return "$fails"
+}
+
+launchd_keep_disabled_test

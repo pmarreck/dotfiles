@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+
+# Test lsregister-prune-dead as a classifier over a set of registrations:
+# exactly the dead paths must be unregistered, nothing else.
+lsregister_prune_dead_test() {
+  local fails=0 tmpdir out status expected actual
+  tmpdir=$(mktemp -d --tmpdir lsregister_prune_dead_test.XXXXXX)
+  local live="$tmpdir/Live App.app"
+  local gone_plain="$tmpdir/gone/Updater.app"
+  local gone_weird="$tmpdir/gone/No Man's Sky & (Beta).app"
+  local unmounted="/Volumes/lsregister-prune-dead-test-no-such-volume-$$/Zero Hour.app"
+  local gone_root_level="/nonexistent-lsregister-prune-dead-$$/Thing.app"
+  mkdir -p "$live"
+
+  # Minimal `lsregister -dump` shape: records separated by dashed lines; a
+  # bundle record carries `bundle id:` and `path: <p> (0x...)`. Non-bundle
+  # records (and bundle records without a path) must be ignored.
+  {
+    echo "Checking data integrity......done."
+    echo "--------------------------------------------------------------------------------"
+    echo "bundle id:                  Live (0x1)"
+    echo "path:                       $live (0x101)"
+    echo "--------------------------------------------------------------------------------"
+    echo "bundle id:                  Updater (0x2)"
+    echo "path:                       $gone_plain (0x102)"
+    echo "--------------------------------------------------------------------------------"
+    echo "bundle id:                  Weird (0x3)"
+    echo "path:                       $gone_weird (0x103)"
+    echo "--------------------------------------------------------------------------------"
+    echo "bundle id:                  Unmounted (0x4)"
+    echo "path:                       $unmounted (0x104)"
+    echo "--------------------------------------------------------------------------------"
+    echo "bundle id:                  RootLevel (0x5)"
+    echo "path:                       $gone_root_level (0x105)"
+    echo "--------------------------------------------------------------------------------"
+    echo "bundle id:                  NoPath (0x6)"
+    echo "--------------------------------------------------------------------------------"
+    echo "claim id:                   Something (0x7)"
+    echo "path:                       $tmpdir/gone/claim-only.app (0x107)"
+    echo "--------------------------------------------------------------------------------"
+  } > "$tmpdir/dump.txt"
+
+  # Fake lsregister records each -u argument, one per line.
+  cat > "$tmpdir/fake-lsregister" <<EOF
+#!/usr/bin/env bash
+[ "\$1" = "-u" ] && printf '%s\n' "\$2" >> "$tmpdir/unregistered.txt"
+exit 0
+EOF
+  chmod +x "$tmpdir/fake-lsregister"
+
+  # Dry run: reports the dead set, unregisters nothing.
+  out=$(LSREGISTER_PRUNE_DEAD_DUMP_FILE="$tmpdir/dump.txt" LSREGISTER_PRUNE_DEAD_LSREGISTER="$tmpdir/fake-lsregister" lsregister-prune-dead --dry-run 2>&1)
+  status=$?
+  assert "$status" == "0" "dry run should succeed"
+  ((fails+=$?))
+  assert "$( [ -e "$tmpdir/unregistered.txt" ] && echo yes || echo no )" == "no" "dry run must not unregister anything"
+  ((fails+=$?))
+  assert "$out" =~ "3 dead" "dry run should count exactly the 3 dead registrations"
+  ((fails+=$?))
+
+  # Real run: the unregistered set must equal the dead set exactly.
+  out=$(LSREGISTER_PRUNE_DEAD_DUMP_FILE="$tmpdir/dump.txt" LSREGISTER_PRUNE_DEAD_LSREGISTER="$tmpdir/fake-lsregister" lsregister-prune-dead 2>&1)
+  status=$?
+  assert "$status" == "0" "real run should succeed"
+  ((fails+=$?))
+  expected=$(printf '%s\n' "$gone_plain" "$gone_weird" "$gone_root_level" | sort)
+  actual=$(sort "$tmpdir/unregistered.txt" 2>/dev/null)
+  assert "$actual" == "$expected" "should unregister exactly the dead bundle paths (live, unmounted-volume, pathless and non-bundle records kept)"
+  ((fails+=$?))
+  assert "$out" =~ "3 dead, 3 unregistered, 1 skipped" "summary should report dead/unregistered/skipped-unmounted counts"
+  ((fails+=$?))
+
+  # A failing unregister is reported and makes the run exit nonzero.
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$tmpdir/fake-lsregister"
+  out=$(LSREGISTER_PRUNE_DEAD_DUMP_FILE="$tmpdir/dump.txt" LSREGISTER_PRUNE_DEAD_LSREGISTER="$tmpdir/fake-lsregister" lsregister-prune-dead 2>&1)
+  status=$?
+  assert "$status" == "1" "unregister failures should exit 1"
+  ((fails+=$?))
+  assert "$out" =~ "3 failed" "unregister failures should be counted"
+  ((fails+=$?))
+
+  rm -rf "$tmpdir"
+  return "$fails"
+}
+
+lsregister_prune_dead_test

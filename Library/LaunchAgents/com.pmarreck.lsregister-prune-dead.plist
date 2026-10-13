@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.pmarreck.lsregister-prune-dead</string>
+
+    <!-- bash via the STABLE nix-darwin symlink, never a versioned /nix/store path
+         (that hash changes on every darwin-rebuild and would break this agent). -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/run/current-system/sw/bin/bash</string>
+        <string>/Users/pmarreck/dotfiles/bin/lsregister-prune-dead</string>
+    </array>
+
+    <!-- Nightly at 03:15. A missed run (asleep) fires once on wake. Dead
+         registrations from Sparkle updater copies accumulate per app update,
+         so daily keeps siriknowledged from ever having a pile to loop over. -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>3</integer>
+        <key>Minute</key>
+        <integer>15</integer>
+    </dict>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>Nice</key>
+    <integer>10</integer>
+    <key>LowPriorityIO</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/pmarreck/Library/Logs/lsregister-prune-dead.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/pmarreck/Library/Logs/lsregister-prune-dead.log</string>
+</dict>
+</plist>

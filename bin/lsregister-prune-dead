@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+
+# Unregister LaunchServices entries whose bundle no longer exists on disk.
+# Sparkle copies its Updater.app into a fresh mkdtemp() dir per update and
+# deletes it later, but LaunchServices keeps the registration; siriknowledged
+# then retries each dead entry (fnfErr -43) in a loop and burns CPU. See
+# https://github.com/sparkle-project/Sparkle/issues/2933. `lsregister -gc`
+# does not remove these; `lsregister -u <missing path>` does.
+# Entries on an unmounted /Volumes/<name> are kept: they are absent, not dead.
+# Run nightly via the LaunchAgent com.pmarreck.lsregister-prune-dead.
+#
+# Env overrides (tests):
+#   LSREGISTER_PRUNE_DEAD_DUMP_FILE   read this dump instead of `lsregister -dump`
+#   LSREGISTER_PRUNE_DEAD_LSREGISTER  lsregister binary to call for -u
+lsregister-prune-dead() {
+	local dry_run=false
+	case "${1:-}" in
+		-h|--help)
+			echo "usage: lsregister-prune-dead [--dry-run]"
+			echo "Unregister LaunchServices bundle entries whose path no longer exists."
+			echo "Entries on an unmounted /Volumes/<name> are skipped. Exits 1 if any unregister fails."
+			return 0
+			;;
+		--dry-run) dry_run=true ;;
+	esac
+	local lsregister="${LSREGISTER_PRUNE_DEAD_LSREGISTER:-/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister}"
+	local dump
+	if [ -n "${LSREGISTER_PRUNE_DEAD_DUMP_FILE:-}" ]; then
+		dump=$(<"$LSREGISTER_PRUNE_DEAD_DUMP_FILE")
+	else
+		dump=$("$lsregister" -dump 2>/dev/null)
+	fi
+	local dead=0 unregistered=0 skipped=0 failed=0 path volume
+	# Emit the path of every `bundle id:` record; records are split by dashed lines.
+	while IFS= read -r path; do
+		[ -e "$path" ] && continue
+		if [[ "$path" == /Volumes/* ]]; then
+			volume="${path#/Volumes/}"
+			volume="${volume%%/*}"
+			if [ ! -d "/Volumes/$volume" ]; then
+				((skipped++))
+				continue
+			fi
+		fi
+		((dead++))
+		$dry_run && { echo "dead: $path"; continue; }
+		if "$lsregister" -u "$path" >/dev/null 2>&1; then
+			((unregistered++))
+		else
+			((failed++))
+			echo "failed to unregister: $path" >&2
+		fi
+	done < <(awk 'BEGIN { RS = "\n-+\n" }
+		/(^|\n)bundle id:/ {
+			if (match($0, /\npath: +[^\n]*/)) {
+				p = substr($0, RSTART + 1, RLENGTH - 1)
+				sub(/^path: +/, "", p)
+				sub(/ \(0x[0-9a-f]+\)$/, "", p)
+				if (p ~ /^\//) print p
+			}
+		}' <<<"$dump")
+	echo "$(date '+%Y-%m-%d %H:%M:%S') lsregister-prune-dead: $dead dead, $unregistered unregistered, $skipped skipped (unmounted volume), $failed failed$($dry_run && echo ' [dry run]')"
+	[ "$failed" -eq 0 ]
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		_test_file="$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+		if [ -f "$_test_file" ]; then . "$_test_file" > /dev/null; fi
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

@@ -1,5 +1,17 @@
 # dotfiles — TODO / Plans
 
+## Active — nightly LaunchServices prune + siriknowledged disable (2026-10-13)
+
+- [x] Add `bin/lsregister-prune-dead` with a set-classifier test: unregister registrations whose bundle path is gone; keep live ones and anything on an unmounted `/Volumes/<name>`.
+  Curiosity poke: paths with spaces, apostrophes, `&` and parentheses must round-trip from `lsregister -dump` into `lsregister -u`.
+  Completed 2026-10-13 12:02 EDT: test red (command missing), then green; live dry run found 0 dead after the manual cleanup of 79.
+- [x] Add generic `bin/launchd-keep-disabled LABEL...` (labels are a per-machine choice, never hard-coded, because dotfiles sync to every device).
+  Completed 2026-10-13 12:08 EDT: uses `disable` + `bootout`, not `kill`. A disabled-but-loaded job was observed being respawned "because xpc event" 10s after a kill; bootout unloaded it.
+- [x] Add tracked LaunchAgent `com.pmarreck.lsregister-prune-dead` (nightly 03:15), install it, verify one live run.
+  Completed 2026-10-13 12:05 EDT. The m4max-only `com.pmarreck.launchd-keep-disabled` agent (siriknowledged) is installed untracked; its record lives in the Obsidian vault at `Machines/m4max.md`.
+  Context: dead Sparkle `Launcher/<random>/Updater.app` copies made siriknowledged spin about 66 CPU-hours over 8.7 days; upstream report https://github.com/sparkle-project/Sparkle/issues/2933. `lsregister -gc` does not remove them; `lsregister -u <missing path>` does.
+- [ ] Retire `manual_configuration_changelog.txt`: verify each claim, migrate the still-valid ones to the vault's `Machines/` notes, then remove the file.
+
 ## Active: repository maintenance and fleet report repair (2026-09-29)
 
 - [x] Reproduce the test-fixture overwrite, isolate custom-state reports, and publish a fresh fleet report (done 2026-09-29 12:18 EDT).
