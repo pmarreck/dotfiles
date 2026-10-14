@@ -1112,6 +1112,9 @@ ASCII `^[A-Z][a-z]`, retaining acronyms and one-letter uppercase words.
   `~/.npmrc` relinked to `npmrc` so `npm -g` tools live in `~/.npm-global` and survive
   Node upgrades. `shell_startup_test` now also asserts node resolves via the mise
   shims in every quadrant (verified red with a planted `~/bin/node`).
+  - Decided 2026-10-14: mise does NOT read `.nvmrc`/`.node-version` (its default since
+    idiomatic files went opt-in); projects pin Node in `flake.nix`, never global state.
+    Only `~/Code/ollama-gui` (third-party, dormant) has an `.nvmrc`.
   - Curiosity poke: a long-lived parent shell keeps its pre-change PATH, so tools and
     agents launched from it still lack node until the shell restarts.
 - [x] CCBC — Peter named the "Country/Community Boundary Conflict": Nix is the
