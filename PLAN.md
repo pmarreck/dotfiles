@@ -12,7 +12,8 @@
   Context: dead Sparkle `Launcher/<random>/Updater.app` copies made siriknowledged spin about 66 CPU-hours over 8.7 days; upstream report https://github.com/sparkle-project/Sparkle/issues/2933. `lsregister -gc` does not remove them; `lsregister -u <missing path>` does.
 - [x] Retire `manual_configuration_changelog.txt`: verify each claim, migrate the still-valid ones to the vault's `Machines/` notes, then remove the file.
   Completed 2026-10-13 12:16 EDT: fonts, voices, the fstab no-fsck line and oh-my-bash (installed, not loaded) migrated to vault `Machines/m4max.md`; MAME (binary gone, `bin/mame` wrapper broken) and the Arch-only items were dropped as no longer true. The file was moved to `~/.Trash/` and remains in git history.
-- [ ] Push `63c6842d` and the changelog retirement. Blocked: after rebasing onto `origin/master`, 3 upstream test files fail on this Mac, also on a pristine `origin/master` worktree: `erect-agent-stack_latest_context_test` (120s timeout), `mandelroc_test` (`jumpscript` not on PATH), `repo-maintenance-cli_test` ("initial repo maintenance exited 1").
+- [x] Push `63c6842d` and the changelog retirement. Completed 2026-10-14 10:35 EDT: full suite green (193/193) after the fixes below and the nix-darwin switch that activated `b3sum`. Was blocked: after rebasing onto `origin/master`, 3 upstream test files fail on this Mac, also on a pristine `origin/master` worktree: `erect-agent-stack_latest_context_test` (120s timeout), `mandelroc_test` (`jumpscript` not on PATH), `repo-maintenance-cli_test` ("initial repo maintenance exited 1").
+  Root causes found 2026-10-14 (all environmental, not code): erect-agent-stack's fixture writer needs `node`, absent since nvm's Node was deleted (fixed by the mise cutover; the BSD `wc` padding fix `= 0` → `-eq 0` is also required); `~/Code/jumpscript` was never cloned on this Mac (cloned and built; `mandelroc_test` green); `b3sum` is declared in the nix-darwin flake but not yet activated (`repo-maintenance` errors "b3sum failed for project"), resolved by the 10:18 EDT `darwin-rebuild switch`.
 
 ## Active: repository maintenance and fleet report repair (2026-09-29)
 
@@ -1092,7 +1093,7 @@ ASCII `^[A-Z][a-z]`, retaining acronyms and one-letter uppercase words.
   service needs node it is currently broken). These are GENERATED artifacts — fix by
   regenerating them after the mise migration so they capture a clean PATH, not by
   hand-editing. Peter to confirm what generates each.
-- [~] macOS Node manager: nvm was an INTERIM (2026-08-25: Node v24.19.0 via nvm 0.40.7
+- [x] macOS Node manager: nvm was an INTERIM (2026-08-25: Node v24.19.0 via nvm 0.40.7
   + a `.pathconfig` resolver that exposed node to non-interactive hook shells).
   SUPERSEDED 2026-08-26 by the fleet-wide **mise** decision: mise installed via Nix
   (`pkgs.mise` in flake.nix), `mise use -g node@lts`, shims on PATH via `.pathconfig`.
@@ -1103,6 +1104,16 @@ ASCII `^[A-Z][a-z]`, retaining acronyms and one-letter uppercase words.
   runtimes; per-project overridable; committed config**. bun/deno available
   side-by-side (bun already in flake) for wasm/speed. `shell_startup_test` stays the
   control (node/npm across all 3 shell quadrants).
+  Completed Phase 2 2026-10-14 10:30 EDT: global config lives in the `~/.config` repo
+  (`mise/config.toml`, `node = "lts"`, installed 24.21.0); shims only, no `mise
+  activate`, placed behind the Nix PATH entries so Nix wins collisions; asdf-era
+  `.tool-versions` (node 16/elixir/erlang/postgres/yarn pins) removed; nvm removed
+  (`.bashrc` loader, `.pathconfig` resolver, `contained_nvm.bash` and its test);
+  `~/.npmrc` relinked to `npmrc` so `npm -g` tools live in `~/.npm-global` and survive
+  Node upgrades. `shell_startup_test` now also asserts node resolves via the mise
+  shims in every quadrant (verified red with a planted `~/bin/node`).
+  - Curiosity poke: a long-lived parent shell keeps its pre-change PATH, so tools and
+    agents launched from it still lack node until the shell restarts.
 - [x] CCBC — Peter named the "Country/Community Boundary Conflict": Nix is the
   country, language communities value ease-of-use over strict determinism, and
   the treaty is that Nix owns everything up to the project boundary while the
