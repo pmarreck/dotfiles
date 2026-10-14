@@ -10,7 +10,9 @@
 - [x] Add tracked LaunchAgent `com.pmarreck.lsregister-prune-dead` (nightly 03:15), install it, verify one live run.
   Completed 2026-10-13 12:05 EDT. The m4max-only `com.pmarreck.launchd-keep-disabled` agent (siriknowledged) is installed untracked; its record lives in the Obsidian vault at `Machines/m4max.md`.
   Context: dead Sparkle `Launcher/<random>/Updater.app` copies made siriknowledged spin about 66 CPU-hours over 8.7 days; upstream report https://github.com/sparkle-project/Sparkle/issues/2933. `lsregister -gc` does not remove them; `lsregister -u <missing path>` does.
-- [ ] Retire `manual_configuration_changelog.txt`: verify each claim, migrate the still-valid ones to the vault's `Machines/` notes, then remove the file.
+- [x] Retire `manual_configuration_changelog.txt`: verify each claim, migrate the still-valid ones to the vault's `Machines/` notes, then remove the file.
+  Completed 2026-10-13 12:16 EDT: fonts, voices, the fstab no-fsck line and oh-my-bash (installed, not loaded) migrated to vault `Machines/m4max.md`; MAME (binary gone, `bin/mame` wrapper broken) and the Arch-only items were dropped as no longer true. The file was moved to `~/.Trash/` and remains in git history.
+- [ ] Push `63c6842d` and the changelog retirement. Blocked: after rebasing onto `origin/master`, 3 upstream test files fail on this Mac, also on a pristine `origin/master` worktree: `erect-agent-stack_latest_context_test` (120s timeout), `mandelroc_test` (`jumpscript` not on PATH), `repo-maintenance-cli_test` ("initial repo maintenance exited 1").
 
 ## Active: repository maintenance and fleet report repair (2026-09-29)
 

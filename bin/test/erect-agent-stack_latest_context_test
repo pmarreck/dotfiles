@@ -71,7 +71,8 @@ check jq -e '
 	([.warnings[] | select(.code == "grok_search_record_unavailable" and .session_id == "grok-index-only") | .conversation_timestamp] | index("2026-09-11T00:00:00.000Z")) != null and
 	([.warnings[].code] | index("gemini_project_hash_mismatch")) != null
 ' "$tmp/out"
-check test "$(rg -o 'not inspected' "$tmp/out" | wc -l)" = 0
+# -eq, not =: BSD wc left-pads its count ("       0") on macOS.
+check test "$(rg -o 'not inspected' "$tmp/out" | wc -l)" -eq 0
 
 # Human output is deliberately composable and returns only the canonical name.
 "$tool" --json --latest-context "$project" >"$tmp/reordered" 2>"$tmp/reordered.err"
