@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# shellcheck disable=SC1091
+set -u
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+source "$root/bin/src/capture.bash"
+source "$root/bin/herdr-codex-session-hook"
+fails=0
+declare out err rc
+check() { if ! "$@"; then printf 'FAIL: %s\n' "$*"; fails=$((fails+1)); fi; }
+payload='{"hook_event_name":"SessionStart","session_id":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee","cwd":"/work/project"}'
+process='{"result":{"process_info":{"pane_id":"w1:p1","foreground_processes":[{"pid":12,"name":"codex","cwd":"/work/project","argv":["/bin/codex","resume","aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"]}]}}}'
+# Classify a set of matching and mismatching reports, including a shared-server
+# pane environment from a different conversation in the same directory.
+for mutation in identity other_id other_cwd wrong_event missing_id; do
+	input="$payload"
+	case "$mutation" in
+		other_id) input="$(jq '.session_id="ffffffff-bbbb-cccc-dddd-eeeeeeeeeeee"' <<< "$input")" ;;
+		other_cwd) input="$(jq '.cwd="/work/other"' <<< "$input")" ;;
+		wrong_event) input="$(jq '.hook_event_name="Stop"' <<< "$input")" ;;
+		missing_id) input="$(jq 'del(.session_id)' <<< "$input")" ;;
+	esac
+	capture herdr_codex_session_matches "$input" "$process"
+	check test -z "$out"
+	check test -z "$err"
+	if [ "$mutation" = identity ]; then check test "$rc" = 0; else check test "$rc" != 0; fi
+done
+for mutation in malformed empty multiple fresh embedded_argument wrong_program wrong_pane; do
+	info="$process"
+	case "$mutation" in
+		malformed) info='{' ;;
+		empty) info="$(jq '.result.process_info.foreground_processes=[]' <<< "$info")" ;;
+		multiple) info="$(jq '.result.process_info.foreground_processes += .result.process_info.foreground_processes' <<< "$info")" ;;
+		fresh) info="$(jq '.result.process_info.foreground_processes[0].argv=["codex"]' <<< "$info")" ;;
+		embedded_argument) info="$(jq '.result.process_info.foreground_processes[0].argv=["codex","exec","aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"]' <<< "$info")" ;;
+		wrong_program) info="$(jq '.result.process_info.foreground_processes[0].name="bash"' <<< "$info")" ;;
+		wrong_pane) info="$(jq 'del(.result.process_info.pane_id)' <<< "$info")" ;;
+	esac
+	capture herdr_codex_session_matches "$payload" "$info"
+	check test "$rc" != 0
+done
+# Recorded adapter effects, no real terminal or service.
+effects=()
+date() { printf '100\n'; }
+herdr() {
+	if [ "$1 $2" = 'pane process-info' ]; then printf '%s' "$process"; else effects+=("$*"); fi
+}
+export HERDR_ENV=1 HERDR_PANE_ID=w1:p1
+herdr_codex_session_hook <<< "$payload"
+check test "${#effects[@]}" = 1
+check test "${effects[0]:-}" = 'pane report-agent-session w1:p1 --source herdr:codex --agent codex --session-start-source resume --seq 100999999999 --agent-session-id aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee -- codex resume aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --dangerously-bypass-approvals-and-sandbox -C /work/project'
+effects=()
+herdr_codex_session_hook <<< '{"hook_event_name":"SessionStart","session_id":"wrong","cwd":"/work/project"}'
+check test "${#effects[@]}" = 0
+printf '%s\n' "herdr-codex-session-hook: $fails failures"
+exit "$fails"

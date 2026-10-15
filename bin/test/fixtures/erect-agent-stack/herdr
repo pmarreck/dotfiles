@@ -6,9 +6,11 @@ case "$1 $2" in
   'agent list') cat "$EAS_FIXTURE/agents.json" ;;
   'workspace list') cat "$EAS_FIXTURE/workspaces.json" ;;
   'pane list') cat "$EAS_FIXTURE/panes.json" ;;
+  'tab list') cat "$EAS_FIXTURE/tabs.json" ;;
   'pane process-info') cat "$EAS_FIXTURE/process.json" ;;
   'workspace create')
-    jq -n --arg cwd "$EAS_PROJECT" '{result:{workspace:{workspace_id:"wNEW"},root_pane:{pane_id:"wNEW:p7",cwd:$cwd}}}' ;;
+    jq -n --arg cwd "$EAS_PROJECT" '{result:{workspace:{workspace_id:"wNEW"},tab:{tab_id:"wNEW:t1"},root_pane:{pane_id:"wNEW:p7",cwd:$cwd}}}' ;;
+  'tab rename'|'tab create') printf '{"result":{"type":"ok"}}\n' ;;
   'agent start')
     if [ "${EAS_FAIL_START:-0}" = 1 ]; then
       printf 'blocked or timed out\n' >&2; exit 1

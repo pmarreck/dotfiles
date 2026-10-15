@@ -7,6 +7,7 @@ _eas_help() {
 usage: erect-agent-stack [OPTIONS] PROJECT
 Create/reuse a Herdr workspace and unrestricted agent at PROJECT (or ~/Code/NAME).
 Requires the intended Herdr session (HERDR_ENV=1), jq and coreutils on PATH.
+New workspaces receive AI and CLI tabs; existing custom tabs are preserved.
 
   --latest-context   Read native stores and print the most recently saved backend.
                      With --json, report session, time, evidence and warnings.
@@ -54,7 +55,7 @@ erect-agent-stack() (
  local dir hash state_dir state_file record="" saved="" lock="" outcome pane="" workspace=""
  local agents workspaces panes matches count candidate info response native_id="" backend
  local automatic_name=0 saved_name="" occupied_labels='[]'
- local args=() create_args=()
+ local args=() create_args=() created_tab=""
  [ "${ERECT_DRY_RUN:-0}" = 1 ] && dry=1
  while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -207,6 +208,21 @@ erect-agent-stack() (
    fi
   done < <(printf '%s' "$workspaces" | jq -c '.result.workspaces[]')
   count="$(printf '%s' "$matches" | jq length)"
+  if [ "$count" -gt 1 ]; then
+   # A project normally has AI and CLI shells after the agent exits. Select
+   # only a single-pane AI tab; directory equality alone cannot choose one.
+   local ai_matches='[]' tab_info
+   while IFS= read -r candidate; do
+    tab_info="$(_eas_herdr tab list --workspace "$(printf '%s' "$candidate" | jq -r '.workspace_id')")" || return 69
+    if printf '%s' "$tab_info" | jq -e --arg tab "$(printf '%s' "$candidate" | jq -r '.tab_id // empty')" '.result.tabs | any(.[]; .tab_id==$tab and .label=="AI" and .pane_count==1)' >/dev/null; then
+     ai_matches="$(printf '%s' "$ai_matches" | jq --argjson p "$candidate" '.+[$p]')" || return 69
+    fi
+   done < <(printf '%s' "$matches" | jq -c '.[]')
+   if [ "$(printf '%s' "$ai_matches" | jq length)" = 1 ]; then
+    matches="$ai_matches"
+    count=1
+   fi
+  fi
   [ "$count" -le 1 ] || { _eas_error 'multiple panes match the project; inspect Herdr explicitly'; return 69; }
   # Inspect both namespaces before allocation. Never retry with a different name
   # after a start failure: the first start may already own a live conversation.
@@ -252,6 +268,10 @@ erect-agent-stack() (
     response="$(_eas_herdr "${create_args[@]}")" || return 69
     pane="$(printf '%s' "$response" | jq -er '.result.root_pane.pane_id')" || return 69
     workspace="$(printf '%s' "$response" | jq -er '.result.workspace.workspace_id')" || return 69
+    created_tab="$(printf '%s' "$response" | jq -er '.result.tab.tab_id')" || return 69
+    # Name the new layout explicitly. Existing workspaces and custom tabs stay
+    # untouched; creating a shell never types into an existing terminal.
+    _eas_herdr tab rename "$created_tab" AI >/dev/null || return 69
    fi
    # Save pending exact resume identity before starting. Failed starts are never
    # interpreted as permission for an automatic fresh launch on the next run.
@@ -271,6 +291,9 @@ erect-agent-stack() (
      _eas_error "resume identity mismatch in $pane; inspect it before proceeding"
      return 69
     fi
+   fi
+   if [ -n "$created_tab" ]; then
+    _eas_herdr tab create --workspace "$workspace" --cwd "$dir" --label CLI --no-focus >/dev/null || return 69
    fi
   fi
  fi

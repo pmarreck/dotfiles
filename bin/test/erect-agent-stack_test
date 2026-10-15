@@ -64,6 +64,8 @@ check jq -se 'any(.[]; .[0:2]==["workspace","create"] and index("--no-focus")!=n
 check jq -se 'any(.[]; .[0:2]==["agent","start"] and index("wNEW:p7")!=null and index("--dangerously-bypass-approvals-and-sandbox")!=null)' "$tmp/calls"
 check grep -q created "$tmp/out"
 check test -d "$ERECT_STATE_DIR"
+check jq -se 'any(.[]; .[0:2]==["tab","rename"] and .[3]=="AI")' "$tmp/calls"
+check jq -se 'any(.[]; .[0:2]==["tab","create"] and .[index("--label")+1]=="CLI" and index("--no-focus")!=null)' "$tmp/calls"
 
 # Auto-resume reads the saved exact identity rather than switching to Claude.
 reset_fixture
@@ -96,6 +98,24 @@ check test "$status" = 0
 check jq -se 'all(.[]; .[0:2]!=["workspace","create"])' "$tmp/calls"
 check jq -se 'any(.[]; .[0:2]==["agent","start"] and index("wOLD:p9")!=null)' "$tmp/calls"
 check grep -q joined-launched "$tmp/out"
+
+# With the standard two-tab layout, resume into AI, not the CLI shell.
+cp "$tmp/panes.json" "$tmp/single-pane.json"
+jq --arg cwd "$EAS_PROJECT" '.result.panes[0].tab_id="wOLD:t1" | .result.panes += [{pane_id:"wOLD:p10",workspace_id:"wOLD",tab_id:"wOLD:t2",cwd:$cwd}]' "$tmp/single-pane.json" > "$tmp/panes.json"
+printf '{"result":{"tabs":[{"tab_id":"wOLD:t1","label":"AI","pane_count":1},{"tab_id":"wOLD:t2","label":"CLI","pane_count":1}]}}\n' > "$tmp/tabs.json"
+: > "$tmp/calls"
+run --fresh --agent codex --no-attach "$EAS_PROJECT"
+check test "$status" = 0
+check jq -se 'any(.[]; .[0:2]==["agent","start"] and index("wOLD:p9")!=null)' "$tmp/calls"
+check jq -se 'all(.[]; .[0:2]!=["workspace","create"] and .[0:2]!=["tab","create"])' "$tmp/calls"
+# Multiple AI candidates are still ambiguous.
+jq '.result.tabs[1].label="AI"' "$tmp/tabs.json" > "$tmp/ambiguous-tabs.json"
+mv "$tmp/ambiguous-tabs.json" "$tmp/tabs.json"
+: > "$tmp/calls"
+run --fresh --agent codex "$EAS_PROJECT"
+check test "$status" = 69
+check calls_are_readonly
+cp "$tmp/single-pane.json" "$tmp/panes.json"
 
 # An editor in an agentless pane must not receive a shell command.
 printf '{"result":{"process_info":{"shell_pid":10,"foreground_process_group_id":22,"foreground_processes":[{"pid":22,"name":"vim"}]}}}\n' > "$tmp/process.json"
