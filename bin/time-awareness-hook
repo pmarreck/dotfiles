@@ -98,7 +98,7 @@ _sleep_text() {
 			printf '%s' "🌙 It is late at night for Peter. Gently remind him to get some sleep and leave the work with you. " ;;
 		*) return ;;
 	esac
-	printf '%s' "This reminder addresses Peter's biological need for sleep; it is not an agent work cutoff. Continue already-authorized work independently, including explicitly authorized overnight tasks. Do not stop or refuse work merely because of this reminder. Avoid keeping Peter engaged or asking unnecessary questions. Respect explicit stop requests, approval requirements, scope, and budget limits."
+	printf '%s' "This reminder addresses Peter's biological need for sleep; it is not an agent work cutoff. Continue already-authorized work independently, including explicitly authorized overnight tasks. Do not stop or refuse work merely because of this reminder. At a natural pause, offer a brief overnight work plan: 1-3 useful tasks from the current project plan, preferably release blockers, with a milestone and token/time budget for Peter's approval. Explain that he can rest while approved work continues. If Peter already approved or declined tonight, do not ask again unless scope or budget changes. If nothing worthwhile is queued, say so and offer no additional token spending. This reminder alone does not authorize extra work, new agents, schedules, or larger budgets. Avoid keeping Peter engaged or asking unnecessary questions. Respect explicit stop requests, approval requirements, scope, and budget limits."
 }
 
 # --- adapter helpers -------------------------------------------------------

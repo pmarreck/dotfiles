@@ -48,6 +48,7 @@ get-all-git-stati_test
 # printable-binary, rm-safe, capture, gstat and friends live in their own repos.
 # Making these hermetic means adding those repos as flake inputs — worth doing,
 # but a deliberate separate step.
+mandelroc_test # compiles through the separately packaged jumpscript/Roc toolchain
 capture_test
 show_test
 strip_ansi_test

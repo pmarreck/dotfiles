@@ -16,9 +16,23 @@ if ! command -v tmux >/dev/null 2>&1; then
 	exit 1
 fi
 
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+test_home="$(mktemp -d --tmpdir terminal_config_test.XXXXXX)"
 socket="terminal_config_test_$$"
 tm() { tmux -L "${socket}" "$@"; }
-trap 'tm kill-server 2>/dev/null' EXIT
+cleanup() {
+	tm kill-server 2>/dev/null || :
+	rm -rf -- "${test_home}"
+}
+trap cleanup EXIT
+
+# Exercise the checkout through the same links install_dotfiles creates, without
+# depending on or modifying the caller's live home directory.
+ln -s "${repo_root}" "${test_home}/dotfiles"
+ln -s "${repo_root}/bin" "${test_home}/bin"
+for dotfile in .aliases .bash_profile .bashrc .envconfig .pathconfig .profile; do
+	ln -s "dotfiles/${dotfile}" "${test_home}/${dotfile}"
+done
 
 # Seconds to wait for a shell to finish its probes before failing.
 probe_timeout=60
@@ -31,7 +45,10 @@ probe_shell() {
 	local session="$1"
 	shift
 	local channel="${session}_done"
-	tm new-session -d -s "${session}" -x 200 -y 50 env "$@" bash --login
+	tm new-session -d -s "${session}" -x 200 -y 50 \
+		env -i HOME="${test_home}" PATH="${PATH}" TMPDIR="${TMPDIR:-/tmp}" \
+			SKIP_COMPLEX_SHELL_SETUP=false ENABLE_COMPLEX_HOOKS=false \
+			"$@" "$(command -v bash)" --login
 	tm send-keys -t "${session}" 'echo "PS0_$([[ -n "${PS0:-}" ]] && echo PRESENT || echo MISSING)"' C-m
 	tm send-keys -t "${session}" 'echo "PROMPT_$([[ "${PROMPT_COMMAND:-}" == *__bp_* ]] && echo NORMALIZED || echo RAW)"' C-m
 	tm send-keys -t "${session}" "tmux -L ${socket} wait-for -S ${channel}" C-m

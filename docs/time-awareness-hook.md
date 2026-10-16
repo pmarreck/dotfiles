@@ -104,6 +104,18 @@ alone is never grounds for stopping or refusing work. Explicit stop requests,
 approval requirements, task scope and budget limits still apply. The old
 `refuse` classifier and contradictory work-cutoff wording have been removed.
 
+On 2026-10-13, the BDFN (Benevolent Dictator For Now) added an overnight-work
+offer. At a natural pause, the agent should propose one to three useful tasks
+from the current project plan,
+preferably release blockers, with a milestone and token/time budget for approval.
+The offer gives BDFN a concrete way to leave work with the agent and go to bed.
+If he already approved or declined that night, do not repeat the question unless
+scope or budget changes. If nothing worthwhile is queued, say so and offer no
+additional token spending. The reminder itself grants no new work, agent launch,
+schedule, or budget authority; previously authorized work continues within its
+existing boundaries. Approval and a bounded commitment matter more than filling
+the night with activity.
+
 Two details that are easy to get wrong:
 
 1. **The window wraps midnight**, so it is expressed as "NOT the daytime range"
@@ -135,6 +147,12 @@ Codex uses the same script through `~/.codex/hooks/time-awareness.sh`, which
 normalizes Codex's field names and points `TIMESTAMP_HOOK_STATE_DIR` at a
 separate directory so the two agents' cadences don't interfere. One change to the
 script therefore reaches every agent.
+
+The sleep-window regression parses actual emitted JSON for both configured hook
+events at every hour from 22 through 04. It checks the offer, milestone/budget,
+decline and no-work paths, continued authorized progress, and unchanged event
+identity. These tests establish what instructions the hook emits, not that a
+particular language model will always follow those instructions.
 
 ## 5. Implement it (3 steps)
 
