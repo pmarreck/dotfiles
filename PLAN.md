@@ -5,7 +5,8 @@
 - [x] `--unzip` downloads each URL resumably (`wget -c` / `curl -C -`), extracts it with bsdtar, then trashes the archive via rm-safe; failures keep the archive for a rerun. Plain-mode curl fallback now resumes too. Completed 2026-10-22 19:00 EDT.
 - [x] Refuse to extract over existing files unless `--overwrite`/`--yes`/`-y` is given; check the archive listing before writing anything, so a refusal changes nothing. Completed 2026-10-22 19:10 EDT.
 - [x] Extract with GNU tar (`gtar` on macOS) and Info-ZIP `unzip` on both OSes instead of bsdtar; pick the tool by the archive's magic bytes. `getfile_test` is now hermetic and runs in the Linux Nix check. Completed 2026-10-22 19:10 EDT.
-- [ ] Fix the 5 test files that fail only inside the aarch64-darwin Nix sandbox check: `erect-agent-stack_latest_context_test`, `mandelroc_test`, `repo-maintenance-cli_test`, `shadows_test`, `terminal_config_test` (all pass on the host).
+- [x] Restore `~/.bash_profile` as a symlink: the oMLX installer had replaced it with a copy plus its PATH block. `~/.omlx/bin` is now a `PATH_ADDITIONS` entry in `.pathconfig`; the installer's block stays in `.bash_profile` commented out so its markers remain, and the copy is in `~/.Trash/`. `path_export_policy_test` now ignores full-line comments. Completed 2026-10-22 19:20 EDT.
+- [x] Fix the 5 test files that failed only inside the aarch64-darwin Nix sandbox check. Completed 2026-10-22 19:35 EDT: `shadows` and `repo-maintenance` chose BSD flags or `gtimeout` by OS rather than by what the tools on PATH support; `terminal_config_test` needed a private HOME with this checkout's startup files; the erect-agent-stack fixture referenced a host path outside its root; `mandelroc_test` needs jumpscript and Roc, so it joined NOT_HERMETIC. Sandbox 148/148, host 193/193.
 
 ## Active — nightly LaunchServices prune + siriknowledged disable (2026-10-13)
 

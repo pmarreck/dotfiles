@@ -18,7 +18,20 @@ fi
 
 socket="terminal_config_test_$$"
 tm() { tmux -L "${socket}" "$@"; }
-trap 'tm kill-server 2>/dev/null' EXIT
+
+# The shells run against this checkout's startup files, laid out the way
+# install_dotfiles links them into $HOME, instead of the account's live
+# ~/.bash_profile (which installers can replace with a drifted copy) or a
+# build sandbox's empty HOME.
+repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+test_home="$(mktemp -d "${TMPDIR:-/tmp}/terminal_config_test.XXXXXX")"
+trap 'tm kill-server 2>/dev/null; rm -rf "${test_home}"' EXIT
+ln -s "${repo}" "${test_home}/dotfiles"
+ln -s dotfiles/bin "${test_home}/bin"
+ln -s dotfiles/lib "${test_home}/lib"
+while IFS= read -r dotfile; do
+	ln -s "dotfiles/${dotfile##*/}" "${test_home}/${dotfile##*/}"
+done < <(find "${repo}" -maxdepth 1 -type f -name '.*')
 
 # Seconds to wait for a shell to finish its probes before failing.
 probe_timeout=60
@@ -31,7 +44,7 @@ probe_shell() {
 	local session="$1"
 	shift
 	local channel="${session}_done"
-	tm new-session -d -s "${session}" -x 200 -y 50 env "$@" bash --login
+	tm new-session -d -s "${session}" -x 200 -y 50 env HOME="${test_home}" "$@" bash --login
 	tm send-keys -t "${session}" 'echo "PS0_$([[ -n "${PS0:-}" ]] && echo PRESENT || echo MISSING)"' C-m
 	tm send-keys -t "${session}" 'echo "PROMPT_$([[ "${PROMPT_COMMAND:-}" == *__bp_* ]] && echo NORMALIZED || echo RAW)"' C-m
 	tm send-keys -t "${session}" "tmux -L ${socket} wait-for -S ${channel}" C-m
