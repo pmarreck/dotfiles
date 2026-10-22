@@ -3,8 +3,9 @@
 ## Active: resumable `getfile --unzip` (2026-10-22)
 
 - [x] `--unzip` downloads each URL resumably (`wget -c` / `curl -C -`), extracts it with bsdtar, then trashes the archive via rm-safe; failures keep the archive for a rerun. Plain-mode curl fallback now resumes too. Completed 2026-10-22 19:00 EDT.
-- [ ] Refuse to extract over existing files unless `--overwrite`/`--yes`/`-y` is given; check the archive listing before writing anything, so a refusal changes nothing.
-  Curiosity poke: an existing directory where the archive has a directory entry is not a conflict; a symlink, or a file where the archive has a directory, is.
+- [x] Refuse to extract over existing files unless `--overwrite`/`--yes`/`-y` is given; check the archive listing before writing anything, so a refusal changes nothing. Completed 2026-10-22 19:10 EDT.
+- [x] Extract with GNU tar (`gtar` on macOS) and Info-ZIP `unzip` on both OSes instead of bsdtar; pick the tool by the archive's magic bytes. `getfile_test` is now hermetic and runs in the Linux Nix check. Completed 2026-10-22 19:10 EDT.
+- [ ] Fix the 5 test files that fail only inside the aarch64-darwin Nix sandbox check: `erect-agent-stack_latest_context_test`, `mandelroc_test`, `repo-maintenance-cli_test`, `shadows_test`, `terminal_config_test` (all pass on the host).
 
 ## Active — nightly LaunchServices prune + siriknowledged disable (2026-10-13)
 

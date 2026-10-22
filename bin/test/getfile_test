@@ -13,11 +13,8 @@ trap 'rm -rf "$tmpdir"' EXIT
 # fixture://NAME from $GETFILE_FIXTURE_DIR to the -O/-o path (or ./NAME).
 # fixture://fail/NAME writes a partial file and exits non-zero.
 fixture_dir="$tmpdir/download-fixtures"
-wget_bin="$tmpdir/wget-bin"
-curl_bin="$tmpdir/curl-bin"
-mkdir -p "$fixture_dir" "$wget_bin" "$curl_bin"
-mock_downloader='#!/usr/bin/env bash
-printf "%s\n" "$*" >> "${DOWNLOADER_LOG:-/dev/null}"
+mkdir -p "$fixture_dir"
+mock_downloader='printf "%s\n" "$*" >> "${DOWNLOADER_LOG:-/dev/null}"
 out=""
 prev=""
 for arg in "$@"; do
@@ -38,36 +35,81 @@ case "$file" in
 esac
 file="${file%%\?*}"
 cp "$GETFILE_FIXTURE_DIR/$file" "${out:-./$file}"'
-printf '%s\n' "$mock_downloader" > "$wget_bin/wget"
-printf '%s\n' "$mock_downloader" > "$curl_bin/curl"
-notrash_bin="$tmpdir/notrash-bin"
-mkdir -p "$notrash_bin"
-cp "$wget_bin/wget" "$notrash_bin/wget"
 # Trash adapter: records what was trashed and moves it aside, never into the real Trash.
-mock_trash='#!/usr/bin/env bash
-for f in "$@"; do
+mock_trash='for f in "$@"; do
 	printf "%s\n" "$f" >> "${TRASH_LOG:?}"
 	mv -- "$f" "${TRASH_DIR:?}/"
 done'
-printf '%s\n' "$mock_trash" > "$wget_bin/rm-safe"
-printf '%s\n' "$mock_trash" > "$curl_bin/rm-safe"
-chmod +x "$wget_bin/wget" "$wget_bin/rm-safe" "$curl_bin/curl" "$curl_bin/rm-safe" "$notrash_bin/wget"
+
+# write_mock PATH BODY : the shebang names this bash directly, because the Linux
+# Nix sandbox has no /usr/bin/env and patchShebangs never sees runtime mocks.
+write_mock() {
+	printf '#!%s\n%s\n' "$BASH" "$2" > "$1"
+	chmod +x "$1"
+}
+
+# link_tool DIR NAME [HOST_PATH] : expose one host tool inside a hermetic PATH dir.
+link_tool() {
+	ln -s "${3:-$(type -P "$2")}" "$1/$2"
+}
+
+# getfile extracts with GNU tar (named gtar on macOS, tar on Linux) and Info-ZIP
+# unzip; every --unzip case below depends on them, so their absence fails the run.
+gnu_tar=""
+for candidate in gtar tar; do
+	candidate_path=$(type -P "$candidate") || continue
+	if "$candidate_path" --version 2>/dev/null | grep -q 'GNU tar'; then
+		gnu_tar="$candidate_path"
+		break
+	fi
+done
+if [ -z "$gnu_tar" ] || ! type -P unzip gzip zip >/dev/null; then
+	echo "✗ GNU tar (as gtar or tar), unzip, zip and gzip are required to run these tests" >&2
+	exit 1
+fi
+
 # Each case runs with PATH set to one of these dirs alone, so the host's real
 # wget, curl and rm-safe (which would use the real Trash) are never reachable.
-for bin in "$wget_bin" "$curl_bin" "$notrash_bin"; do
-	for tool in bash bsdtar cp mv rm; do
-		ln -s "$(type -P "$tool")" "$bin/$tool"
+# wget_bin has the Linux layout (GNU tar as tar); macos_bin has the macOS layout,
+# where tar is bsdtar (a decoy here) and GNU tar is gtar.
+wget_bin="$tmpdir/wget-bin"
+curl_bin="$tmpdir/curl-bin"
+notrash_bin="$tmpdir/notrash-bin"
+macos_bin="$tmpdir/macos-bin"
+for bin in "$wget_bin" "$curl_bin" "$notrash_bin" "$macos_bin"; do
+	mkdir -p "$bin"
+	for tool in bash cp mv rm unzip gzip; do
+		link_tool "$bin" "$tool"
 	done
+done
+for bin in "$wget_bin" "$curl_bin" "$notrash_bin"; do
+	link_tool "$bin" tar "$gnu_tar"
+done
+link_tool "$macos_bin" gtar "$gnu_tar"
+write_mock "$macos_bin/tar" 'echo "decoy non-GNU tar invoked" >&2; exit 99'
+write_mock "$wget_bin/wget" "$mock_downloader"
+write_mock "$curl_bin/curl" "$mock_downloader"
+write_mock "$notrash_bin/wget" "$mock_downloader"
+write_mock "$macos_bin/wget" "$mock_downloader"
+for bin in "$wget_bin" "$curl_bin" "$macos_bin"; do
+	write_mock "$bin/rm-safe" "$mock_trash"
 done
 
 echo "hello from getfile test" > "$tmpdir/testfile.txt"
-(cd "$tmpdir" && bsdtar --format zip -cf "$fixture_dir/test.zip" testfile.txt)
+(cd "$tmpdir" && zip -q "$fixture_dir/test.zip" testfile.txt)
 echo "file_a" > "$tmpdir/a.txt"
 echo "file_b" > "$tmpdir/b.txt"
 (cd "$tmpdir" &&
-	bsdtar --format zip -cf "$fixture_dir/a.zip" a.txt &&
-	bsdtar --format zip -cf "$fixture_dir/b.zip" b.txt)
+	zip -q "$fixture_dir/a.zip" a.txt &&
+	zip -q "$fixture_dir/b.zip" b.txt)
 printf 'this is not an archive' > "$fixture_dir/corrupt.zip"
+# tree.zip lists "sub/", "sub/f.txt", "top.txt"; tree.tgz lists the same with "./" prefixes.
+mkdir -p "$tmpdir/tree/sub"
+echo "new f" > "$tmpdir/tree/sub/f.txt"
+echo "new top" > "$tmpdir/tree/top.txt"
+(cd "$tmpdir/tree" &&
+	zip -qr "$fixture_dir/tree.zip" sub top.txt &&
+	"$gnu_tar" -czf "$fixture_dir/tree.tgz" .)
 
 # run_case NAME PATH_DIR ARGS... : runs getfile in a fresh dir $tmpdir/NAME,
 # capturing status/stderr into case_status/case_err.
@@ -110,6 +152,18 @@ unzip_wget_ok() {
 }
 check "--unzip resumes via wget -c, extracts to cwd and trashes the archive" unzip_wget_ok
 
+# Tarballs go to GNU tar; on macOS that is gtar, never the bsdtar named tar.
+for layout in wget_bin macos_bin; do
+	run_case "tgz_$layout" "${!layout}" --unzip "fixture://tree.tgz"
+	tgz_ok() {
+		[ "$case_status" -eq 0 ] &&
+			[ "$(<"$case_dir/top.txt")" = "new top" ] &&
+			[ "$(<"$case_dir/sub/f.txt")" = "new f" ] &&
+			[ "$(<"$case_dir.trash.log")" = "tree.tgz" ] &&
+			[[ "$case_err" != *decoy* ]]
+	}
+	check "--unzip extracts a .tgz with GNU tar ($layout layout)" tgz_ok
+done
 # --unzip without wget uses curl's resume.
 run_case unzip_curl "$curl_bin" --unzip "fixture://test.zip"
 unzip_curl_ok() {
@@ -198,6 +252,75 @@ unzip_notrash_ok() {
 		[[ "$case_err" == *"getfile: rm-safe unavailable; kept test.zip"* ]]
 }
 check "--unzip keeps the archive when rm-safe is unavailable" unzip_notrash_ok
+
+# seed_case NAME : pre-populates $tmpdir/NAME with an old top.txt.
+seed_case() {
+	mkdir -p "$tmpdir/$1"
+	echo "old top" > "$tmpdir/$1/top.txt"
+}
+
+# An existing file blocks the whole archive: nothing is written, the archive is kept.
+for fixture in tree.zip tree.tgz; do
+	seed_case "conflict_${fixture%%.*}_${fixture##*.}"
+	run_case "conflict_${fixture%%.*}_${fixture##*.}" "$wget_bin" --unzip "fixture://$fixture"
+	conflict_ok() {
+		[ "$case_status" -ne 0 ] &&
+			[ "$(<"$case_dir/top.txt")" = "old top" ] &&
+			[ ! -e "$case_dir/sub" ] &&
+			[ -f "$case_dir/$fixture" ] &&
+			[ ! -s "$case_dir.trash.log" ] &&
+			[[ "$case_err" == *"top.txt"* ]] &&
+			[[ "$case_err" == *"--overwrite"* ]]
+	}
+	check "--unzip refuses to extract $fixture over an existing file and writes nothing" conflict_ok
+done
+
+# Each overwrite spelling replaces existing files and trashes the archive.
+for spec in --overwrite:tree.zip --yes:tree.zip -y:tree.zip --overwrite:tree.tgz; do
+	flag="${spec%%:*}"
+	fixture="${spec#*:}"
+	seed_case "overwrite${flag}_$fixture"
+	run_case "overwrite${flag}_$fixture" "$wget_bin" --unzip "$flag" "fixture://$fixture"
+	overwrite_ok() {
+		[ "$case_status" -eq 0 ] &&
+			[ "$(<"$case_dir/top.txt")" = "new top" ] &&
+			[ "$(<"$case_dir/sub/f.txt")" = "new f" ] &&
+			[ "$(<"$case_dir.trash.log")" = "$fixture" ]
+	}
+	check "--unzip $flag overwrites existing files from $fixture" overwrite_ok
+done
+
+# Conflict classifier over a set of pre-existing paths, for both listing
+# formats (unzip -Z1 and tar -tf): an existing directory where the archive has
+# a directory is fine; a file there, or a symlink anywhere the archive writes,
+# is a conflict.
+for fixture in tree.zip tree.tgz; do
+	tag="${fixture//./_}"
+	mkdir -p "$tmpdir/dir_ok_$tag/sub"
+	run_case "dir_ok_$tag" "$wget_bin" --unzip "fixture://$fixture"
+	dir_ok_ok() {
+		[ "$case_status" -eq 0 ] && [ "$(<"$case_dir/sub/f.txt")" = "new f" ]
+	}
+	check "--unzip merges $fixture into an existing directory it also contains" dir_ok_ok
+
+	mkdir -p "$tmpdir/file_for_dir_$tag"
+	echo "not a dir" > "$tmpdir/file_for_dir_$tag/sub"
+	run_case "file_for_dir_$tag" "$wget_bin" --unzip "fixture://$fixture"
+	file_for_dir_ok() {
+		[ "$case_status" -ne 0 ] && [ "$(<"$case_dir/sub")" = "not a dir" ] && [ ! -e "$case_dir/top.txt" ] &&
+			[[ "$case_err" == *"would overwrite"* ]]
+	}
+	check "--unzip treats a file where $fixture has a directory as a conflict" file_for_dir_ok
+
+	mkdir -p "$tmpdir/symlink_conflict_$tag"
+	ln -s "$tmpdir/nowhere" "$tmpdir/symlink_conflict_$tag/top.txt"
+	run_case "symlink_conflict_$tag" "$wget_bin" --unzip "fixture://$fixture"
+	symlink_conflict_ok() {
+		[ "$case_status" -ne 0 ] && [ -L "$case_dir/top.txt" ] && [ ! -e "$case_dir/sub" ] &&
+			[[ "$case_err" == *"would overwrite"* ]]
+	}
+	check "--unzip treats a dangling symlink at a $fixture path as a conflict" symlink_conflict_ok
+done
 
 # Plain mode: curl fallback resumes too.
 echo "normal content" > "$fixture_dir/normalfile.txt"
