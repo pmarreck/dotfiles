@@ -42,7 +42,7 @@ lsregister_prune_dead_test() {
 
   # Fake lsregister records each -u argument, one per line.
   cat > "$tmpdir/fake-lsregister" <<EOF
-#!/usr/bin/env bash
+#!$BASH
 [ "\$1" = "-u" ] && printf '%s\n' "\$2" >> "$tmpdir/unregistered.txt"
 exit 0
 EOF
@@ -71,7 +71,7 @@ EOF
   ((fails+=$?))
 
   # A failing unregister is reported and makes the run exit nonzero.
-  printf '#!/usr/bin/env bash\nexit 1\n' > "$tmpdir/fake-lsregister"
+  printf '#!%s\nexit 1\n' "$BASH" > "$tmpdir/fake-lsregister"
   out=$(LSREGISTER_PRUNE_DEAD_DUMP_FILE="$tmpdir/dump.txt" LSREGISTER_PRUNE_DEAD_LSREGISTER="$tmpdir/fake-lsregister" lsregister-prune-dead 2>&1)
   status=$?
   assert "$status" == "1" "unregister failures should exit 1"
