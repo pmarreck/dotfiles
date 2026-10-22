@@ -1,5 +1,11 @@
 # dotfiles — TODO / Plans
 
+## Active: resumable `getfile --unzip` (2026-10-22)
+
+- [x] `--unzip` downloads each URL resumably (`wget -c` / `curl -C -`), extracts it with bsdtar, then trashes the archive via rm-safe; failures keep the archive for a rerun. Plain-mode curl fallback now resumes too. Completed 2026-10-22 19:00 EDT.
+- [ ] Refuse to extract over existing files unless `--overwrite`/`--yes`/`-y` is given; check the archive listing before writing anything, so a refusal changes nothing.
+  Curiosity poke: an existing directory where the archive has a directory entry is not a conflict; a symlink, or a file where the archive has a directory, is.
+
 ## Active — nightly LaunchServices prune + siriknowledged disable (2026-10-13)
 
 - [x] Add `bin/lsregister-prune-dead` with a set-classifier test: unregister registrations whose bundle path is gone; keep live ones and anything on an unmounted `/Volumes/<name>`.

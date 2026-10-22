@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Tests for getfile --unzip feature
+# Tests for getfile, including --unzip (resumable download, extract, trash archive)
 # shellcheck disable=SC2016 # Mock scripts intentionally expand in their child processes.
+# shellcheck disable=SC2329 # *_ok predicates are invoked indirectly through check.
 
 tests=0
 fails=0
@@ -8,110 +9,213 @@ fails=0
 tmpdir=$(mktemp -d --tmpdir getfile_test.XXXXXX)
 trap 'rm -rf "$tmpdir"' EXIT
 
-# Test 1: --unzip meters the streamed compressed bytes using the response's
-# Content-Length, without staging the archive on disk. Every dependency is
-# mocked, but getfile itself is executed through PATH.
-((tests++))
-payload='streamed progress payload'
-payload_size=$(printf '%s' "$payload" | wc -c | tr -d ' ')
-total_size=$((payload_size * 2))
-mock_bin="$tmpdir/mock-bin"
-pv_log="$tmpdir/pv.log"
-extracted_stream="$tmpdir/extracted-stream"
-mkdir -p "$mock_bin"
-printf '%s\n' \
-	'#!/usr/bin/env bash' \
-	'printf "%s" "${MOCK_HEADERS:?}"' > "$mock_bin/curl"
-printf '%s\n' \
-	'#!/usr/bin/env bash' \
-	'printf "%s" "${MOCK_PAYLOAD:?}"' > "$mock_bin/wget"
-printf '%s\n' \
-	'#!/usr/bin/env bash' \
-	'printf "%s\n" "$*" >> "${PV_LOG:?}"' \
-	'cat' > "$mock_bin/pv"
-printf '%s\n' \
-	'#!/usr/bin/env bash' \
-	'cat >> "${EXTRACTED_STREAM:?}"' > "$mock_bin/bsdtar"
-chmod +x "$mock_bin/curl" "$mock_bin/wget" "$mock_bin/pv" "$mock_bin/bsdtar"
-known_length_headers=$(printf 'HTTP/1.1 200 OK\r\nContent-Length: %s\r\n\r\n' "$payload_size")
-if PATH="$mock_bin:$PATH" MOCK_HEADERS="$known_length_headers" MOCK_PAYLOAD="$payload" \
-	PV_LOG="$pv_log" EXTRACTED_STREAM="$extracted_stream" getfile --unzip 'mock://archive-a.zip' 'mock://archive-b.zip' 2>/dev/null; then
-	pv_calls=0
-	pv_args=""
-	if [ -f "$pv_log" ]; then
-		pv_calls=$(awk 'END { print NR }' "$pv_log")
-		pv_args=$(<"$pv_log")
-	fi
-	if [[ "$(<"$extracted_stream")" == "${payload}${payload}" && "$pv_calls" -ge 3 && \
-		"$pv_args" == *"-s $payload_size"* && "$pv_args" == *"-s $total_size"* ]]; then
-		echo "✓ --unzip meters per-archive and aggregate streamed bytes"
+# Deterministic downloader adapters. Each records its argv, then serves
+# fixture://NAME from $GETFILE_FIXTURE_DIR to the -O/-o path (or ./NAME).
+# fixture://fail/NAME writes a partial file and exits non-zero.
+fixture_dir="$tmpdir/download-fixtures"
+wget_bin="$tmpdir/wget-bin"
+curl_bin="$tmpdir/curl-bin"
+mkdir -p "$fixture_dir" "$wget_bin" "$curl_bin"
+mock_downloader='#!/usr/bin/env bash
+printf "%s\n" "$*" >> "${DOWNLOADER_LOG:-/dev/null}"
+out=""
+prev=""
+for arg in "$@"; do
+	case "$prev" in -O|-o) out="$arg" ;; esac
+	prev="$arg"
+done
+url="${*: -1}"
+file="${url#fixture://}"
+case "$file" in
+	fail/*)
+		printf "partial" > "${out:-./${file#fail/}}"
+		exit 4
+		;;
+	missing/*)
+		: > "${out:-./${file#missing/}}"
+		exit 8
+		;;
+esac
+file="${file%%\?*}"
+cp "$GETFILE_FIXTURE_DIR/$file" "${out:-./$file}"'
+printf '%s\n' "$mock_downloader" > "$wget_bin/wget"
+printf '%s\n' "$mock_downloader" > "$curl_bin/curl"
+notrash_bin="$tmpdir/notrash-bin"
+mkdir -p "$notrash_bin"
+cp "$wget_bin/wget" "$notrash_bin/wget"
+# Trash adapter: records what was trashed and moves it aside, never into the real Trash.
+mock_trash='#!/usr/bin/env bash
+for f in "$@"; do
+	printf "%s\n" "$f" >> "${TRASH_LOG:?}"
+	mv -- "$f" "${TRASH_DIR:?}/"
+done'
+printf '%s\n' "$mock_trash" > "$wget_bin/rm-safe"
+printf '%s\n' "$mock_trash" > "$curl_bin/rm-safe"
+chmod +x "$wget_bin/wget" "$wget_bin/rm-safe" "$curl_bin/curl" "$curl_bin/rm-safe" "$notrash_bin/wget"
+# Each case runs with PATH set to one of these dirs alone, so the host's real
+# wget, curl and rm-safe (which would use the real Trash) are never reachable.
+for bin in "$wget_bin" "$curl_bin" "$notrash_bin"; do
+	for tool in bash bsdtar cp mv rm; do
+		ln -s "$(type -P "$tool")" "$bin/$tool"
+	done
+done
+
+echo "hello from getfile test" > "$tmpdir/testfile.txt"
+(cd "$tmpdir" && bsdtar --format zip -cf "$fixture_dir/test.zip" testfile.txt)
+echo "file_a" > "$tmpdir/a.txt"
+echo "file_b" > "$tmpdir/b.txt"
+(cd "$tmpdir" &&
+	bsdtar --format zip -cf "$fixture_dir/a.zip" a.txt &&
+	bsdtar --format zip -cf "$fixture_dir/b.zip" b.txt)
+printf 'this is not an archive' > "$fixture_dir/corrupt.zip"
+
+# run_case NAME PATH_DIR ARGS... : runs getfile in a fresh dir $tmpdir/NAME,
+# capturing status/stderr into case_status/case_err.
+run_case() {
+	local name="$1" bin="$2"
+	shift 2
+	case_dir="$tmpdir/$name"
+	mkdir -p "$case_dir" "$case_dir.trash"
+	: > "$case_dir.trash.log"
+	: > "$case_dir.dl.log"
+	case_err=$(cd "$case_dir" && PATH="$bin" GETFILE_FIXTURE_DIR="$fixture_dir" \
+		DOWNLOADER_LOG="$case_dir.dl.log" TRASH_LOG="$case_dir.trash.log" TRASH_DIR="$case_dir.trash" \
+		"$HOME/dotfiles/bin/getfile" "$@" 2>&1 >/dev/null)
+	case_status=$?
+}
+
+check() {
+	local description="$1"
+	shift
+	((tests++))
+	if "$@"; then
+		echo "✓ $description"
 	else
-		echo "✗ --unzip should send Content-Length to per-archive and aggregate progress meters" >&2
-		echo "  pv calls: $pv_calls; args: $pv_args" >&2
+		echo "✗ $description" >&2
+		echo "  status: $case_status; stderr: $case_err" >&2
+		echo "  downloader: $(<"$case_dir.dl.log"); trashed: $(<"$case_dir.trash.log")" >&2
 		((fails++))
 	fi
-else
-	echo "✗ --unzip progress path failed" >&2
-	((fails++))
-fi
+}
 
-# Test 2: An omitted Content-Length still gets a per-archive rate meter, but
-# never presents a misleading aggregate ETA.
-((tests++))
-unknown_pv_log="$tmpdir/unknown-pv.log"
-unknown_extracted_stream="$tmpdir/unknown-extracted-stream"
-unknown_headers=$'HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n'
-if PATH="$mock_bin:$PATH" MOCK_HEADERS="$unknown_headers" MOCK_PAYLOAD="$payload" \
-	PV_LOG="$unknown_pv_log" EXTRACTED_STREAM="$unknown_extracted_stream" getfile --unzip 'mock://unknown-a.zip' 'mock://unknown-b.zip' 2>/dev/null; then
-	unknown_pv_calls=$(awk 'END { print NR }' "$unknown_pv_log")
-	unknown_pv_args=$(<"$unknown_pv_log")
-	if [[ "$(<"$unknown_extracted_stream")" == "${payload}${payload}" && "$unknown_pv_calls" == 2 && "$unknown_pv_args" != *'-s '* ]]; then
-		echo "✓ --unzip omits aggregate ETA when Content-Length is unavailable"
-	else
-		echo "✗ --unzip should retain per-archive rate without inventing an aggregate total" >&2
-		echo "  pv calls: $unknown_pv_calls; args: $unknown_pv_args" >&2
-		((fails++))
-	fi
-else
-	echo "✗ --unzip unknown-length progress path failed" >&2
-	((fails++))
-fi
+# --unzip: resumable download to a named file, extract in cwd, trash the archive.
+run_case unzip_wget "$wget_bin" --unzip "fixture://test.zip"
+unzip_wget_ok() {
+	[ "$case_status" -eq 0 ] &&
+		grep -q "hello from getfile test" "$case_dir/testfile.txt" &&
+		[ ! -e "$case_dir/test.zip" ] &&
+		[ "$(<"$case_dir.trash.log")" = "test.zip" ] &&
+		[[ " $(<"$case_dir.dl.log") " == *" -c "* ]] &&
+		[[ " $(<"$case_dir.dl.log") " == *" -O test.zip "* ]]
+}
+check "--unzip resumes via wget -c, extracts to cwd and trashes the archive" unzip_wget_ok
 
-# Test 3: Without pv, keep the archive in the pipe and surface the downloader's
-# own progress UI instead of going silently back to a quiet stream.
-((tests++))
-fallback_bin="$tmpdir/fallback-bin"
-fallback_wget_log="$tmpdir/fallback-wget.log"
-fallback_extracted_stream="$tmpdir/fallback-extracted-stream"
-mkdir -p "$fallback_bin"
-printf '%s\n' \
-	'#!/usr/bin/env bash' \
-	'printf "%s\n" "$*" > "${WGET_LOG:?}"' \
-	'printf "%s" "${MOCK_PAYLOAD:?}"' > "$fallback_bin/wget"
-printf '%s\n' \
-	'#!/usr/bin/env bash' \
-	'cat > "${EXTRACTED_STREAM:?}"' > "$fallback_bin/bsdtar"
-chmod +x "$fallback_bin/wget" "$fallback_bin/bsdtar"
-ln -s "$BASH" "$fallback_bin/bash"
-ln -s "$(type -P cat)" "$fallback_bin/cat"
-fallback_output=$(PATH="$fallback_bin:/usr/bin:/bin" WGET_LOG="$fallback_wget_log" MOCK_PAYLOAD="$payload" \
-	EXTRACTED_STREAM="$fallback_extracted_stream" "$HOME/dotfiles/bin/getfile" --unzip 'mock://fallback.zip' 2>&1)
-fallback_status=$?
-if [ "$fallback_status" -eq 0 ]; then
-	if [[ "$(<"$fallback_extracted_stream")" == "$payload" && "$(<"$fallback_wget_log")" == *'--progress=bar'* ]]; then
-		echo "✓ --unzip falls back to downloader progress without pv"
-	else
-		echo "✗ --unzip should keep downloader progress when pv is unavailable" >&2
-		echo "  wget args: $(<"$fallback_wget_log")" >&2
-		((fails++))
-	fi
-else
-	echo "✗ --unzip fallback progress path failed" >&2
-	echo "  Status: $fallback_status; output: $fallback_output" >&2
-	((fails++))
-fi
+# --unzip without wget uses curl's resume.
+run_case unzip_curl "$curl_bin" --unzip "fixture://test.zip"
+unzip_curl_ok() {
+	[ "$case_status" -eq 0 ] &&
+		grep -q "hello from getfile test" "$case_dir/testfile.txt" &&
+		[ "$(<"$case_dir.trash.log")" = "test.zip" ] &&
+		[[ " $(<"$case_dir.dl.log") " == *" -C - "* ]] &&
+		[[ " $(<"$case_dir.dl.log") " == *" -o test.zip "* ]]
+}
+check "--unzip falls back to curl -C - when wget is unavailable" unzip_curl_ok
 
-# Test 2: --help mentions --unzip
+# A query string is not part of the saved archive name.
+run_case unzip_query "$wget_bin" --unzip "fixture://test.zip?token=abc"
+unzip_query_ok() {
+	[ "$case_status" -eq 0 ] &&
+		[ -f "$case_dir/testfile.txt" ] &&
+		[ "$(<"$case_dir.trash.log")" = "test.zip" ]
+}
+check "--unzip strips the query string from the archive filename" unzip_query_ok
+
+# Multiple archives are each downloaded, extracted and trashed.
+run_case unzip_multi "$wget_bin" --unzip "fixture://a.zip" "fixture://b.zip"
+unzip_multi_ok() {
+	[ "$case_status" -eq 0 ] &&
+		[ -f "$case_dir/a.txt" ] && [ -f "$case_dir/b.txt" ] &&
+		[ "$(<"$case_dir.trash.log")" = $'a.zip\nb.zip' ]
+}
+check "--unzip handles multiple URLs" unzip_multi_ok
+
+# A failed extraction keeps the archive, keeps going, and fails the run.
+run_case unzip_corrupt "$wget_bin" --unzip "fixture://corrupt.zip" "fixture://a.zip"
+unzip_corrupt_ok() {
+	[ "$case_status" -ne 0 ] &&
+		[ -f "$case_dir/corrupt.zip" ] &&
+		[ -f "$case_dir/a.txt" ] &&
+		[ "$(<"$case_dir.trash.log")" = "a.zip" ] &&
+		[[ "$case_err" == *"getfile: failed to extract corrupt.zip; archive kept"* ]]
+}
+check "--unzip keeps an archive that fails to extract and exits non-zero" unzip_corrupt_ok
+
+# A failed download keeps the partial file for a later resume and skips extraction.
+run_case unzip_dlfail "$wget_bin" --unzip "fixture://fail/test.zip"
+unzip_dlfail_ok() {
+	[ "$case_status" -ne 0 ] &&
+		[ "$(<"$case_dir/test.zip")" = "partial" ] &&
+		[ ! -s "$case_dir.trash.log" ] &&
+		[[ "$case_err" == *"getfile: download of test.zip incomplete; rerun to resume"* ]]
+}
+check "--unzip keeps a partial download for resume and skips extraction" unzip_dlfail_ok
+
+# A server error (wget -O leaves an empty file on a 404) removes only that
+# empty file getfile created, and does not promise a resume.
+run_case unzip_404 "$wget_bin" --unzip "fixture://missing/test.zip"
+unzip_404_ok() {
+	[ "$case_status" -ne 0 ] &&
+		[ ! -e "$case_dir/test.zip" ] &&
+		[[ "$case_err" == *"getfile: download of test.zip failed"* ]] &&
+		[[ "$case_err" != *"resume"* ]]
+}
+check "--unzip removes the empty file a failed request leaves behind" unzip_404_ok
+
+# A pre-existing empty file is the user's, so it is never removed.
+mkdir -p "$tmpdir/unzip_404_existing"
+: > "$tmpdir/unzip_404_existing/test.zip"
+run_case unzip_404_existing "$wget_bin" --unzip "fixture://missing/test.zip"
+unzip_404_existing_ok() {
+	[ "$case_status" -ne 0 ] && [ -e "$case_dir/test.zip" ]
+}
+check "--unzip never removes an empty archive file that existed beforehand" unzip_404_existing_ok
+
+# A URL with no filename component cannot be named, so it is rejected.
+run_case unzip_noname "$wget_bin" --unzip "fixture://dir/"
+unzip_noname_ok() {
+	[ "$case_status" -ne 0 ] &&
+		[ ! -s "$case_dir.dl.log" ] &&
+		[[ "$case_err" == *"getfile: cannot derive an archive filename from fixture://dir/"* ]]
+}
+check "--unzip rejects a URL without a filename" unzip_noname_ok
+
+# Without rm-safe, the archive is left in place rather than hard-deleted.
+run_case unzip_notrash "$notrash_bin" --unzip "fixture://test.zip"
+unzip_notrash_ok() {
+	[ "$case_status" -eq 0 ] &&
+		[ -f "$case_dir/testfile.txt" ] &&
+		[ -f "$case_dir/test.zip" ] &&
+		[[ "$case_err" == *"getfile: rm-safe unavailable; kept test.zip"* ]]
+}
+check "--unzip keeps the archive when rm-safe is unavailable" unzip_notrash_ok
+
+# Plain mode: curl fallback resumes too.
+echo "normal content" > "$fixture_dir/normalfile.txt"
+run_case plain_wget "$wget_bin" "fixture://normalfile.txt"
+plain_wget_ok() {
+	[ "$case_status" -eq 0 ] &&
+		grep -q "normal content" "$case_dir/normalfile.txt" &&
+		[[ " $(<"$case_dir.dl.log") " == *" -c "* ]]
+}
+check "Normal download resumes via wget -c" plain_wget_ok
+
+run_case plain_curl "$curl_bin" "fixture://normalfile.txt"
+plain_curl_ok() {
+	[ "$case_status" -eq 0 ] &&
+		[[ " $(<"$case_dir.dl.log") " == *" -C - "* ]]
+}
+check "Normal download falls back to curl -C -" plain_curl_ok
+
 ((tests++))
 if getfile --help 2>&1 | grep -q -- "--unzip"; then
 	echo "✓ --help mentions --unzip"
@@ -120,91 +224,6 @@ else
 	((fails++))
 fi
 
-# Deterministic downloader adapter for archive integration. The old TCP fixture
-# accepted one request even though --unzip correctly performs HEAD plus GET.
-integration_bin="$tmpdir/integration-bin"
-fixture_dir="$tmpdir/download-fixtures"
-mkdir -p "$integration_bin" "$fixture_dir"
-cat >"$integration_bin/curl" <<'EOF'
-#!/usr/bin/env bash
-url="${*: -1}"
-file="${url#fixture://}"
-size=$(wc -c <"$GETFILE_FIXTURE_DIR/$file")
-printf 'HTTP/1.1 200 OK\r\nContent-Length: %s\r\n\r\n' "$size"
-EOF
-cat >"$integration_bin/wget" <<'EOF'
-#!/usr/bin/env bash
-url="${*: -1}"
-file="${url#fixture://}"
-case " $* " in
-	*" -O - "*)
-		cat "$GETFILE_FIXTURE_DIR/$file"
-		;;
-	*)
-		cp "$GETFILE_FIXTURE_DIR/$file" "./$file"
-		;;
-esac
-EOF
-chmod +x "$integration_bin/curl" "$integration_bin/wget"
-
-# Test 3: --unzip extracts zip contents
-((tests++))
-echo "hello from getfile test" > "$tmpdir/testfile.txt"
-(cd "$tmpdir" && bsdtar --format zip -cf "$fixture_dir/test.zip" testfile.txt)
-mkdir -p "$tmpdir/out_unzip"
-if (cd "$tmpdir/out_unzip" && PATH="$integration_bin:$PATH" \
-	GETFILE_FIXTURE_DIR="$fixture_dir" getfile --unzip "fixture://test.zip" 2>/dev/null); then
-	if [ -f "$tmpdir/out_unzip/testfile.txt" ] && grep -q "hello from getfile test" "$tmpdir/out_unzip/testfile.txt"; then
-		echo "✓ --unzip extracts zip contents to cwd"
-	else
-		echo "✗ --unzip should extract testfile.txt with correct contents" >&2
-		((fails++))
-	fi
-else
-	echo "✗ --unzip command failed" >&2
-	((fails++))
-fi
-
-# Test 4: normal download still works
-((tests++))
-echo "normal content" > "$fixture_dir/normalfile.txt"
-mkdir -p "$tmpdir/out_normal"
-if (cd "$tmpdir/out_normal" && PATH="$integration_bin:$PATH" \
-	GETFILE_FIXTURE_DIR="$fixture_dir" getfile "fixture://normalfile.txt" 2>/dev/null); then
-	if [ -f "$tmpdir/out_normal/normalfile.txt" ] && grep -q "normal content" "$tmpdir/out_normal/normalfile.txt"; then
-		echo "✓ Normal download still works"
-	else
-		echo "✗ Normal download should produce normalfile.txt with correct contents" >&2
-		((fails++))
-	fi
-else
-	echo "✗ Normal download command failed" >&2
-	((fails++))
-fi
-
-# Test 5: --unzip with multiple URLs
-((tests++))
-echo "file_a" > "$tmpdir/a.txt"
-echo "file_b" > "$tmpdir/b.txt"
-(cd "$tmpdir" &&
-	bsdtar --format zip -cf "$fixture_dir/a.zip" a.txt &&
-	bsdtar --format zip -cf "$fixture_dir/b.zip" b.txt)
-mkdir -p "$tmpdir/out_multi"
-if (cd "$tmpdir/out_multi" && PATH="$integration_bin:$PATH" \
-	GETFILE_FIXTURE_DIR="$fixture_dir" getfile --unzip \
-		"fixture://a.zip" "fixture://b.zip" 2>/dev/null); then
-	if [ -f "$tmpdir/out_multi/a.txt" ] && [ -f "$tmpdir/out_multi/b.txt" ]; then
-		echo "✓ --unzip handles multiple URLs"
-	else
-		echo "✗ --unzip with multiple URLs should extract all archives" >&2
-		((fails++))
-	fi
-else
-	echo "✗ --unzip with multiple URLs failed" >&2
-	((fails++))
-fi
-
-# Test 6: runs cleanly when GREP_QUIET is unset in the environment
 # Regression: bash arrays cannot be exported, so child scripts never inherit
 # GREP_QUIET. The old guard `(( ${#GREP_QUIET[@]} ))` itself tripped `set -u`
 # with "unbound variable" before its fallback could run.
