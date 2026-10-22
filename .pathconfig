@@ -112,10 +112,13 @@ PATH_ADDITIONS+=(
 	"$HOME/bin"
 	# Vendor-installed AI agent CLIs, each with its own ~/.<tool>/bin. Declared
 	# here rather than left where their installers put them: they append a raw
-	# `export PATH=...:$PATH` to .bashrc, which lands AFTER this file has built
-	# PATH declaratively and so escapes the ordering and dedup rules entirely.
+	# `export PATH=...:$PATH` to .bashrc or .bash_profile, which lands AFTER this
+	# file has built PATH declaratively and so escapes the ordering and dedup
+	# rules entirely. (The oMLX installer also replaced the ~/.bash_profile
+	# symlink with an edited copy; check for that after running it.)
 	"$HOME/.antigravity/antigravity/bin"
 	"$HOME/.grok/bin"
+	"$HOME/.omlx/bin"
 	# Non-Zig personal projects
 	"$CODE/ixnay/bin"
 	"$CODE/jumpscript/bin"

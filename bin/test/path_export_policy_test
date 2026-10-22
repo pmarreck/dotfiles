@@ -19,8 +19,12 @@ fail() {
 	((fails++))
 }
 
+# A line whose first non-blank character is # is a comment, whatever follows,
+# so a commented-out installer block cannot count as a command.
+comment_line='^[[:space:]]*#'
+
 matches_path_export() {
-	[[ "$1" =~ $pattern ]]
+	[[ ! "$1" =~ $comment_line && "$1" =~ $pattern ]]
 }
 
 # Keep the gate non-vacuous. Build examples in pieces so this test's source is
@@ -34,6 +38,8 @@ positive_cases=(
 )
 negative_cases=(
 	"# $export_word PATH=/tmp:\$PATH"
+	"#   *) $export_word PATH=\"\$HOME/bin:\$PATH\" ;;"
+	"	# ( $export_word PATH=/tmp )"
 	"PATH=/tmp:\$PATH"
 	"$export_word PATHOLOGICAL=/tmp"
 	"printf '%s' '$export_word PATH=/tmp'"
@@ -87,6 +93,7 @@ while IFS= read -r hit; do
 	remainder=${hit#*:}
 	line_number=${remainder%%:*}
 	source_line=${remainder#*:}
+	[[ "$source_line" =~ $comment_line ]] && continue
 	if [[ "$path" == '.pathconfig' && "$source_line" =~ ^[[:space:]]*export[[:space:]]+PATH[[:space:]]*(#.*)?$ ]]; then
 		((allowed_count++))
 	else

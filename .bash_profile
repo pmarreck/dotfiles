@@ -103,3 +103,10 @@ truthy DEBUG_PATHCONFIG && echo "$PATH" || :
 # Added by LM Studio CLI (lms)
 # export PATH="$PATH:/Users/pmarreck/.cache/lm-studio/bin"
 # End of LM Studio CLI section
+# oMLX: CLI shim path begin
+# (moved to PATH_ADDITIONS in .pathconfig; markers kept so the installer sees its block)
+# case ":$PATH:" in
+#   *":$HOME/.omlx/bin:"*) ;;
+#   *) export PATH="$HOME/.omlx/bin:$PATH" ;;
+# esac
+# oMLX: CLI shim path end
