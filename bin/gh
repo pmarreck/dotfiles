@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# Check PR prose before handing it to the real GitHub CLI. Other commands pass through.
+set -u
+script_dir=$(cd -P -- "$(dirname "${BASH_SOURCE[0]}")" && pwd) || exit 2
+real=''
+IFS=: read -r -a search_dirs <<< "$PATH"
+for directory in "${search_dirs[@]}"; do
+	candidate="${directory:-.}/gh"
+	if [[ -f $candidate && -x $candidate && ! $candidate -ef ${BASH_SOURCE[0]} ]]; then real=$candidate; break; fi
+done
+if [[ -z $real ]]; then printf 'gh spelling gate: underlying gh executable not found.\n' >&2; exit 127; fi
+original=("$@")
+prefix=()
+while (( $# )); do
+	case "$1" in
+		-R|--repo|--hostname)
+			if (( $# < 2 )); then exec "$real" "${original[@]}"; fi
+			prefix+=("$1" "$2"); shift 2 ;;
+		--repo=*|--hostname=*|-R?*) prefix+=("$1"); shift ;;
+		*) break ;;
+	esac
+done
+if [[ ${1:-} != pr || ( ${2:-} != create && ${2:-} != new && ${2:-} != edit ) ]]; then exec "$real" "${original[@]}"; fi
+action=$2
+shift 2
+checker="$script_dir/american-english-check"
+if [[ ${ALLOW_BRITISH_ENGLISH+x} ]]; then
+	"$checker" --file /dev/null || exit "$?"
+	exec "$real" "${original[@]}"
+fi
+reject() { printf 'gh spelling gate: %s\n' "$*" >&2; exit 2; }
+args=("${prefix[@]}" pr "$action")
+title='' body='' body_file='' have_title=false have_body=false from_file=false metadata=false
+while (( $# )); do
+	option=$1; shift
+	case "$option" in
+		--help|-h) exec "$real" "${original[@]}" ;;
+		-t|--title|-b|--body|-F|--body-file)
+			(( $# )) || reject "missing value for $option"
+			value=$1; shift ;;
+		--title=*|--body=*|--body-file=*) value=${option#*=}; option=${option%%=*} ;;
+		-t?*) value=${option:2}; option=-t ;;
+		-b?*) value=${option:2}; option=-b ;;
+		-F?*) value=${option:2}; option=-F ;;
+		--fill|--fill-first|--fill-verbose|--editor|--web|--recover|--recover=*|--template|--template=*|--attach|--attach=*|-f|-e|-w|-T|-T?*)
+			reject 'generated, editor, browser and attachment prose cannot be checked before submission; supply explicit --title and --body/--body-file, or use the reason-required ALLOW_BRITISH_ENGLISH override.' ;;
+		-R|--repo|-B|--base|-H|--head|-a|--assignee|-l|--label|-m|--milestone|-p|--project|-r|--reviewer|--add-label|--remove-label|--add-reviewer|--remove-reviewer|--add-assignee|--remove-assignee|--add-project|--remove-project)
+			(( $# )) || reject "missing value for $option"
+			args+=("$option" "$1"); shift; metadata=true; continue ;;
+		--repo=*|--base=*|--head=*|--assignee=*|--label=*|--milestone=*|--project=*|--reviewer=*|--add-label=*|--remove-label=*|--add-reviewer=*|--remove-reviewer=*|--add-assignee=*|--remove-assignee=*|--add-project=*|--remove-project=*|-R?*)
+			args+=("$option"); metadata=true; continue ;;
+		-d|--draft|--no-maintainer-edit|--dry-run|--remove-milestone)
+			args+=("$option"); metadata=true; continue ;;
+		-*) reject "unrecognized PR option $option; use separate documented flags or an explicit override" ;;
+		*) args+=("$option"); continue ;;
+	esac
+	case "$option" in
+		-t|--title)
+			$have_title && reject 'duplicate --title is ambiguous'
+			title=$value; have_title=true; args+=(--title "$value") ;;
+		-b|--body|-F|--body-file)
+			$have_body && reject 'duplicate/conflicting body options are ambiguous'
+			have_body=true
+			if [[ $option == -F || $option == --body-file ]]; then body_file=$value; from_file=true; else body=$value; fi ;;
+	esac
+done
+if [[ $action != edit ]] && { ! $have_title || ! $have_body; }; then
+	reject 'create requires explicit --title and --body/--body-file so final prose can be checked.'
+fi
+if [[ $action == edit ]] && ! $have_title && ! $have_body && ! $metadata; then
+	reject 'interactive editing cannot be checked before submission; provide explicit text options.'
+fi
+umask 077
+work=$(mktemp -d "${TMPDIR:-/tmp}/gh-spelling.XXXXXXXX") || exit 2
+trap 'command rm -rf -- "$work"' EXIT
+if $have_title; then
+	printf '%s' "$title" > "$work/title" || exit 2
+	"$checker" --file "$work/title" --label 'PR title' || exit "$?"
+fi
+if $have_body; then
+	if [[ $body_file == - ]]; then cat > "$work/body" || exit 2
+	elif $from_file; then cat -- "$body_file" > "$work/body" || exit 2
+	else printf '%s' "$body" > "$work/body" || exit 2; fi
+	"$checker" --file "$work/body" --label 'PR body' || exit "$?"
+	# Send the very bytes checked, not a file that could change between check and send.
+	args+=(--body-file "$work/body")
+fi
+"$real" "${args[@]}"
+exit "$?"

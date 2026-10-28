@@ -1,0 +1,182 @@
+#!/usr/bin/env luajit
+-- Source-controlled language policy; inspect staged blobs or one explicit text input.
+local PROGRAM = "american-english-check"
+local directory = arg[0]:match("^(.*)/[^/]+$") or "."
+local scratch
+local scratch_files = {}
+local function quote(s) return "'" .. s:gsub("'", "'\\''") .. "'" end
+local function command(cmd)
+	-- LuaJIT builds differ in whether popen:close reports the child's status.
+	-- The final shell-owned record preserves it even on Lua 5.1-compatible builds.
+	-- `command` also avoids exported interactive functions in a private test HOME.
+	local pipe = assert(io.popen("command " .. cmd .. "; status=$?; printf '\\n__AMERICAN_ENGLISH_STATUS__%s\\n' \"$status\"", "r"), "cannot start command")
+	local output = pipe:read("*a"); pipe:close()
+	local data, status = output:match("^(.*)\n__AMERICAN_ENGLISH_STATUS__(%d+)\n$")
+	assert(data, "missing child exit status")
+	return data, tonumber(status)
+end
+local function checked(cmd)
+	local data, status = command(cmd)
+	assert(status == 0, "command failed while checking content: " .. cmd)
+	return data
+end
+local function read(path)
+	local f = assert(io.open(path, "rb"), "cannot read " .. path)
+	local data = assert(f:read("*a")); f:close(); return data
+end
+local function write(path, data)
+	scratch_files[#scratch_files + 1] = path
+	local f = assert(io.open(path, "wb"), "cannot write private scratch")
+	assert(f:write(data)); assert(f:close())
+end
+local function main()
+	if #arg == 1 and (arg[1] == "--help" or arg[1] == "-h") then
+		io.write("Usage: american-english-check --staged | --file PATH [--label NAME]\n",
+			"Use PATH - for stdin. Reject British variants with American replacements.\n",
+			"ALLOW_BRITISH_ENGLISH requires a specific reason and warns on stderr.\n")
+		return 0
+	end
+	if #arg == 1 and arg[1] == "--about" then
+		local osname = ({Linux="linux", OSX="macos", Windows="mswin"})[jit.os] or jit.os:lower()
+		local arch = ({x64="amd64", arm64="arm64"})[jit.arch] or jit.arch:lower()
+		io.write(PROGRAM .. " 1.0 - rg-backed American English gate; PF=" .. osname .. "-" .. arch .. "\n")
+		return 0
+	end
+	local staged, file, label = false, nil, nil
+	local i = 1
+	while i <= #arg do
+		if arg[i] == "--staged" then staged = true
+		elseif arg[i] == "--file" or arg[i] == "--label" then
+			local option = arg[i]; i = i + 1; assert(arg[i], "missing " .. option .. " value")
+			if option == "--file" then file = arg[i] else label = arg[i] end
+		else error("unknown argument; use --help") end
+		i = i + 1
+	end
+	assert((staged and not file and not label) or (file and not staged), "choose --staged or --file PATH")
+	local override = os.getenv("ALLOW_BRITISH_ENGLISH")
+	if override then
+		local reason = override:match("^%s*(.-)%s*$")
+		assert(#reason >= 12 and reason:find("%s") and not reason:find("[\r\n]"),
+			"ALLOW_BRITISH_ENGLISH requires a specific single-line reason, not 1/true")
+		io.stderr:write(PROGRAM .. ": WARNING: spelling check bypassed; reason: " .. reason .. "\n")
+		return 0
+	end
+	local replacements, patterns = {}, {}
+	for line in read(directory .. "/../share/american-english/british-to-american.tsv"):gmatch("[^\r\n]+") do
+		local from, to = line:match("^([a-z]+)\t([a-z/]+)$")
+		assert(from and not replacements[from], "invalid or duplicate dictionary entry")
+		replacements[from] = to; patterns[#patterns + 1] = from
+	end
+	assert(#patterns > 0, "empty spelling dictionary")
+	scratch = checked("mktemp -d " .. quote((os.getenv("TMPDIR") or "/tmp") .. "/american-english.XXXXXXXX")):gsub("\n$", "")
+	write(scratch .. "/patterns", table.concat(patterns, "\n") .. "\n")
+	local exceptions = {}
+	local files = {}
+	local git_prefix = "git "
+	local function git(args) return checked(git_prefix .. args) end
+	if staged then
+		local root = git("rev-parse --show-toplevel"):gsub("\n$", "")
+		git_prefix = "git -C " .. quote(root) .. " "
+		local entries = {}
+		for entry in git("ls-files --stage -z"):gmatch("([^%z]+)%z") do
+			local mode, hash, stage, path = entry:match("^(%d+) (%x+) (%d+)\t(.*)$")
+			assert(mode, "cannot parse staged entry")
+			assert(stage == "0", "unmerged index; resolve conflicts first")
+			entries[path] = {mode=mode, hash=hash}
+		end
+		local policy = entries[".american-english-allowlist"]
+		if policy then
+			assert(policy.mode == "100644" or policy.mode == "100755", "allowlist must be a regular staged file")
+			local content = git("cat-file blob " .. policy.hash)
+			for line in (content .. "\n"):gmatch("([^\n]*)\n") do
+				line = line:gsub("\r$", "")
+				if line ~= "" and line:sub(1,1) ~= "#" then
+					local path, word, reason = line:match("^([^\t]+)\t([^\t]+)\t([^\t]+)$")
+					assert(path and #reason >= 12 and reason:find("%s"), "invalid staged allowlist; use path<TAB>word or *<TAB>specific reason")
+					assert(path:sub(1,1) ~= "/", "allowlist paths must be repository-relative exact paths")
+					for part in path:gmatch("[^/]+") do assert(part ~= "..", "allowlist path escapes repository") end
+					word = word:lower(); assert(word == "*" or replacements[word], "unknown allowlist word")
+					exceptions[path] = exceptions[path] or {}; exceptions[path][word] = reason
+				end
+			end
+		end
+		for path in git("diff --cached --name-only --diff-filter=ACMRT -z --"):gmatch("([^%z]+)%z") do
+			local entry = assert(entries[path], "missing index entry")
+			if path ~= ".american-english-allowlist" and (entry.mode == "100644" or entry.mode == "100755") then
+				files[#files + 1] = {path=path, hash=entry.hash}
+			end
+		end
+	else
+		files[1] = {path=label or file, data=(file == "-" and io.read("*a") or read(file))}
+		assert(not files[1].data:find("\0", 1, true), "explicit text input contains NUL bytes")
+	end
+	-- Batch object reads and search execution: process startup must not scale with
+	-- the number of staged files. Object sizes frame binary data without delimiters.
+	if staged then
+		local hashes, pending = {}, {}
+		for _, entry in ipairs(files) do
+			if not (exceptions[entry.path] or {})["*"] then
+				hashes[#hashes + 1] = entry.hash; pending[#pending + 1] = entry
+			end
+		end
+		if #hashes > 0 then
+			write(scratch .. "/objects", table.concat(hashes, "\n") .. "\n")
+			local stream = git("cat-file --batch < " .. quote(scratch .. "/objects"))
+			local offset = 1
+			for _, entry in ipairs(pending) do
+				local stop = assert(stream:find("\n", offset, true), "missing Git object header")
+				local hash, size = stream:sub(offset, stop - 1):match("^(%x+) blob (%d+)$")
+				size = tonumber(size); assert(hash == entry.hash and size, "invalid Git object header")
+				entry.data = stream:sub(stop + 1, stop + size)
+				assert(#entry.data == size and stream:sub(stop + size + 1, stop + size + 1) == "\n", "truncated Git object")
+				offset = stop + size + 2
+			end
+			assert(offset == #stream + 1, "unexpected Git object data")
+		end
+	end
+	local count = 0
+	for id, entry in ipairs(files) do
+		local allowed = exceptions[entry.path] or {}
+		if not allowed["*"] then
+			local data = assert(entry.data, "missing file data")
+			if not data:find("\0", 1, true) then
+				-- Split identifier components without altering line numbers. Whole-word rg
+				-- matching then covers snake_case, camelCase and acronym-prefixed names.
+				data = data:gsub("(%l)(%u)", "%1 %2"):gsub("(%u)(%u%l)", "%1 %2"):gsub("_", " ")
+				-- The dictionary is ASCII. Normalize its case here to avoid rg's
+				-- expensive Unicode case-folding automaton, retaining Unicode boundaries.
+				data = data:gsub("[A-Z]", function(c) return string.char(c:byte() + 32) end)
+				write(scratch .. "/input-" .. id, data); count = count + 1
+			end
+		end
+	end
+	local found = false
+	if count > 0 then
+		local matches, status = command("rg --threads 1 --no-config --no-heading --color never --hidden --no-ignore --null -H -n -o -w -F --glob 'input-*' -f " ..
+			quote(scratch .. "/patterns") .. " -- " .. quote(scratch))
+		assert(status == 0 or status == 1, "rg failed; refusing unchecked content")
+		for path, line, word in matches:gmatch("([^%z]+)%z(%d+):([^\r\n]+)\r?\n") do
+			local id = tonumber(path:match("/input%-(%d+)$"))
+			local entry = assert(files[id], "unknown rg input")
+			local lower = word:lower()
+			if not (exceptions[entry.path] or {})[lower] then
+				found = true
+				io.stderr:write(string.format("%q:%s: %s -> %s\n", entry.path, line, word, assert(replacements[lower])))
+			end
+		end
+	end
+	if found then
+		io.stderr:write(PROGRAM .. ": use American English and stage the correction.\n",
+			"For intentional quotations, external identifiers or locale text only, set\n",
+			"ALLOW_BRITISH_ENGLISH='Specific reason for preserving the original text'.\n")
+		return 1
+	end
+	return 0
+end
+local ok, status = pcall(main)
+if scratch then
+	for _, path in ipairs(scratch_files) do os.remove(path) end
+	os.remove(scratch)
+end
+if not ok then io.stderr:write(PROGRAM .. ": ERROR: " .. tostring(status) .. "\n"); status = 2 end
+os.exit(status)

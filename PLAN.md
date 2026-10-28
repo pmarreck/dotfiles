@@ -1,5 +1,10 @@
 # dotfiles — TODO / Plans
 
+## Active: American English gates
+
+- [x] Add sourced, case-insensitive rg-backed checks of staged text with explicit inflections, reviewed exceptions, failure-closed tool errors and disposable-repository tests. Completed 2026-10-28 08:14 EDT: 60 focused checks and all 178 Nix test files pass; batched staged scanning measured 0.107 seconds on this checkout.
+- [x] Reuse the spelling checker in a narrow gh pr create/edit wrapper for titles, bodies and body files, preserving normal gh behavior and recording unsupported submission routes. Completed 2026-10-28 08:14 EDT: 45 fake-GitHub checks pass; the reason-required ALLOW_BRITISH_ENGLISH override is explicit and loud.
+
 ## Active: declarative mise and suite reconciliation (2026-10-23)
 
 - [x] Run the default pre-push suite inside this repository's declared Nix development environment so hermetic tool dependencies such as `zip` cannot disappear from the ambient host `PATH`; preserve injected-runner tests and nothing-to-push short-circuiting. Completed 2026-10-28 02:46 EDT: the old direct-runner contract failed first; 13/13 gate tests, 64/64 parallel `kill-session` repetitions, 153/153 hermetic tests, and all 197 host test files then passed.
@@ -1253,7 +1258,7 @@ ASCII `^[A-Z][a-z]`, retaining acronyms and one-letter uppercase words.
   Completed 2026-08-01 02:07 EDT.
   - This is the interesting one: the old width assertion used awk's `length()`,
     which *also* counts bytes under C, so the test and the code shared the same
-    wrong assumption and the two errors cancelled. The bug was invisible until
+    wrong assumption and the two errors canceled. The bug was invisible until
     the measurement was made locale-independent.
 - [x] Measure characters rather than bytes in `hr_test` (`wc -m` counts bytes
   under `LC_ALL=C`). Counting codepoints by deleting UTF-8 continuation bytes

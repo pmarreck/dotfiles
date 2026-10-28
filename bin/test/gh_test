@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+set -u
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)
+wrapper="$root/bin/gh"
+work=$(mktemp -d "${TMPDIR:-/tmp}/gh-spelling-test.XXXXXXXX") || exit 1
+trap 'command rm -rf -- "$work"' EXIT
+mkdir -p "$work/native"
+export GH_TEST_CALL="$work/call" GH_TEST_BODY="$work/body"
+unset ALLOW_BRITISH_ENGLISH
+printf '#!%s\nprintf "%%s\\0" "$@" > "$GH_TEST_CALL"\nwhile (( $# )); do if [[ $1 == --body-file ]]; then cat -- "$2" > "$GH_TEST_BODY"; break; fi; shift; done\nexit "${GH_TEST_EXIT:-0}"\n' "$(command -v bash)" > "$work/native/gh"
+chmod +x "$work/native/gh"
+PATH="$work/native:$PATH"
+tests=0 failures=0
+check() { tests=$((tests+1)); if "$@"; then return; fi; printf 'FAIL: %s\n' "$*" >&2; failures=$((failures+1)); }
+run() { command rm -f "$GH_TEST_CALL" "$GH_TEST_BODY"; output=$("$wrapper" "$@" 2>&1); rc=$?; }
+run pr create --title 'Fix colour' --body 'Correct behavior'; check test "$rc" -ne 0; check test ! -e "$GH_TEST_CALL"
+run pr edit 42 -b 'Neighbours disagree'; check test "$rc" -ne 0; check test ! -e "$GH_TEST_CALL"
+run -R owner/repo pr create --title='Fix neighbors' --body='Correct behavior'; check test "$rc" -eq 0; check test -e "$GH_TEST_CALL"
+run pr new -t'Fix neighbours' -b'Correct behavior'; check test "$rc" -ne 0; check test ! -e "$GH_TEST_CALL"
+printf 'The colour changed\n' > "$work/draft"
+run pr create -t Fix -F "$work/draft"; check test "$rc" -ne 0; check test ! -e "$GH_TEST_CALL"
+printf 'The color changed\nSecond line\n' > "$work/draft"
+run pr create -t Fix --body-file="$work/draft"; check test "$rc" -eq 0; check cmp "$work/draft" "$GH_TEST_BODY"
+command rm -f "$GH_TEST_CALL"
+output=$(printf 'neighbours\n' | "$wrapper" pr edit 42 -F - 2>&1); rc=$?; check test "$rc" -ne 0; check test ! -e "$GH_TEST_CALL"
+output=$(printf 'neighbors\n' | "$wrapper" pr edit 42 -F - 2>&1); rc=$?; check test "$rc" -eq 0; check test "$(cat "$GH_TEST_BODY")" = neighbors
+for mode in --fill --fill-first --fill-verbose --editor --web; do
+	run pr create "$mode"; check test "$rc" -ne 0; check test ! -e "$GH_TEST_CALL"
+done
+run pr create --title Fix; check test "$rc" -ne 0; check test ! -e "$GH_TEST_CALL"
+run pr edit 42; check test "$rc" -ne 0; check test ! -e "$GH_TEST_CALL"
+run pr edit 42 --add-label colour; check test "$rc" -eq 0; check test -e "$GH_TEST_CALL"
+run pr list --search colour; check test "$rc" -eq 0; check test -e "$GH_TEST_CALL"
+run pr create --help; check test "$rc" -eq 0
+run pr create --title --help --body colour; check test "$rc" -ne 0; check test ! -e "$GH_TEST_CALL"
+run pr create --title Fix --body-file ''; check test "$rc" -ne 0; check test ! -e "$GH_TEST_CALL"
+run pr edit 42 --title colour --title color; check test "$rc" -ne 0; check test ! -e "$GH_TEST_CALL"
+output=$(ALLOW_BRITISH_ENGLISH='Preserving a verbatim quotation' "$wrapper" pr create -t colour -b neighbours 2>&1); rc=$?; check test "$rc" -eq 0
+check test "${output#*WARNING}" != "$output"
+output=$(ALLOW_BRITISH_ENGLISH=1 "$wrapper" pr create -t colour -b neighbours 2>&1); rc=$?; check test "$rc" -ne 0
+output=$(GH_TEST_EXIT=23 "$wrapper" pr create -t color -b neighbors 2>&1); rc=$?; check test "$rc" -eq 23
+printf '%s checks, %s failures\n' "$tests" "$failures"
+test "$failures" -eq 0

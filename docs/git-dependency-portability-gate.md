@@ -1,10 +1,11 @@
 # Staged dependency portability gate
 
-The shared `pre-commit` and `pre-merge-commit` chain runs two fail-fast checks
+The shared `pre-commit` and `pre-merge-commit` chain runs three fail-fast checks
 before delegating to a repository's own hook:
 
 1. `git-conflict-marker-gate`
 2. `git-dependency-portability-gate`
+3. `american-english-check --staged` (see [the spelling gate](git-american-english-gate.md))
 
 `git-staged-gates` fixes that order for both the global and dotfiles-local hook
 paths. The dependency gate reads index blobs, never the possibly different

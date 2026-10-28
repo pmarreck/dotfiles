@@ -4,4 +4,5 @@ set -u
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P) || exit 2
 "$root/bin/git-conflict-marker-gate" || exit "$?"
-exec "$root/bin/git-dependency-portability-gate" "$@"
+"$root/bin/git-dependency-portability-gate" "$@" || exit "$?"
+exec "$root/bin/american-english-check" --staged

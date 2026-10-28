@@ -1,0 +1,5 @@
+# Exact repository path, exact lowercase word (or * for the whole file), specific reason; tab-delimited.
+share/american-english/british-to-american.tsv	*	Licensed spelling-variant data intentionally contains the prohibited forms
+bin/test/american-english-check_test	*	Classifier and commit-control fixtures intentionally exercise rejected spellings
+bin/test/gh_test	*	PR submission controls intentionally exercise rejected spellings
+docs/git-american-english-gate.md	*	User documentation demonstrates rejected spellings and explicit exceptions
