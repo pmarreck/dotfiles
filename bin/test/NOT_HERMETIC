@@ -16,7 +16,6 @@
 
 # ── Requires a real terminal, tmux server, or interactive session ────────────
 shell_startup_test
-ask_test
 
 # ── Requires the user's live system configuration or account layout ──────────
 # pathconfig asserts NixOS wrapper ordering under /run/wrappers, executables and

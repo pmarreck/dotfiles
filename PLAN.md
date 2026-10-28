@@ -1437,6 +1437,12 @@ ASCII `^[A-Z][a-z]`, retaining acronyms and one-letter uppercase words.
     under one trap-cleaned root and private HOME, and passes focused ShellCheck,
     all three platform behaviors, all 187 Nix-admitted files, and all 204 host
     files. The manifest is down to 17.
+  - Progress 2026-10-28 09:21 EDT: graduated `ask`; the first Nix run proved its
+    success cases inherited a live API key and Glow installation. The test now
+    supplies those adapters, resolves the command, uses private HOME/XDG/TMPDIR
+    state, and exports every curl mock. Its negative assertions reject unrelated
+    adapter failures. Focused ShellCheck, all four API behaviors, all 188
+    Nix-admitted files, and all 204 host files pass. The manifest is down to 16.
 - [ ] Migrate the 9 legacy memories still in `~/.claude/projects/*/memory/` into
   `~/MEMORIES` via the `memories` skill (another agent's migration is unfinished).
 
