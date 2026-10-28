@@ -1388,6 +1388,11 @@ ASCII `^[A-Z][a-z]`, retaining acronyms and one-letter uppercase words.
   - Progress 2026-10-28 07:52 EDT: graduated `diskhogs`; its injected `iotop`,
     `fs_usage`, and `sudo` adapters now use the resolved Bash interpreter. The
     manifest is down to 26.
+  - Progress 2026-10-28 08:13 EDT: graduated `nethogs`; a disposable-clone Nix
+    run first reproduced all six fixture adapters failing through absent
+    `/usr/bin/env`, then passed all 176 admitted files after resolving their
+    Bash interpreter. The live tree then passed all 204 host files and all 179
+    Nix-admitted files. The manifest is down to 25.
 - [ ] Migrate the 9 legacy memories still in `~/.claude/projects/*/memory/` into
   `~/MEMORIES` via the `memories` skill (another agent's migration is unfinished).
 
