@@ -1483,6 +1483,11 @@ ASCII `^[A-Z][a-z]`, retaining acronyms and one-letter uppercase words.
     uses private GnuPG/XDG/TMPDIR state, and runs declared GnuPG plus rage.
     All three round trips, all 195 Nix-admitted files, and all 204 host files
     pass. The manifest is down to 9.
+  - Progress 2026-10-28 10:08 EDT: graduated `decrypt`; the old duplicate
+    passed its admission run, then was reduced to a repository-relative
+    delegate to the isolated encryption/decryption contract. Concurrent test
+    entries now receive distinct private GnuPG roots. All 196 Nix-admitted
+    files and all 204 host files pass. The manifest is down to 8.
 - [ ] Migrate the 9 legacy memories still in `~/.claude/projects/*/memory/` into
   `~/MEMORIES` via the `memories` skill (another agent's migration is unfinished).
 
