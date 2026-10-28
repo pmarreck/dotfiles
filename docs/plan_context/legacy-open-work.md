@@ -234,8 +234,9 @@ Driven by `CODE_REVIEW.md` (6-reviewer audit). Wave 1 + the nix-PATH bug are don
 
 ## Active — cross-platform GPU observability (started 2026-07-24)
 
-- [ ] Remove `diskhogs`' unconditional sudo requirement: provide the strongest useful unprivileged per-process view each OS permits, while reserving privileged all-user visibility for an explicit mode or on-demand collector.
+- [x] Remove `diskhogs`' unconditional sudo requirement: provide the strongest useful unprivileged per-process view each OS permits, while reserving privileged all-user visibility for an explicit mode or on-demand collector (completed 2026-10-28 11:50 EDT).
   - Curiosity poke: Linux may expose same-user `/proc/<pid>/io` counters while macOS may require a narrowly privileged sampler for process attribution; do not pretend device-wide I/O is per-process evidence.
+  - Result: the default samples same-user cumulative disk-byte counters twice and reports rates, using `/proc/<pid>/io` plus process start time on Linux and `proc_pid_rusage(RUSAGE_INFO_V4)` through LuaJIT FFI on macOS. `--all-users` preserves the privileged `iotop`/`fs_usage` collectors.
 
 ## Backlog (PARKED — revenue work comes first) — mechanically gate `--help` against the parser
 

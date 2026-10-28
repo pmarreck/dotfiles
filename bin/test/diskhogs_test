@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-set -uo pipefail
+set -u
 
 fails=0
 tests=0
@@ -20,9 +20,14 @@ fi
 iotop_log="$test_dir/iotop.log"
 fs_usage_log="$test_dir/fs_usage.log"
 sudo_log="$test_dir/sudo.log"
+snapshot_log="$test_dir/snapshot.log"
+sleep_log="$test_dir/sleep.log"
 iotop_stub="$test_dir/iotop"
 fs_usage_stub="$test_dir/fs_usage"
 sudo_stub="$test_dir/sudo"
+snapshot_stub="$test_dir/snapshot"
+sleep_stub="$test_dir/sleep"
+fixture_sleep_stub="$test_dir/fixture-sleep"
 
 cat <<'EOF' > "$iotop_stub"
 #!/usr/bin/env bash
@@ -46,17 +51,45 @@ cat <<'EOF' > "$sudo_stub"
 printf '%s\n' "$*" > "$DISKHOGS_TEST_SUDO_LOG"
 EOF
 
+cat <<'EOF' > "$snapshot_stub"
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$DISKHOGS_TEST_SNAPSHOT_LOG"
+case "$2" in
+	before)
+		printf '101\tstable-101\t100\t200\talpha\n'
+		printf '102\tstable-102\t0\t0\treadonly\n'
+		printf '777\told-777\t0\t0\treused-pid\n'
+		;;
+	after)
+		printf '101\tstable-101\t340\t860\talpha\n'
+		printf '102\tstable-102\t100\t0\treadonly\n'
+		printf '777\tnew-777\t999999\t999999\treused-pid\n'
+		;;
+esac
+EOF
+
+cat <<'EOF' > "$sleep_stub"
+#!/usr/bin/env bash
+printf '%s\n' "$*" > "$DISKHOGS_TEST_SLEEP_LOG"
+EOF
+
+cat <<'EOF' > "$fixture_sleep_stub"
+#!/usr/bin/env bash
+printf '%s\n' "$*" > "$DISKHOGS_TEST_SLEEP_LOG"
+printf 'read_bytes: 500\nwrite_bytes: 900\n' > "$DISKHOGS_TEST_PROC_ROOT/201/io"
+EOF
+
 set_test_shebang() {
 	local stub="$1" stub_body
 	stub_body=$(<"$stub")
 	printf '#!%s\n%s\n' "$(type -P bash)" "${stub_body#*$'\n'}" >"$stub"
 }
 
-for stub in "$iotop_stub" "$fs_usage_stub" "$sudo_stub"; do
+for stub in "$iotop_stub" "$fs_usage_stub" "$sudo_stub" "$snapshot_stub" "$sleep_stub" "$fixture_sleep_stub"; do
 	set_test_shebang "$stub"
 done
 
-chmod +x "$iotop_stub" "$fs_usage_stub" "$sudo_stub"
+chmod +x "$iotop_stub" "$fs_usage_stub" "$sudo_stub" "$snapshot_stub" "$sleep_stub" "$fixture_sleep_stub"
 
 run_diskhogs() {
 	local platform="$1"
@@ -67,15 +100,38 @@ run_diskhogs() {
 		DISKHOGS_IOTOP="$iotop_stub" \
 		DISKHOGS_FS_USAGE="$fs_usage_stub" \
 		DISKHOGS_SUDO="$sudo_stub" \
+		DISKHOGS_SNAPSHOT="$snapshot_stub" \
+		DISKHOGS_SLEEP="$sleep_stub" \
 		DISKHOGS_TEST_IOTOP_LOG="$iotop_log" \
 		DISKHOGS_TEST_FS_USAGE_LOG="$fs_usage_log" \
 		DISKHOGS_TEST_SUDO_LOG="$sudo_log" \
+		DISKHOGS_TEST_SNAPSHOT_LOG="$snapshot_log" \
+		DISKHOGS_TEST_SLEEP_LOG="$sleep_log" \
+		"$diskhogs_cmd" "$@"
+}
+
+run_unprivileged_diskhogs() {
+	local platform="$1"
+	shift
+	env \
+		DISKHOGS_PLATFORM="$platform" \
+		DISKHOGS_EUID=1000 \
+		DISKHOGS_IOTOP="$iotop_stub" \
+		DISKHOGS_FS_USAGE="$fs_usage_stub" \
+		DISKHOGS_SUDO="$sudo_stub" \
+		DISKHOGS_SNAPSHOT="$snapshot_stub" \
+		DISKHOGS_SLEEP="$sleep_stub" \
+		DISKHOGS_TEST_IOTOP_LOG="$iotop_log" \
+		DISKHOGS_TEST_FS_USAGE_LOG="$fs_usage_log" \
+		DISKHOGS_TEST_SUDO_LOG="$sudo_log" \
+		DISKHOGS_TEST_SNAPSHOT_LOG="$snapshot_log" \
+		DISKHOGS_TEST_SLEEP_LOG="$sleep_log" \
 		"$diskhogs_cmd" "$@"
 }
 
 ((tests++))
 if output=$(run_diskhogs Linux --help); then
-	if [[ "$output" == *'Usage: diskhogs'* && "$output" == *'sudo'* && "$output" == *'-d SECONDS'* ]]; then
+	if [[ "$output" == *'Usage: diskhogs'* && "$output" == *'--all-users'* && "$output" == *'current user'* && "$output" == *'-d SECONDS'* ]]; then
 		echo "✓ --help documents sampling and privilege requirements"
 	else
 		echo "✗ --help omitted diskhogs usage details" >&2
@@ -87,7 +143,7 @@ else
 fi
 
 ((tests++))
-if output=$(run_diskhogs Linux -d 3 2>&1); then
+if output=$(run_diskhogs Linux --all-users -d 3 2>&1); then
 	if [[ "$(<"$iotop_log")" == '-b -n 1 -d 3 -o -P' && "$output" == *'nix-daemon'* && "$output" == *'77.00 M/s'* ]]; then
 		echo "✓ Linux delegates to iotop for active per-process bandwidth"
 	else
@@ -100,7 +156,7 @@ else
 fi
 
 ((tests++))
-if output=$(run_diskhogs Darwin -d 3 2>&1); then
+if output=$(run_diskhogs Darwin --all-users -d 3 2>&1); then
 	if [[ "$(<"$fs_usage_log")" == '-w -f diskio -t 3' && "$output" == *'nix-daemon.15521'* && "$output" == *'B=4096'* ]]; then
 		echo "✓ macOS delegates to fs_usage disk-I/O tracing"
 	else
@@ -113,21 +169,97 @@ else
 fi
 
 ((tests++))
-rm -f "$sudo_log"
+rm -f "$sudo_log" "$snapshot_log" "$sleep_log"
 if env \
 	DISKHOGS_PLATFORM=Linux \
 	DISKHOGS_EUID=1000 \
 	DISKHOGS_SUDO="$sudo_stub" \
 	DISKHOGS_TEST_SUDO_LOG="$sudo_log" \
-	"$diskhogs_cmd" -d 2; then
-	if [[ "$(<"$sudo_log")" == "$diskhogs_cmd -d 2" ]]; then
-		echo "✓ unprivileged invocation re-execs through sudo"
+	"$diskhogs_cmd" --all-users -d 2; then
+	if [[ "$(<"$sudo_log")" == "$diskhogs_cmd --all-users -d 2" ]]; then
+		echo "✓ explicit all-user invocation re-execs through sudo"
 	else
-		echo "✗ unprivileged invocation did not re-exec diskhogs through sudo" >&2
+		echo "✗ explicit all-user invocation did not re-exec diskhogs through sudo" >&2
 		((fails++))
 	fi
 else
-	echo "✗ unprivileged invocation should delegate to sudo" >&2
+	echo "✗ explicit all-user invocation should delegate to sudo" >&2
+	((fails++))
+fi
+
+((tests++))
+rm -f "$sudo_log" "$snapshot_log" "$sleep_log"
+if output=$(run_unprivileged_diskhogs Linux -d 2 2>&1); then
+	if [[ ! -e "$sudo_log" ]] &&
+		[[ "$(<"$sleep_log")" == 2 ]] &&
+		[[ "$output" == *$'120\t330\t450\t101\talpha'* ]] &&
+		[[ "$output" == *$'50\t0\t50\t102\treadonly'* ]] &&
+		[[ "$output" != *'reused-pid'* ]]; then
+		echo "✓ default Linux view samples only current-user process counters without sudo"
+	else
+		echo "✗ default Linux view was not the expected unprivileged delta sample" >&2
+		((fails++))
+	fi
+else
+	echo "✗ default Linux view failed" >&2
+	((fails++))
+fi
+
+((tests++))
+rm -f "$sudo_log" "$snapshot_log" "$sleep_log" "$fs_usage_log"
+if output=$(run_unprivileged_diskhogs Darwin -d 2 2>&1); then
+	if [[ ! -e "$sudo_log" && ! -e "$fs_usage_log" ]] &&
+		[[ "$(<"$sleep_log")" == 2 ]] &&
+		[[ "$output" == *$'120\t330\t450\t101\talpha'* ]]; then
+		echo "✓ default macOS view samples current-user process counters without sudo"
+	else
+		echo "✗ default macOS view was not the expected unprivileged delta sample" >&2
+		((fails++))
+	fi
+else
+	echo "✗ default macOS view failed" >&2
+	((fails++))
+fi
+
+proc_fixture="$test_dir/proc"
+mkdir -p "$proc_fixture/201" "$proc_fixture/202" "$proc_fixture/203" "$proc_fixture/204/io"
+printf 'Name:\tfixture-own\nUid:\t1000\t1000\t1000\t1000\n' >"$proc_fixture/201/status"
+printf 'read_bytes: 100\nwrite_bytes: 300\n' >"$proc_fixture/201/io"
+printf '201 (fixture own) S 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 555 0\n' >"$proc_fixture/201/stat"
+printf 'Name:\tfixture-other\nUid:\t2000\t2000\t2000\t2000\n' >"$proc_fixture/202/status"
+printf 'read_bytes: 0\nwrite_bytes: 0\n' >"$proc_fixture/202/io"
+printf '202 (fixture other) S 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 777 0\n' >"$proc_fixture/202/stat"
+printf 'Name:\tfixture-unstable\nUid:\t1000\t1000\t1000\t1000\n' >"$proc_fixture/203/status"
+printf 'read_bytes: 0\nwrite_bytes: 0\n' >"$proc_fixture/203/io"
+printf 'Name:\tfixture-denied\nUid:\t1000\t1000\t1000\t1000\n' >"$proc_fixture/204/status"
+printf '204 (fixture denied) S 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 888 0\n' >"$proc_fixture/204/stat"
+
+((tests++))
+rm -f "$sudo_log" "$snapshot_log" "$sleep_log"
+if output=$(env \
+	DISKHOGS_PLATFORM=Linux \
+	DISKHOGS_EUID=1000 \
+	DISKHOGS_PROC_ROOT="$proc_fixture" \
+	DISKHOGS_SLEEP="$fixture_sleep_stub" \
+	DISKHOGS_SUDO="$sudo_stub" \
+	DISKHOGS_TEST_SLEEP_LOG="$sleep_log" \
+	DISKHOGS_TEST_PROC_ROOT="$proc_fixture" \
+	"$diskhogs_cmd" -d 2 2>&1); then
+	if [[ ! -e "$sudo_log" ]] &&
+		[[ "$output" == *$'200\t300\t500\t201\tfixture-own'* ]] &&
+		[[ "$output" != *'fixture-other'* ]] &&
+		[[ "$output" != *'fixture-unstable'* ]] &&
+		[[ "$output" != *'fixture-denied'* ]] &&
+		[[ "$output" != *'No such file'* ]] &&
+		[[ "$output" != *'Is a directory'* ]] &&
+		[[ "$output" != *'Permission denied'* ]]; then
+		echo "✓ Linux procfs adapter classifies the process set by uid and samples deltas"
+	else
+		echo "✗ Linux procfs adapter crossed the uid boundary or computed the wrong delta" >&2
+		((fails++))
+	fi
+else
+	echo "✗ Linux procfs adapter fixture failed" >&2
 	((fails++))
 fi
 

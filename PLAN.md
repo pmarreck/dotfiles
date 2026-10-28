@@ -18,7 +18,6 @@ Open work is listed in priority order. Completed history is in `docs/PLAN_LOG.md
 ## Code maintenance
 
 - [ ] Decide whether to finish and wire `.shellenv` or remove the orphaned refactor, accounting for login-shell order on both supported operating systems.
-- [ ] Remove `diskhogs`' unconditional sudo requirement while preserving an explicit privileged all-user mode (context: docs/plan_context/legacy-open-work.md#active--cross-platform-gpu-observability-started-2026-07-24).
 - [ ] Decide retention for the unbounded rm-safe log and Trash backlog, then add a bounded `gio trash` timeout in the rm-safe project (context: docs/plan_context/legacy-open-work.md#active--shell-helper-argument-correctness-2026-07-27).
 - [ ] Reproduce the queued Baldur's Gate 3 Proton startup failure without modifying saves or the prefix first (context: docs/plan_context/legacy-open-work.md#queued--baldurs-gate-3-proton-startup-failure-2026-08-04).
 - [ ] Add the approved TTY-only, muteable collation disclosure to `glob`, showing the rendered output to BDFN before fixing assertions (context: docs/plan_context/legacy-open-work.md#active--collation--listing-thread-started-2026-07-23).
@@ -34,6 +33,7 @@ Open work is listed in priority order. Completed history is in `docs/PLAN_LOG.md
 
 ## Recent completions
 
+- [x] Make `diskhogs` unprivileged by default with same-user Linux `/proc` and macOS libproc byte-counter sampling, retaining explicit `--all-users` elevation through the original collectors (done 2026-10-28 11:50 EDT).
 - [x] Replace 229 unsafe `${EDIT}` expansions across 153 live, generated, and dormant shell files with nounset-safe defaults after a repository-wide classifier failed on the old set; retain the byte-preserved randompass predecessor as the sole explicit exception (done 2026-10-28 11:34 EDT).
 - [x] Complete code-review remediation wave 2 with one regression suite covering fail-closed startup predicates, alias grouping, parent-agent detection, reload safety, terminal guards, portable commands, architecture flags, missing-executable wrappers, and the previously completed project-bin ordering (done 2026-10-28 11:29 EDT).
 - [x] Finish the readiness-gated development-cache policy: repository-isolated Cargo and Zig local caches, shared Zig global cache, prompt-time directory refresh, revocation after readiness loss, and live Codex/Claude environment verification (done 2026-10-28 11:22 EDT).

@@ -22,29 +22,35 @@ effective_uid=${DISKHOGS_EUID:-$EUID}
 iotop_bin=${DISKHOGS_IOTOP:-iotop}
 fs_usage_bin=${DISKHOGS_FS_USAGE:-fs_usage}
 sudo_bin=${DISKHOGS_SUDO:-sudo}
+sleep_bin=${DISKHOGS_SLEEP:-sleep}
+snapshot_bin=${DISKHOGS_SNAPSHOT:-}
 interval=1
+all_users=false
 original_args=("$@")
 
 usage() {
 	cat <<'USAGE'
-Usage: diskhogs [-d SECONDS]
+Usage: diskhogs [--all-users] [-d SECONDS]
 
-Show system-wide disk activity for one sampled interval. diskhogs elevates via
-sudo because per-process disk I/O is privileged on both Linux and macOS.
+Show current-user process disk activity for one sampled interval without
+elevation. Use --all-users to request the privileged system-wide collector.
 
 Options:
   -d SECONDS    Sampling duration; a positive integer (default 1).
+  --all-users   Include every user's processes; elevate through sudo if needed.
   -h, --help    Show this help text.
   -a, --about   Describe this tool.
   --test        Run the diskhogs test suite (stdout muted) and exit.
 
 Platform behavior:
-  Linux   Uses iotop to show active processes with current read/write bandwidth.
-  macOS   Uses fs_usage -f diskio to show disk-I/O events, byte counts, and paths.
+  Linux   Samples read_bytes/write_bytes from the current user's /proc entries.
+  macOS   Samples current-user libproc resource-usage disk-byte counters.
+  All     --all-users uses iotop on Linux and fs_usage -f diskio on macOS.
 
 Environment:
-  DISKHOGS_PLATFORM, DISKHOGS_IOTOP, DISKHOGS_FS_USAGE, DISKHOGS_SUDO
-                    Override platform or command paths (primarily for testing).
+  DISKHOGS_PLATFORM, DISKHOGS_IOTOP, DISKHOGS_FS_USAGE, DISKHOGS_SUDO,
+  DISKHOGS_SLEEP, DISKHOGS_SNAPSHOT, DISKHOGS_PROC_ROOT
+                    Override platform, adapters, or Linux procfs root.
 USAGE
 }
 
@@ -58,6 +64,10 @@ is_positive_integer() {
 
 while [[ $# -gt 0 ]]; do
 	case "$1" in
+		--all-users)
+			all_users=true
+			shift
+			;;
 		-d)
 			if [[ $# -lt 2 ]] || ! is_positive_integer "$2"; then
 				echo "diskhogs: -d requires a positive integer number of seconds" >&2
@@ -99,7 +109,7 @@ case "$platform" in
 		;;
 esac
 
-if [[ "$effective_uid" != "0" ]]; then
+if "$all_users" && [[ "$effective_uid" != "0" ]]; then
 	if ! command -v "$sudo_bin" >/dev/null 2>&1; then
 		echo "diskhogs: system-wide disk activity requires root, but sudo is unavailable" >&2
 		exit 1
@@ -111,7 +121,8 @@ if [[ "$effective_uid" != "0" ]]; then
 	exec "$sudo_bin" "$self_path" "${original_args[@]}"
 fi
 
-case "$platform" in
+if "$all_users"; then
+	case "$platform" in
 	Linux)
 		if ! command -v "$iotop_bin" >/dev/null 2>&1; then
 			echo "diskhogs: Linux requires iotop" >&2
@@ -128,4 +139,125 @@ case "$platform" in
 		echo "diskhogs: macOS disk-I/O events (${interval}s sample); B= is byte count and the process is at right" >&2
 		exec "$fs_usage_bin" -w -f diskio -t "$interval"
 		;;
-esac
+	esac
+fi
+
+collect_linux_snapshot() {
+	local phase="$1" target_uid="$2"
+	local proc_root=${DISKHOGS_PROC_ROOT:-/proc}
+	local noglob_was_set=false
+	local status_paths=()
+	local status_path pid line proc_uid name io_path key value read_bytes write_bytes
+	local stat_path stat_line stat_tail start_time
+	local stat_fields=()
+
+	[[ "$-" == *f* ]] && noglob_was_set=true
+	set +f
+	status_paths=("$proc_root"/[0-9]*/status)
+	"$noglob_was_set" && set -f
+
+	for status_path in "${status_paths[@]}"; do
+		[[ -r "$status_path" ]] || continue
+		pid=${status_path%/status}
+		pid=${pid##*/}
+		proc_uid=
+		name=
+		while IFS= read -r line; do
+			case "$line" in
+				Uid:*) read -r _ proc_uid _ <<<"$line" ;;
+				Name:*) name=${line#Name:}; name=${name#[$'\t ']} ;;
+			esac
+		done <"$status_path"
+		[[ "$proc_uid" == "$target_uid" ]] || continue
+
+		io_path=${status_path%/status}/io
+		[[ -r "$io_path" ]] || continue
+		read_bytes=
+		write_bytes=
+		while IFS=: read -r key value; do
+			value=${value//[[:space:]]/}
+			case "$key" in
+				read_bytes) read_bytes=$value ;;
+				write_bytes) write_bytes=$value ;;
+			esac
+		done 2>/dev/null <"$io_path"
+		[[ "$read_bytes" =~ ^[0-9]+$ && "$write_bytes" =~ ^[0-9]+$ ]] || continue
+
+		stat_path=${status_path%/status}/stat
+		[[ -r "$stat_path" ]] || continue
+		IFS= read -r stat_line 2>/dev/null <"$stat_path" || continue
+		stat_tail=${stat_line##*) }
+		read -r -a stat_fields <<<"$stat_tail"
+		start_time=${stat_fields[19]:-}
+		[[ "$start_time" =~ ^[0-9]+$ ]] || continue
+		name=${name//$'\t'/ }
+		printf '%s\t%s\t%s\t%s\t%s\n' "$pid" "$start_time" "$read_bytes" "$write_bytes" "${name:-pid-$pid}"
+	done
+}
+
+collect_snapshot() {
+	local phase="$1"
+	if [[ -n "$snapshot_bin" ]]; then
+		"$snapshot_bin" "$platform" "$phase" "$effective_uid"
+		return
+	fi
+	case "$platform" in
+		Linux)
+			collect_linux_snapshot "$phase" "$effective_uid"
+			;;
+		Darwin)
+			local script_dir macos_snapshot
+			script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+			macos_snapshot=${DISKHOGS_MACOS_SNAPSHOT:-"$script_dir/src/diskhogs_macos_snapshot"}
+			if [[ ! -x "$macos_snapshot" ]]; then
+				echo "diskhogs: macOS snapshot adapter is unavailable: $macos_snapshot" >&2
+				return 1
+			fi
+			"$macos_snapshot" "$phase" "$effective_uid"
+			;;
+	esac
+}
+
+render_deltas() {
+	local before="$1" after="$2" rows
+	rows=$(
+		{
+			while IFS= read -r line; do [[ -n "$line" ]] && printf 'before\t%s\n' "$line"; done <<<"$before"
+			while IFS= read -r line; do [[ -n "$line" ]] && printf 'after\t%s\n' "$line"; done <<<"$after"
+		} | awk -F '\t' -v interval="$interval" '
+			$1 == "before" {
+				key = $2 SUBSEP $3
+				reads[key] = $4
+				writes[key] = $5
+				next
+			}
+			$1 == "after" {
+				key = $2 SUBSEP $3
+				if (!(key in reads)) next
+				read_delta = $4 - reads[key]
+				write_delta = $5 - writes[key]
+				if (read_delta < 0 || write_delta < 0) next
+				read_rate = int(read_delta / interval)
+				write_rate = int(write_delta / interval)
+				total_rate = read_rate + write_rate
+				if (total_rate > 0)
+					printf "%d\t%d\t%d\t%s\t%s\n", read_rate, write_rate, total_rate, $2, $6
+			}
+		'
+	)
+	printf 'READ_B/s\tWRITE_B/s\tTOTAL_B/s\tPID\tCOMMAND\n'
+	if [[ -n "$rows" ]]; then
+		printf '%s\n' "$rows" | sort -t $'\t' -k3,3nr -k4,4n
+	fi
+}
+
+if ! command -v "$sleep_bin" >/dev/null 2>&1; then
+	echo "diskhogs: sampling sleep adapter is unavailable: $sleep_bin" >&2
+	exit 1
+fi
+
+echo "diskhogs: current-user process disk-byte rates (${interval}s sample)" >&2
+before_snapshot=$(collect_snapshot before) || exit $?
+"$sleep_bin" "$interval"
+after_snapshot=$(collect_snapshot after) || exit $?
+render_deltas "$before_snapshot" "$after_snapshot"
