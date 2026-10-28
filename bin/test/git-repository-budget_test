@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+set -u
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)
+gate="$root/bin/git-repository-budget"
+real_git=''
+while IFS= read -r candidate; do
+	if [[ ! $candidate -ef $root/bin/git && ! $candidate -ef $root/bin/src/git-budget-launcher ]]; then real_git=$candidate; break; fi
+done < <(type -a -p git)
+[[ -n $real_git ]] || exit 1
+work=$(mktemp -d "${TMPDIR:-/tmp}/git-budget-test.XXXXXXXX") || exit 1
+trap 'command rm -rf -- "$work"' EXIT
+export HOME="$work/home" GIT_CONFIG_GLOBAL="$work/config" GIT_CONFIG_NOSYSTEM=1
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_REPOSITORY_BUDGET_LOCK
+mkdir -p "$HOME" "$work/hooks"
+printf '#!%s\nexec %q --reference "$@"\n' "$(command -v bash)" "$gate" > "$work/hooks/reference-transaction"
+chmod +x "$work/hooks/reference-transaction"
+"$real_git" init -qb main "$work/repo" || exit 1
+"$real_git" -C "$work/repo" config user.name 'Budget Test'
+"$real_git" -C "$work/repo" config user.email test@example.invalid
+"$real_git" -C "$work/repo" -c core.hooksPath=/dev/null commit -qm initial --allow-empty || exit 1
+"$real_git" -C "$work/repo" config core.hooksPath "$work/hooks"
+tests=0 failures=0
+check() { tests=$((tests+1)); if "$@"; then return; fi; printf 'FAIL: %s\n' "$*" >&2; failures=$((failures+1)); }
+run() { output=$("$gate" --run "$real_git" -C "$work/repo" "$@" 2>&1); rc=$?; }
+count() { "$real_git" -C "$work/repo" for-each-ref --format='%(refname)' refs/heads | wc -l; }
+run branch two; check test "$rc" -eq 0
+run branch three; check test "$rc" -eq 0
+run branch four; check test "$rc" -eq 0; check test "${output#*WARNING}" != "$output"
+run branch five; check test "$rc" -eq 0; check test "${output#*MAXIMUM}" != "$output"
+run branch six; check test "$rc" -ne 0; check test "$(count)" -eq 5; check test "${output#*Wrap up}" != "$output"
+# Classify multiple native creation paths, not just git branch.
+for command in 'switch -c six' 'checkout -b six' 'branch -c two six' 'update-ref refs/heads/six HEAD'; do
+	read -r -a words <<< "$command"
+	run "${words[@]}"; check test "$rc" -ne 0; check test "$(count)" -eq 5
+done
+run branch -f two HEAD; check test "$rc" -eq 0
+run branch -m two renamed; check test "$rc" -eq 0; check test "$(count)" -eq 5
+run update-ref refs/remotes/origin/not-a-local-branch HEAD; check test "$rc" -eq 0
+run -c agentLimits.maxBranches=6 branch six; check test "$rc" -eq 0; check test "${output#*MAXIMUM}" != "$output"
+run branch seven; check test "$rc" -ne 0
+run branch -D six; check test "$rc" -eq 0
+run branch -D five; check test "$rc" -eq 0
+run -c agentLimits.maxBranches=potato branch invalid; check test "$rc" -ne 0
+# Existing over-limit repositories can update and reduce their state.
+"$real_git" -C "$work/repo" -c core.hooksPath=/dev/null branch legacy-one
+"$real_git" -C "$work/repo" -c core.hooksPath=/dev/null branch legacy-two
+run commit -qm progress --allow-empty; check test "$rc" -eq 0
+run branch more; check test "$rc" -ne 0
+run branch -D legacy-one legacy-two; check test "$rc" -eq 0
+"$gate" --run "$real_git" -C "$work/repo" branch branch-racer-a > "$work/a.log" 2>&1 & a=$!
+"$gate" --run "$real_git" -C "$work/repo" branch branch-racer-b > "$work/b.log" 2>&1 & b=$!
+wait "$a"; ac=$?; wait "$b"; bc=$?
+check test "$(( (ac == 0) + (bc == 0) ))" -eq 1
+check test "$(count)" -eq 5
+if (( ac == 0 )); then run branch -D branch-racer-a; else run branch -D branch-racer-b; fi
+check test "$rc" -eq 0
+# Linked, detached, no-checkout, unusual path names and independent caps.
+for n in 2 3 4 5; do
+	run worktree add --detach --no-checkout "$work/tree $n" HEAD; check test "$rc" -eq 0
+	if [[ $n == 4 ]]; then check test "${output#*WARNING}" != "$output"; fi
+	if [[ $n == 5 ]]; then check test "${output#*MAXIMUM}" != "$output"; fi
+done
+run worktree add --detach "$work/six" HEAD; check test "$rc" -ne 0; check test ! -e "$work/six"
+output=$("$gate" --run "$real_git" -C "$work/tree 2" worktree add --detach "$work/also-six" HEAD 2>&1); rc=$?
+check test "$rc" -ne 0; check test ! -e "$work/also-six"
+run -c alias.wt='worktree add --detach' wt "$work/alias-six" HEAD; check test "$rc" -ne 0
+run -c alias.wt='-c color.ui=never worktree add --detach' wt "$work/alias-option-six" HEAD; check test "$rc" -ne 0; check test ! -e "$work/alias-option-six"
+run -c agentLimits.maxWorktrees=6 worktree add --detach "$work/six" HEAD; check test "$rc" -eq 0; check test "${output#*MAXIMUM}" != "$output"
+run worktree remove "$work/six"; check test "$rc" -eq 0
+run worktree remove "$work/tree 5"; check test "$rc" -eq 0
+# Two concurrent creators compete for one remaining slot in the same common dir.
+"$gate" --run "$real_git" -C "$work/repo" worktree add --detach "$work/racer-a" HEAD > "$work/a.log" 2>&1 & a=$!
+"$gate" --run "$real_git" -C "$work/tree 2" worktree add --detach "$work/racer-b" HEAD > "$work/b.log" 2>&1 & b=$!
+wait "$a"; ac=$?; wait "$b"; bc=$?
+check test "$(( (ac == 0) + (bc == 0) ))" -eq 1
+run status --porcelain; check test "$rc" -eq 0
+# A repository-specific hooksPath must not silently disable the capacity gate.
+mkdir -p "$work/repo/custom-hooks"
+printf '#!%s\ncat > ref-payload\nprintf "%%s\\n" "$@" >> ref-events\n' "$(command -v bash)" > "$work/repo/custom-hooks/reference-transaction"
+chmod +x "$work/repo/custom-hooks/reference-transaction"
+"$real_git" -C "$work/repo" config core.hooksPath custom-hooks
+run branch custom-five; check test "$rc" -eq 0
+check test -s "$work/repo/ref-events"
+printf '#!%s\ngit config --get core.hooksPath > observed-hooks\ngit config --get sample.fixture > observed-config\n' "$(command -v bash)" > "$work/repo/custom-hooks/pre-commit"
+chmod +x "$work/repo/custom-hooks/pre-commit"
+run -c sample.fixture=retained commit -qm configuration --allow-empty; check test "$rc" -eq 0
+check test "$(cat "$work/repo/observed-hooks" 2>/dev/null)" = custom-hooks
+check test "$(cat "$work/repo/observed-config" 2>/dev/null)" = retained
+run branch custom-six; check test "$rc" -ne 0; check test "$(count)" -eq 5
+printf '#!%s\nexit 23\n' "$(command -v bash)" > "$work/repo/custom-hooks/pre-commit"
+chmod +x "$work/repo/custom-hooks/pre-commit"
+run commit -qm refused --allow-empty; check test "$rc" -ne 0
+printf '%s checks, %s failures\n' "$tests" "$failures"
+test "$failures" -eq 0

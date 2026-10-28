@@ -35,8 +35,15 @@ ln -s "$scratch/parent/indexed" "$scratch/alias"
 # Isolated PATH proves command availability without invoking the real indexer.
 mkdir -p "$scratch/tools" "$scratch/no-codescan"
 for tool in bash jq cat dirname mkdir sha256sum git; do
-	ln -s "$(command -v "$tool")" "$scratch/tools/$tool"
-	ln -s "$(command -v "$tool")" "$scratch/no-codescan/$tool"
+	tool_path=$(command -v "$tool")
+	if [[ $tool == git ]]; then
+		# This fixture admits only native Git, not the PATH wrapper and its runtime.
+		while IFS= read -r candidate; do
+			if [[ ! $candidate -ef $repo_root/bin/git ]]; then tool_path=$candidate; break; fi
+		done < <(type -a -p git)
+	fi
+	ln -s "$tool_path" "$scratch/tools/$tool"
+	ln -s "$tool_path" "$scratch/no-codescan/$tool"
 done
 printf '#!/usr/bin/env bash\nexit 99\n' > "$scratch/tools/codescan"
 chmod +x "$scratch/tools/codescan"

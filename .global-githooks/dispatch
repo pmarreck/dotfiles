@@ -24,6 +24,16 @@ else
 	fi
 fi
 target="$delegate/$hook"
+if [[ -x $target && $target -ef $0 ]]; then
+	printf 'ERROR: recursive Git hook delegation: %s\n' "$target" >&2
+	exit 2
+fi
+if [[ $hook == reference-transaction && ${GIT_REPOSITORY_BUDGET_CHECKED_PARENT:-} != "$PPID" ]]; then
+	# Direct native Git still receives the branch check; the PATH wrapper also
+	# covers branch copies, worktree creation, custom hooks and concurrent callers.
+	export GIT_REPOSITORY_BUDGET_DELEGATE="$delegate"
+	exec "$root/.repository-budget-hooks/reference-transaction" "$@"
+fi
 # Automatic merges should also honor a repository's pre-commit check.
 if [[ $hook == pre-merge-commit && ! -x $target ]]; then target="$delegate/pre-commit"; fi
 if [[ -x $target ]]; then

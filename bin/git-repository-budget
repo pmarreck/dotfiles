@@ -1,0 +1,246 @@
+#!/usr/bin/env luajit
+-- Shared-repository capacity checks. Never prune, remove or reset user work.
+local ffi = require("ffi")
+local bit = require("bit")
+ffi.cdef[[
+int open(const char *, int, ...); int close(int); int flock(int, int);
+int fcntl(int, int, ...); int setenv(const char *, const char *, int);
+int fork(void); int waitpid(int, int *, int); int execvp(const char *, char *const []);
+void _exit(int);
+char *realpath(const char *, char *); void free(void *);
+]]
+local function quote(s) return "'" .. s:gsub("'", "'\\''") .. "'" end
+local function shell(argv)
+	local parts = {}; for _, a in ipairs(argv) do parts[#parts+1] = quote(a) end
+	return table.concat(parts, " ")
+end
+local function capture(argv)
+	local p = assert(io.popen("command " .. shell(argv) .. " 2>/dev/null; s=$?; printf '\\n__BUDGET_STATUS__%s\\n' \"$s\"", "r"))
+	local output = p:read("*a"); p:close()
+	local data, status = output:match("^(.*)\n__BUDGET_STATUS__(%d+)\n$")
+	assert(data, "cannot determine Git command status")
+	return data, tonumber(status)
+end
+local function extend(a, ...)
+	local out = {}; for _, x in ipairs(a) do out[#out+1] = x end
+	for _, x in ipairs({...}) do out[#out+1] = x end
+	return out
+end
+local function get(base, ...)
+	local data, status = capture(extend(base, ...)); assert(status == 0, "cannot inspect repository state")
+	return data
+end
+local function limit(base, kind)
+	local value, status = capture(extend(base, "config", "--get", "agentLimits.max" .. kind))
+	if status == 1 then return 5 end
+	assert(status == 0, "cannot read repository budget")
+	value = value:gsub("\n$", "")
+	assert(value:match("^[1-9]%d*$") and tonumber(value) <= 100000,
+		"agentLimits.max" .. kind .. " must be an integer from 1 to 100000")
+	return tonumber(value)
+end
+local function notice(kind, count, maximum, predicted)
+	local suffix = predicted and " after this transaction" or ""
+	if count >= maximum then
+		io.stderr:write(string.format("MAXIMUM: %s %d/%d%s. Wrap up and retire existing work before creating more.\n", kind, count, maximum, suffix))
+	elseif count == maximum - 1 then
+		io.stderr:write(string.format("WARNING: %s %d/%d%s; one slot remains.\n", kind, count, maximum, suffix))
+	end
+end
+local function refuse(kind, current, projected, maximum)
+	io.stderr:write(string.format("BLOCKED: %s would grow from %d to %d; maximum is %d per shared repository. Wrap up branch/worktree work, merge or preserve its results, then retire unneeded branches/worktrees first. No work was removed.\n", kind, current, projected, maximum))
+	return 1
+end
+local function heads(base)
+	local set, n = {}, 0
+	for name in get(base, "for-each-ref", "--format=%(refname)", "refs/heads"):gmatch("[^\n]+") do set[name] = true; n = n+1 end
+	return set, n
+end
+local function worktrees(base)
+	local n, is_tree = 0, false
+	for field in get(base, "worktree", "list", "--porcelain", "-z"):gmatch("([^%z]*)%z") do
+		if field:match("^worktree ") then is_tree = true
+		elseif field == "bare" then is_tree = false
+		elseif field == "" then if is_tree then n=n+1 end; is_tree=false end
+	end
+	return n
+end
+local function exec(argv)
+	local c = ffi.new("char *[?]", #argv+1)
+	for i, s in ipairs(argv) do c[i-1] = ffi.cast("char *", s) end
+	ffi.C.execvp(argv[1], c)
+	error("cannot execute underlying Git")
+end
+-- Git aliases use shell-like quoting, but expanding a normal alias must never
+-- evaluate shell substitutions. Shell aliases remain Git's responsibility.
+local function split(s)
+	local out, token, mode, escaped, started = {}, "", nil, false, false
+	for i=1,#s do
+		local c = s:sub(i,i)
+		if escaped then token=token..c; escaped=false; started=true
+		elseif c == "\\" and mode ~= "'" then escaped=true; started=true
+		elseif mode then if c == mode then mode=nil else token=token..c end
+		elseif c == "'" or c == '"' then mode=c; started=true
+		elseif c:match("%s") then if started then out[#out+1]=token; token=""; started=false end
+		else token=token..c; started=true end
+	end
+	assert(not mode and not escaped, "malformed Git alias")
+	if started then out[#out+1]=token end
+	return out
+end
+local function prefix(raw, args)
+	local base, i = {raw}, 1
+	while i <= #args do
+		local a=args[i]
+		if a == "--" then i=i+1; break end
+		if a:sub(1,1) ~= "-" then break end
+		base[#base+1]=a
+		if a == "-C" or a == "-c" or a == "--git-dir" or a == "--work-tree" or a == "--namespace" or a == "--config-env" or a == "--super-prefix" then
+			i=i+1; assert(args[i], "missing Git global option value"); base[#base+1]=args[i]
+		end
+		i=i+1
+	end
+	local rest={}; for j=i,#args do rest[#rest+1]=args[j] end
+	return base,rest
+end
+local mutations = {branch=true, checkout=true, switch=true, worktree=true, fetch=true,
+	pull=true, ["update-ref"]=true, ["symbolic-ref"]=true, commit=true, merge=true,
+	rebase=true, reset=true, ["cherry-pick"]=true, am=true, revert=true}
+local reads = {status=true, diff=true, log=true, show=true, config=true, version=true,
+	help=true, ["rev-parse"]=true, ["for-each-ref"]=true, ["cat-file"]=true,
+	["ls-files"]=true, ["show-ref"]=true, ["rev-list"]=true, ["merge-base"]=true,
+	add=true, init=true, clone=true, push=true}
+local function run(raw, args)
+	local original=extend({raw}, unpack(args))
+	local base, command=prefix(raw,args)
+	local native_base=base
+	local native_command=command
+	if not command[1] or reads[command[1]] then exec(original) end
+	for _=1,16 do
+		if mutations[command[1]] then break end
+		local alias,status=capture(extend(base,"config","--get","alias."..command[1]))
+		if status == 1 then exec(original) end
+		assert(status == 0, "cannot resolve Git alias")
+		if alias:sub(1,1) == "!" then exec(original) end
+		local expanded=split(alias); for i=2,#command do expanded[#expanded+1]=command[i] end
+		local alias_base
+		alias_base,command=prefix(raw,expanded)
+		local combined=extend(base); for i=2,#alias_base do combined[#combined+1]=alias_base[i] end
+		base=combined
+		assert(command[1], "empty Git alias")
+	end
+	assert(mutations[command[1]], "Git alias expansion too deep")
+	if (command[1]=="worktree" and command[2]=="list") or
+		(command[1]=="branch" and (#command==1 or (#command==2 and command[2]=="--show-current"))) then exec(original) end
+	local common,status=capture(extend(base,"rev-parse","--path-format=absolute","--git-common-dir"))
+	if status ~= 0 then exec(original) end -- Native Git reports invalid repository usage.
+	common=common:gsub("\n$", "")
+	local resolved=ffi.C.realpath(common,nil); assert(resolved~=nil,"cannot resolve shared repository path")
+	common=ffi.string(resolved); ffi.C.free(resolved)
+	local lock_path=common.."/agent-repository-budget.lock"
+	local inherited=os.getenv("GIT_REPOSITORY_BUDGET_LOCK") or ""
+	local fd,path=inherited:match("^(%d+):(.*)$"); fd=tonumber(fd)
+	local owned=false
+	if not (fd and path == lock_path and ffi.C.fcntl(fd,1) >= 0) then
+		local create = jit.os == "OSX" and 512 or 64
+		fd=ffi.C.open(lock_path,bit.bor(2,create),ffi.new("int",384)); assert(fd>=0,"cannot open repository budget lock")
+		if ffi.C.flock(fd,bit.bor(2,4)) ~= 0 then
+			io.stderr:write("Repository budget: waiting for another Git operation in this shared repository.\n")
+			assert(ffi.C.flock(fd,2)==0,"cannot lock repository budget")
+		end
+		owned=true
+		assert(ffi.C.setenv("GIT_REPOSITORY_BUDGET_LOCK",fd..":"..lock_path,1)==0)
+	end
+	assert(ffi.C.setenv("GIT_REPOSITORY_BUDGET_GIT",raw,1)==0)
+	-- Preserve all existing hooks while interposing the reference check even
+	-- when the repository has a custom core.hooksPath. The override is per call.
+	local directory=assert(arg[0]:match("^(.*)/[^/]+$"),"cannot locate budget hook adapter")
+	local proxy_path=directory.."/../.repository-budget-hooks"
+	local resolved_proxy=ffi.C.realpath(proxy_path,nil); assert(resolved_proxy~=nil,"missing budget hook adapter")
+	proxy_path=ffi.string(resolved_proxy); ffi.C.free(resolved_proxy)
+	local delegate=get(base,"rev-parse","--path-format=absolute","--git-path","hooks"):gsub("\n$", "")
+	if delegate==proxy_path then delegate=assert(os.getenv("GIT_REPOSITORY_BUDGET_DELEGATE"),"missing inherited hook delegate") end
+	assert(delegate~=proxy_path,"recursive hook delegation")
+	assert(ffi.C.setenv("GIT_REPOSITORY_BUDGET_DELEGATE",delegate,1)==0)
+	original=extend(native_base,"-c","core.hooksPath="..proxy_path,unpack(native_command))
+	local adding=command[1]=="worktree" and command[2]=="add"
+	-- Git's native branch-copy implementation can bypass reference-transaction.
+	-- Cover both ordinary and forced copies before invoking it.
+	local copied, copy_max, copy_before
+	if command[1]=="branch" then
+		local copying, names, literal=false,{},false
+		for i=2,#command do
+			local a=command[i]
+			if not literal and a=="--" then literal=true
+			elseif not literal and a:sub(1,1)=="-" then
+				if a=="--copy" or (a:sub(2,2)~="-" and a:find("[cC]")) then copying=true end
+			else names[#names+1]=a end
+		end
+		if copying and #names>0 then
+			local existing; existing,copy_before=heads(base)
+			copied=not existing["refs/heads/"..names[#names]]
+			if copied then
+				copy_max=limit(base,"Branches")
+				if copy_before+1>copy_max then if owned then ffi.C.close(fd) end; return refuse("local branches",copy_before,copy_before+1,copy_max) end
+			end
+		end
+	end
+	local maximum,before
+	if adding then
+		maximum=limit(base,"Worktrees"); before=worktrees(base)
+		if before+1>maximum then if owned then ffi.C.close(fd) end; return refuse("worktrees",before,before+1,maximum) end
+	end
+	local pid=ffi.C.fork(); assert(pid>=0,"cannot start Git")
+	if pid==0 then local ok=pcall(exec,original); ffi.C._exit(ok and 0 or 127) end
+	local result=ffi.new("int[1]")
+	while ffi.C.waitpid(pid,result,0)<0 do assert(ffi.errno()==4,"cannot wait for Git") end
+	local signal=bit.band(result[0],127)
+	local code=signal~=0 and 128+signal or bit.rshift(result[0],8)
+	if code==0 and adding then notice("worktrees",worktrees(base),maximum,false) end
+	if code==0 and copied then local _,n=heads(base); notice("local branches",n,copy_max,false) end
+	if owned then ffi.C.close(fd) end
+	return code
+end
+local function reference(state)
+	if state ~= "prepared" then return 0 end
+	local payload=io.read("*a")
+	-- HEAD, tags and remote tracking refs do not consume local branch slots.
+	if not payload:find(" refs/heads/",1,true) then return 0 end
+	local base={os.getenv("GIT_REPOSITORY_BUDGET_GIT") or "git"}
+	local existing,before=heads(base); local after=before
+	for line in payload:gmatch("[^\n]+") do
+		local old,new,name=line:match("^(%S+) (%S+) (%S+)$"); assert(name,"malformed reference transaction")
+		if name:match("^refs/heads/") then
+			local exists=not new:match("^0+$")
+			if exists and not existing[name] then after=after+1
+			elseif not exists and existing[name] then after=after-1 end
+			existing[name]=exists or nil
+		end
+	end
+	if after<=before then return 0 end -- Updating, renaming and cleanup stay possible.
+	local maximum=limit(base,"Branches")
+	if after>maximum then return refuse("local branches",before,after,maximum) end
+	notice("local branches",after,maximum,true)
+	return 0
+end
+local function main()
+	if arg[1]=="--restore-hook-config" then
+		assert(arg[2],"missing hook adapter path")
+		local restored={}
+		for _,setting in ipairs(split(os.getenv("GIT_CONFIG_PARAMETERS") or "")) do
+			if setting~="core.hooksPath="..arg[2] then restored[#restored+1]=quote(setting) end
+		end
+		io.write(table.concat(restored," ")); return 0
+	end
+	if arg[1]=="--reference" then return reference(arg[2]) end
+	if arg[1]=="--run" then
+		assert(arg[2] and arg[2]:sub(1,1)=="/","absolute underlying Git path required")
+		local args={}; for i=3,#arg do args[#args+1]=arg[i] end
+		return run(arg[2],args)
+	end
+	io.stderr:write("Usage: git-repository-budget --run /absolute/git ARGS... | --reference STATE\n")
+	return 2
+end
+local ok,code=pcall(main)
+if not ok then io.stderr:write("Repository budget ERROR: "..tostring(code).."\n"); code=2 end
+os.exit(code)
