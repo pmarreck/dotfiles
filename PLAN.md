@@ -1355,6 +1355,9 @@ ASCII `^[A-Z][a-z]`, retaining acronyms and one-letter uppercase words.
     `warhammer_quote`). The manifest is down to 34 explicit exclusions.
   - Progress 2026-10-28 05:28 EDT: graduated `mdff`; its fake `mdfind` now
     uses the Nix-resolved Bash interpreter. The manifest is down to 33.
+  - Progress 2026-10-28 05:39 EDT: graduated `show`; its generated adapters
+    use resolved interpreters, zsh completion is exercised, and the sandbox
+    fixture preserves generated-artifact mtimes. The manifest is down to 32.
 - [ ] Migrate the 9 legacy memories still in `~/.claude/projects/*/memory/` into
   `~/MEMORIES` via the `memories` skill (another agent's migration is unfinished).
 

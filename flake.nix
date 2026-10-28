@@ -21,7 +21,7 @@
         # to be installed on the machine running it.
         suiteTools = (with pkgs; [
           bash coreutils gnused gnugrep gawk findutils diffutils
-          jq ripgrep fd tmux expect git openssh b3sum
+          jq ripgrep fd tmux expect git openssh b3sum zsh
           nodejs_24  # erect-agent-stack native context discovery uses node:sqlite
           gzip gnutar zip unzip xz bc file which
           (luajit.withPackages (luaPackages: [ luaPackages.lua-cjson ]))
@@ -66,7 +66,9 @@
               # and so nothing can reach a developer's live configuration.
               export HOME="$NIX_BUILD_TOP/home"
               mkdir -p "$HOME"
-              cp -r "$PWD" "$HOME/dotfiles"
+              # Preserve mtimes so checked-in generated artifacts remain paired
+              # with their sources instead of spuriously invoking compilers.
+              cp -a "$PWD" "$HOME/dotfiles"
               chmod -R u+w "$HOME/dotfiles"
               ln -s "$HOME/dotfiles/bin" "$HOME/bin"
 
