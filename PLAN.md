@@ -50,6 +50,11 @@
 ## Active: suite repair and branch reconciliation (2026-10-15)
 
 - [x] Protect agent-owned cgroups from `steam-procs` cleanup after Herdr exposed co-located live Wine helpers. Completed 2026-10-23 22:20 EDT: the new hermetic cgroup case failed first; all 15 focused cases, live invariants, and ShellCheck then passed.
+- [x] Remove the live `steam-procs_test` snapshot race exposed by the preserved
+  pre-push report. Completed 2026-10-28 07:37 EDT: Wine-process oracles now
+  bracket the classifier and compare only stable pid/birth/comm/cgroup records;
+  combined `pgrep` and Bash-native counters keep focused execution under five
+  seconds.
 - [x] Restore the complete suite to green, preserve the current hook work, reconcile `master` with `origin/master` without rewriting either history, push, and verify the exact remote commit. Completed 2026-10-28 03:00 EDT: merge commits `9c935fb` and `4e6ce82` preserve both histories; the complete suite and Nix check pass; local, `origin/master`, and successful Mechatron Prime CI all identify `e2788fe`.
 
 ## Active: Herdr layout and session identity

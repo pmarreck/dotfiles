@@ -227,15 +227,64 @@ if [ ! -r /proc/self/cmdline ]; then
 		bad "ps fallback misbehaved" "rc=$rc out=$(printf '%s' "$out" | head -3)"
 	fi
 else
+	# procfs reports st_size 0 for every /proc file, so `[ -s cmdline ]` is
+	# always false. Read the content instead.
+	has_argv() {
+		local f
+		IFS= read -r -d '' f 2>/dev/null < "/proc/$1/cmdline" && [ -n "$f" ]
+	}
+	cgroup_of() {
+		local row
+		while IFS= read -r row; do
+			case "$row" in
+				0::*) printf '%s' "${row#0::}"; return 0 ;;
+			esac
+		done 2>/dev/null < "/proc/$1/cgroup"
+		return 1
+	}
+	proc_birth_id() {
+		local stat_line rest
+		stat_line=$(<"/proc/$1/stat") || return 1
+		rest="${stat_line##*) }"
+		# Field 22 is process start time; after removing pid/comm it is field 20.
+		# shellcheck disable=SC2086 # Intentional splitting of procfs fields.
+		set -- $rest
+		[ "$#" -ge 20 ] || return 1
+		printf '%s' "${20}"
+	}
+	wine_process_snapshot() {
+		local pid c cg birth
+		while IFS= read -r pid; do
+			c=""
+			IFS= read -r c 2>/dev/null < "/proc/$pid/comm" || continue
+			case "$c" in *.exe) ;; *) continue ;; esac
+			has_argv "$pid" || continue
+			cg=$(cgroup_of "$pid") || continue
+			birth=$(proc_birth_id "$pid") || continue
+			printf '%s|%s|%s|%s\n' "$pid" "$birth" "$c" "$cg"
+		done < <(pgrep -i '[.]exe$' 2>/dev/null || true)
+	}
+
+	# Bracket the classifier with an independent Wine-process oracle. Only an
+	# identical pid/birth/comm/cgroup record on both sides is stable evidence.
+	declare -A WINE_BEFORE=() STABLE_WINE=()
+	while IFS= read -r record; do
+		[ -n "$record" ] && WINE_BEFORE["$record"]=1
+	done < <(wine_process_snapshot)
 	live_pids=$("$PROCS" --pids 2>/dev/null || true)
-	live_count=$(printf '%s' "$live_pids" | grep -c . || true)
+	while IFS= read -r record; do
+		[ -n "${WINE_BEFORE[$record]:-}" ] && STABLE_WINE["$record"]=1
+	done < <(wine_process_snapshot)
+	live_count=0
+	for c in $live_pids; do live_count=$((live_count + 1)); done
 
 	# 9. Never this test, and never any of its ancestors — a tool that kills its
 	#    own operator's shell is worse than no tool.
 	tests=$((tests+1))
-	chain=""; p=$$
+	chain=""; chain_count=0; p=$$
 	while [ -n "$p" ] && [ "$p" != "0" ] && [ "$p" != "1" ]; do
 		chain="$chain $p"
+		chain_count=$((chain_count + 1))
 		p=$(awk '/^PPid:/{print $2}' "/proc/$p/status" 2>/dev/null)
 	done
 	selfhit=""
@@ -243,7 +292,7 @@ else
 		case $'\n'"$live_pids"$'\n' in *$'\n'"$c"$'\n'*) selfhit="$selfhit $c" ;; esac
 	done
 	if [ -z "$selfhit" ]; then
-		ok "excludes itself and its whole ancestor chain ($(printf '%s' "$chain" | wc -w) pids)"
+		ok "excludes itself and its whole ancestor chain ($chain_count pids)"
 	else
 		bad "matched itself or an ancestor:$selfhit" "running the killer would kill the shell that ran it"
 	fi
@@ -251,12 +300,11 @@ else
 	# 10. THE REGRESSION DETECTOR. Independent oracle: pgrep by exact comm. No
 	#     agent, node, or tmux server may ever be matched, Steam running or not.
 	tests=$((tests+1))
-	protected=""
-	for name in claude node tmux ssh sshd systemd bash zsh; do
-		protected="$protected $(pgrep -x "$name" 2>/dev/null | tr '\n' ' ')"
-	done
+	protected=$(pgrep -x 'claude|node|tmux|ssh|sshd|systemd|bash|zsh' 2>/dev/null || true)
 	hits=""
+	nprot=0
 	for c in $protected; do
+		nprot=$((nprot + 1))
 		case $'\n'"$live_pids"$'\n' in *$'\n'"$c"$'\n'*) hits="$hits $c" ;; esac
 	done
 	# The Steam client is itself started by a bash script, so a matched bash is
@@ -267,22 +315,12 @@ else
 			real_hits="$real_hits $h($(cat "/proc/$h/comm" 2>/dev/null))"
 		fi
 	done
-	nprot=$(printf '%s' "$protected" | wc -w)
 	if [ -z "$real_hits" ]; then
 		ok "no agent/shell/tmux/ssh process matched ($nprot protected pids checked)"
 	else
 		bad "matched processes that are NOT Steam:$real_hits" \
 		    "this is the 85-process regression — running the killer would take them out"
 	fi
-
-	# procfs reports st_size 0 for every /proc file, so `[ -s cmdline ]` is ALWAYS
-	# false and silently turns any check built on it into a vacuous pass. Read the
-	# content instead. (Learned the hard way: an earlier draft of this file used
-	# -s and reported "0 Wine processes found" while 12 were running.)
-	has_argv() {
-		local f
-		IFS= read -r -d '' f < "/proc/$1/cmdline" 2>/dev/null && [ -n "$f" ]
-	}
 
 	# 11. No kernel thread, and never pid 1.
 	tests=$((tests+1))
@@ -313,7 +351,6 @@ else
 	#     which is exactly what makes it evidence rather than a restatement.
 	tests=$((tests+1))
 	declare -A PROTECTED_CG=()
-	cgroup_of() { sed -n 's/^0:://p' "/proc/$1/cgroup" 2>/dev/null | head -1; }
 	my_cg=$(cgroup_of $$)
 	if [ -z "$my_cg" ]; then
 		# No cgroup v2 accounting (non-systemd Linux). Fall back to the pid-set
@@ -375,33 +412,22 @@ else
 	fi
 
 	# 14. Sensitivity on the live table: every unprotected Wine-hosted .exe
-	#     process that exists right now must be matched. Agent-cgroup Wine is
-	#     deliberately live work, not abandoned game state.
+	#     process stable across the classifier snapshot must be matched. Bracket
+	#     the command with two oracle snapshots so a Wine process born afterward
+	#     cannot be reported as a miss against an older result.
 	tests=$((tests+1))
-	wine_live=""; wine_missed=""; wine_protected=""
-	for d in $(glob echo /proc/[0-9]*); do
-		pid="${d#/proc/}"
-		c=$(cat "$d/comm" 2>/dev/null) || continue
-		case "$c" in
-			*.exe)
-				has_argv "$pid" || continue
-				cg=$(cgroup_of "$pid")
-				if [ -n "${PROTECTED_CG[$cg]:-}" ]; then
-					wine_protected="$wine_protected $pid"
-					continue
-				fi
-				wine_live="$wine_live $pid"
-				case $'\n'"$live_pids"$'\n' in
-					*$'\n'"$pid"$'\n'*) ;;
-					*) wine_missed="$wine_missed $pid($c)" ;;
-				esac
-				;;
+	wine_missed=""; nwine=0
+	for record in "${!STABLE_WINE[@]}"; do
+		IFS='|' read -r pid birth c cg <<<"$record"
+		[ -n "${PROTECTED_CG[$cg]:-}" ] && continue
+		nwine=$((nwine + 1))
+		case $'\n'"$live_pids"$'\n' in
+			*$'\n'"$pid"$'\n'*) ;;
+			*) wine_missed="$wine_missed $pid($c)" ;;
 		esac
 	done
-	nwine=$(printf '%s' "$wine_live" | wc -w)
-	nprotected=$(printf '%s' "$wine_protected" | wc -w)
 	if [ -z "$wine_missed" ]; then
-		ok "every unprotected live Wine-hosted .exe process is matched ($nwine eligible, $nprotected agent-owned)"
+		ok "every stable unprotected Wine-hosted .exe process is matched ($nwine eligible)"
 	else
 		bad "missed live Wine processes:$wine_missed" \
 		    "these are exactly the ones that wedge the next Proton launch"
