@@ -8,6 +8,36 @@ fails=0
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 cmd="$script_dir/../fingerprint_hw_os"
 
+test_root=$(mktemp -d "${TMPDIR:-/tmp}/fingerprint_hw_os_test.XXXXXX")
+trap 'rm -rf -- "$test_root"' EXIT
+fixture_root="$test_root/root"
+mkdir -p \
+	"$fixture_root/etc" \
+	"$fixture_root/proc/1" \
+	"$fixture_root/proc/sys/fs/binfmt_misc" \
+	"$fixture_root/run/systemd" \
+	"$fixture_root/sys/devices/system/cpu/cpu0/cache/index0" \
+	"$fixture_root/sys/devices/system/cpu/cpu0/cache/index1" \
+	"$fixture_root/sys/devices/system/cpu/cpu0/cache/index2" \
+	"$fixture_root/sys/devices/system/cpu/cpu0/cache/index3" \
+	"$fixture_root/sys/devices/virtual/dmi/id"
+
+printf '\nprocessor : 0\nvendor_id : FixtureVendor\nmodel name : Fixture CPU\ncpu family : 6\nmodel : 42\nstepping : 1\ncpu cores : 2\nsiblings : 2\nphysical id : 0\nflags : sse4_2 avx avx2\nprocessor : 1\nphysical id : 0\n' >"$fixture_root/proc/cpuinfo"
+printf 'MemTotal: 1048576 kB\n' >"$fixture_root/proc/meminfo"
+printf 'Linux version fixture\n' >"$fixture_root/proc/version"
+printf '0::/docker/fixture\n' >"$fixture_root/proc/1/cgroup"
+printf 'NAME=FixtureLinux\nVERSION_ID=42\n' >"$fixture_root/etc/os-release"
+printf 'Fixture Board\n' >"$fixture_root/sys/devices/virtual/dmi/id/product_name"
+printf 'Fixture Firmware\n' >"$fixture_root/sys/devices/virtual/dmi/id/bios_version"
+printf '32K\n' >"$fixture_root/sys/devices/system/cpu/cpu0/cache/index0/size"
+printf 'Data\n' >"$fixture_root/sys/devices/system/cpu/cpu0/cache/index0/type"
+printf '32K\n' >"$fixture_root/sys/devices/system/cpu/cpu0/cache/index1/size"
+printf 'Instruction\n' >"$fixture_root/sys/devices/system/cpu/cpu0/cache/index1/type"
+printf '256K\n' >"$fixture_root/sys/devices/system/cpu/cpu0/cache/index2/size"
+printf 'Unified\n' >"$fixture_root/sys/devices/system/cpu/cpu0/cache/index2/type"
+printf '8M\n' >"$fixture_root/sys/devices/system/cpu/cpu0/cache/index3/size"
+printf 'Unified\n' >"$fixture_root/sys/devices/system/cpu/cpu0/cache/index3/type"
+
 if [[ ! -x "$cmd" ]]; then
 	echo "fingerprint_hw_os_test: executable not found at $cmd" >&2
 	exit 1
@@ -22,9 +52,14 @@ fail() {
 	((fails++))
 }
 
-run_cmd() {
-	"$cmd" "$@"
-}
+run_cmd() (
+	unset WSL_DISTRO_NAME WSL_INTEROP
+	FINGERPRINT_HW_OS_ROOT="$fixture_root" \
+	FINGERPRINT_HW_OS_PLATFORM=linux \
+	FINGERPRINT_HW_OS_ARCH=x86_64 \
+	FINGERPRINT_HW_OS_KERNEL_RELEASE=6.1.2-fixture \
+		"$cmd" "$@"
+)
 
 ((tests++))
 echo "Test: --help shows usage..."
@@ -68,6 +103,14 @@ if [[ $status1 -ne 0 || $status2 -ne 0 ]]; then
 		fail "threads_per_core missing from output"
 	elif ! echo "$out1" | grep -q "^total_cores="; then
 		fail "total_cores missing from output"
+	elif ! echo "$out1" | grep -qx "distro=FixtureLinux"; then
+		fail "distro did not come from the isolated fixture"
+	elif ! echo "$out1" | grep -qx "board=Fixture_Board"; then
+		fail "board did not come from the isolated fixture"
+	elif ! echo "$out1" | grep -qx "kernel_release=6.1.2-fixture"; then
+		fail "kernel release did not come from the isolated fixture"
+	elif ! echo "$out1" | grep -qx "container_runtime=docker"; then
+		fail "container runtime did not come from the isolated fixture"
 	elif [[ -n "$brand" && "$brand" =~ " " ]]; then
 		fail "cpu_brand contains spaces"
 	elif [[ -n "$distro" && "$distro" =~ " " ]]; then
@@ -104,11 +147,10 @@ fi
 ((tests++))
 echo "Test: sha256 helper matches system sha256..."
 sys_hash=""
+test_input='Ab9xQ2mK7z'
 if command -v sha256sum >/dev/null 2>&1; then
-	test_input=$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 10)
 	sys_hash=$(printf "%s" "$test_input" | sha256sum | awk '{print $1}')
 elif command -v shasum >/dev/null 2>&1; then
-	test_input=$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 10)
 	sys_hash=$(printf "%s" "$test_input" | shasum -a 256 | awk '{print $1}')
 fi
 if [[ -z "$sys_hash" ]]; then

@@ -1393,6 +1393,11 @@ ASCII `^[A-Z][a-z]`, retaining acronyms and one-letter uppercase words.
     `/usr/bin/env`, then passed all 176 admitted files after resolving their
     Bash interpreter. The live tree then passed all 204 host files and all 179
     Nix-admitted files. The manifest is down to 25.
+  - Progress 2026-10-28 08:25 EDT: graduated `fingerprint_hw_os`; the first Nix
+    run reproduced two missing-distro assertions caused by reading the sandbox
+    host. A private Linux fixture now injects filesystem, platform, architecture,
+    kernel, CPU, memory, DMI, OS, container, and fixed SHA inputs. Focused tests,
+    ShellCheck, and all 180 Nix-admitted files pass. The manifest is down to 24.
 - [ ] Migrate the 9 legacy memories still in `~/.claude/projects/*/memory/` into
   `~/MEMORIES` via the `memories` skill (another agent's migration is unfinished).
 
