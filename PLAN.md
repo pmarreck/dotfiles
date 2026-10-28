@@ -1453,6 +1453,12 @@ ASCII `^[A-Z][a-z]`, retaining acronyms and one-letter uppercase words.
     discards inherited `fd`/`find` functions, and uses a private trap-cleaned
     root and HOME. Focused ShellCheck, the full behavior suite, all 190
     Nix-admitted files, and all 204 host files pass. The manifest is down to 14.
+  - Progress 2026-10-28 09:39 EDT: graduated `overview`; the first Nix run
+    reproduced all generated commands failing through absent `/usr/bin/env`.
+    The test now resolves every fixture shebang and the command, clears the
+    inherited `rg` wrapper, and uses private HOME plus trap-owned storage.
+    Focused ShellCheck, all six safety assertions, all 191 Nix-admitted files,
+    and all 204 host files pass. The manifest is down to 13.
 - [ ] Migrate the 9 legacy memories still in `~/.claude/projects/*/memory/` into
   `~/MEMORIES` via the `memories` skill (another agent's migration is unfinished).
 
