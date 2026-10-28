@@ -24,7 +24,7 @@ capture env \
 	USER=ffpw-alias-test \
 	XDG_CONFIG_HOME="${TMPDIR%/}/ffpw-alias-home/.config" \
 	bash --noprofile --norc -c '
-		PLATFORM=linux
+		OS=linux
 		DISTRO=NixOS
 		needs() { :; }
 		is_nix_darwin() { return 1; }

@@ -1,10 +1,10 @@
 # Sexy man pages. Opens a postscript version in Preview.app on OS X or evince on Linux
-if [ "$PLATFORM" = "mac" ]; then
+if [ "$OS" = "macos" ]; then
   pman() { 
     [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
     man -t "$@" | open -f -a Preview
   }
-elif [ "$PLATFORM" = "linux" ]; then
+elif [ "$OS" = "linux" ]; then
   # unfortunately this is a little grosser on linux, requiring a tempfile
   pman() {
     [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return

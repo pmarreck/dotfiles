@@ -1,5 +1,5 @@
 # get nvidia driver version on linux
-if [ "$PLATFORM" = "linux" ]; then
+if [ "$OS" = "linux" ]; then
   nvidia() {
     [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
     needs nvidia-smi from nvidia-cuda-toolkit

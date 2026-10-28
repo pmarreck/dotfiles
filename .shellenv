@@ -61,13 +61,11 @@ fi
 # --- locale ---
 export LANG=en_US.UTF-8
 
-# --- platform (used by .envconfig and scripts) ---
-export PLATFORM
-case "$OSTYPE" in
-	darwin*)              export PLATFORM="mac";     export DISTRO="macOS"   ;;
-	linux*)              export PLATFORM="linux";   export DISTRO="$(distro 2>/dev/null)" ;;
-	msys*|cygwin*|mingw*) export PLATFORM="windows"; export DISTRO="Windows" ;;
-	*)                   export PLATFORM="$OSTYPE" ;;
+# --- distribution (canonical platform variables come from .pathconfig) ---
+case "$OS" in
+	macos) export DISTRO="macOS" ;;
+	linux) export DISTRO="$(distro 2>/dev/null)" ;;
+	mswin) export DISTRO="Windows" ;;
 esac
 
 # --- preferred editors (scripts & git read $EDITOR / $VISUAL) ---

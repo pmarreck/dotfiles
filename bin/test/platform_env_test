@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+
+# Canonical execution-platform classification is a set mapping, not a handful
+# of independent predicates. Exercise every supported PF, representative input
+# aliases, WSL's Linux identity, and a rejection set.
+
+set -u
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+helper="$repo_root/bin/src/platform_env.bash"
+tests=0
+fails=0
+
+pass() {
+	printf 'PASS: %s\n' "$1"
+}
+
+fail() {
+	printf 'FAIL: %s\n' "$1" >&2
+	((fails++))
+}
+
+if [ ! -r "$helper" ]; then
+	printf 'FAIL: platform helper is missing: %s\n' "$helper" >&2
+	exit 1
+fi
+
+# shellcheck source=/dev/null
+. "$helper"
+
+classify() {
+	(
+		unset OS ARCH PLATFORM PF WSL
+		configure_platform_env "$1" "$2" "$3" || exit
+		printf '%s|%s|%s|%s|%s' "$OS" "$ARCH" "$PLATFORM" "$PF" "$WSL"
+	)
+}
+
+supported_cases=(
+	'Linux|x86_64|6.8.0-generic|linux|amd64|linux-amd64|0'
+	'linux-gnu|amd64|6.8.0-generic|linux|amd64|linux-amd64|0'
+	'Linux|aarch64|6.8.0-generic|linux|arm64|linux-arm64|0'
+	'Darwin|arm64|23.5.0|macos|arm64|macos-arm64|0'
+	'MINGW64_NT-10.0|AMD64|10.0|mswin|amd64|mswin-amd64|0'
+	'MSYS_NT-10.0|x86_64|10.0|mswin|amd64|mswin-amd64|0'
+	'CYGWIN_NT-10.0|ARM64|10.0|mswin|arm64|mswin-arm64|0'
+	'Windows_NT|arm64|10.0|mswin|arm64|mswin-arm64|0'
+	'Linux|x86_64|5.15.90.1-microsoft-standard-WSL2|linux|amd64|linux-amd64|1'
+	'Linux|aarch64|Microsoft WSL2|linux|arm64|linux-arm64|1'
+)
+
+((tests++))
+supported_failures=0
+for case_data in "${supported_cases[@]}"; do
+	IFS='|' read -r raw_os raw_arch kernel_identity expected_os expected_arch expected_pf expected_wsl <<< "$case_data"
+	expected="$expected_os|$expected_arch|$expected_pf|$expected_pf|$expected_wsl"
+	actual=$(classify "$raw_os" "$raw_arch" "$kernel_identity" 2>/dev/null)
+	[ "$actual" = "$expected" ] || {
+		printf '  %s/%s/%s: expected %s, got %s\n' \
+			"$raw_os" "$raw_arch" "$kernel_identity" "$expected" "${actual:-<failure>}" >&2
+		((supported_failures++))
+	}
+done
+if (( supported_failures == 0 )); then
+	pass 'supported OS/architecture/WSL inputs map to the complete canonical set'
+else
+	fail "$supported_failures supported platform mapping(s) were wrong"
+fi
+
+rejected_cases=(
+	'FreeBSD|x86_64'
+	'Darwin|x86_64'
+	'Linux|riscv64'
+	'Plan9|arm64'
+	'MINGW64_NT-10.0|i686'
+)
+
+((tests++))
+accepted_rejections=0
+for case_data in "${rejected_cases[@]}"; do
+	IFS='|' read -r raw_os raw_arch <<< "$case_data"
+	if classify "$raw_os" "$raw_arch" 'fixture-kernel' >/dev/null 2>&1; then
+		printf '  unexpectedly accepted %s/%s\n' "$raw_os" "$raw_arch" >&2
+		((accepted_rejections++))
+	fi
+done
+if (( accepted_rejections == 0 )); then
+	pass 'unsupported OS/architecture pairs are rejected as a set'
+else
+	fail "$accepted_rejections unsupported platform pair(s) were accepted"
+fi
+
+((tests++))
+# Each command substitution is an intentionally isolated classifier process.
+# shellcheck disable=SC2030,SC2031
+stale_result=$(
+	export OS=stale ARCH=stale PLATFORM=linux PF=macos-arm64 WSL=9
+	configure_platform_env Linux x86_64 6.8.0-generic 2>/dev/null || exit
+	printf '%s|%s|%s|%s|%s' "$OS" "$ARCH" "$PLATFORM" "$PF" "$WSL"
+)
+if [ "$stale_result" = 'linux|amd64|linux-amd64|linux-amd64|0' ]; then
+	pass 'actual execution facts replace stale inherited platform values'
+else
+	fail "stale inherited values survived classification: ${stale_result:-<failure>}"
+fi
+
+((tests++))
+# This is a second independent classifier process, not a read of the one above.
+# shellcheck disable=SC2031
+actual_result=$(
+	unset OS ARCH PLATFORM PF WSL
+	configure_platform_env 2>/dev/null || exit
+	printf '%s|%s|%s|%s|%s' "$OS" "$ARCH" "$PLATFORM" "$PF" "$WSL"
+)
+IFS='|' read -r actual_os actual_arch actual_platform actual_pf actual_wsl <<< "$actual_result"
+case "$actual_os|$actual_arch|$actual_platform|$actual_pf|$actual_wsl" in
+	linux\|amd64\|linux-amd64\|linux-amd64\|[01]|linux\|arm64\|linux-arm64\|linux-arm64\|[01]|macos\|arm64\|macos-arm64\|macos-arm64\|0|mswin\|amd64\|mswin-amd64\|mswin-amd64\|0|mswin\|arm64\|mswin-arm64\|mswin-arm64\|0)
+		pass 'no-argument classification reports a supported coherent host tuple'
+		;;
+	*)
+		fail "real host classification is unsupported or incoherent: ${actual_result:-<failure>}"
+		;;
+esac
+
+if (( fails == 0 )); then
+	printf 'All %s platform environment checks passed.\n' "$tests"
+else
+	printf '%s of %s platform environment checks failed.\n' "$fails" "$tests" >&2
+fi
+exit "$fails"

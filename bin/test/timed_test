@@ -314,7 +314,7 @@ test_times_entrypoint() {
 	local out err rc
 	capture env \
 		HOME="$alias_home" \
-		PLATFORM=linux \
+		OS=linux \
 		DISTRO=NixOS \
 		bash --noprofile --norc -c '
 			needs() { :; }

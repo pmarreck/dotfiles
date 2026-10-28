@@ -1,0 +1,212 @@
+#!/usr/bin/env bash
+
+# Exercise .pathconfig itself against a disposable project corpus. The asserted
+# set contains only each project's current bin/<PF> and generic bin directory.
+
+set -u
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+bash_bin="${BASH:-$(command -v bash)}"
+work=$(mktemp -d --tmpdir pathconfig_pf_test.XXXXXX)
+trap 'rm -rf -- "$work"' EXIT
+fixture_home="$work/home"
+operation_log="$work/build-operations"
+tests=0
+fails=0
+
+pass() {
+	printf 'PASS: %s\n' "$1"
+}
+
+fail() {
+	printf 'FAIL: %s\n' "$1" >&2
+	((fails++))
+}
+
+mkdir -p "$fixture_home/Code" "$work/stub-bin"
+ln -s "$repo_root" "$fixture_home/dotfiles"
+ln -s "$repo_root/.pathconfig" "$fixture_home/.pathconfig"
+: > "$operation_log"
+
+for command_name in nix zig cargo make; do
+	{
+		printf '#!%s\n' "$bash_bin"
+		printf 'printf "%%s\\n" %q >> %q\n' "$command_name" "$operation_log"
+		printf 'exit 97\n'
+	} > "$work/stub-bin/$command_name"
+	chmod +x "$work/stub-bin/$command_name"
+done
+
+platform_dirs=(macos-arm64 linux-amd64 linux-arm64 mswin-amd64 mswin-arm64)
+for project in alpha 'beta project'; do
+	project_bin="$fixture_home/Code/$project/bin"
+	mkdir -p "$project_bin/nested/deep" "$fixture_home/Code/$project/result/bin" "$fixture_home/Code/$project/zig-out/bin"
+	for pf_dir in "${platform_dirs[@]}"; do
+		mkdir -p "$project_bin/$pf_dir"
+	done
+done
+
+# An unmigrated project has no bin/<PF>. Its legacy built command directories
+# must remain visible until that project stages a native PF entrypoint.
+mkdir -p "$fixture_home/Code/gamma legacy/bin" \
+	"$fixture_home/Code/gamma legacy/result/bin" \
+	"$fixture_home/Code/gamma legacy/zig-out/bin"
+
+# A legacy-only project may have published commands without ever creating a
+# source bin/. Staging must preserve those too until it gains bin/<PF>.
+mkdir -p "$fixture_home/Code/delta legacy only/result/bin" \
+	"$fixture_home/Code/delta legacy only/zig-out/bin"
+
+# Distinguishable commands prove resolution, not merely PATH string presence.
+printf '#!%s\nprintf "generic"\n' "$bash_bin" > "$fixture_home/Code/alpha/bin/shared-command"
+chmod +x "$fixture_home/Code/alpha/bin/shared-command"
+for pf_dir in "${platform_dirs[@]}"; do
+	printf '#!%s\nprintf "%%s" %q\n' "$bash_bin" "$pf_dir" > "$fixture_home/Code/alpha/bin/$pf_dir/shared-command"
+	chmod +x "$fixture_home/Code/alpha/bin/$pf_dir/shared-command"
+done
+
+base_path="$work/stub-bin:/run/current-system/sw/bin:/usr/bin:/bin"
+[ -x /run/current-system/sw/bin/awk ] || base_path="$work/stub-bin:$PATH"
+
+run_pathconfig() {
+	local raw_os=$1 raw_arch=$2 kernel_identity=$3 source_count=${4:-1} incoming_prefix=${5:-}
+	# shellcheck disable=SC2016 # The quoted argument is the child shell program under test.
+	env -i \
+		HOME="$fixture_home" \
+		PATH="${incoming_prefix:+$incoming_prefix:}$base_path" \
+		NIX_PATH=fixture \
+		TEST_UNAME_OS="$raw_os" \
+		TEST_UNAME_ARCH="$raw_arch" \
+		TEST_UNAME_KERNEL="$kernel_identity" \
+		"$bash_bin" --noprofile --norc -c '
+			uname() {
+				case "${1:-}" in
+					-s) printf "%s\n" "$TEST_UNAME_OS" ;;
+					-m) printf "%s\n" "$TEST_UNAME_ARCH" ;;
+					-r) printf "%s\n" "$TEST_UNAME_KERNEL" ;;
+					*) return 2 ;;
+				esac
+			}
+			count=$1
+			while (( count > 0 )); do
+				. "$HOME/.pathconfig" >/dev/null || exit
+				((count--))
+			done
+			printf "ENV=%s|%s|%s|%s|%s\n" "${OS:-UNSET}" "${ARCH:-UNSET}" "${PLATFORM:-UNSET}" "${PF:-UNSET}" "${WSL:-UNSET}"
+			printf "PATH=%s\n" "$PATH"
+			printf "RESOLVED=%s\n" "$(command -v shared-command 2>/dev/null)"
+			printf "OUTPUT=%s\n" "$(shared-command 2>/dev/null)"
+		' _ "$source_count"
+}
+
+code_entries() {
+	local path_value=$1 entry joined=''
+	local IFS=:
+	for entry in $path_value; do
+		case "$entry" in
+			"$fixture_home/Code/"*) joined="${joined:+$joined|}$entry" ;;
+		esac
+	done
+	printf '%s' "$joined"
+}
+
+supported_cases=(
+	'Linux|x86_64|6.8.0-generic|linux|amd64|linux-amd64|0'
+	'Linux|aarch64|6.8.0-generic|linux|arm64|linux-arm64|0'
+	'Darwin|arm64|23.5.0|macos|arm64|macos-arm64|0'
+	'MINGW64_NT-10.0|AMD64|10.0|mswin|amd64|mswin-amd64|0'
+	'MSYS_NT-10.0|arm64|10.0|mswin|arm64|mswin-arm64|0'
+	'Linux|x86_64|5.15.90.1-microsoft-standard-WSL2|linux|amd64|linux-amd64|1'
+)
+
+((tests++))
+mapping_failures=0
+for case_data in "${supported_cases[@]}"; do
+	IFS='|' read -r raw_os raw_arch kernel_identity expected_os expected_arch expected_pf expected_wsl <<< "$case_data"
+	result=$(run_pathconfig "$raw_os" "$raw_arch" "$kernel_identity" 1 2>/dev/null)
+	run_status=$?
+	env_line=${result%%$'\n'*}
+	remainder=${result#*$'\n'}
+	path_line=${remainder%%$'\n'*}
+	path_value=${path_line#PATH=}
+	remainder=${remainder#*$'\n'}
+	resolved_line=${remainder%%$'\n'*}
+	output_line=${remainder##*$'\n'}
+	expected_env="ENV=$expected_os|$expected_arch|$expected_pf|$expected_pf|$expected_wsl"
+	expected_entries="$fixture_home/Code/gamma legacy/bin|$fixture_home/Code/beta project/bin/$expected_pf|$fixture_home/Code/beta project/bin|$fixture_home/Code/alpha/bin/$expected_pf|$fixture_home/Code/alpha/bin|$fixture_home/Code/gamma legacy/zig-out/bin|$fixture_home/Code/delta legacy only/zig-out/bin|$fixture_home/Code/gamma legacy/result/bin|$fixture_home/Code/delta legacy only/result/bin"
+	expected_resolved="RESOLVED=$fixture_home/Code/alpha/bin/$expected_pf/shared-command"
+	expected_output="OUTPUT=$expected_pf"
+	if (( run_status != 0 )) || [ "$env_line" != "$expected_env" ] || \
+		[ "$(code_entries "$path_value")" != "$expected_entries" ] || \
+		[ "$resolved_line" != "$expected_resolved" ] || [ "$output_line" != "$expected_output" ]; then
+		printf '  %s/%s: rc=%s env=[%s] code=[%s] resolved=[%s] output=[%s]\n' \
+			"$raw_os" "$raw_arch" "$run_status" "$env_line" "$(code_entries "$path_value")" \
+			"$resolved_line" "$output_line" >&2
+		((mapping_failures++))
+	fi
+done
+if (( mapping_failures == 0 )); then
+	pass 'supported hosts cut over migrated projects while preserving unmigrated legacy commands'
+else
+	fail "$mapping_failures supported PATH classifier case(s) were wrong"
+fi
+
+((tests++))
+once=$(run_pathconfig Linux x86_64 6.8.0-generic 1 2>/dev/null)
+twice=$(run_pathconfig Linux x86_64 6.8.0-generic 2 2>/dev/null)
+if [ "$once" = "$twice" ]; then
+	pass 're-sourcing preserves the complete environment and PATH exactly'
+else
+	fail 'a second .pathconfig source changed its result'
+fi
+
+((tests++))
+mkdir -p "$work/external-injection"
+inherited_prefix="$fixture_home/Code/alpha/result/bin:$fixture_home/Code/alpha/zig-out/bin:$fixture_home/Code/alpha/bin/macos-arm64:$work/external-injection"
+inherited=$(run_pathconfig Linux x86_64 6.8.0-generic 1 "$inherited_prefix" 2>/dev/null)
+inherited_path_line=$(printf '%s\n' "$inherited" | sed -n '2p')
+inherited_path=${inherited_path_line#PATH=}
+expected_inherited_entries="$fixture_home/Code/gamma legacy/bin|$fixture_home/Code/beta project/bin/linux-amd64|$fixture_home/Code/beta project/bin|$fixture_home/Code/alpha/bin/linux-amd64|$fixture_home/Code/alpha/bin|$fixture_home/Code/gamma legacy/zig-out/bin|$fixture_home/Code/delta legacy only/zig-out/bin|$fixture_home/Code/gamma legacy/result/bin|$fixture_home/Code/delta legacy only/result/bin"
+if [ "$(code_entries "$inherited_path")" = "$expected_inherited_entries" ] && \
+	case ":$inherited_path:" in *":$work/external-injection:"*) true ;; *) false ;; esac
+then
+	pass 'retired project outputs and foreign PFs are stripped while unrelated injections survive'
+else
+	fail "inherited PATH cleanup was wrong: $(code_entries "$inherited_path")"
+fi
+
+((tests++))
+if [[ "$inherited_path" != *::* && "$inherited_path" != :* && "$inherited_path" != *: ]]; then
+	pass 'PATH construction introduces no empty components'
+else
+	fail "PATH construction introduced an empty component: $inherited_path"
+fi
+
+((tests++))
+rejected_failures=0
+for rejected in 'FreeBSD|x86_64' 'Darwin|x86_64' 'Linux|riscv64'; do
+	IFS='|' read -r raw_os raw_arch <<< "$rejected"
+	if run_pathconfig "$raw_os" "$raw_arch" fixture-kernel 1 >/dev/null 2>&1; then
+		printf '  unexpectedly accepted %s/%s\n' "$raw_os" "$raw_arch" >&2
+		((rejected_failures++))
+	fi
+done
+if (( rejected_failures == 0 )); then
+	pass 'standalone PATH construction refuses unsupported host pairs'
+else
+	fail "$rejected_failures unsupported host pair(s) built a PATH"
+fi
+
+((tests++))
+if [ ! -s "$operation_log" ]; then
+	pass 'shell startup invokes no Nix or language build operation'
+else
+	fail "shell startup invoked build tools: $(tr '\n' ' ' < "$operation_log")"
+fi
+
+if (( fails == 0 )); then
+	printf 'All %s PF PATH checks passed.\n' "$tests"
+else
+	printf '%s of %s PF PATH checks failed.\n' "$fails" "$tests" >&2
+fi
+exit "$fails"

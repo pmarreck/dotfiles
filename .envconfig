@@ -1,5 +1,12 @@
 #!/usr/bin/env bash
 
+# shellcheck source=/dev/null # HOME is replaced by isolated startup fixtures.
+. "$HOME/dotfiles/bin/src/platform_env.bash"
+if ! configure_platform_env; then
+	# shellcheck disable=SC2317 # exit is the executed-file fallback after return fails.
+	return 1 2>/dev/null || exit 1
+fi
+
 [ -n "${DEBUG_SHELLCONFIG}" ] && echo "Entering $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")" || $INTERACTIVE_SHELL && $LOGIN_SHELL && append_dotfile_progress "env"
 [ -n "${DEBUG_PATHCONFIG}" ] && echo $PATH
 
@@ -229,12 +236,12 @@ export PS4='$0:$LINENO+ '
 # shut up, macos, zsh isn't significantly better enough than bash to warrant switching
 # (and you only did it because of the licensing difference, anyway)
 # (If this is unset on macos, it will keep reminding you to switch to zsh)
-if [ "$PLATFORM" = "mac" ]; then
+if [ "$OS" = "macos" ]; then
 	export BASH_SILENCE_DEPRECATION_WARNING=1
 fi
 
 # steam custom proton stuff, but only on linux
-if [ "$PLATFORM" = "linux" ]; then
+if [ "$OS" = "linux" ]; then
 	export STEAM_COMPAT_DATA_PATH="$HOME/.steam/steam/steamapps/compatdata"
 	export STEAM_COMPAT_CLIENT_INSTALL_PATH="$HOME/.steam/root"
 	export STEAM_EXTRA_COMPAT_TOOLS_PATHS="$HOME/.steam/root/compatibilitytools.d"

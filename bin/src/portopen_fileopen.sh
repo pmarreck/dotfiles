@@ -3,8 +3,8 @@
 # May only work on OS X and need tweaking for Linux!
 portopen() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-  case $PLATFORM in
-    "mac")
+  case $OS in
+    "macos")
       >&2 echo -e "${ANSI}${TXTYLW}sudo lsof -P -i \":${1}\"${ANSI}${TXTDFT}"
       sudo lsof -P -i ":${1}"
       ;;
@@ -17,8 +17,8 @@ portopen() {
 
 fileopen() {
   [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-  case $PLATFORM in
-    "mac")
+  case $OS in
+    "macos")
       >&2 echo -e "${ANSI}${TXTYLW}sudo lsof \"${1}\"${ANSI}${TXTDFT}"
       sudo lsof "${1}" 2>/dev/null
       ;;

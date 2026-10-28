@@ -45,14 +45,14 @@ alias lsize4='lsize0 --level=4'
 # alias rehash='hash -r'
 # OK, thanks to badly written hooks, this now has to be a function
 # alias word='grep \!* /usr/share/dict/web2' # Grep thru dictionary
-if [ "$PLATFORM" = "mac" ]; then
+if [ "$OS" = "macos" ]; then
   alias tophog='top -ocpu -s 3'
 else # linux
   alias tophog='top -o %CPU -d 3'
 fi
 
 # NixOS-specific stuff
-if [ "${PLATFORM}-${DISTRO}" = "linux-NixOS" ] || is_nix_darwin; then
+if [ "${OS}-${DISTRO}" = "linux-NixOS" ] || is_nix_darwin; then
   alias nix-list-gens='sudo nix-env -p /nix/var/nix/profiles/system --list-generations'
   alias nix-gen-num='readlink /nix/var/nix/profiles/system | cut -d- -f2'
   is_nix_darwin || alias nixos="choose_editor /etc/nixos &"
@@ -93,7 +93,7 @@ alias undefine="unset"
 # alias rc='rails console'
 
 # network crap (OS X only)
-if [ "$PLATFORM" = "mac" ]; then
+if [ "$OS" = "macos" ]; then
   alias killdns='sudo killall -HUP mDNSResponder'
 fi
 
@@ -243,7 +243,7 @@ alias setup_zig_repo='git init && link_AGENTS_here && cp -P AGENTS.md CLAUDE.md 
 alias dt='dirtree'
 alias keys='env | rg API_KEY'
 # Open the existing vault; Linux uses the desktop environment even from SSH/tmux.
-if [ "$PLATFORM" = "mac" ]; then
+if [ "$OS" = "macos" ]; then
   alias obsidian='open -a Obsidian "obsidian://open?vault=Peter%20Marreck"'
 else
   alias obsidian='systemd-run --user --collect --quiet -- obsidian "obsidian://open?vault=Peter%20Marreck"'

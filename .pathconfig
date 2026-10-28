@@ -37,6 +37,12 @@ _pc_incoming="$PATH"
 
 # Source path helpers (prepend_path, exclude_path)
 . "$HOME/dotfiles/bin/src/prepend_path.bash"
+# shellcheck source=/dev/null # HOME is replaced by isolated startup fixtures.
+. "$HOME/dotfiles/bin/src/platform_env.bash"
+if ! configure_platform_env; then
+	# shellcheck disable=SC2317 # exit is the executed-file fallback after return fails.
+	return 1 2>/dev/null || exit 1
+fi
 
 # CODE is the canonical home for Git repositories across platforms
 CODE="$HOME/Code"
@@ -127,13 +133,14 @@ PATH_ADDITIONS+=(
 	"$CODE/rm_safe/bin"
 )
 
-# Auto-discover personal project bin dirs under $CODE.
-# Source bin/ is globbed LAST so it ends up CLOSEST to the front of PATH (last prepend
-# wins) — a project's checked-in/dev bin/ takes precedence over its built result/bin or
-# zig-out/bin. This keeps the edit-run loop live for interpreted tools (random, uuidv7,
-# os_counters) and for dev wrappers (e.g. ffpw's bin/ffpw auto-rebuilds + execs the binary),
-# so a stale `nix build` result/ no longer shadows the source you're editing. `nix build`
-# stays canonical for CI/release; `nix profile install` / systemPackages for installs.
+# Auto-discover personal project command dirs under $CODE. A project with the
+# current bin/<PF>/ is migrated: generic bin/ is appended first and native
+# second, so last-prepend-wins puts native commands first. An unmigrated project
+# temporarily retains its old result/bin and zig-out/bin entries, even if it
+# never had a generic bin/. Legacy output groups remain behind the generic-bin
+# group, preserving the prior cross-project precedence. As soon as bin/<PF>/
+# exists, those raw build outputs leave PATH for that project.
+# Foreign PFs and arbitrary nested bin children are never admitted.
 # Use inline native globbing (noglob is on globally via set -f) — avoids subprocess fork
 # AND avoids #!/usr/bin/env bash resolving to /bin/bash 3.2 during early bootstrap.
 #
@@ -152,7 +159,20 @@ CODE_BIN_DENYLIST=(
 _saved_f=$-
 set +f
 shopt -s nullglob
-for _dir in "$CODE"/*/result/bin "$CODE"/*/zig-out/bin "$CODE"/*/bin; do
+for _legacy_kind in result/bin zig-out/bin; do
+	for _dir in "$CODE"/*/"$_legacy_kind"; do
+		_project_root=${_dir%/result/bin}
+		[ "$_project_root" = "$_dir" ] && _project_root=${_dir%/zig-out/bin}
+		[ -d "$_project_root/bin/$PF" ] && continue
+		_proj=${_project_root#"$CODE"/}
+		_denied=0
+		for _deny in "${CODE_BIN_DENYLIST[@]}"; do
+			if [ "$_proj" = "$_deny" ]; then _denied=1; break; fi
+		done
+		[ "$_denied" -eq 1 ] || PATH_ADDITIONS+=("$_dir")
+	done
+done
+for _dir in "$CODE"/*/bin; do
 	_proj=${_dir#"$CODE"/}
 	_proj=${_proj%%/*}
 	_denied=0
@@ -161,10 +181,11 @@ for _dir in "$CODE"/*/result/bin "$CODE"/*/zig-out/bin "$CODE"/*/bin; do
 	done
 	[ "$_denied" -eq 1 ] && continue
 	PATH_ADDITIONS+=("$_dir")
+	[ -d "$_dir/$PF" ] && PATH_ADDITIONS+=("$_dir/$PF")
 done
 shopt -u nullglob
 [[ "$_saved_f" == *f* ]] && set -f
-unset _saved_f _dir _proj _denied _deny
+unset _saved_f _legacy_kind _dir _proj _denied _deny _project_root
 
 # Declarative list of PATH exclusions (mostly macOS cruft that keeps reinserting itself).
 # https://support.apple.com/guide/deployment/rapid-security-responses-dep93ff7ea78/web
@@ -266,6 +287,30 @@ IFS=$_OLD_IFS
 unset _OLD_IFS _path _deny
 
 unset IGNORE_EXCLUDE_PATH_WARNINGS _excl
+
+# Retire raw build paths for migrated projects even when an old parent shell
+# presents them as foreign injections. Unmigrated projects retain those paths
+# until their current PF directory exists. Remove foreign PF directories while
+# preserving the current PF and generic project bin.
+_OLD_IFS=$IFS
+IFS=:
+for _path in $PATH; do
+	case "$_path" in
+		"$CODE"/*/result/bin|"$CODE"/*/zig-out/bin)
+			_legacy_project=${_path%/result/bin}
+			[ "$_legacy_project" = "$_path" ] && _legacy_project=${_path%/zig-out/bin}
+			[ -d "$_legacy_project/bin/$PF" ] && exclude_path "$_path"
+			;;
+		"$CODE"/*/bin/macos-arm64|"$CODE"/*/bin/linux-amd64|"$CODE"/*/bin/linux-arm64|"$CODE"/*/bin/mswin-amd64|"$CODE"/*/bin/mswin-arm64)
+			case "$_path" in
+				"$CODE"/*/bin/"$PF") ;;
+				*) exclude_path "$_path" ;;
+			esac
+			;;
+	esac
+done
+IFS=$_OLD_IFS
+unset _OLD_IFS _path _legacy_project
 
 # Filter out any path entries that don't actually exist as directories
 _OLD_IFS=$IFS

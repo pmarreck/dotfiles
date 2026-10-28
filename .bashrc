@@ -185,11 +185,10 @@ export SSH_KEY_PATH="$HOME/.ssh/id_ed25519"
 # Guix integration
 [[ -s "$HOME/.guix-profile/etc/profile" ]] && source $HOME/.guix-profile/etc/profile
 
-# platform info
-export PLATFORM
-case $OSTYPE in
-	darwin*)
-		export PLATFORM="mac"
+# Distribution information. Canonical OS/ARCH/PLATFORM/PF/WSL are exported by
+# .pathconfig before this point and must retain their execution-platform meaning.
+case $OS in
+	macos)
 		export DISTRO="macOS"
 		if command -v mac_os_version_number_to_name >/dev/null 2>&1 && command -v sw_vers >/dev/null 2>&1; then
 			MACOS_VERSION="$(sw_vers -productVersion 2>/dev/null)"
@@ -211,21 +210,15 @@ case $OSTYPE in
 		#   "$HOME/dotfiles/bin/src/macos_ramdisk_tmp.sh"
 		# fi
 		;;
-	linux*)
-		export PLATFORM="linux"
+	linux)
 		export DISTRO="$(distro)"
 		export DISTRO_PRETTY="$(distro_pretty)"
 		export DISTRO_VERSION="$(distro_version)"
 		;;
-	msys*|cygwin*|mingw*)
-		export PLATFORM="windows"
+	mswin)
 		export DISTRO="Windows"
 		export DISTRO_PRETTY="$(distro_pretty)"
 		export DISTRO_VERSION="$(distro_version)"
-		;;
-	*)
-		# this downcase requires bash 4+; you can pipe to tr '[:upper:]' '[:lower:]' instead
-		export PLATFORM="$OSTYPE"
 		;;
 esac
 
@@ -235,7 +228,7 @@ fi
 # echo "AWK in .bashrc:258 is: $AWK"
 # using the right awk is a PITA on macOS vs. Linux so let's ensure GNU Awk everywhere
 is_gnu_awk=$($AWK --version | "${GREP_QUIET_ARRAY[@]}" -m 1 'GNU Awk' && echo true || echo false)
-[ "${PLATFORM}$(basename $AWK)" == "macawk" ] && \
+[ "${OS}$(basename "$AWK")" == "macosawk" ] && \
 	$is_gnu_awk && \
 	echo "WARNING: The awk on PATH is not GNU Awk on macOS, which may cause problems" >&2
 

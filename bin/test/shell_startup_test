@@ -23,8 +23,26 @@ SHELLENV="$HOME/dotfiles/.shellenv"
 BASE_PATH="/run/current-system/sw/bin:/usr/bin:/bin"
 ME="$(id -un)"
 
+case "$(uname -s)" in
+	Linux) HOST_OS=linux ;;
+	Darwin) HOST_OS=macos ;;
+	MINGW*|MSYS*|CYGWIN*|Windows*) HOST_OS=mswin ;;
+	*) HOST_OS=unsupported ;;
+esac
+case "$(uname -m)" in
+	x86_64|amd64|AMD64) HOST_ARCH=amd64 ;;
+	aarch64|arm64|ARM64) HOST_ARCH=arm64 ;;
+	*) HOST_ARCH=unsupported ;;
+esac
+HOST_PF="$HOST_OS-$HOST_ARCH"
+case "$(uname -r)" in
+	*[Mm][Ii][Cc][Rr][Oo][Ss][Oo][Ff][Tt]*|*[Ww][Ss][Ll]*) HOST_WSL=1 ;;
+	*) HOST_WSL=0 ;;
+esac
+
 # One-line probe emitting the env facts we assert on.
-PROBE='printf "needs=%s editor=%s node=%s nodesrc=%s npm=%s hasbin=%s pnpm=%s rehash=%s\n" "$(command -v needs >/dev/null 2>&1 && echo ok || echo MISSING)" "${EDITOR:-UNSET}" "$(command -v node >/dev/null 2>&1 && echo ok || echo MISSING)" "$(case "$(command -v node 2>/dev/null)" in */mise/shims/node) echo mise ;; "") echo none ;; *) echo other ;; esac)" "$(command -v npm >/dev/null 2>&1 && echo ok || echo MISSING)" "$(case ":$PATH:" in *":$HOME/bin:"*) echo yes ;; *) echo no ;; esac)" "$(command -v pnpm >/dev/null 2>&1 && echo ok || echo MISSING)" "$(type -t rehash 2>/dev/null || echo MISSING)"'
+# shellcheck disable=SC2016 # The pristine child shell expands this probe.
+PROBE='printf "needs=%s editor=%s node=%s nodesrc=%s npm=%s hasbin=%s pnpm=%s rehash=%s os=%s arch=%s platform=%s pf=%s wsl=%s\n" "$(command -v needs >/dev/null 2>&1 && echo ok || echo MISSING)" "${EDITOR:-UNSET}" "$(command -v node >/dev/null 2>&1 && echo ok || echo MISSING)" "$(case "$(command -v node 2>/dev/null)" in */mise/shims/node) echo mise ;; "") echo none ;; *) echo other ;; esac)" "$(command -v npm >/dev/null 2>&1 && echo ok || echo MISSING)" "$(case ":$PATH:" in *":$HOME/bin:"*) echo yes ;; *) echo no ;; esac)" "$(command -v pnpm >/dev/null 2>&1 && echo ok || echo MISSING)" "$(type -t rehash 2>/dev/null || echo MISSING)" "${OS:-UNSET}" "${ARCH:-UNSET}" "${PLATFORM:-UNSET}" "${PF:-UNSET}" "${WSL:-UNSET}"'
 
 fails=0
 
@@ -51,6 +69,8 @@ check() { # <label> <probe-output> <expected-rehash-kind>
 	local expected_rehash=$3
 	if [[ "$out" == *"needs=ok"* && "$out" == *"hasbin=yes"* && "$out" != *"editor=UNSET"* && \
 		"$out" == *"node=ok"* && "$out" == *"nodesrc=mise"* && "$out" == *"npm=ok"* && \
+		"$out" == *"os=$HOST_OS"* && "$out" == *"arch=$HOST_ARCH"* && \
+		"$out" == *"platform=$HOST_PF"* && "$out" == *"pf=$HOST_PF"* && "$out" == *"wsl=$HOST_WSL"* && \
 		( "$expected_rehash" == "any" || "$out" == *"rehash=$expected_rehash"* ) ]]; then
 		echo "✓ $label  [$out]"
 	else

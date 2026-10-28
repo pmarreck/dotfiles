@@ -40,7 +40,7 @@ out="" err="" rc=0
 capture env -i \
 	HOME="$scratch/home" \
 	USER=fixture \
-	PLATFORM=linux \
+	OS=linux \
 	DISTRO=NixOS \
 	XDG_CACHE_HOME="$scratch/cache" \
 	XDG_CONFIG_HOME="$scratch/config" \
