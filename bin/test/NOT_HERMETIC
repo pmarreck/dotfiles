@@ -18,10 +18,9 @@
 shell_startup_test
 
 # ── Requires the user's live system configuration or account layout ──────────
-# pathconfig asserts NixOS wrapper ordering under /run/wrappers; executables and
-# overview enumerate the real PATH.
+# pathconfig asserts NixOS wrapper ordering under /run/wrappers; overview
+# enumerates the real PATH.
 pathconfig_bash_prepend_test
-executables_test
 overview_test
 
 # ── Requires sibling tools from ~/Code that are not part of this repository ───

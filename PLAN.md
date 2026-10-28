@@ -1447,6 +1447,12 @@ ASCII `^[A-Z][a-z]`, retaining acronyms and one-letter uppercase words.
     changes. Its repositories, remotes, roots, and default HOME were already
     disposable fixtures; the first admitted run passed all 189 Nix test files.
     The manifest is down to 15.
+  - Progress 2026-10-28 09:33 EDT: graduated `executables`; the first Nix run
+    proved its limited PATH selected the dotfiles `fd` guard without the real
+    binary. The test now resolves one real provider for every dependency,
+    discards inherited `fd`/`find` functions, and uses a private trap-cleaned
+    root and HOME. Focused ShellCheck, the full behavior suite, all 190
+    Nix-admitted files, and all 204 host files pass. The manifest is down to 14.
 - [ ] Migrate the 9 legacy memories still in `~/.claude/projects/*/memory/` into
   `~/MEMORIES` via the `memories` skill (another agent's migration is unfinished).
 
