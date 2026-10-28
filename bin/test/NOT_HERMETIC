@@ -15,7 +15,6 @@
 # point: it is how a test graduates to being hermetic.
 
 # ── Requires a real terminal, tmux server, or interactive session ────────────
-apply-hooks_test
 newterm_test
 shell_startup_test
 ask_test

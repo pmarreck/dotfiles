@@ -1425,6 +1425,12 @@ ASCII `^[A-Z][a-z]`, retaining acronyms and one-letter uppercase words.
     uses one private temp root and HOME, and passes focused ShellCheck, all 13
     behavior cases, all 185 Nix-admitted files, and all 204 host files. The
     manifest is down to 19.
+  - Progress 2026-10-28 09:06 EDT: graduated `apply-hooks`; the first Nix run
+    reproduced McFly disappearing after a second source because its adapter
+    could not execute through `/usr/bin/env`. Both adapters now resolve Bash,
+    and the nested shell uses a private HOME with the repository as a read-only
+    source fixture. Focused ShellCheck, both hook lifecycle regressions, all 186
+    Nix-admitted files, and all 204 host files pass. The manifest is down to 18.
 - [ ] Migrate the 9 legacy memories still in `~/.claude/projects/*/memory/` into
   `~/MEMORIES` via the `memories` skill (another agent's migration is unfinished).
 
