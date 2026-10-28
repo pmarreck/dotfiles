@@ -64,6 +64,10 @@ check jq -se 'any(.[]; .[0:2]==["workspace","create"] and index("--no-focus")!=n
 check jq -se 'any(.[]; .[0:2]==["agent","start"] and index("wNEW:p7")!=null and index("--dangerously-bypass-approvals-and-sandbox")!=null)' "$tmp/calls"
 check grep -q created "$tmp/out"
 check test -d "$ERECT_STATE_DIR"
+initial_hash="$(printf '%s' "$EAS_PROJECT" | sha256sum)"
+initial_hash="${initial_hash%% *}"
+state_record="$ERECT_STATE_DIR/$initial_hash.json"
+check jq -e '.schema=="erect-agent-stack/v2" and .requested_session_id==null and .observed_session_id=="native-session-123" and .verified_session_id=="native-session-123" and .session_id=="native-session-123" and .status=="verified"' "$state_record"
 check jq -se 'any(.[]; .[0:2]==["tab","rename"] and .[3]=="AI")' "$tmp/calls"
 check jq -se 'any(.[]; .[0:2]==["tab","create"] and .[index("--label")+1]=="CLI" and index("--no-focus")!=null)' "$tmp/calls"
 
@@ -138,12 +142,50 @@ run --fresh "$EAS_PROJECT"
 check test "$status" = 69
 check calls_are_readonly
 
-# A start timeout sends exactly one start and no speculative resume/fresh/ping.
+# A timed-out start is reinspected once. A ready exact identity succeeds without
+# a second start, while an identity-free delayed startup remains unconfirmed.
 reset_fixture
-EAS_FAIL_START=1 run --fresh "$EAS_PROJECT"
+EAS_FAIL_START=1 run --resume exact-id --agent codex --no-attach "$EAS_PROJECT"
+check test "$status" = 0
+check jq -se '[.[]|select(.[0:2]==["agent","start"])]|length==1' "$tmp/calls"
+check jq -se '[.[]|select(.[0:2]==["agent","get"])]|length==1' "$tmp/calls"
+check jq -e '.requested_session_id=="exact-id" and .observed_session_id=="exact-id" and .verified_session_id=="exact-id" and .session_id=="exact-id" and .status=="verified"' "$state_record"
+
+reset_fixture
+EAS_FAIL_START=1 EAS_NO_SESSION=1 run --resume exact-id --agent codex --no-attach "$EAS_PROJECT"
 check test "$status" = 69
 check jq -se '[.[]|select(.[0:2]==["agent","start"])]|length==1' "$tmp/calls"
+check jq -se '[.[]|select(.[0:2]==["agent","get"])]|length==1' "$tmp/calls"
 check jq -se 'all(.[]; .[0:2]!=["agent","prompt"] and .[0:2]!=["pane","run"])' "$tmp/calls"
+check jq -e '.requested_session_id=="exact-id" and .observed_session_id==null and .verified_session_id==null and .session_id==null and .status=="unconfirmed"' "$state_record"
+
+# A normal return from Herdr is insufficient when the native ID is delayed or
+# the client is sitting at an update/login prompt.
+reset_fixture
+EAS_NO_SESSION=1 run --resume exact-id --agent codex --no-attach "$EAS_PROJECT"
+check test "$status" = 69
+check jq -e '.requested_session_id=="exact-id" and .observed_session_id==null and .verified_session_id==null and .session_id==null and .status=="unconfirmed"' "$state_record"
+
+# Auto mode retries preserved operator intent; it does not confuse an
+# unconfirmed observation with a verified conversation.
+reset_fixture
+run --no-attach "$EAS_PROJECT"
+check test "$status" = 0
+check jq -se 'any(.[]; .[0:2]==["agent","start"] and index("resume")!=null and index("exact-id")!=null)' "$tmp/calls"
+check jq -e '.requested_session_id=="exact-id" and .observed_session_id=="exact-id" and .verified_session_id=="exact-id" and .status=="verified"' "$state_record"
+
+reset_fixture
+EAS_AGENT_STATUS=blocked run --resume exact-id --agent codex --no-attach "$EAS_PROJECT"
+check test "$status" = 69
+check jq -e '.requested_session_id=="exact-id" and .observed_session_id=="exact-id" and .verified_session_id==null and .session_id==null and .status=="unconfirmed"' "$state_record"
+
+# Existing v1 records remain resumable and migrate after exact verification.
+jq -n --arg cwd "$EAS_PROJECT" '{schema:"erect-agent-stack/v1",cwd:$cwd,agent:"codex",session_id:"legacy-id",name:"a-project",status:"observed"}' > "$state_record"
+reset_fixture
+run --no-attach "$EAS_PROJECT"
+check test "$status" = 0
+check jq -se 'any(.[]; .[0:2]==["agent","start"] and index("resume")!=null and index("legacy-id")!=null)' "$tmp/calls"
+check jq -e '.schema=="erect-agent-stack/v2" and .requested_session_id=="legacy-id" and .observed_session_id=="legacy-id" and .verified_session_id=="legacy-id" and .status=="verified"' "$state_record"
 
 # Explicit resume selection and full permissions for all supported backends.
 for backend in claude codex grok gemini; do
@@ -167,6 +209,7 @@ reset_fixture
 EAS_WRONG_ID=different run --resume intended --agent codex "$EAS_PROJECT"
 check test "$status" = 69
 check grep -q 'identity' "$tmp/err"
+check jq -e '.requested_session_id=="intended" and .observed_session_id=="different" and .verified_session_id==null and .session_id==null and .status=="unconfirmed"' "$state_record"
 
 reset_fixture
 printf '{"result":{"agents":[{}]}}\n' > "$tmp/agents.json"
@@ -235,7 +278,7 @@ jq -n --arg cwd "$EAS_PROJECT" '{result:{agents:[{name:"p-blip-legacy",agent:"co
 run --name requested-new-name "$EAS_PROJECT"
 check test "$status" = 0
 check grep -Fq 'joined-running: p-blip-legacy @' "$tmp/out"
-check jq -e '.name=="p-blip-legacy" and .session_id=="kept-id"' "$ERECT_STATE_DIR/$project_hash.json"
+check jq -e '.name=="p-blip-legacy" and .requested_session_id==null and .observed_session_id=="kept-id" and .verified_session_id=="kept-id" and .session_id=="kept-id" and .status=="verified"' "$ERECT_STATE_DIR/$project_hash.json"
 check calls_are_readonly
 
 bash -c 'source "$1"; erect-agent-stack --help' _ "$tool" > "$tmp/sourced" 2> "$tmp/source.err"

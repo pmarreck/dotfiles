@@ -12,9 +12,6 @@ case "$1 $2" in
     jq -n --arg cwd "$EAS_PROJECT" '{result:{workspace:{workspace_id:"wNEW"},tab:{tab_id:"wNEW:t1"},root_pane:{pane_id:"wNEW:p7",cwd:$cwd}}}' ;;
   'tab rename'|'tab create') printf '{"result":{"type":"ok"}}\n' ;;
   'agent start')
-    if [ "${EAS_FAIL_START:-0}" = 1 ]; then
-      printf 'blocked or timed out\n' >&2; exit 1
-    fi
     kind=claude
     native_id=native-session-123
     pane=wNEW:p7
@@ -30,10 +27,17 @@ case "$1 $2" in
     printf '%s' "$kind" > "$EAS_FIXTURE/kind"
     printf '%s' "${EAS_WRONG_ID:-$native_id}" > "$EAS_FIXTURE/id"
     printf '%s' "$pane" > "$EAS_FIXTURE/pane"
+    if [ "${EAS_FAIL_START:-0}" = 1 ]; then
+      printf 'blocked or timed out\n' >&2; exit 1
+    fi
     printf '{"result":{"type":"ok"}}\n' ;;
   'agent get')
     kind="$(cat "$EAS_FIXTURE/kind" 2>/dev/null || printf codex)"
-    jq -n --arg cwd "$EAS_PROJECT" --arg kind "$kind" --arg id "$(cat "$EAS_FIXTURE/id")" --arg pane "$(cat "$EAS_FIXTURE/pane")" '{result:{agent:{agent:$kind,agent_status:"idle",cwd:$cwd,pane_id:$pane,workspace_id:"wNEW",agent_session:{kind:"id",value:$id}}}}' ;;
+    if [ "${EAS_NO_SESSION:-0}" = 1 ]; then
+      jq -n --arg cwd "$EAS_PROJECT" --arg kind "$kind" --arg pane "$(cat "$EAS_FIXTURE/pane")" --arg status "${EAS_AGENT_STATUS:-idle}" '{result:{agent:{agent:$kind,agent_status:$status,cwd:$cwd,pane_id:$pane,workspace_id:"wNEW"}}}'
+    else
+      jq -n --arg cwd "$EAS_PROJECT" --arg kind "$kind" --arg id "$(cat "$EAS_FIXTURE/id")" --arg pane "$(cat "$EAS_FIXTURE/pane")" --arg status "${EAS_AGENT_STATUS:-idle}" '{result:{agent:{agent:$kind,agent_status:$status,cwd:$cwd,pane_id:$pane,workspace_id:"wNEW",agent_session:{kind:"id",value:$id}}}}'
+    fi ;;
   'agent focus'|'workspace focus'|'notification show') printf '{"result":{"type":"ok"}}\n' ;;
   *) printf 'unexpected Herdr mutation: %s\n' "$*" >&2; exit 99 ;;
 esac

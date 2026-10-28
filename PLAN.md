@@ -55,7 +55,7 @@
 ## Active: Herdr layout and session identity
 
 - [x] Add AI/CLI launcher layout, two-shell restoration selection and exact-process Codex session-report guard; all 193 host suites and ShellCheck pass (done 2026-10-15 13:03 EDT; commit 98d24dc; context: docs/herdr-session-identity.md).
-- [ ] Finish queued sandbox verification and reconcile pre-existing local/remote branch divergence before pushing the Herdr layout/session guard commit; preserve unrelated in-progress edits.
+- [x] Finish sandbox verification, reconcile the pre-existing local/remote divergence and push the Herdr layout/session guard. Completed 2026-10-28 03:00 EDT: commit `98d24dc` is an ancestor of the reconciled and pushed history; the complete host and Nix gates passed, and Mechatron Prime CI verified the exact merged commit.
 
 ## Active: bedtime reminder and overnight-work offer (2026-10-13)
 
@@ -141,12 +141,16 @@
   - Completed 2026-09-23 10:59 EDT: focused, host, and hermetic gates passed;
     dotfiles commit `1fbee99` and skill commit `03ffbe7` were reported in the
     LLMsend reply, and the handled note was moved recoverably to Trash.
-- [ ] Follow up separately on restore-record fidelity: preserve the requested
+- [x] Follow up separately on restore-record fidelity: preserve the requested
       resume ID apart from any observed/verified native ID, never treat an
       update prompt or delayed startup as restored context, and reinspect after
       a timeout before considering any relaunch.
   - Curiosity poke: model requested, observed, and verified launch state so a
     blank `agent_session` cannot erase exact operator intent or imply success.
+  - Completed 2026-10-28 04:24 EDT: v2 records separate requested, observed,
+    and verified identity; blocked or identity-free startup stays unconfirmed,
+    a timed-out start receives one read-only inspection, v1 records migrate on
+    verification, and all 200 host tests plus the hermetic Nix check pass.
 
 ## Active: live wall-clock `times` command (2026-09-16)
 

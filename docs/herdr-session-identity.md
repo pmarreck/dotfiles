@@ -19,6 +19,21 @@ independent identity evidence is unavailable; it does not fix provider-side
 environment propagation. Explicit native IDs remain necessary when restoring
 those unreported conversations.
 
+The launcher stores conversation identity in `erect-agent-stack/v2` records.
+`requested_session_id` preserves the operator's exact resume target,
+`observed_session_id` records what Herdr reports, and
+`verified_session_id` is set only after the backend, pane, ready lifecycle
+state, and native ID agree. The legacy `session_id` field aliases the verified
+ID for compatibility. Existing v1 records remain readable and migrate after
+the next verified launch.
+
+Every launch attempt receives one read-only post-start inspection, including
+attempts whose `agent start` command times out. A ready agent with the exact
+native ID can therefore finish successfully without a duplicate launch. A
+missing ID, mismatched ID, blocked update/login UI, unknown state, or malformed
+response leaves an `unconfirmed` record and exits 69. The saved requested ID
+remains available for a later explicit or automatic exact retry.
+
 Install the command `"$HOME/dotfiles/bin/herdr-codex-session-hook"` as the
 Codex SessionStart hook instead of the stock Herdr integration. Clients that
 cache the old hook command may need a restart or a temporary redirect in that
@@ -34,5 +49,6 @@ session JSON behind the daemon.
 
 The shell tests exercise the process/event classifier and recorded reporting
 effects without touching a real terminal. Launcher tests cover new tab names,
-AI-shell selection, ambiguous layouts and preservation of live agents. Both
-run under `./test`.
+AI-shell selection, ambiguous layouts, preservation of live agents, timeout
+reinspection, blocked startup, ID mismatch, and record migration. Both run
+under `./test`.
