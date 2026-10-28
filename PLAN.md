@@ -1408,6 +1408,11 @@ ASCII `^[A-Z][a-z]`, retaining acronyms and one-letter uppercase words.
     adapter used `/usr/bin/env`. The test now resolves its command, temp files,
     Bash, `gh`, and `xargs`; focused ShellCheck, all six cases, and all 182
     Nix-admitted files pass. The manifest is down to 22.
+  - Progress 2026-10-28 08:46 EDT: graduated `webping_curl`; the first Nix run
+    proved its private curl adapter never executed. The test now resolves its
+    command, temp root, and Bash without HOME or `/usr/bin/env`; focused
+    ShellCheck, all six argument-contract cases, and all 183 Nix-admitted files
+    pass. The manifest is down to 21.
 - [ ] Migrate the 9 legacy memories still in `~/.claude/projects/*/memory/` into
   `~/MEMORIES` via the `memories` skill (another agent's migration is unfinished).
 

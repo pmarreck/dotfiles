@@ -15,7 +15,6 @@
 # point: it is how a test graduates to being hermetic.
 
 # ── Requires network access (the sandbox has none, by design) ────────────────
-webping_curl_test
 git_commit_ai_test
 
 # ── Requires a real terminal, tmux server, or interactive session ────────────
