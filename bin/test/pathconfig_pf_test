@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 
 # Exercise .pathconfig itself against a disposable project corpus. The asserted
-# set contains only each project's current bin/<PF> and generic bin directory.
+# order puts every current bin/<PF> ahead of every generic bin directory while
+# preserving unmigrated and legacy-only command paths behind both groups.
 
 set -u
 
@@ -133,7 +134,7 @@ for case_data in "${supported_cases[@]}"; do
 	resolved_line=${remainder%%$'\n'*}
 	output_line=${remainder##*$'\n'}
 	expected_env="ENV=$expected_os|$expected_arch|$expected_pf|$expected_pf|$expected_wsl"
-	expected_entries="$fixture_home/Code/gamma legacy/bin|$fixture_home/Code/beta project/bin/$expected_pf|$fixture_home/Code/beta project/bin|$fixture_home/Code/alpha/bin/$expected_pf|$fixture_home/Code/alpha/bin|$fixture_home/Code/gamma legacy/zig-out/bin|$fixture_home/Code/delta legacy only/zig-out/bin|$fixture_home/Code/gamma legacy/result/bin|$fixture_home/Code/delta legacy only/result/bin"
+	expected_entries="$fixture_home/Code/beta project/bin/$expected_pf|$fixture_home/Code/alpha/bin/$expected_pf|$fixture_home/Code/gamma legacy/bin|$fixture_home/Code/beta project/bin|$fixture_home/Code/alpha/bin|$fixture_home/Code/gamma legacy/zig-out/bin|$fixture_home/Code/delta legacy only/zig-out/bin|$fixture_home/Code/gamma legacy/result/bin|$fixture_home/Code/delta legacy only/result/bin"
 	expected_resolved="RESOLVED=$fixture_home/Code/alpha/bin/$expected_pf/shared-command"
 	expected_output="OUTPUT=$expected_pf"
 	if (( run_status != 0 )) || [ "$env_line" != "$expected_env" ] || \
@@ -166,7 +167,7 @@ inherited_prefix="$fixture_home/Code/alpha/result/bin:$fixture_home/Code/alpha/z
 inherited=$(run_pathconfig Linux x86_64 6.8.0-generic 1 "$inherited_prefix" 2>/dev/null)
 inherited_path_line=$(printf '%s\n' "$inherited" | sed -n '2p')
 inherited_path=${inherited_path_line#PATH=}
-expected_inherited_entries="$fixture_home/Code/gamma legacy/bin|$fixture_home/Code/beta project/bin/linux-amd64|$fixture_home/Code/beta project/bin|$fixture_home/Code/alpha/bin/linux-amd64|$fixture_home/Code/alpha/bin|$fixture_home/Code/gamma legacy/zig-out/bin|$fixture_home/Code/delta legacy only/zig-out/bin|$fixture_home/Code/gamma legacy/result/bin|$fixture_home/Code/delta legacy only/result/bin"
+expected_inherited_entries="$fixture_home/Code/beta project/bin/linux-amd64|$fixture_home/Code/alpha/bin/linux-amd64|$fixture_home/Code/gamma legacy/bin|$fixture_home/Code/beta project/bin|$fixture_home/Code/alpha/bin|$fixture_home/Code/gamma legacy/zig-out/bin|$fixture_home/Code/delta legacy only/zig-out/bin|$fixture_home/Code/gamma legacy/result/bin|$fixture_home/Code/delta legacy only/result/bin"
 if [ "$(code_entries "$inherited_path")" = "$expected_inherited_entries" ] && \
 	case ":$inherited_path:" in *":$work/external-injection:"*) true ;; *) false ;; esac
 then

@@ -133,13 +133,14 @@ PATH_ADDITIONS+=(
 	"$CODE/rm_safe/bin"
 )
 
-# Auto-discover personal project command dirs under $CODE. A project with the
-# current bin/<PF>/ is migrated: generic bin/ is appended first and native
-# second, so last-prepend-wins puts native commands first. An unmigrated project
-# temporarily retains its old result/bin and zig-out/bin entries, even if it
-# never had a generic bin/. Legacy output groups remain behind the generic-bin
-# group, preserving the prior cross-project precedence. As soon as bin/<PF>/
-# exists, those raw build outputs leave PATH for that project.
+# Auto-discover personal project command dirs under $CODE. Generic bin/ and
+# current bin/<PF>/ directories are collected separately, then appended as two
+# groups. The later native group therefore precedes every generic project bin
+# after the last-prepend-wins PATH rebuild. An unmigrated project temporarily
+# retains its old result/bin and zig-out/bin entries, even if it never had a
+# generic bin/. Legacy output groups remain behind the generic-bin group,
+# preserving the prior cross-project precedence. As soon as bin/<PF>/ exists,
+# those raw build outputs leave PATH for that project.
 # Foreign PFs and arbitrary nested bin children are never admitted.
 # Use inline native globbing (noglob is on globally via set -f) — avoids subprocess fork
 # AND avoids #!/usr/bin/env bash resolving to /bin/bash 3.2 during early bootstrap.
@@ -172,6 +173,8 @@ for _legacy_kind in result/bin zig-out/bin; do
 		[ "$_denied" -eq 1 ] || PATH_ADDITIONS+=("$_dir")
 	done
 done
+_code_generic_bins=()
+_code_pf_bins=()
 for _dir in "$CODE"/*/bin; do
 	_proj=${_dir#"$CODE"/}
 	_proj=${_proj%%/*}
@@ -180,12 +183,14 @@ for _dir in "$CODE"/*/bin; do
 		if [ "$_proj" = "$_deny" ]; then _denied=1; break; fi
 	done
 	[ "$_denied" -eq 1 ] && continue
-	PATH_ADDITIONS+=("$_dir")
-	[ -d "$_dir/$PF" ] && PATH_ADDITIONS+=("$_dir/$PF")
+	_code_generic_bins+=("$_dir")
+	[ -d "$_dir/$PF" ] && _code_pf_bins+=("$_dir/$PF")
 done
+PATH_ADDITIONS+=("${_code_generic_bins[@]}" "${_code_pf_bins[@]}")
 shopt -u nullglob
 [[ "$_saved_f" == *f* ]] && set -f
-unset _saved_f _legacy_kind _dir _proj _denied _deny _project_root
+unset _saved_f _legacy_kind _dir _proj _denied _deny _project_root \
+	_code_generic_bins _code_pf_bins
 
 # Declarative list of PATH exclusions (mostly macOS cruft that keeps reinserting itself).
 # https://support.apple.com/guide/deployment/rapid-security-responses-dep93ff7ea78/web
