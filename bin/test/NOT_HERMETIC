@@ -50,7 +50,6 @@ get-all-git-stati_test
 # mandelroc runs a Roc script through jumpscript, which needs both jumpscript
 # and a Roc toolchain.
 mandelroc_test
-capture_test
 block-attribution_test
 
 # ── Requires external services, credentials, or large media toolchains ───────

@@ -1358,6 +1358,10 @@ ASCII `^[A-Z][a-z]`, retaining acronyms and one-letter uppercase words.
     fixture preserves generated-artifact mtimes. The manifest is down to 32.
   - Progress 2026-10-28 05:55 EDT: graduated `hr`; terminal-width detection now
     runs in a deterministic 37-column PTY. The manifest is down to 31.
+  - Progress 2026-10-28 07:03 EDT: graduated `capture`; the hermetic suite now
+    builds PrintableBinary's canonical Zig implementation from pinned public
+    source and toolchain inputs, and the filter emits no diagnostics. The
+    manifest is down to 30.
 - [ ] Migrate the 9 legacy memories still in `~/.claude/projects/*/memory/` into
   `~/MEMORIES` via the `memories` skill (another agent's migration is unfinished).
 

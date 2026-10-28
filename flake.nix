@@ -8,12 +8,40 @@
       url = "github:pmarreck/glob";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    printable_binary_src = {
+      url = "github:pmarreck/printable-binary/cdefa95e4590fa016967e0e6ccb3b96c19c44c7e";
+      flake = false;
+    };
+    zig_overlay = {
+      url = "github:mitchellh/zig-overlay/71c0e07037115906981da3ce2bbfa55584332ac5";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs, flake-utils, glob }:
+  outputs = { self, nixpkgs, flake-utils, glob, printable_binary_src, zig_overlay }:
     flake-utils.lib.eachSystem [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" ] (system:
       let
         pkgs = import nixpkgs { inherit system; };
+        zig = zig_overlay.packages.${system}."0.16.0";
+
+        printableBinary = pkgs.stdenv.mkDerivation {
+          pname = "printable-binary";
+          version = "1.0.0";
+          src = printable_binary_src;
+          strictDeps = true;
+          nativeBuildInputs = [ zig ];
+
+          buildPhase = ''
+            export HOME="$TMPDIR"
+            zig build -Doptimize=ReleaseFast
+          '';
+
+          installPhase = ''
+            mkdir -p "$out/bin"
+            cp zig-out/bin/printable-binary "$out/bin/"
+            cp character_map.txt "$out/bin/"
+          '';
+        };
 
         # Tools the suite shells out to. This is deliberately explicit rather than
         # inheriting the builder's environment: the point of the check is to prove
@@ -32,7 +60,10 @@
           ffmpeg       # ffmpeg, ffprobe
           tokei        # fleet-status local primary-language fallback
         ]) ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.procps ]
-          ++ [ glob.packages.${system}.default ];
+          ++ [
+            glob.packages.${system}.default
+            printableBinary
+          ];
       in {
         checks = {
           test = pkgs.stdenv.mkDerivation {

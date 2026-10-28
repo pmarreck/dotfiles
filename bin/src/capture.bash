@@ -1,4 +1,7 @@
 # capture.bash — Simultaneous stdout/stderr/exit-code capture for Bash
+# shellcheck disable=SC1090,SC2030,SC2031,SC2034
+# State crosses process substitutions through sourced declare -p output and
+# intentionally assigns the caller's dynamically scoped out/err/rc variables.
 #
 # Copyright (c) 2026 Peter Marreck. MIT License.
 #
@@ -105,7 +108,7 @@ EOF
 		fi
 		# Mute printable-binary's statistics output that goes to stderr, if not already muted
 		_old_pb_mute_stats=$PRINTABLE_BINARY_MUTE_STATS
-		export PRINTABLE_BINARY_MUTE_STATS=true
+		export PRINTABLE_BINARY_MUTE_STATS=1
 	fi
 	# Verify that out/err/rc exist in the dynamic scope (caller locals or globals)
 	local v
