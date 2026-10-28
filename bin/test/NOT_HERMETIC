@@ -16,7 +16,6 @@
 
 # ── Requires real hardware / kernel interfaces the sandbox does not expose ────
 diskhogs_test
-gpuhogs_test
 memhogs_test
 nethogs_test
 fingerprint_hw_os_test

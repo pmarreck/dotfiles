@@ -262,11 +262,11 @@ case "$platform" in
 		fi
 		;;
 	Darwin)
-		sudo_bin=$(resolve_command "${GPUHOGS_SUDO:-}" sudo) || {
-			printf 'gpuhogs: required command not found: sudo\n' >&2
-			exit 1
-		}
 		if (( effective_uid != 0 )); then
+			sudo_bin=$(resolve_command "${GPUHOGS_SUDO:-}" sudo) || {
+				printf 'gpuhogs: required command not found: sudo\n' >&2
+				exit 1
+			}
 			script_path=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")
 			exec "$sudo_bin" /usr/bin/env \
 				GPUHOGS_EUID=0 \

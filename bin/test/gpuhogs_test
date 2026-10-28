@@ -137,6 +137,16 @@ cat >"$test_root/sudo" <<'STUB'
 printf '%s\n' "$*" >"$GPUHOGS_TEST_SUDO_LOG"
 STUB
 
+set_test_shebang() {
+	local stub="$1" stub_body
+	stub_body=$(<"$stub")
+	printf '#!%s\n%s\n' "$(type -P bash)" "${stub_body#*$'\n'}" >"$stub"
+}
+
+for stub in nvidia-smi nvidia-smi-fail ps nvtop powermetrics plutil sudo; do
+	set_test_shebang "$test_root/$stub"
+done
+
 chmod +x "$test_root/nvidia-smi" "$test_root/nvidia-smi-fail" \
 	"$test_root/ps" "$test_root/nvtop" \
 	"$test_root/powermetrics" "$test_root/plutil" "$test_root/sudo"
@@ -246,7 +256,7 @@ if (( rc == 0 )); then
 	expect_contains "macOS requests per-process GPU time" "--show-process-gpu" "$power_args"
 	expect_contains "macOS requests one sample" "--sample-count 1" "$power_args"
 else
-	fail "macOS powermetrics snapshot exits successfully"
+	fail "macOS powermetrics snapshot exits successfully (output: $output)"
 fi
 
 sudo_log="$test_root/sudo.log"

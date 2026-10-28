@@ -1365,6 +1365,10 @@ ASCII `^[A-Z][a-z]`, retaining acronyms and one-letter uppercase words.
   - Progress 2026-10-28 07:13 EDT: graduated `cpuhogs`; every process-data
     source and the CPU count were already injected, and its help capture now
     stays in the test-owned fixture directory. The manifest is down to 29.
+  - Progress 2026-10-28 07:26 EDT: graduated `gpuhogs`; runtime fixture scripts
+    use the resolved Bash interpreter, and the Darwin root path no longer
+    requires `sudo` merely to discover that it will not be used. The manifest
+    is down to 28.
 - [ ] Migrate the 9 legacy memories still in `~/.claude/projects/*/memory/` into
   `~/MEMORIES` via the `memories` skill (another agent's migration is unfinished).
 
