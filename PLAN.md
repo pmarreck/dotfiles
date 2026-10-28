@@ -13,8 +13,8 @@
 
 ## Active: canonical platform environment and PATH (2026-10-23)
 
-- [ ] Implement the owner-approved `OS`/`ARCH`/`PLATFORM`/`PF`/`WSL` contract and current-PF project-bin discovery with failing-first set classifiers, preserve generic bins and existing tools, document migration evidence, update shared guidance, and reply to the coordinator.
-- [ ] After the core PATH contract passes, qualify Printable Binary's `bin/linux-amd64/printable-binary` from verified checkpoint `6822f66` and RotShield's current-PF commands against real shell resolution, preserve their generic portable scripts and rollback paths, then report evidence to both project owners and the coordinator.
+- [x] Implement the approved `OS`/`ARCH`/`PLATFORM`/`PF`/`WSL` contract and staged current-PF project discovery. Completed 2026-10-28 03:50 EDT: commit `ea3de14`; 156/156 hermetic and 200/200 host test files passed; the 109-directory live inventory retained 99 unmigrated paths, retired 10 migrated paths and found zero mismatches; shared guidance already matched; Ollama/OpenMPT name collisions were documented and reported.
+- [x] Qualify Printable Binary and RotShield current-PF commands and report to both owners and the coordinator. Completed 2026-10-28 03:50 EDT: all three native commands resolve before generic bins, raw outputs are absent, portable entries remain, `--about` PF/variant evidence passed for Printable Binary and `mrs`, the headless RotShield GUI regression was reported, and durable `llmsend` notes were delivered.
 
 ## Active: staged dependency portability gate (2026-10-23)
 
@@ -243,18 +243,10 @@
     class or count versus `HEAD`; six old unused-variable findings and one old
     source-follow finding disappeared from the test file.
 
-## Pending: host-selected project binaries (2026-09-16)
+## Completed: host-selected project binaries (2026-09-16)
 
-- [ ] After the `timed`/`times` work, read the
-      `cross-platform-project-build-arch` skill and coordinate the approved
-      `.pathconfig` migration without launching a fleet migration.
-  - Curiosity poke: preserve portable project scripts and host-selected native
-    precedence while removing stale `result/bin` and `zig-out/bin` entries.
-- [ ] Add failing-first classifier and startup tests for OS/architecture aliases,
-      WSL, foreign-target exclusion, paths with spaces, repeated sourcing, and
-      stale PATH entries before changing discovery.
-  - Curiosity poke: shell command hashing can retain a removed wrong-platform
-    path after the textual PATH value is corrected.
+- [x] Coordinate the staged `.pathconfig` migration under the cross-platform build contract without launching a fleet rewrite. Completed 2026-10-28 03:50 EDT in `ea3de14`.
+- [x] Add failing-first platform, WSL, foreign-target, whitespace, idempotency, stale-PATH and shell-startup classifiers. Completed 2026-10-28 03:50 EDT with the complete Nix and host gates green.
 
 ## Active — native Herdr erect-agent-stack (2026-09-10)
 
