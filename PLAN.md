@@ -1190,13 +1190,11 @@ ASCII `^[A-Z][a-z]`, retaining acronyms and one-letter uppercase words.
     `mix deps.get --check-locked`, each run from a clean checkout in CI.
   - Recorded as a shared memory: "Language ecosystem tools may cache globally
     but must never capture global command names".
-- [ ] OPEN — `compare_dirs_test` refused a push once (2026-08-01 02:38 EDT) and
-  has not reproduced since: 40 runs in isolation, 64 under 8-way concurrency,
-  and 4 full suites, all green. Its scratch dirs are `mktemp -d` (no collision)
-  and its mtime assertions use fixed `touch -t` stamps (not load-sensitive), so
-  neither obvious mechanism fits. Left open deliberately rather than dismissed
-  as flake. The gate now preserves its report, so the next occurrence arrives
-  with evidence attached — that was the actual blocker, and it is fixed.
+- [x] `compare_dirs_test` refused pushes intermittently until the preserved
+  report exposed second-boundary `ctime` differences between otherwise equal
+  fixtures. Completed 2026-10-28 06:18 EDT: copy equivalence now excludes the
+  uncopyable field, with a finite pure-core classifier test covering every
+  retained field and multiple `ctime` mutations.
 - [ ] `~/.local/share/Trash/rm-safe-log` is a DIRECTORY of 34,844 files (178M),
   one per deletion, and only grows. It was the real source of the "40,208
   entries" count — the trash proper held 4,922. Not deleted: it is rm_safe's
