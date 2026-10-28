@@ -5,7 +5,7 @@ source_relative_once truthy.bash
 # only redefines it here if it's not already defined
 >/dev/null declare -F needs || \
 needs() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   local bin=$1
   shift
   command -v "$bin" >/dev/null 2>&1 || { echo >&2 "I require $bin but it's not installed or in PATH; $*"; return 1; }
@@ -20,14 +20,14 @@ if truthy RUN_DOTFILE_TESTS; then
 fi
 
 save_shellenv() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   export OLDHISTIGNORE=$HISTIGNORE
   export HISTIGNORE="shopt:set:eval"
   _prev_shell_opts=$(set +o; shopt -p;)
 }
 
 restore_shellenv() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   eval "$_prev_shell_opts"
   # clean up after ourselves, don't want to pollute the ENV
   unset _prev_shell_opts
@@ -36,7 +36,7 @@ restore_shellenv() {
 }
 
 uniquify_array() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   # ${AWK:-awk} '!seen[$0]++'
   # declare -n arr=$1  # indirect reference to the array name passed in as arg1
   # edit: forcing compatibility with bash < 4.2 (which doesn't support declare -n)
@@ -57,7 +57,7 @@ uniquify_array() {
 }
 
 array_contains_element() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   # declare -n array=$1
   # We can't use nameref, so use eval to indirectly reference the array
   eval 'array=("${'"$1"'[@]}")'
@@ -76,7 +76,7 @@ array_contains_element() {
 }
 
 move_PROMPT_COMMAND_to_precmd_functions() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   # Replace newlines with semicolons
   PROMPT_COMMAND=${PROMPT_COMMAND//$'\n'/;}
 
@@ -100,7 +100,7 @@ move_PROMPT_COMMAND_to_precmd_functions() {
 
 # Minimalist rehash function for shell refreshing
 function rehash() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   
   # Skip all tests and hooks during rehash
   export SKIP_DOTFILE_TESTS=true
@@ -141,7 +141,7 @@ function rehash() {
 # command provided by wezterm if wezterm is installed, but falls
 # back to a simple printf command otherwise.
 __wezterm_osc7() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   local default_directory=${1:-$PWD}
   if hash wezterm 2>/dev/null ; then
     wezterm set-working-directory $default_directory 2>/dev/null && return 0
@@ -152,12 +152,12 @@ __wezterm_osc7() {
 }
 
 __wezterm_osc7_home() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   __wezterm_osc7 "$HOME"
 }
 
 trim_leading_heredoc_whitespace() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   #  echo "Debug: Function started" >&2
   # For some reason, frawk screws this up. No time to troubleshoot.
   needs gawk "please install gawk (GNU awk) to run this function" && \
@@ -206,7 +206,7 @@ fi
 
 unwrap() {
   local SED=`which sed`
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   # this expects contents to be piped in via stdin
   [[ "$(sed --version | head -1)" =~ .*GNU.* ]] || echo "WARNING: function unwrap: The sed on PATH is not GNU sed, which may cause problems" >&2 && SED="/run/current-system/sw/bin/sed"
   # sed -E -e ':a;N;$!ba' -e 's/( \n | \n|\n )/ /g'
@@ -228,13 +228,13 @@ fi
 wrap() {
   # take an argument of colwidth but default to current terminal width
   local colwidth=${1:-$(tput cols)}
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   # this expects contents to be piped in via stdin
   fold -s -w $colwidth
 }
 
 isacolortty() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   [[ "$TERM" =~ 'color' ]] && return 0 || return 1
 }
 
@@ -249,7 +249,7 @@ if truthy RUN_DOTFILE_TESTS; then
 fi
 
 strip_ansi() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   local ansiregex="s/\x1b\[[0-9;]*[a-zA-Z]//g"
 
   if [ -t 0 ] && [ "$#" -eq 0 ]; then
@@ -280,17 +280,17 @@ if truthy RUN_DOTFILE_TESTS; then
 fi
 
 elixir_js_loc() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   git ls-files | grep -E '\.erl|\.exs?|\.js$' | xargs cat | $SED -e '/^$/d' -e '/^ *#/d' -e '/^ *\/\//d' | wc -l
 }
 
 open_gem() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   choose_editor "$(bundle show "$1")"
 }
 
 contains() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   [[ "$2" == "" ]] && return 0 # Empty string is contained in every string (including empty string)
   local word
   for word in $1; do
@@ -316,7 +316,7 @@ if truthy RUN_DOTFILE_TESTS; then
 fi
 
 edit() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   if contains "$(functions)" $1; then
     EDIT=1 $1
   else
@@ -325,7 +325,7 @@ edit() {
 }
 
 ltrim() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   local var="$*"
   # remove leading whitespace characters
   var="${var#"${var%%[![:space:]]*}"}"
@@ -333,7 +333,7 @@ ltrim() {
 }
 
 rtrim() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   local var="$*"
   # remove trailing whitespace characters
   var="${var%"${var##*[![:space:]]}"}"
@@ -341,7 +341,7 @@ rtrim() {
 }
 
 trim() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   local var="$*"
   var="$(ltrim "$var")"
   var="$(rtrim "$var")"
@@ -358,17 +358,17 @@ if truthy RUN_DOTFILE_TESTS; then
 fi
 
 datetime() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   date "+%Y-%m-%d %H:%M:%S"
 }
 
 datetime-human() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   date +"%A, %B %d, %Y %I:%M %p"
 }
 
 image_convert_to_heif() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   # base name of argument 1
   # local bn="${1%.*}"
   # ffmpeg -i "$1" -c:v libx265 -preset ultrafast -x265-params lossless=1 "${bn}.heif"
@@ -379,7 +379,7 @@ image_convert_to_heif() {
 }
 
 image_convert_to_jpegxl() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   # base name of argument 1
   local bn="${1%.*}"
   local d="${JXL_DISTANCE:-0}" # 0-9 where 0 is lossless; default 0
@@ -407,7 +407,7 @@ supertop() {
 }
 
 puts() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   local print_fmt end_fmt print_spec fd newline
   print_fmt=''
   end_fmt=''
@@ -460,34 +460,34 @@ EOF
 
 # ANSI color helpers
 red_text() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   puts --red -en "$*"
 }
 
 green_text() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   puts --green -en "$*"
 }
 
 yellow_text() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   puts --yellow -en "$*"
 }
 
 orange_text() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   puts --orange -en "$*"
 }
 
 echo_eval() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   yellow_text "$*\n" >&2
   eval "$*"
 }
 
 # exit with red text to stderr, optional 2nd arg is error code
 die() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   red_text "${1}" >&2
   echo >&2
   exit ${2:-1}
@@ -495,7 +495,7 @@ die() {
 
 # fail with red text to stderr, optional 2nd arg is return code
 fail() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   red_text "${1}" >&2
   echo >&2
   return ${2:-1}

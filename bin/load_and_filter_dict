@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 load_and_filter_dict() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	# local dict_loc="${WORDLIST_FILEPATH:-"/usr/share/dict/words"}"
 	# [ -f "$dict_loc" ] || { echo "$dict_loc missing. May need to install 'words' package (or just pass in a WORDLIST_FILEPATH env var that paths to a file of words). Exiting."; return 1; }
 	# local dict=$(sed '0,/^__DICT__$/d' "${BASH_SOURCE[0]}")

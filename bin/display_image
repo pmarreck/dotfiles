@@ -12,7 +12,7 @@
 #   -a, --about          Show one-line summary
 
 display_image() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	local geometry="" image_file="" protocol=""
 
 	while [[ $# -gt 0 ]]; do

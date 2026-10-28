@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 whatismyexternalip() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	needs curl "Please install curl"
 
 	# Array of IP service endpoints that return just the IP

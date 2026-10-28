@@ -5,7 +5,7 @@
 
 declare -f source_relative &>/dev/null || \
 source_relative() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   # _dir_name=`dirname "$0"` # doesn't work reliably
   local _dir_name=`dirname "${BASH_SOURCE[1]}"` # works in bash but not POSIX compliant sh
   local _temp_path=`cd "$_dir_name" && pwd`
@@ -18,7 +18,7 @@ source_relative() {
 # export _TRACE_SOURCING=true
 declare -f source_relative_once &>/dev/null || \
 source_relative_once() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   [[ -n "${_TRACE_SOURCING}" ]] && local _debug_id=$RANDOM
   local _file="$1"
   # check if it is already an absolute path

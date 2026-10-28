@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 flip_a_coin() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	local random_value="${FLIP_A_COIN_RANDOM:-$RANDOM}"
 	(( random_value % 2 )) && echo "heads" || echo "tails"
 }

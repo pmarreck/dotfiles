@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 __wezterm_osc7() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	local default_directory=${1:-$PWD}
 	if hash wezterm 2>/dev/null ; then
 		wezterm set-working-directory $default_directory 2>/dev/null && return 0

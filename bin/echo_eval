@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 echo_eval() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	yellow_text "$*\n" >&2
 	eval "$*"
 }

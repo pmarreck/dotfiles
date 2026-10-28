@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 ds_bore() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   needs rg "ripgrep is not installed. Please install it and try again." || return 1
   case $1 in
     -h|--help)

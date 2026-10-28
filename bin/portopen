@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 portopen() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	case $OS in
 		"macos")
 			>&2 echo -e "${ANSI}${TXTYLW}sudo lsof -P -i \":${1}\"${ANSI}${TXTDFT}"

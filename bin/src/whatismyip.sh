@@ -1,5 +1,5 @@
 whatismyip() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	needs awk "Please install awk"
 	if command -v ifconfig >/dev/null 2>&1; then
 		if [[ "$(uname)" == "Darwin" ]]; then
@@ -26,7 +26,7 @@ whatismyip() {
 }
 
 whatismyexternalip() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	needs curl "Please install curl"
 
 	# Array of IP service endpoints that return just the IP
@@ -56,7 +56,7 @@ whatismyexternalip() {
 }
 
 whatismyipv6() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	if command -v ifconfig >/dev/null 2>&1; then
 		if [[ "$(uname)" == "Darwin" ]]; then
 			# macOS - filter for global IPv6 addresses (2000::/3)
@@ -81,7 +81,7 @@ whatismyipv6() {
 }
 
 whatismyexternalipv6() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	needs curl "Please install curl"
 
 	local services=(

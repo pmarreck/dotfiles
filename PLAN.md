@@ -17,7 +17,6 @@ Open work is listed in priority order. Completed history is in `docs/PLAN_LOG.md
 
 ## Code maintenance
 
-- [ ] Replace unsafe `${EDIT}` expansions across the remaining 38 sites, with failing `set -u` regressions first.
 - [ ] Decide whether to finish and wire `.shellenv` or remove the orphaned refactor, accounting for login-shell order on both supported operating systems.
 - [ ] Remove `diskhogs`' unconditional sudo requirement while preserving an explicit privileged all-user mode (context: docs/plan_context/legacy-open-work.md#active--cross-platform-gpu-observability-started-2026-07-24).
 - [ ] Decide retention for the unbounded rm-safe log and Trash backlog, then add a bounded `gio trash` timeout in the rm-safe project (context: docs/plan_context/legacy-open-work.md#active--shell-helper-argument-correctness-2026-07-27).
@@ -35,6 +34,7 @@ Open work is listed in priority order. Completed history is in `docs/PLAN_LOG.md
 
 ## Recent completions
 
+- [x] Replace 229 unsafe `${EDIT}` expansions across 153 live, generated, and dormant shell files with nounset-safe defaults after a repository-wide classifier failed on the old set; retain the byte-preserved randompass predecessor as the sole explicit exception (done 2026-10-28 11:34 EDT).
 - [x] Complete code-review remediation wave 2 with one regression suite covering fail-closed startup predicates, alias grouping, parent-agent detection, reload safety, terminal guards, portable commands, architecture flags, missing-executable wrappers, and the previously completed project-bin ordering (done 2026-10-28 11:29 EDT).
 - [x] Finish the readiness-gated development-cache policy: repository-isolated Cargo and Zig local caches, shared Zig global cache, prompt-time directory refresh, revocation after readiness loss, and live Codex/Claude environment verification (done 2026-10-28 11:22 EDT).
 - [x] Review and migrate the nine remaining legacy Claude memories into the private shared memory root, preserving their original creation instants and validating the complete index (done 2026-10-28 11:15 EDT).

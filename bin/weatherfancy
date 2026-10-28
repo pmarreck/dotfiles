@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 weatherfancy() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	curl wttr.in
 }
 

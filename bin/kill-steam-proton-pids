@@ -68,7 +68,7 @@ _ksp_signal() {
 
 kill-steam-proton-pids() {
 	# Peter's self-edit hook: `EDIT=1 kill-steam-proton-pids` opens this file.
-	# ${EDIT:-} rather than ${EDIT}, which is an unbound-variable error under
+	# ${EDIT:-} rather than ${EDIT:-}, which is an unbound-variable error under
 	# `set -u` and made this function unusable in a strict shell.
 	if [ -n "${EDIT:-}" ]; then
 		unset EDIT

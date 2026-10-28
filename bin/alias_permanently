@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 alias_permanently() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	case "$1" in
 		*=*)
 			# split on the first '='

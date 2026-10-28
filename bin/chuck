@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 chuck() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	# if you want to filter out the obscene ones, there's a category you can filter out,
 	# but it didn't get all of them... you can also pipe to glow for a nicer output
 	# figure out the path of the current script

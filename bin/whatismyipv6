@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 whatismyipv6() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	
 	# Function to get the best IPv6 address based on priority
 	get_best_ipv6() {

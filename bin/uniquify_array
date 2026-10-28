@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 uniquify_array() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	# ${AWK:-awk} '!seen[$0]++'
 	# declare -n arr=$1  # indirect reference to the array name passed in as arg1
 	# edit: forcing compatibility with bash < 4.2 (which doesn't support declare -n)

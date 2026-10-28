@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 write_iso() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	sudo dd if="$1" of="$2" bs=1M oflag=sync status=progress
 }
 

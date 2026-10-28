@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 list-nics() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	
 	# Detect OS
 	if [[ "$OSTYPE" == "darwin"* ]]; then

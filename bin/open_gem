@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 open_gem() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	choose_editor "$(bundle show "$1")"
 }
 

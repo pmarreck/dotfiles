@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 needs() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	local bin="$1"
 	local err_msg="%s is required but it's not installed or in PATH"
 	shift

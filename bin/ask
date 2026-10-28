@@ -7,7 +7,7 @@ SED=${SED:-sed}
 
 # Function to get local zip code
 get_zip() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return;
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return;
 	note "Calling get_zip..." # Italic and yellow text
 	# Call `get_location` and parse the output with jq to extract required fields
 	local postal
@@ -21,7 +21,7 @@ get_zip() {
 
 # Function to get detailed location information
 get_location() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return;
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return;
 	note "Calling get_location..." # Italic and yellow text
 	# Call `get_location` and parse the output with jq to extract required fields
 	local ip city region country postal timezone
@@ -35,7 +35,7 @@ get_location() {
 
 # Function to convert temperature from Kelvin to Fahrenheit or Celsius
 convert_temp() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return;
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return;
 	local temp_in_k="$1"
 	local scale="$2"
 
@@ -50,7 +50,7 @@ convert_temp() {
 
 # Function to convert wind speed from m/s to knots and round to 2 decimal places
 convert_wind_speed_from_mps_to_knots() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return;
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return;
 	local speed_in_mps="$1"
 	# skip conversion if the speed is not a number
 	if ! [[ "$speed_in_mps" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
@@ -62,7 +62,7 @@ convert_wind_speed_from_mps_to_knots() {
 
 # Function to convert wind direction from degrees to cardinal direction
 convert_wind_direction() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return;
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return;
 	local degrees="$1"
 	# Add 22.5 to ensure proper rounding before integer division
 	local index=$(( ( (degrees * 2 + 45) % 720) / 45 ))
@@ -76,7 +76,7 @@ convert_wind_direction() {
 
 # Function to get weather information using OpenWeatherMap API
 get_weather() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return;
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return;
 	# note "Calling get_weather..." # Italic and yellow text
 	local postal_code=$1
 	# bail if there is no postal code
@@ -117,7 +117,7 @@ get_weather() {
 
 # Command line access to the ChatGPT API with conversation history and tool calls
 ask() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	needs curl
 	needs jq
 	needs glow see https://github.com/charmbracelet/glow
@@ -454,7 +454,7 @@ if truthy RUN_DOTFILE_TESTS; then
 
 	# Define the mocked curl function for testing
 	mocked_curl() {
-		[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+		[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 		local output_file
 		while getopts ":o:w:X:H:d:s" opt; do
 			case ${opt} in

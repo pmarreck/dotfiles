@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 source_relative_once() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	[[ -n "${_TRACE_SOURCING}" ]] && local _debug_id=$RANDOM
 	local _file="$1"
 	# check if it is already an absolute path

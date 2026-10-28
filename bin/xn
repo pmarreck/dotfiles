@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 xn() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	# Resolve the sibling script so an unrelated x earlier in PATH cannot shadow it.
 	"$(dirname -- "${BASH_SOURCE[0]}")/x" +n "$@"
 }

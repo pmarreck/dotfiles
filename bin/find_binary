@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 find_binary() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	if [ -f "/run/current-system/sw/bin/$1" ]; then
 		echo -n "/run/current-system/sw/bin/$1"
 	elif [ -f "/usr/local/bin/$1" ]; then

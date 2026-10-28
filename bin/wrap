@@ -3,7 +3,7 @@
 wrap() {
 	# take an argument of colwidth but default to current terminal width
 	local colwidth=${1:-$(tput cols)}
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	# this expects contents to be piped in via stdin
 	fold -s -w $colwidth
 }

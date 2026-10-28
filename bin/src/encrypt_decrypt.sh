@@ -180,7 +180,7 @@ _test_encrypt_decrypt() {
 }
 
 encrypt() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 
 	if [[ "$1" == "--test" ]]; then
 		_test_encrypt_decrypt
@@ -479,7 +479,7 @@ encrypt() {
 }
 
 decrypt() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 
 	if [[ "$1" == "--test" ]]; then
 		_test_encrypt_decrypt

@@ -22,7 +22,7 @@ note() {
 }
 
 get_git_status() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return;
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return;
 	needs git "install git"
 	local git_dir proj_root shortstat result fetchout
 	git_dir="$1"

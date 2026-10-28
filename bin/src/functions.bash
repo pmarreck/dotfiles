@@ -2,7 +2,7 @@
 
 # Print out the names of all defined functions
 functions() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	# declare -F | awk '{print $NF}'
 	compgen -A function
 }

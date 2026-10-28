@@ -255,7 +255,7 @@ fi
 
 # who am I? (should work even when sourced from elsewhere, but only in Bash)
 me() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	basename -- "${BASH_SOURCE[0]}"
 }
 

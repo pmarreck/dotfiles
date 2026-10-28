@@ -56,6 +56,10 @@ require_literal .envconfig 'if [ -t 0 ]; then' "GPG terminal is exported only fr
 require_literal .envconfig 'GPG_TTY="$(tty)"' "GPG terminal uses the active TTY"
 reject_literal .envconfig 'KERL_CONFIGURE_OPTIONS="--disable-parallel-configure --disable-debug --disable-silent-rules --without-javac --enable-shared-zlib --enable-dynamic-ssl-lib --enable-sctp --enable-threads --enable-kernel-poll --enable-wx --enable-darwin-64bit"' "Darwin kerl option is not unconditional"
 
+# randompass.bash is the byte-for-byte preserved predecessor for the LuaJIT port.
+unsafe_edit_sites=$(rg -n '\$\{EDIT\}' "$repo_root/.bashrc" "$repo_root/bin" --glob '!bin/test/**' --glob '!bin/randompass.bash' || :)
+[ -z "$unsafe_edit_sites" ] || fail "all editable shell entry points tolerate an unset EDIT variable"
+
 # shellcheck source=/dev/null # These tracked wrappers are the subject under test.
 . "$repo_root/bin/src/claude.bash"
 # shellcheck source=/dev/null

@@ -2,7 +2,7 @@
 
 # am I the only one who constantly forgets the correct order of arguments to `ln`?
 lnwtf() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	echo 'ln -s path_of_thing_to_link_to [name_of_link]'
 	echo '(If you omit the latter, it puts a basename-named link in the current directory)'
 	echo "This function is defined in $0"

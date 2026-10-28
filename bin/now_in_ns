@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 now_in_ns() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	local now=$(Time.now.to_f)
 	echo ${now//.}
 }

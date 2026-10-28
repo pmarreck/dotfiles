@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 check_kitty_support() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	# Check specific terminals known to support the Kitty graphics protocol
 	if [[ "$TERM" == "xterm-kitty" ]]; then
 		[ -n "$DEBUG_SHELLCONFIG" ] && echo "Kitty terminal detected via TERM." >&2
