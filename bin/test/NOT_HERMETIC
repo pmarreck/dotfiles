@@ -29,6 +29,3 @@ pathconfig_bash_prepend_test
 # and a Roc toolchain.
 mandelroc_test
 block-attribution_test
-
-# ── Requires external services, credentials, or large media toolchains ───────
-rg_test
