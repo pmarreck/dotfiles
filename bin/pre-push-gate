@@ -23,7 +23,7 @@
 #   pre-push-gate -h|--help
 #
 # Env:
-#   PRE_PUSH_GATE_RUNNER      Command to run (default: bin/run_test_suite)
+#   PRE_PUSH_GATE_RUNNER      Executable to run instead of the default Nix-backed suite
 #   PRE_PUSH_GATE_MIN_TESTS   Override the committed floor (testing)
 #   PRE_PUSH_GATE_SKIP        If set to a truthy value, refuse loudly and exit 1;
 #                             there is deliberately no silent bypass.
@@ -31,7 +31,11 @@
 set -u
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
-runner="${PRE_PUSH_GATE_RUNNER:-$repo_root/bin/run_test_suite}"
+if [ -n "${PRE_PUSH_GATE_RUNNER:-}" ]; then
+	runner_argv=("$PRE_PUSH_GATE_RUNNER")
+else
+	runner_argv=(nix develop "$repo_root" -c "$repo_root/bin/run_test_suite")
+fi
 min_file="$repo_root/bin/test/MIN_TEST_COUNT"
 skips_file="$repo_root/bin/test/ALLOWED_SKIPS"
 
@@ -121,7 +125,7 @@ echo "pre-push-gate: running the suite (floor: $min_tests tests)…" >&2
 # fd 3 bypasses the captured report so the suite can show live completion
 # progress. The final, deterministic report remains intact for validation and
 # is preserved on failure.
-RUN_TEST_SUITE_PROGRESS_FD=3 "$runner" 3>&2 >"$report" 2>&1 </dev/null
+RUN_TEST_SUITE_PROGRESS_FD=3 "${runner_argv[@]}" 3>&2 >"$report" 2>&1 </dev/null
 runner_status=$?
 
 pass_count="$(grep -cE '^PASS ' "$report" || true)"

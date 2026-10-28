@@ -2,6 +2,7 @@
 
 ## Active: declarative mise and suite reconciliation (2026-10-23)
 
+- [x] Run the default pre-push suite inside this repository's declared Nix development environment so hermetic tool dependencies such as `zip` cannot disappear from the ambient host `PATH`; preserve injected-runner tests and nothing-to-push short-circuiting. Completed 2026-10-28 02:46 EDT: the old direct-runner contract failed first; 13/13 gate tests, 64/64 parallel `kill-session` repetitions, 153/153 hermetic tests, and all 197 host test files then passed.
 - [x] Change the `vk` alias from ephemeral `npx` resolution to the mise-managed `vibe-kanban` executable, with an alias-contract regression and focused shell verification. Completed 2026-10-24 10:19 EDT: the injected `npx` test failed first, then 3/3 alias-contract checks and ShellCheck passed with `mise x npm:vibe-kanban -- vibe-kanban`.
 - [x] Coordinate declarative activation of mise, `b3sum`, and `expect` with Mechatron Prime. Completed 2026-10-24 10:41 EDT: generation 368 is active, all three commands resolve from the system profile, and Mechatron Prime's 38-file host suite passes.
 - [ ] Confirm the declared Node tool, rerun every dotfiles gate, resolve any remaining failures, finish the pending merge, push, and verify exact-commit CI.

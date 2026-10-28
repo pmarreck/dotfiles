@@ -12,7 +12,8 @@
 
 set -u
 
-GATE="$HOME/dotfiles/bin/pre-push-gate"
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+GATE="$repo_root/bin/pre-push-gate"
 
 tests=0
 fails=0
@@ -184,6 +185,47 @@ if [ -e "$_marker" ]; then
 else
 	bad "a ref with new commits MUST still run the suite" "exit=$rc"
 fi
+
+# ── The default suite must run inside this repository's declared Nix shell ───
+# Exercise a disposable copy of the gate so the old direct-runner behavior does
+# not invoke the live 197-file suite. The fake nix adapter records the contract
+# and then executes the fixture runner after `-c`.
+default_root="$WORK/default-runner-repo"
+fake_nix_bin="$WORK/fake-nix-bin"
+mkdir -p "$default_root/bin/test" "$fake_nix_bin"
+cp "$GATE" "$default_root/bin/pre-push-gate"
+cp "$(make_runner 0 155)" "$default_root/bin/run_test_suite"
+chmod +x "$default_root/bin/pre-push-gate" "$default_root/bin/run_test_suite"
+printf '155\n' > "$default_root/bin/test/MIN_TEST_COUNT"
+: > "$default_root/bin/test/ALLOWED_SKIPS"
+nix_log="$WORK/nix-argv"
+{
+	printf '#!%s\n' "$BASH"
+	# shellcheck disable=SC2016 # The generated adapter expands these at runtime.
+	printf 'printf "%%s\\n" "$@" > "$NIX_LOG"\n'
+	printf 'while (($#)); do\n'
+	# shellcheck disable=SC2016 # The generated adapter expands these at runtime.
+	printf '\tif [[ "$1" == -c ]]; then shift; exec "$@"; fi\n'
+	printf '\tshift\n'
+	printf 'done\n'
+	printf 'exit 98\n'
+} > "$fake_nix_bin/nix"
+chmod +x "$fake_nix_bin/nix"
+
+((tests++))
+PATH="$fake_nix_bin:$PATH" NIX_LOG="$nix_log" \
+	"$default_root/bin/pre-push-gate" --check-only >/dev/null 2>&1
+rc=$?
+expected_nix_args=$(printf '%s\n' develop "$default_root" -c "$default_root/bin/run_test_suite")
+actual_nix_args=$([ -f "$nix_log" ] && cat "$nix_log")
+if [ "$rc" = 0 ] && [ "$actual_nix_args" = "$expected_nix_args" ]; then
+	ok "default runner enters this repository's Nix development environment"
+else
+	bad "default runner bypassed the declared Nix development environment" \
+		"exit=$rc" "expected nix argv: ${expected_nix_args//$'\n'/ }" \
+		"actual nix argv: ${actual_nix_args//$'\n'/ }"
+fi
+
 echo
 if [ "$fails" -eq 0 ]; then
 	echo "All $tests pre-push-gate tests passed"
