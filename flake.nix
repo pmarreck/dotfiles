@@ -8,6 +8,8 @@
       url = "github:pmarreck/glob";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    jumpscript.url = "github:pmarreck/jumpscript/88486ae0278fa8a702314bf11d6826a21d081bac";
+    roc_luajit.url = "github:pmarreck/roc_luajit/fbc131fe353ccbad9ca2f77ab652b6f75d5180fe";
     printable_binary_src = {
       url = "github:pmarreck/printable-binary/cdefa95e4590fa016967e0e6ccb3b96c19c44c7e";
       flake = false;
@@ -18,7 +20,7 @@
     };
   };
 
-  outputs = { self, nixpkgs, flake-utils, glob, printable_binary_src, zig_overlay }:
+  outputs = { self, nixpkgs, flake-utils, glob, jumpscript, roc_luajit, printable_binary_src, zig_overlay }:
     flake-utils.lib.eachSystem [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" ] (system:
       let
         pkgs = import nixpkgs { inherit system; };
@@ -64,6 +66,8 @@
         ]) ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.procps ]
           ++ [
             glob.packages.${system}.default
+            jumpscript.packages.${system}.default
+            roc_luajit.packages.${system}.roc
             printableBinary
           ];
       in {
@@ -111,6 +115,10 @@
               export XDG_STATE_HOME="$HOME/.local/state"
               mkdir -p "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$XDG_STATE_HOME"
               PATH="$HOME/bin:$PATH"
+              # Jumpscript's Roc plugin normally realizes its pinned compiler
+              # lazily. The check already carries that compiler as a declared
+              # input, so supply its exact executable and avoid nested Nix.
+              export JUMPSCRIPT_ROC="${roc_luajit.packages.${system}.roc}/bin/roc"
               export TMPDIR="$NIX_BUILD_TOP/tmp"
               mkdir -p "$TMPDIR"
 

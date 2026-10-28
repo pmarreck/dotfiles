@@ -20,12 +20,6 @@ shell_startup_test
 # ── Requires the user's live system configuration or account layout ──────────
 # pathconfig asserts NixOS wrapper ordering under /run/wrappers.
 pathconfig_bash_prepend_test
-
-# ── Requires sibling tools from ~/Code that are not part of this repository ───
-# printable-binary, rm-safe, capture, gstat and friends live in their own repos.
-# Making these hermetic means adding those repos as flake inputs — worth doing,
-# but a deliberate separate step.
-# mandelroc runs a Roc script through jumpscript, which needs both jumpscript
-# and a Roc toolchain.
-mandelroc_test
+# block-attribution validates the installed global Claude hook, which is owned
+# outside this repository and intentionally absent from the sandbox fixture.
 block-attribution_test
