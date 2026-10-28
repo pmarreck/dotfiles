@@ -31,5 +31,4 @@ mandelroc_test
 block-attribution_test
 
 # ── Requires external services, credentials, or large media toolchains ───────
-png_test
 rg_test
