@@ -52,7 +52,7 @@
           jq ripgrep fd tmux expect git openssh b3sum zsh
           nodejs_24  # erect-agent-stack native context discovery uses node:sqlite
           gzip gnutar zip unzip xz bc file which
-          rsync
+          gnupg rage rsync
           (luajit.withPackages (luaPackages: [ luaPackages.lua-cjson ]))
           perl
           util-linux   # hexdump

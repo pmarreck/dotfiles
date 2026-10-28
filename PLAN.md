@@ -1477,6 +1477,12 @@ ASCII `^[A-Z][a-z]`, retaining acronyms and one-letter uppercase words.
     trap-owned, and inherited search wrappers cannot redirect `find` through
     live HOME. All 40 focused assertions, all 194 Nix-admitted files, and all
     204 host files pass. The manifest is down to 10.
+  - Progress 2026-10-28 10:03 EDT: graduated `encrypt`; its admission run
+    exposed an encryption failure masked by a successful trailing `base64`.
+    The test now checks each operation directly, sources tracked functions,
+    uses private GnuPG/XDG/TMPDIR state, and runs declared GnuPG plus rage.
+    All three round trips, all 195 Nix-admitted files, and all 204 host files
+    pass. The manifest is down to 9.
 - [ ] Migrate the 9 legacy memories still in `~/.claude/projects/*/memory/` into
   `~/MEMORIES` via the `memories` skill (another agent's migration is unfinished).
 
