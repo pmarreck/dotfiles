@@ -11,10 +11,7 @@ temp_dir=$(mktemp -d --tmpdir counted_test.XXXXXX)
 trap 'rm -rf "$temp_dir"' EXIT
 
 line_script="$temp_dir/lines.sh"
-cat > "$line_script" << 'EOF'
-#!/usr/bin/env bash
-printf "alpha\nbeta\n"
-EOF
+printf '%s\n' "#!$(type -P bash)" 'printf "alpha\nbeta\n"' > "$line_script"
 chmod +x "$line_script"
 
 pass() {

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2016  # Stub expressions expand in the generated script.
 
 # Test the warhammer_quote function
 test_warhammer_quote() {
@@ -72,12 +73,12 @@ test_warhammer_quote() {
 	first_quote=${quotes[0]}
 	last_quote=${quotes[quote_count - 1]}
 
-	cat > "$tmpdir/random" <<'RANDOM_STUB'
-#!/usr/bin/env bash
-printf '%s\n' "$*" >> "${WARHAMMER_RANDOM_ARGS:?}"
-[[ "$#" -eq 1 && "$1" == "${WARHAMMER_EXPECTED_RANGE:?}" ]] || exit 64
-printf '%s\n' "${WARHAMMER_PICK:?}"
-RANDOM_STUB
+	printf '%s\n' \
+		"#!$(type -P bash)" \
+		'printf '\''%s\n'\'' "$*" >> "${WARHAMMER_RANDOM_ARGS:?}"' \
+		'[[ "$#" -eq 1 && "$1" == "${WARHAMMER_EXPECTED_RANGE:?}" ]] || exit 64' \
+		'printf '\''%s\n'\'' "${WARHAMMER_PICK:?}"' \
+		> "$tmpdir/random"
 	chmod +x "$tmpdir/random"
 
 	first_output=$(PATH="$tmpdir:$PATH" WARHAMMER_RANDOM_ARGS="$tmpdir/args" \

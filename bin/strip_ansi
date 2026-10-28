@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC1090  # --test sources its command-derived test path.
 
 strip_ansi() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "${BASH_SOURCE[0]}" && return
 	local ansiregex="s/\x1b\[[0-9;]*[a-zA-Z]//g"
+	local script_dir sed_bin
+	script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+	sed_bin="${SED:-$script_dir/sed}"
 
 	if [ -t 0 ] && [ "$#" -eq 0 ]; then
 		printf "Usage: strip_ansi [text]\n"
@@ -12,10 +16,10 @@ strip_ansi() {
 
 	if [ -t 0 ]; then
 		# Input from arguments
-		printf '%b' "$*" | $SED -E "$ansiregex"
+		printf '%b' "$*" | "$sed_bin" -E "$ansiregex"
 	else
 		# Input from pipe
-		$SED -E "$ansiregex"
+		"$sed_bin" -E "$ansiregex"
 	fi
 }
 

@@ -6,28 +6,30 @@ test_run_test_suite() {
 	local actual
 	local output
 	local compatibility_runner
+	local bash_bin
 	local top_level_runner
 	local runner
 	local tmpdir
 
 	runner="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)/run_test_suite"
+	bash_bin="$(type -P bash)"
 	compatibility_runner="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)/test_dotfiles"
 	top_level_runner="$(dirname "$(dirname "$runner")")/test"
 	tmpdir=$(mktemp -d --tmpdir run_test_suite_test.XXXXXX)
 	trap 'rm -rf "$tmpdir"' EXIT
 
 	mkdir -p "$tmpdir/mixed" "$tmpdir/passing" "$tmpdir/empty" "$tmpdir/nonexec" "$tmpdir/capped" "$tmpdir/home"
-	printf '%s\n' '#!/usr/bin/env bash' 'printf "fixture pass\\n"' 'exit 0' >"$tmpdir/mixed/a_pass_test"
-	printf '%s\n' '#!/usr/bin/env bash' 'printf "fixture failure two\\n" >&2' 'exit 2' >"$tmpdir/mixed/b_fail_test"
-	printf '%s\n' '#!/usr/bin/env bash' 'printf "fixture failure three\\n" >&2' 'exit 3' >"$tmpdir/mixed/c_fail_test"
-	printf '%s\n' '#!/usr/bin/env bash' 'exit 99' >"$tmpdir/mixed/not-a-test"
+	printf '%s\n' "#!$bash_bin" 'printf "fixture pass\\n"' 'exit 0' >"$tmpdir/mixed/a_pass_test"
+	printf '%s\n' "#!$bash_bin" 'printf "fixture failure two\\n" >&2' 'exit 2' >"$tmpdir/mixed/b_fail_test"
+	printf '%s\n' "#!$bash_bin" 'printf "fixture failure three\\n" >&2' 'exit 3' >"$tmpdir/mixed/c_fail_test"
+	printf '%s\n' "#!$bash_bin" 'exit 99' >"$tmpdir/mixed/not-a-test"
 	chmod +x "$tmpdir/mixed/a_pass_test" "$tmpdir/mixed/b_fail_test" "$tmpdir/mixed/c_fail_test" "$tmpdir/mixed/not-a-test"
 
-	printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$tmpdir/passing/pass_test"
+	printf '%s\n' "#!$bash_bin" 'exit 0' >"$tmpdir/passing/pass_test"
 	chmod +x "$tmpdir/passing/pass_test"
-	printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$tmpdir/nonexec/cannot_run_test"
-	printf '%s\n' '#!/usr/bin/env bash' 'exit 100' >"$tmpdir/capped/a_hundred_test"
-	printf '%s\n' '#!/usr/bin/env bash' 'exit 200' >"$tmpdir/capped/two_hundred_test"
+	printf '%s\n' "#!$bash_bin" 'exit 0' >"$tmpdir/nonexec/cannot_run_test"
+	printf '%s\n' "#!$bash_bin" 'exit 100' >"$tmpdir/capped/a_hundred_test"
+	printf '%s\n' "#!$bash_bin" 'exit 200' >"$tmpdir/capped/two_hundred_test"
 	chmod +x "$tmpdir/capped/a_hundred_test" "$tmpdir/capped/two_hundred_test"
 
 	(( tests++ ))

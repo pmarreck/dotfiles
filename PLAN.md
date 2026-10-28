@@ -1349,6 +1349,10 @@ ASCII `^[A-Z][a-z]`, retaining acronyms and one-letter uppercase words.
   FAIL row even when the tip is green. Currently the gate tests the working tree.
 - [ ] Graduate tests off `NOT_HERMETIC`. The largest group only needs sibling
   ~/Code repos (printable-binary, rm-safe) added as flake inputs.
+  - Progress 2026-10-28 05:12 EDT: graduated 10 falsely excluded or locally
+    repairable suites (`run_test_suite`, `counted`, `strip_ansi`, `date`,
+    `date_difference_days`, `sed`, `stat`, `histogram`, `rule30`, and
+    `warhammer_quote`). The manifest is down to 34 explicit exclusions.
 - [ ] Migrate the 9 legacy memories still in `~/.claude/projects/*/memory/` into
   `~/MEMORIES` via the `memories` skill (another agent's migration is unfinished).
 

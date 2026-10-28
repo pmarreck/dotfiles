@@ -51,7 +51,10 @@
             # and Darwin sandboxes DO have /usr/bin/env, so a green macOS check
             # would prove nothing about Linux.
             postPatch = ''
-              patchShebangs bin .githooks .global-githooks
+              patchShebangs test bin .githooks .global-githooks
+              substituteInPlace bin/warhammer_quote \
+                --replace-fail '#!/usr/bin/env yuerun' "#!$PWD/bin/yuerun"
+              touch -r bin/warhammer_quote.lua bin/warhammer_quote
             '';
 
             checkPhase = ''
