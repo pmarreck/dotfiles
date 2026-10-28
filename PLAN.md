@@ -1465,6 +1465,12 @@ ASCII `^[A-Z][a-z]`, retaining acronyms and one-letter uppercase words.
     Bash and the repository root, and confines HOME and XDG state to its
     trap-owned tree. Focused ShellCheck, all 192 Nix-admitted files, and all
     204 host files pass. The manifest is down to 12.
+  - Progress 2026-10-28 09:50 EDT: graduated `darktide-sync-mods`; the
+    admission run reproduced two host-fixture failures through absent
+    `/usr/bin/env`. Generated adapters now use resolved Bash, all state lives
+    under one trap-owned root, and declared `rsync` coverage replaces the
+    prior sandbox skip. All 20 focused assertions, all 193 Nix-admitted files,
+    and all 204 host files pass. The manifest is down to 11.
 - [ ] Migrate the 9 legacy memories still in `~/.claude/projects/*/memory/` into
   `~/MEMORIES` via the `memories` skill (another agent's migration is unfinished).
 

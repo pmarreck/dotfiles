@@ -37,5 +37,4 @@ jpeg_test
 jpegxl_test
 png_test
 darktide-patch-mods_test
-darktide-sync-mods_test
 rg_test

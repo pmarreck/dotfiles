@@ -1,7 +1,25 @@
 #!/usr/bin/env bash
 set -u
 
-PATH="$HOME/dotfiles/bin:$PATH"
+test_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+repo_root=$(cd -- "$test_dir/../.." && pwd)
+bash_path=$(command -v bash)
+work_root=$(mktemp --tmpdir -d darktide_sync_mods_test.XXXXXX)
+
+export HOME="$work_root/home"
+export XDG_CACHE_HOME="$work_root/xdg-cache"
+export XDG_CONFIG_HOME="$work_root/xdg-config"
+export XDG_DATA_HOME="$work_root/xdg-data"
+export TMPDIR="$work_root/tmp"
+mkdir -p "$HOME" "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$TMPDIR"
+
+PATH="$repo_root/bin:$PATH"
+
+# shellcheck disable=SC2329 # Invoked indirectly by EXIT trap.
+cleanup() {
+	rm -rf -- "$work_root"
+}
+trap cleanup EXIT
 
 tests=0
 fails=0
@@ -55,8 +73,8 @@ mock_host_dir() {
 	local os_name=$1 host_name=$2
 	local mockdir
 	mockdir=$(mktemp -d --tmpdir darktide_mock.XXXXXX)
-	printf '#!/usr/bin/env bash\necho "%s"\n' "$os_name" > "$mockdir/uname"
-	printf '#!/usr/bin/env bash\necho "%s"\n' "$host_name" > "$mockdir/hostname"
+	printf '#!%s\necho "%s"\n' "$bash_path" "$os_name" > "$mockdir/uname"
+	printf '#!%s\necho "%s"\n' "$bash_path" "$host_name" > "$mockdir/hostname"
 	chmod +x "$mockdir/uname" "$mockdir/hostname"
 	echo "$mockdir"
 }
@@ -120,7 +138,7 @@ else
 	expect_eq "mod file content copied to Linux side" "mod contents" "$(cat "$lin_tmp/mymod.txt" 2>/dev/null)"
 
 	# Idempotency: running again with no changes still succeeds and content is unchanged
-	output2=$(PATH="$mockdir:$PATH" DARKTIDE_WIN_MODS="$win_tmp" DARKTIDE_LIN_MODS="$lin_tmp" darktide-sync-mods 2>&1)
+	PATH="$mockdir:$PATH" DARKTIDE_WIN_MODS="$win_tmp" DARKTIDE_LIN_MODS="$lin_tmp" darktide-sync-mods >/dev/null 2>&1
 	status2=$?
 	expect_status "re-running sync (no changes) still exits 0 (idempotent)" 0 "$status2"
 	expect_eq "mod file content unchanged after second sync" "mod contents" "$(cat "$lin_tmp/mymod.txt" 2>/dev/null)"
