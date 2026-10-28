@@ -1350,6 +1350,9 @@ ASCII `^[A-Z][a-z]`, retaining acronyms and one-letter uppercase words.
   temp worktree) rather than just the tip. Mechatron judges each pushed commit
   against its exact-commit manifest, so a red middle commit surfaces as a real
   FAIL row even when the tip is green. Currently the gate tests the working tree.
+  - Evidence 2026-10-28 07:40 EDT: a two-commit push enqueued and passed only
+    the tip; the intermediate commit has no queue or history row. Base this
+    decision on desired history integrity rather than assuming CI covers ranges.
 - [ ] Graduate tests off `NOT_HERMETIC`. The largest group only needs sibling
   ~/Code repos (printable-binary, rm-safe) added as flake inputs.
   - Progress 2026-10-28 05:12 EDT: graduated 10 falsely excluded or locally
@@ -1374,6 +1377,9 @@ ASCII `^[A-Z][a-z]`, retaining acronyms and one-letter uppercase words.
     use the resolved Bash interpreter, and the Darwin root path no longer
     requires `sudo` merely to discover that it will not be used. The manifest
     is down to 28.
+  - Progress 2026-10-28 07:44 EDT: graduated `memhogs`; its generated `ps`
+    adapter uses the resolved Bash interpreter, avoids `errexit`, and keeps help
+    capture in the test-owned fixture directory. The manifest is down to 27.
 - [ ] Migrate the 9 legacy memories still in `~/.claude/projects/*/memory/` into
   `~/MEMORIES` via the `memories` skill (another agent's migration is unfinished).
 
