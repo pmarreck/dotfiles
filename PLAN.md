@@ -1443,6 +1443,10 @@ ASCII `^[A-Z][a-z]`, retaining acronyms and one-letter uppercase words.
     state, and exports every curl mock. Its negative assertions reject unrelated
     adapter failures. Focused ShellCheck, all four API behaviors, all 188
     Nix-admitted files, and all 204 host files pass. The manifest is down to 16.
+  - Progress 2026-10-28 09:24 EDT: graduated `get-all-git-stati` without code
+    changes. Its repositories, remotes, roots, and default HOME were already
+    disposable fixtures; the first admitted run passed all 189 Nix test files.
+    The manifest is down to 15.
 - [ ] Migrate the 9 legacy memories still in `~/.claude/projects/*/memory/` into
   `~/MEMORIES` via the `memories` skill (another agent's migration is unfinished).
 
