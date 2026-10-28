@@ -14,9 +14,6 @@
 # attached to the entry. Removing an entry is a deliberate diff — that is the
 # point: it is how a test graduates to being hermetic.
 
-# ── Requires real hardware / kernel interfaces the sandbox does not expose ────
-distro_pretty_test
-
 # ── Requires network access (the sandbox has none, by design) ────────────────
 find_github_forks_with_file_test
 webping_curl_test

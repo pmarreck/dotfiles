@@ -1398,6 +1398,11 @@ ASCII `^[A-Z][a-z]`, retaining acronyms and one-letter uppercase words.
     host. A private Linux fixture now injects filesystem, platform, architecture,
     kernel, CPU, memory, DMI, OS, container, and fixed SHA inputs. Focused tests,
     ShellCheck, and all 180 Nix-admitted files pass. The manifest is down to 24.
+  - Progress 2026-10-28 08:33 EDT: graduated `distro_pretty`; the first Nix run
+    reproduced its three macOS adapters failing through absent `/usr/bin/env`.
+    The test now resolves the command and Bash itself, uses a private HOME, and
+    passes focused ShellCheck plus all 181 Nix-admitted files. The manifest is
+    down to 23.
 - [ ] Migrate the 9 legacy memories still in `~/.claude/projects/*/memory/` into
   `~/MEMORIES` via the `memories` skill (another agent's migration is unfinished).
 
