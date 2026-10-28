@@ -48,7 +48,9 @@ get-all-git-stati_test
 # printable-binary, rm-safe, capture, gstat and friends live in their own repos.
 # Making these hermetic means adding those repos as flake inputs — worth doing,
 # but a deliberate separate step.
-mandelroc_test # compiles through the separately packaged jumpscript/Roc toolchain
+# mandelroc runs a Roc script through jumpscript, which needs both jumpscript
+# and a Roc toolchain.
+mandelroc_test
 capture_test
 show_test
 strip_ansi_test
@@ -62,7 +64,6 @@ date_test
 date_difference_days_test
 stat_test
 sed_test
-getfile_test
 block-attribution_test
 run_test_suite_test
 

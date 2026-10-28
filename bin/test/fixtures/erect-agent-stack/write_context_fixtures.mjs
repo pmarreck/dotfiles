@@ -71,10 +71,15 @@ writeJsonl(path.join(claudeDir, "claude-root", "subagents", "claude-child-2.json
 writeJsonl(path.join(claudeHome, "projects", "collision-name", "claude-other.jsonl"), [
 	{ type: "assistant", cwd: otherProject, isSidechain: false, sessionId: "claude-other-project", timestamp: "2026-09-30T00:00:00.000Z" },
 ]);
+// A same-named project at another path whose transcript no longer exists. Both
+// paths stay inside the fixture root and are never created: a path outside it
+// may be denied rather than missing in a build sandbox.
+const movedFrom = path.join(fixtureRoot, "moved-from");
+const movedProject = path.join(movedFrom, path.basename(project));
 writeJson(path.join(claudeDir, "sessions-index.json"), {
-	originalPath: "/Users/pmarreck/a project",
+	originalPath: movedProject,
 	entries: [
-		{ sessionId: "claude-moved", projectPath: "/Users/pmarreck/a project", fullPath: "/Users/pmarreck/.claude/projects/a-project/claude-moved.jsonl", modified: "2026-09-23T00:00:00.000Z" },
+		{ sessionId: "claude-moved", projectPath: movedProject, fullPath: path.join(movedFrom, ".claude", "projects", "a-project", "claude-moved.jsonl"), modified: "2026-09-23T00:00:00.000Z" },
 		{ sessionId: "claude-index-only", projectPath: project, fullPath: path.join(claudeDir, "missing-claude-index-only.jsonl"), modified: "2026-09-08T00:00:00.000Z" },
 	],
 });

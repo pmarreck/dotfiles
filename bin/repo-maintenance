@@ -187,12 +187,15 @@ for _, repo in ipairs(baseline.repos) do
 end
 
 local chosen, deferred = maintenance.select_due(candidates, max_fetches)
-local timeout = jit.os == "OSX" and "gtimeout" or "timeout"
+-- GNU timeout is gtimeout under nix-darwin or Homebrew but plain timeout from Nix
+-- coreutils and on Linux, so take whichever this PATH provides (as providers.lua does).
+local discovered_timeout, has_timeout = runtime.run_command("command -v gtimeout || command -v timeout")
+local timeout = has_timeout and runtime.trim(discovered_timeout) or "timeout"
 for _, candidate in ipairs(chosen) do
 	local status = "due"
 	if not dry_run then
 		local command = "GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND='ssh -o BatchMode=yes' "
-			.. timeout .. " 120 git -C " .. runtime.shell_quote(candidate.repo.path)
+			.. runtime.shell_quote(timeout) .. " 120 git -C " .. runtime.shell_quote(candidate.repo.path)
 			.. " -c gc.auto=0 fetch --quiet --no-tags " .. runtime.shell_quote(candidate.name)
 		local _, ok = runtime.run_command(command)
 		status = ok and "fetched" or "failed"

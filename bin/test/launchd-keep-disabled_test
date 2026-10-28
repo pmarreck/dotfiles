@@ -7,9 +7,8 @@ launchd_keep_disabled_test() {
   tmpdir=$(mktemp -d --tmpdir launchd_keep_disabled_test.XXXXXX)
 
   # Fake launchctl: serves a fixed print-disabled table, records mutations.
-  {
-    printf '#!%s\n' "$(command -v bash)"
-    cat <<EOF
+  cat > "$tmpdir/fake-launchctl" <<EOF
+#!$BASH
 case "\$1" in
 	print-disabled)
 		printf '\tdisabled services = {\n'
@@ -22,7 +21,6 @@ case "\$1" in
 esac
 exit 0
 EOF
-  } > "$tmpdir/fake-launchctl"
   chmod +x "$tmpdir/fake-launchctl"
   local env=(LAUNCHD_KEEP_DISABLED_LAUNCHCTL="$tmpdir/fake-launchctl" LAUNCHD_KEEP_DISABLED_DOMAIN="gui/999")
 

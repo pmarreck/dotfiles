@@ -23,6 +23,14 @@
 - [x] Reproduce and fix the live Nix `//` merge-operator false positive with a staged classifier set that still rejects actual absolute path literals; notify Printable Binary after focused and independent controls pass. Completed 2026-10-23 22:25 EDT: exact `e578c595047c` alternate index and independent merge variants pass without an override.
 - [x] Add a staged-blob pre-commit gate for nonportable dependency references, with parser-aware manifest coverage, repository-boundary and tracked-symlink checks, narrow Nix staging exceptions, a reason-required loud override, disposable-repository commit tests, complete-suite evidence, and coordinator review. Completed 2026-10-28 01:00 EDT with hook-backed disposable-repository commit controls, parser-aware Nix coverage, the complete 198-file host suite, and the sandboxed Nix check; coordinator delivery follows the merge commit.
 
+## Active: resumable `getfile --unzip` (2026-10-22)
+
+- [x] `--unzip` downloads each URL resumably (`wget -c` / `curl -C -`), extracts it with bsdtar, then trashes the archive via rm-safe; failures keep the archive for a rerun. Plain-mode curl fallback now resumes too. Completed 2026-10-22 19:00 EDT.
+- [x] Refuse to extract over existing files unless `--overwrite`/`--yes`/`-y` is given; check the archive listing before writing anything, so a refusal changes nothing. Completed 2026-10-22 19:10 EDT.
+- [x] Extract with GNU tar (`gtar` on macOS) and Info-ZIP `unzip` on both OSes instead of bsdtar; pick the tool by the archive's magic bytes. `getfile_test` is now hermetic and runs in the Linux Nix check. Completed 2026-10-22 19:10 EDT.
+- [x] Restore `~/.bash_profile` as a symlink: the oMLX installer had replaced it with a copy plus its PATH block. `~/.omlx/bin` is now a `PATH_ADDITIONS` entry in `.pathconfig`; the installer's block stays in `.bash_profile` commented out so its markers remain, and the copy is in `~/.Trash/`. `path_export_policy_test` now ignores full-line comments. Completed 2026-10-22 19:20 EDT.
+- [x] Fix the 5 test files that failed only inside the aarch64-darwin Nix sandbox check. Completed 2026-10-22 19:35 EDT: `shadows` and `repo-maintenance` chose BSD flags or `gtimeout` by OS rather than by what the tools on PATH support; `terminal_config_test` needed a private HOME with this checkout's startup files; the erect-agent-stack fixture referenced a host path outside its root; `mandelroc_test` needs jumpscript and Roc, so it joined NOT_HERMETIC. Sandbox 148/148, host 193/193.
+
 ## Active — nightly LaunchServices prune + siriknowledged disable (2026-10-13)
 
 - [x] Add `bin/lsregister-prune-dead` with a set-classifier test: unregister registrations whose bundle path is gone; keep live ones and anything on an unmounted `/Volumes/<name>`.

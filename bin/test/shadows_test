@@ -295,6 +295,43 @@ else
 	echo "  Exit: $status" >&2
 	((fails++))
 fi
+
+# The audit must not assume BSD find/stat on macOS: a Nix-first PATH (and the
+# Nix build sandbox) puts GNU findutils and coreutils there, and GNU find
+# rejects BSD's `-perm +111`. Run the same audit with GNU tools first on PATH.
+((tests++))
+echo "Testing: argument-free shadows works with GNU find and stat on PATH..."
+gnu_find="" gnu_stat=""
+for candidate in gfind find; do
+	candidate_path="$(type -P "$candidate")" || continue
+	if "$candidate_path" --version 2>/dev/null | grep -q 'GNU findutils'; then gnu_find="$candidate_path"; break; fi
+done
+for candidate in gstat stat; do
+	candidate_path="$(type -P "$candidate")" || continue
+	if "$candidate_path" --version 2>/dev/null | grep -q 'GNU coreutils'; then gnu_stat="$candidate_path"; break; fi
+done
+if [[ -z "$gnu_find" || -z "$gnu_stat" ]]; then
+	echo "✗ Test failed: GNU find (find or gfind) and GNU stat (stat or gstat) are required" >&2
+	((fails++))
+else
+	gnu_tools_dir="$tmpdir_all/gnu-tools"
+	mkdir -p "$gnu_tools_dir"
+	ln -s "$gnu_find" "$gnu_tools_dir/find"
+	ln -s "$gnu_stat" "$gnu_tools_dir/stat"
+	output="$(PATH="$gnu_tools_dir:$PATH"; hash -r; shadows 2>"$all_warn_file")"
+	status=$?
+	if [[ "$output" == *"$dir_all_early/shadows_all_binary shadows: $dir_all_late/shadows_all_binary"* ]] && \
+		[[ "$output" == *"alias shadows_all_alias shadows:"*"$dir_all_early/shadows_all_alias"* ]] && \
+		(( status >= 3 )); then
+		echo "✓ Test passed: argument-free report works with GNU find and stat"
+	else
+		echo "✗ Test failed: argument-free report broke with GNU find and stat on PATH" >&2
+		echo "  Output: $output" >&2
+		echo "  Exit: $status; stderr: $(<"$all_warn_file")" >&2
+		((fails++))
+	fi
+fi
+hash -r 2>/dev/null
 unalias shadows_all_alias
 unset -f shadows_all_function
 PATH="$OLDPATH"

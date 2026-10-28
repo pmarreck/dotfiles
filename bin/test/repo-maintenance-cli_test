@@ -37,6 +37,8 @@ REPO_MAINTENANCE_NOW_EPOCH="$fixture_now" \
 first_status=$?
 if (( first_status != 0 )); then
 	printf 'FAIL initial repo maintenance exited %s\n' "$first_status" >&2
+	sed 's/^/  stdout: /' "$scratch/first.out" >&2
+	sed 's/^/  stderr: /' "$scratch/first.err" >&2
 	exit 1
 fi
 if [[ -s "$scratch/first.err" ]]; then

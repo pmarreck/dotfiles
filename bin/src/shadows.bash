@@ -139,12 +139,16 @@ shadows() {
 		candidate_dirs+=("$dir")
 	done
 
+	# Device:inode keys dedupe symlinked PATH dirs in one stat call. Try GNU's -c
+	# first (BSD stat rejects it and prints nothing), then BSD's -f; GNU stat
+	# would misread -f as filesystem mode, so the order matters.
 	local stat_command
 	stat_command="$(builtin type -P stat 2>/dev/null)"
-	if [[ -n "$stat_command" && "${OSTYPE-}" == darwin* ]]; then
-		mapfile -t dir_keys < <("$stat_command" -Lf '%d:%i' -- "${candidate_dirs[@]}" 2>/dev/null)
-	elif [[ -n "$stat_command" ]]; then
+	if [[ -n "$stat_command" ]]; then
 		mapfile -t dir_keys < <("$stat_command" -Lc '%d:%i' -- "${candidate_dirs[@]}" 2>/dev/null)
+		if ((${#dir_keys[@]} != ${#candidate_dirs[@]})); then
+			mapfile -t dir_keys < <("$stat_command" -Lf '%d:%i' -- "${candidate_dirs[@]}" 2>/dev/null)
+		fi
 	fi
 	((${#dir_keys[@]} == ${#candidate_dirs[@]})) || dir_keys=()
 
@@ -168,11 +172,14 @@ shadows() {
 		return 2
 	fi
 
+	# Pick the predicate by what this find supports, not by OS: GNU find and bfs
+	# have -executable, BSD find has only `-perm +111`, and a Nix-first macOS
+	# PATH puts GNU find there.
 	local -a find_predicates=(-mindepth 1 -maxdepth 1 -type f)
-	if [[ "${OSTYPE-}" == darwin* ]]; then
-		find_predicates+=(-perm +111)
-	else
+	if "$find_command" / -maxdepth 0 -executable >/dev/null 2>&1; then
 		find_predicates+=(-executable)
+	else
+		find_predicates+=(-perm +111)
 	fi
 	if ((${#unique_dirs[@]} > 0)); then
 		while IFS= read -r -d '' fullpath; do

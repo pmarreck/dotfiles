@@ -1,20 +1,26 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Rehydrate the exported GREP_QUIET string into an argv array, defaulting to
-# `grep -q`. Bash arrays can't be exported, so child scripts receive the string
-# form and reconstruct the array here (safe under `set -u`).
-read -ra GREP_QUIET_ARRAY <<< "${GREP_QUIET:-grep -q}"
+# wget's default verbose mode buries its progress bar in resolve/connect/header
+# chatter; --no-verbose keeps errors and a one-line summary, --show-progress the bar.
+WGET_ARGS=(--xattr -c --no-verbose --show-progress --progress=bar)
 
 usage() {
 	cat <<'USAGE'
 Usage: getfile [options] URL [URL...]
 
-Download remote files to disk using wget (preferred) or curl.
+Download remote files to disk using wget (preferred) or curl, resuming any
+partial download left by an earlier interrupted run.
 
 Options:
-  --unzip   Stream-unzip each URL through bsdtar with download progress (disables resume).
-            Uses pv for per-archive and, when all lengths are known, total ETA.
+  --unzip   After each URL finishes downloading, extract it into the current
+            directory (zip with unzip; tar, tar.gz/bz2/xz/zst with GNU tar, which
+            is gtar on macOS) and move the archive to the Trash via rm-safe.
+            A failed download or extraction keeps the archive, so rerunning
+            resumes or retries it. An archive that would overwrite any existing
+            file is refused before anything is written.
+  --overwrite, --yes, -y
+            With --unzip, let archives replace existing files.
   --help    Show this help message and exit.
   --about   Show a short description and exit.
   --test    Run associated tests.
@@ -30,82 +36,168 @@ about() {
 
 run_downloader() {
 	if command -v wget >/dev/null 2>&1; then
-		wget --xattr -c --progress=bar -- "$@"
+		wget "${WGET_ARGS[@]}" -- "$@"
 	elif command -v curl >/dev/null 2>&1; then
-		curl -fL --progress-bar -O "$@"
+		curl -fL -C - --progress-bar --remote-name-all "$@"
 	else
 		echo "getfile: require wget or curl" >&2
 		return 1
 	fi
 }
 
-stream_download() {
-	local url="$1" show_progress="${2:-false}"
+# Resumably download one URL to an explicit path, so the caller knows exactly
+# which file to extract regardless of redirects or Content-Disposition.
+download_to() {
+	local url="$1" file="$2"
 	if command -v wget >/dev/null 2>&1; then
-		if $show_progress; then
-			wget -O - --progress=bar -- "$url"
-		else
-			wget -q -O - -- "$url"
-		fi
+		wget "${WGET_ARGS[@]}" -O "$file" -- "$url"
 	elif command -v curl >/dev/null 2>&1; then
-		if $show_progress; then
-			curl -fL --progress-bar -- "$url"
-		else
-			curl -sfL -- "$url"
-		fi
+		curl -fL -C - --progress-bar -o "$file" -- "$url"
 	else
 		echo "getfile: require wget or curl" >&2
 		return 1
 	fi
 }
 
-# Print an HTTP Content-Length, if the server supplies a usable one. HEAD is
-# deliberately best-effort: a streaming GET remains the source of truth.
-remote_content_length() {
-	local headers
-	if command -v curl >/dev/null 2>&1; then
-		headers=$(curl -fsSIL -- "$1" 2>/dev/null) || return 1
-	elif command -v wget >/dev/null 2>&1; then
-		headers=$(wget --spider --server-response -- "$1" 2>&1) || return 1
+# Local archive name for a URL: its last path segment, minus query/fragment.
+archive_filename() {
+	local path="${1%%[?#]*}"
+	path="${path##*/}"
+	[ -n "$path" ] && printf '%s\n' "$path"
+}
+
+# Print the GNU tar command: gtar on macOS, where tar is bsdtar; tar on Linux.
+find_gnu_tar() {
+	local candidate version
+	for candidate in gtar tar; do
+		command -v "$candidate" >/dev/null 2>&1 || continue
+		version=$("$candidate" --version 2>/dev/null) || continue
+		if [[ "$version" == *"GNU tar"* ]]; then
+			printf '%s\n' "$candidate"
+			return 0
+		fi
+	done
+	return 1
+}
+
+# Choose the extractor by content, since a URL's name can be wrong or missing:
+# zip (magic "PK") needs Info-ZIP unzip because GNU tar cannot read zip;
+# everything else goes to GNU tar, which detects gzip/bzip2/xz/zstd itself.
+archive_tool() {
+	local magic=""
+	IFS= read -r -n 2 magic < "$1" || true
+	if [ "$magic" = PK ]; then
+		command -v unzip >/dev/null 2>&1 && echo unzip
 	else
-		return 1
-	fi
-	printf '%s\n' "$headers" | tr -d '\r' | awk '
-		tolower($0) ~ /^[[:space:]]*content-length:[[:space:]]*/ {
-			value = $0
-			sub(/^[^:]*:[[:space:]]*/, "", value)
-		}
-		END {
-			if (value ~ /^[0-9]+$/) print value
-		}
-	'
-}
-
-progress_label() {
-	local path="${1%%\?*}" label
-	label="${path##*/}"
-	printf '%s\n' "${label:-$1}"
-}
-
-OVERALL_PROGRESS_ACTIVE=false
-OVERALL_PROGRESS_PID=""
-
-stop_overall_progress() {
-	if $OVERALL_PROGRESS_ACTIVE; then
-		exec 3>&-
-		wait "$OVERALL_PROGRESS_PID" 2>/dev/null || true
-		OVERALL_PROGRESS_ACTIVE=false
-		OVERALL_PROGRESS_PID=""
+		find_gnu_tar
 	fi
 }
 
-find_stream_unzipper() {
-	if command -v bsdtar >/dev/null 2>&1; then
-		echo bsdtar
-	elif tar --version 2>&1 | "${GREP_QUIET_ARRAY[@]}" libarchive; then
-		echo tar
-	else
+# List archive member paths, one per line, directories with a trailing slash.
+list_archive() {
+	case "$1" in
+		unzip) unzip -Z1 "$2" ;;
+		*) "$1" -tf "$2" ;;
+	esac
+}
+
+# Extract into the current directory. Without overwrite, each tool's
+# keep-existing mode (unzip -n, tar -k) refuses to replace a file. unzip must
+# always get -n or -o, or it stops to prompt.
+extract_archive() {
+	local tool="$1" archive="$2" overwrite="$3"
+	case "$tool" in
+		unzip)
+			if $overwrite; then unzip -q -o "$archive"; else unzip -q -n "$archive"; fi
+			;;
+		*)
+			if $overwrite; then "$tool" -xf "$archive"; else "$tool" -xkf "$archive"; fi
+			;;
+	esac
+}
+
+# Print each archive entry that would write over an existing path, as a
+# set classifier over the archive listing: an existing directory is fine where
+# the archive also has a directory; any other existing path, including a
+# dangling symlink, conflicts. Fails if the archive cannot be listed.
+archive_conflicts() {
+	local tool="$1" archive="$2" entry path
+	list_archive "$tool" "$archive" | while IFS= read -r entry; do
+		# GNU tar and unzip both strip leading slashes on extraction.
+		path="${entry#"${entry%%[!/]*}"}"
+		case "$path" in
+			*/)
+				path="${path%/}"
+				[ -z "$path" ] || [ "$path" = . ] && continue
+				if [ -L "$path" ] || { [ -e "$path" ] && [ ! -d "$path" ]; }; then
+					printf '%s\n' "$entry"
+				fi
+				;;
+			*)
+				if [ -e "$path" ] || [ -L "$path" ]; then
+					printf '%s\n' "$entry"
+				fi
+				;;
+		esac
+	done
+}
+
+# Explain an overwrite refusal, listing at most a screenful of conflicts.
+report_conflicts() {
+	local archive="$1" conflicts="$2" shown=10 line list=()
+	# A read loop rather than mapfile, which macOS's /bin/bash 3.2 lacks.
+	while IFS= read -r line; do list+=("$line"); done <<< "$conflicts"
+	echo "getfile: $archive would overwrite ${#list[@]} existing path(s); archive kept." >&2
+	echo "getfile: rerun with --overwrite (or --yes, -y) to replace them:" >&2
+	printf '  %s\n' "${list[@]:0:shown}" >&2
+	[ "${#list[@]}" -gt "$shown" ] && echo "  ... and $((${#list[@]} - shown)) more" >&2
+	return 0
+}
+
+# Download, extract, then trash one archive. Each step gates the next, so an
+# interrupted download or failed extraction leaves the archive for a rerun.
+# wget -O creates its output before the server answers, so a refused request
+# leaves an empty file; only that file, if getfile created it, is removed.
+# Without overwrite, any conflict refuses the whole archive before anything is
+# written, and keep-existing mode backstops a path that appears in between.
+unzip_one() {
+	local url="$1" overwrite="$2" archive existed=false tool conflicts
+	archive=$(archive_filename "$url") || {
+		echo "getfile: cannot derive an archive filename from $url" >&2
 		return 1
+	}
+	[ -e "$archive" ] && existed=true
+	download_to "$url" "$archive" || {
+		if [ -s "$archive" ]; then
+			echo "getfile: download of $archive incomplete; rerun to resume" >&2
+		else
+			$existed || rm -f -- "$archive"
+			echo "getfile: download of $archive failed" >&2
+		fi
+		return 1
+	}
+	tool=$(archive_tool "$archive") || {
+		echo "getfile: no extractor for $archive (zip needs unzip, tarballs need GNU tar); archive kept" >&2
+		return 1
+	}
+	if ! $overwrite; then
+		conflicts=$(archive_conflicts "$tool" "$archive") || {
+			echo "getfile: failed to extract $archive; archive kept" >&2
+			return 1
+		}
+		if [ -n "$conflicts" ]; then
+			report_conflicts "$archive" "$conflicts"
+			return 1
+		fi
+	fi
+	extract_archive "$tool" "$archive" "$overwrite" || {
+		echo "getfile: failed to extract $archive; archive kept" >&2
+		return 1
+	}
+	if command -v rm-safe >/dev/null 2>&1; then
+		rm-safe "$archive"
+	else
+		echo "getfile: rm-safe unavailable; kept $archive" >&2
 	fi
 }
 
@@ -115,6 +207,7 @@ if [ $# -eq 0 ]; then
 fi
 
 unzip_mode=false
+overwrite=false
 args=()
 while [ $# -gt 0 ]; do
 	case "$1" in
@@ -127,10 +220,15 @@ while [ $# -gt 0 ]; do
 			exit 0
 			;;
 		--test)
-			exec bin/test/getfile_test 2>&1 >/dev/null
+			# shellcheck disable=SC2069 # Deliberate: failures (stderr) reach the terminal, passes are muted.
+			exec "$(dirname "${BASH_SOURCE[0]}")/test/getfile_test" 2>&1 >/dev/null
 			;;
 		--unzip)
 			unzip_mode=true
+			shift
+			;;
+		--overwrite|--yes|-y)
+			overwrite=true
 			shift
 			;;
 		--)
@@ -151,61 +249,16 @@ if [ ${#args[@]} -eq 0 ]; then
 fi
 
 if $unzip_mode; then
-	unzipper=$(find_stream_unzipper) || {
-		echo "getfile: --unzip requires bsdtar or libarchive-based tar" >&2
+	# Fail before a long download when no extractor could possibly run.
+	if ! find_gnu_tar >/dev/null && ! command -v unzip >/dev/null 2>&1; then
+		echo "getfile: --unzip requires GNU tar (gtar on macOS) or unzip" >&2
 		exit 1
-	}
-	if command -v pv >/dev/null 2>&1; then
-		stream_sizes=()
-		total_size=0
-		all_sizes_known=true
-		for url in "${args[@]}"; do
-			size=$(remote_content_length "$url" || true)
-			if [[ "$size" =~ ^[0-9]+$ ]]; then
-				stream_sizes+=("$size")
-				total_size=$((total_size + 10#$size))
-			else
-				stream_sizes+=("")
-				all_sizes_known=false
-			fi
-		done
-
-		if $all_sizes_known; then
-			echo "getfile: streaming ${#args[@]} archive(s), $total_size bytes total" >&2
-			display_args=(-f)
-			[ -t 2 ] && display_args=(-c)
-			exec 3> >(pv "${display_args[@]}" -s "$total_size" -N total >/dev/null)
-			OVERALL_PROGRESS_ACTIVE=true
-			OVERALL_PROGRESS_PID=$!
-			trap stop_overall_progress EXIT
-		else
-			echo "getfile: one or more servers omitted Content-Length; aggregate ETA unavailable" >&2
-		fi
-
-		for index in "${!args[@]}"; do
-			url="${args[index]}"
-			size="${stream_sizes[index]}"
-			label="$(progress_label "$url")"
-			display_args=(-f)
-			[ -t 2 ] && display_args=(-c)
-			pv_args=("${display_args[@]}" -N "[$((index + 1))/${#args[@]}] $label")
-			[ -n "$size" ] && pv_args+=(-s "$size")
-			echo "getfile: stream-unzipping $url" >&2
-			if $OVERALL_PROGRESS_ACTIVE; then
-				stream_download "$url" | tee /dev/fd/3 | pv "${pv_args[@]}" | "$unzipper" -xf -
-			else
-				stream_download "$url" | pv "${pv_args[@]}" | "$unzipper" -xf -
-			fi
-		done
-		stop_overall_progress
-		trap - EXIT
-	else
-		echo "getfile: pv unavailable; using downloader progress per archive" >&2
-		for url in "${args[@]}"; do
-			echo "getfile: stream-unzipping $url" >&2
-			stream_download "$url" true | "$unzipper" -xf -
-		done
 	fi
+	failures=0
+	for url in "${args[@]}"; do
+		unzip_one "$url" "$overwrite" || failures=$((failures + 1))
+	done
+	exit "$((failures > 0))"
 else
 	run_downloader "${args[@]}"
 fi
