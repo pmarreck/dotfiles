@@ -1459,6 +1459,12 @@ ASCII `^[A-Z][a-z]`, retaining acronyms and one-letter uppercase words.
     inherited `rg` wrapper, and uses private HOME plus trap-owned storage.
     Focused ShellCheck, all six safety assertions, all 191 Nix-admitted files,
     and all 204 host files pass. The manifest is down to 13.
+  - Progress 2026-10-28 09:44 EDT: graduated `epub`; the admission run
+    reproduced all seven conversion paths failing because the generated
+    `ebook-convert` adapter used absent `/usr/bin/env`. The test now resolves
+    Bash and the repository root, and confines HOME and XDG state to its
+    trap-owned tree. Focused ShellCheck, all 192 Nix-admitted files, and all
+    204 host files pass. The manifest is down to 12.
 - [ ] Migrate the 9 legacy memories still in `~/.claude/projects/*/memory/` into
   `~/MEMORIES` via the `memories` skill (another agent's migration is unfinished).
 
