@@ -52,7 +52,7 @@ Options:
       --about     One-line description
 
 Excluded, always: this process and its entire ancestor chain (a cleanup tool
-must not kill the shell that ran it), and kernel threads.
+must not kill the shell that ran it), agent-owned cgroups, and kernel threads.
 
 Matching is by executable path, kernel command name, and Steam paths appearing
 as command-line ARGUMENTS — never by the bare word "steam" appearing anywhere,
@@ -83,11 +83,50 @@ elif [ -r /proc/self/cmdline ]; then
 	proc_root=/proc
 	mode=proc
 else
-	mode=ps
+	mode="ps"
 fi
 
 declare -A ARGV_OF=() REASON_OF=()
 matched=()
+
+process_cgroup() {
+	local row
+	PROCESS_CGROUP=""
+	[ -r "$proc_root/$1/cgroup" ] || return 1
+	while IFS= read -r row; do
+		case "$row" in
+			0::*) PROCESS_CGROUP="${row#0::}"; return 0 ;;
+		esac
+	done < "$proc_root/$1/cgroup"
+	return 1
+}
+
+# Herdr and similar agent runners may keep agents and their detached children in
+# one service cgroup. Never treat Wine launched there as abandoned game state.
+# Protect the invoking cgroup too, except when it is the cgroup of Steam itself.
+declare -A PROTECTED_CGROUP=() STEAM_CGROUP=()
+if [ "$mode" = proc ]; then
+	for d in "$proc_root"/[0-9]*; do
+		[ -d "$d" ] || continue
+		pid="${d##*/}"
+		comm=""
+		IFS= read -r comm < "$d/comm" 2>/dev/null
+		process_cgroup "$pid" || :
+		cgroup="$PROCESS_CGROUP"
+		[ -n "$cgroup" ] || continue
+		case "$comm" in
+			steam) STEAM_CGROUP["$cgroup"]=1 ;;
+			claude|node|codex|codex-*|herdr|herdr-*|tmux*)
+				PROTECTED_CGROUP["$cgroup"]=1
+				;;
+		esac
+	done
+	process_cgroup $$ || :
+	self_cgroup="$PROCESS_CGROUP"
+	if [ -n "$self_cgroup" ] && [ -z "${STEAM_CGROUP[$self_cgroup]:-}" ]; then
+		PROTECTED_CGROUP["$self_cgroup"]=1
+	fi
+fi
 
 # This process and its ancestors, so the cleanup never targets its own caller.
 declare -A EXCLUDE=()
@@ -106,6 +145,9 @@ if [ "$mode" = proc ]; then
 		[ -d "$d" ] || continue
 		pid="${d##*/}"
 		[ -n "${EXCLUDE[$pid]:-}" ] && continue
+		process_cgroup "$pid" || :
+		cgroup="$PROCESS_CGROUP"
+		[ -n "$cgroup" ] && [ -n "${PROTECTED_CGROUP[$cgroup]:-}" ] && continue
 
 		# cmdline first: it is a builtin read, and its emptiness identifies kernel
 		# threads and zombies. Skipping them here also avoids a readlink fork for

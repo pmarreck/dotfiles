@@ -1,0 +1,162 @@
+#!/usr/bin/env bash
+# Real index/commit tests: never inspect the working copy as a stand-in for Git.
+set -u
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+gate="$root/bin/git-conflict-marker-gate"
+hooks="$root/.global-githooks"
+bash_path=$(command -v bash)
+work=$(mktemp -d "${TMPDIR:-/tmp}/conflict-gate-test.XXXXXXXX") || exit 1
+trap 'command rm -rf -- "$work"' EXIT
+export GIT_CONFIG_GLOBAL="$work/global-config" GIT_CONFIG_NOSYSTEM=1
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE ALLOW_GIT_CONFLICT_MARKERS
+tests=0 failures=0
+check() {
+	tests=$((tests+1))
+	if "$@"; then return; fi
+	printf 'FAIL: %s\n' "$*" >&2
+	failures=$((failures+1))
+}
+repo="$work/repo"
+git init -q "$repo" || exit 1
+cd "$repo" || exit 1
+git config user.name 'Gate test'
+git config user.email 'gate@example.invalid'
+git config commit.gpgsign false
+git config core.hooksPath "$hooks"
+run_gate() { output=$("$gate" 2>&1); rc=$?; }
+stage() { printf '%s\n' "$1" > sample; git add -- sample; }
+
+# Classifier sets include each marker separately, diff3, long markers, and CRLF.
+for value in '<<<<<<< HEAD' '=======' '>>>>>>> topic' '||||||| base' '<<<<<<<<<< HEAD' $'=======\r'; do
+	stage "$value"
+	run_gate
+	check test "$rc" -eq 1
+done
+for value in 'ordinary text' 'x <<<<<<< HEAD' '====== comparison' '======='"not-a-marker" '<<<<<<<<operator' '>>>>>> six' ''; do
+	stage "$value"
+	run_gate
+	check test "$rc" -eq 0
+done
+
+# All changed paths, including whitespace, colon, leading dash and newline.
+for name in 'with space' ':literal' '-option' $'line\nbreak'; do
+	printf '<<<<<<< HEAD\n' > "$name"
+	git --literal-pathspecs add -- "$name"
+	run_gate
+	check test "$rc" -eq 1
+	git --literal-pathspecs rm -q -f --cached -- "$name"
+done
+
+stage '<<<<<<< HEAD'
+printf 'clean working copy\n' > sample
+run_gate
+check test "$rc" -eq 1
+stage 'clean index'
+printf '<<<<<<< unstaged\n' > sample
+run_gate
+check test "$rc" -eq 0
+
+# Bypass is narrow, exact and loud.
+stage '>>>>>>> topic'
+output=$(ALLOW_GIT_CONFLICT_MARKERS=0 "$gate" 2>&1); rc=$?
+check test "$rc" -eq 1
+output=$(ALLOW_GIT_CONFLICT_MARKERS=1 "$gate" 2>&1); rc=$?
+check test "$rc" -eq 0
+check test -n "$output"
+
+# A real commit proves the dispatcher is installed and blocks before local hooks.
+printf '#!%s\nprintf "ran\\n" >> local-hook-log\n' "$bash_path" > .git/hooks/pre-commit
+chmod +x .git/hooks/pre-commit
+output=$(git commit -qm blocked 2>&1); rc=$?
+check test "$rc" -ne 0
+check test ! -e local-hook-log
+stage 'clean'
+output=$(git commit -qm clean 2>&1); rc=$?
+check test "$rc" -eq 0
+check test "$(wc -l 2>/dev/null < <(cat local-hook-log 2>/dev/null))" -eq 1
+
+# Existing marker elsewhere in the changed blob must not evade a diff-only check.
+stage '<<<<<<< fixture'
+output=$(ALLOW_GIT_CONFLICT_MARKERS=1 git commit -qm fixture 2>&1); rc=$?
+check test "$rc" -eq 0
+printf '\nanother line\n' >> sample
+git add sample
+run_gate
+check test "$rc" -eq 1
+
+# Binary blobs and symlink targets are not scanned as text.
+git rm -q -f sample
+printf '\000\n<<<<<<< HEAD\n' > binary
+ln -s '<<<<<<< HEAD' link
+git add binary link
+run_gate
+check test "$rc" -eq 0
+
+# The bypass cannot bypass repository checks.
+printf '#!%s\nexit 23\n' "$bash_path" > .git/hooks/pre-commit
+output=$(ALLOW_GIT_CONFLICT_MARKERS=1 git commit -qm local-reject 2>&1); rc=$?
+check test "$rc" -ne 0
+
+# Non-commit hook stdin/argv and exit status survive global hook selection.
+printf '#!%s\nprintf "%%s\\n" "$@" > received-args\ncat > received-input\nexit 17\n' "$bash_path" > .git/hooks/pre-push
+chmod +x .git/hooks/pre-push
+printf 'push payload\n' > "$work/push-input"
+output=$(git hook run --to-stdin="$work/push-input" pre-push -- origin 'ssh://example.invalid/repo' 2>&1); rc=$?
+check test "$rc" -eq 17
+check test "$(cat received-input 2>/dev/null)" = 'push payload'
+check test "$(head -n 1 received-args 2>/dev/null)" = origin
+
+# Empty staging and missing repository are distinct.
+output=$(git -c core.hooksPath=/dev/null commit -qm cleanup 2>&1)
+run_gate
+check test "$rc" -eq 0
+output=$(git hook run pre-merge-commit 2>&1); rc=$?
+check test "$rc" -eq 23
+
+# Custom tracked hook directories retain their behavior after migration.
+mkdir -p custom-hooks
+printf '#!%s\nexit 29\n' "$bash_path" > custom-hooks/pre-commit
+chmod +x custom-hooks/pre-commit
+git config conflictMarkerGate.delegateHooksPath custom-hooks
+output=$(git hook run pre-commit 2>&1); rc=$?
+check test "$rc" -eq 29
+git config --unset conflictMarkerGate.delegateHooksPath
+
+# Linked worktrees must use their own index and the shared repository hooks.
+output=$(git -c core.hooksPath=/dev/null worktree add -qb linked "$work/linked" 2>&1); rc=$?
+check test "$rc" -eq 0
+cd "$work/linked" || exit 1
+stage '<<<<<<< linked'
+output=$(git commit -qm blocked-linked 2>&1); rc=$?
+check test "$rc" -ne 0
+stage 'clean linked'
+output=$(git commit -qm local-reject-linked 2>&1); rc=$?
+check test "$rc" -ne 0
+check test "$output" = ''
+
+# A custom hook pointing back at the dispatcher must fail, not loop forever.
+cd "$repo" || exit 1
+git config conflictMarkerGate.delegateHooksPath "$hooks"
+output=$(git hook run pre-commit 2>&1); rc=$?
+check test "$rc" -eq 2
+check test "${output#*recursive Git hook}" != "$output"
+git config --unset conflictMarkerGate.delegateHooksPath
+
+# Inspection failures must never look like a clean index.
+printf 'not a git index\n' > "$work/broken-index"
+output=$(GIT_INDEX_FILE="$work/broken-index" "$gate" 2>&1); rc=$?
+check test "$rc" -eq 2
+cd "$work" || exit 1
+run_gate
+check test "$rc" -gt 1
+
+# A global hook also runs while git init is still creating HEAD/config.
+git config --file "$GIT_CONFIG_GLOBAL" core.hooksPath "$hooks"
+output=$(git init -q "$work/global-init" 2>&1); rc=$?
+check test "$rc" -eq 0
+check test -z "$output"
+output=$(git init --bare -q "$work/global-bare" 2>&1); rc=$?
+check test "$rc" -eq 0
+check test -z "$output"
+printf '%s checks, %s failures\n' "$tests" "$failures"
+test "$failures" -eq 0

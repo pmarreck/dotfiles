@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+
+# Prove vk runs vibe-kanban through mise without touching the real mise/npm state.
+
+set -u
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+aliases_file="$repo_root/.aliases"
+bash_path="$(command -v bash)"
+bash_dir="${bash_path%/*}"
+# shellcheck source=/dev/null
+source "$repo_root/bin/src/capture.bash"
+
+scratch="$(mktemp -d "${TMPDIR:-/tmp}/vk-alias-test.XXXXXXXX")" || exit 1
+trap 'command rm -rf -- "$scratch"' EXIT
+mkdir -p "$scratch/bin" "$scratch/home" "$scratch/cache" "$scratch/config"
+
+# shellcheck disable=SC2016 # The generated adapter expands these at runtime.
+printf '%s\n' \
+	"#!$bash_path" \
+	'set -u' \
+	'{' \
+	'  printf "HOST=%s\n" "${HOST-}"' \
+	'  printf "BACKEND_PORT=%s\n" "${BACKEND_PORT-}"' \
+	'  printf "TMPDIR=%s\n" "${TMPDIR-}"' \
+	'  printf "ARG=%s\n" "$@"' \
+	'} > "$VK_PROBE"' > "$scratch/bin/mise"
+printf '%s\n' \
+	"#!$bash_path" \
+	'printf "npx must not be invoked\n" >&2' \
+	'exit 97' > "$scratch/bin/npx"
+chmod +x "$scratch/bin/mise" "$scratch/bin/npx"
+
+failures=0
+pass() { printf 'ok - %s\n' "$1"; }
+fail() { printf 'not ok - %s\n' "$1" >&2; failures=$((failures + 1)); }
+
+out="" err="" rc=0
+# shellcheck disable=SC2016 # The child shell expands only its injected environment.
+capture env -i \
+	HOME="$scratch/home" \
+	USER=fixture \
+	PLATFORM=linux \
+	DISTRO=NixOS \
+	XDG_CACHE_HOME="$scratch/cache" \
+	XDG_CONFIG_HOME="$scratch/config" \
+	PATH="$scratch/bin:$bash_dir:/run/current-system/sw/bin:/usr/bin:/bin" \
+	ALIASES_FILE="$aliases_file" \
+	VK_PROBE="$scratch/probe" \
+	"$bash_path" --noprofile --norc -c '
+		needs() { return 0; }
+		is_nix_darwin() { return 1; }
+		choose_editor() { :; }
+		shopt -s expand_aliases
+		source "$ALIASES_FILE"
+		eval '\''vk --board "two words"'\''
+	'
+
+if [ "$rc" -eq 0 ]; then
+	pass 'vk invocation succeeds through the injected command adapter'
+else
+	fail "vk invocation exited $rc"
+fi
+if [ -z "$out" ] && [ -z "$err" ]; then
+	pass 'vk invocation emits no wrapper diagnostics'
+else
+	fail "vk invocation was noisy: stdout=[$out] stderr=[$err]"
+fi
+
+expected="$(printf '%s\n' \
+	'HOST=0.0.0.0' \
+	'BACKEND_PORT=10001' \
+	"TMPDIR=$scratch/cache/vibe-kanban" \
+	'ARG=x' \
+	'ARG=npm:vibe-kanban' \
+	'ARG=--' \
+	'ARG=vibe-kanban' \
+	'ARG=--board' \
+	'ARG=two words')"
+actual="$(cat "$scratch/probe" 2>/dev/null || :)"
+if [ "$actual" = "$expected" ]; then
+	pass 'vk preserves its environment and delegates exact arguments to mise'
+else
+	fail "vk adapter contract mismatch: [$actual]"
+fi
+
+printf '%s checks, %s failures\n' 3 "$failures"
+exit "$failures"

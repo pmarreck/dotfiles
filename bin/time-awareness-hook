@@ -91,6 +91,7 @@ _sleep_decide() {
 
 # advice keyword -> the text injected into every agent's context
 _sleep_text() {
+	printf '%s' 'Time notices are informational; agents have no implied sleep/wake schedule. Sleep is a human biological requirement, not a reason for agents to suspend actionable work. '
 	case "$1" in
 		wind_down)
 			printf '%s' "🌙 It is after 10 PM for Peter. Gently encourage him to wind down and rest. " ;;
@@ -98,7 +99,7 @@ _sleep_text() {
 			printf '%s' "🌙 It is late at night for Peter. Gently remind him to get some sleep and leave the work with you. " ;;
 		*) return ;;
 	esac
-	printf '%s' "This reminder addresses Peter's biological need for sleep; it is not an agent work cutoff. Continue already-authorized work independently, including explicitly authorized overnight tasks. Do not stop or refuse work merely because of this reminder. At a natural pause, offer a brief overnight work plan: 1-3 useful tasks from the current project plan, preferably release blockers, with a milestone and token/time budget for Peter's approval. Explain that he can rest while approved work continues. If Peter already approved or declined tonight, do not ask again unless scope or budget changes. If nothing worthwhile is queued, say so and offer no additional token spending. This reminder alone does not authorize extra work, new agents, schedules, or larger budgets. Avoid keeping Peter engaged or asking unnecessary questions. Respect explicit stop requests, approval requirements, scope, and budget limits."
+	printf '%s' "This reminder addresses Peter's biological need for sleep; it is not an agent work cutoff. Continue already-authorized work: open PLAN items are standing work to complete as soon as possible without sacrificing correctness, performance, testing, or other project values. Do not request fresh overnight approval. Before voluntarily ending the turn, review PLAN.md and continue the next authorized, unblocked PLAN item. When a choice is easily reversible, use reasonable judgment, record the assumption, and proceed without waiting for Peter. If an item truly requires Peter's decision, record the specific question and continue independent items. A completed milestone is a checkpoint, not a reason to stop while actionable items remain. Do not revive shelved work, invent busywork, or treat this reminder as permission for new agents, schedules, or larger budgets. Respect explicit stop requests, approval requirements, scope, and budget limits. If no actionable authorized work remains or every remaining item is genuinely blocked, report that with the exact blockers. Keep the sleep nudge brief so Peter can rest while you continue."
 }
 
 # --- adapter helpers -------------------------------------------------------

@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Global hook selection must not silently disable existing repository hooks.
+set -u
+hook=${0##*/}
+root=$(cd "$(dirname "$0")/.." && pwd -P) || exit 2
+case "$hook" in
+	pre-commit|pre-merge-commit)
+		"$root/bin/git-staged-gates" || exit "$?"
+		;;
+esac
+# git init calls reference-transaction before HEAD makes the repository valid.
+if ! common=$(git rev-parse --git-common-dir 2>/dev/null); then
+	if [[ $hook == reference-transaction ]]; then exit 0; fi
+	printf 'ERROR: cannot locate repository hooks.\n' >&2
+	exit 2
+else
+	# An explicitly migrated custom path wins over the default Git directory.
+	delegate=$(git config --path --get conflictMarkerGate.delegateHooksPath)
+	rc=$?
+	if (( rc == 1 )); then
+		delegate="$common/hooks"
+	elif (( rc != 0 )); then
+		exit 2
+	fi
+fi
+target="$delegate/$hook"
+# Automatic merges should also honor a repository's pre-commit check.
+if [[ $hook == pre-merge-commit && ! -x $target ]]; then target="$delegate/pre-commit"; fi
+if [[ -x $target ]]; then
+	if [[ $target -ef $0 ]]; then
+		printf 'ERROR: recursive Git hook delegation: %s\n' "$target" >&2
+		exit 2
+	fi
+	exec "$target" "$@"
+fi
+exit 0

@@ -10,15 +10,25 @@ script_dir="$(cd -- "$(dirname "${BASH_SOURCE[0]}")/../../" && pwd)"
 tmpdir="$(mktemp -d --tmpdir)"
 mkdir -p "$tmpdir"
 ORIGPATH="$PATH"
-PATH="$script_dir/bin:$HOME/dotfiles/bin:$PATH"
+
+# Keep the argument-free audit bounded and independent of the owner's project
+# inventory. The function is sourced explicitly, so neither this checkout's
+# guarded `find` wrapper nor arbitrary per-user executable directories belong
+# in the adapter test's PATH.
+test_path=""
+IFS=':' read -ra original_path_dirs <<< "$ORIGPATH"
+for path_dir in "${original_path_dirs[@]}"; do
+	[[ -n "$path_dir" ]] || continue
+	case "$path_dir/" in
+		"$HOME/"*|"$script_dir/"*) continue ;;
+	esac
+	test_path+="${test_path:+:}$path_dir"
+done
+PATH="$test_path"
 hash -r 2>/dev/null
 
-shadows_type=$(type -t shadows 2>/dev/null)
-if [ "$shadows_type" != "function" ]; then
-	# shellcheck disable=SC1091
-	. "$script_dir/bin/src/shadows.bash" 2>/dev/null || true
-	shadows_type=$(type -t shadows 2>/dev/null)
-fi
+# shellcheck disable=SC1091
+. "$script_dir/bin/src/shadows.bash"
 
 if ! command -v shadows >/dev/null 2>&1; then
 	echo "shadows command not found on PATH" >&2
@@ -38,6 +48,7 @@ fi
 
 # A filtered query must inspect only the named command, not enumerate every PATH directory.
 filter_probe_file="$(mktemp --tmpdir="$tmpdir" filter-probe.XXXXXX)"
+# shellcheck disable=SC2329 # shadows must not invoke this test double.
 compgen() {
 	if [[ "$1" == "-G" ]]; then
 		printf 'PATH enumeration attempted\n' >> "$filter_probe_file"
@@ -386,6 +397,7 @@ if [[ "$(uname -s)" == "Linux" ]] && command -v strace >/dev/null 2>&1; then
 	printf '%s\n' \
 		'#!/usr/bin/env bash' \
 		'source "$1"' \
+		'unset -f find stat 2>/dev/null' \
 		'scale="$2"' \
 		'scale_path="$3"' \
 		'for ((i=0; i<scale; i++)); do eval "shadows_scale_fn_$i(){ :; }"; done' \
@@ -429,6 +441,7 @@ if [[ "$(uname -s)" == "Linux" ]] && command -v strace >/dev/null 2>&1; then
 		echo "✓ Test passed: doubling all inputs grows filesystem probes by less than 3x ($small_calls → $large_calls calls)"
 	else
 		echo "✗ Test failed: doubling all inputs is superlinear ($small_calls → $large_calls filesystem probes)" >&2
+		echo "  Exit: $small_status → $large_status" >&2
 		((fails++))
 	fi
 	rm -rf "$perf_root"

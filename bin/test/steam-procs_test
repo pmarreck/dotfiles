@@ -121,6 +121,7 @@ run_fake() { STEAM_PROCS_PROC_ROOT="$FAKE" "$PROCS" "$@"; }
 # 1. Exact set equality — the classifier-over-sets discipline at this layer.
 tests=$((tests+1))
 got=$(run_fake --pids | sort -n | tr '\n' ' ' | sed 's/ *$//')
+# shellcheck disable=SC2086 # The fixture is a whitespace-delimited PID set.
 want=$(printf '%s\n' $STEAM_PIDS | sort -n | tr '\n' ' ' | sed 's/ *$//')
 if [ "$got" = "$want" ]; then
 	ok "matched set is exactly the Steam/Proton/Wine processes (12 of 22)"
@@ -132,6 +133,20 @@ else
 	    "missing (should have matched):$missing" \
 	    "extra (FALSE POSITIVES — these get killed):$extra"
 fi
+
+# Agent multiplexers may place their agents and agent-launched subprocesses in
+# one service cgroup. A Wine helper in that cgroup belongs to live agent work,
+# not to a cleanup request, even though its executable is genuinely Wine.
+printf '0::/user.slice/app.slice/herdr.service\n' > "$FAKE/300/cgroup"
+printf '0::/user.slice/app.slice/herdr.service\n' > "$FAKE/130/cgroup"
+tests=$((tests+1))
+cgroup_got=$(run_fake --pids | sort -n | tr '\n' ' ')
+if [[ " $cgroup_got " != *" 130 "* && " $cgroup_got " == *" 100 "* ]]; then
+	ok "excludes Wine helpers sharing an agent cgroup without suppressing unrelated Steam"
+else
+	bad "agent-cgroup Wine helper was not isolated" "matched:$cgroup_got"
+fi
+command rm -f -- "$FAKE/300/cgroup" "$FAKE/130/cgroup"
 
 # 2. Kernel threads must never appear, whatever they are named.
 tests=$((tests+1))
@@ -297,6 +312,7 @@ else
 	#     app.slice/tmux-spawn-<uuid>.scope. The classifier reads none of this,
 	#     which is exactly what makes it evidence rather than a restatement.
 	tests=$((tests+1))
+	declare -A PROTECTED_CG=()
 	cgroup_of() { sed -n 's/^0:://p' "/proc/$1/cgroup" 2>/dev/null | head -1; }
 	my_cg=$(cgroup_of $$)
 	if [ -z "$my_cg" ]; then
@@ -315,7 +331,6 @@ else
 	else
 		# Cgroups holding the agent fleet, plus our own — unless Steam itself was
 		# launched from our cgroup, in which case overlap there is legitimate.
-		declare -A PROTECTED_CG=()
 		for c in $(pgrep -x claude 2>/dev/null); do
 			cg=$(cgroup_of "$c"); [ -n "$cg" ] && PROTECTED_CG["$cg"]=1
 		done
@@ -359,17 +374,22 @@ else
 		fi
 	fi
 
-	# 14. Sensitivity on the live table: every Wine-hosted .exe process that
-	#     exists right now must be matched. These are the ones that survive a
-	#     crashed launch and block the next one.
+	# 14. Sensitivity on the live table: every unprotected Wine-hosted .exe
+	#     process that exists right now must be matched. Agent-cgroup Wine is
+	#     deliberately live work, not abandoned game state.
 	tests=$((tests+1))
-	wine_live=""; wine_missed=""
+	wine_live=""; wine_missed=""; wine_protected=""
 	for d in $(glob echo /proc/[0-9]*); do
 		pid="${d#/proc/}"
 		c=$(cat "$d/comm" 2>/dev/null) || continue
 		case "$c" in
 			*.exe)
 				has_argv "$pid" || continue
+				cg=$(cgroup_of "$pid")
+				if [ -n "${PROTECTED_CG[$cg]:-}" ]; then
+					wine_protected="$wine_protected $pid"
+					continue
+				fi
 				wine_live="$wine_live $pid"
 				case $'\n'"$live_pids"$'\n' in
 					*$'\n'"$pid"$'\n'*) ;;
@@ -379,8 +399,9 @@ else
 		esac
 	done
 	nwine=$(printf '%s' "$wine_live" | wc -w)
+	nprotected=$(printf '%s' "$wine_protected" | wc -w)
 	if [ -z "$wine_missed" ]; then
-		ok "every live Wine-hosted .exe process is matched ($nwine found)"
+		ok "every unprotected live Wine-hosted .exe process is matched ($nwine eligible, $nprotected agent-owned)"
 	else
 		bad "missed live Wine processes:$wine_missed" \
 		    "these are exactly the ones that wedge the next Proton launch"

@@ -51,7 +51,7 @@
             # and Darwin sandboxes DO have /usr/bin/env, so a green macOS check
             # would prove nothing about Linux.
             postPatch = ''
-              patchShebangs bin
+              patchShebangs bin .githooks .global-githooks
             '';
 
             checkPhase = ''

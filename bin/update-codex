@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # Update the Codex installation that this shell actually resolves. npm's global
-# prefix can differ from the prefix containing `codex` (notably after nvm use),
+# prefix can differ from the prefix containing `codex` (notably after a Node version change),
 # so a bare `npm install -g` can update one copy while another keeps running.
 
 set -u

@@ -78,6 +78,10 @@ hour" all register as a new hour.
 
 ### The sleep-hours nudge (added 2026-08-01)
 
+Clock, bedtime and wake-time notices are informational context about the human's
+availability, never an implied agent sleep/wake schedule. Human biological rest
+requirements do not suspend actionable agent work.
+
 Knowing the time is not the same as acting on it. Peter runs many agents at
 once, so relying on whichever one he happens to be talking to to notice that it
 is 2 AM does not scale — one agent remembering is not a rule, it is luck. The
@@ -104,17 +108,20 @@ alone is never grounds for stopping or refusing work. Explicit stop requests,
 approval requirements, task scope and budget limits still apply. The old
 `refuse` classifier and contradictory work-cutoff wording have been removed.
 
-On 2026-10-13, the BDFN (Benevolent Dictator For Now) added an overnight-work
-offer. At a natural pause, the agent should propose one to three useful tasks
-from the current project plan,
-preferably release blockers, with a milestone and token/time budget for approval.
-The offer gives BDFN a concrete way to leave work with the agent and go to bed.
-If he already approved or declined that night, do not repeat the question unless
-scope or budget changes. If nothing worthwhile is queued, say so and offer no
-additional token spending. The reminder itself grants no new work, agent launch,
-schedule, or budget authority; previously authorized work continues within its
-existing boundaries. Approval and a bounded commitment matter more than filling
-the night with activity.
+On 2026-10-24, the BDFN (Benevolent Dictator For Now) replaced the prior
+overnight-approval offer with standing continuation of open PLAN work. Bedtime
+does not reset authorization. Agents should complete open items as soon as
+possible while preserving correctness, performance, testing and other project
+values. Before voluntarily ending a turn, review PLAN.md and continue an
+actionable item. Make reasonable, recorded choices when they are easily
+reversible; ask about consequential blockers while continuing independent work.
+Milestones are checkpoints, not automatic stops.
+
+Explicit pauses, budgets, shelved work and action-specific approvals still apply.
+When no actionable work remains, or all remaining items are genuinely blocked,
+report the exact status. Do not invent busywork or new schedules. This hook
+influences active agents; it does not restart exited clients or itself schedule
+background work.
 
 Two details that are easy to get wrong:
 
@@ -149,8 +156,8 @@ separate directory so the two agents' cadences don't interfere. One change to th
 script therefore reaches every agent.
 
 The sleep-window regression parses actual emitted JSON for both configured hook
-events at every hour from 22 through 04. It checks the offer, milestone/budget,
-decline and no-work paths, continued authorized progress, and unchanged event
+events at every hour from 22 through 04. It checks continued PLAN execution,
+reversible judgment, real blockers, preserved limits, and unchanged event
 identity. These tests establish what instructions the hook emits, not that a
 particular language model will always follow those instructions.
 

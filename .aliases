@@ -205,7 +205,7 @@ alias times='"$HOME/bin/times"'
 # letter count
 alias lc='wc -l'
 
-# Update the installation actually selected by PATH. This matters with nvm:
+# Update the installation actually selected by PATH. This matters with a version-managed Node (mise):
 # npm's configured global prefix can point at ~/.npm-global while `codex` is a
 # stale package under the active Node version. The wrapper targets the resolved
 # package prefix and retains native self-update support for standalone installs.
@@ -213,7 +213,7 @@ alias upgrade_codex='update-codex'
 alias update_codex=upgrade_codex
 # Claude Code is a NATIVE install (binary in ~/.local/share/claude/versions/<ver>,
 # launcher symlinked at ~/.local/bin/claude) and self-updates. Do NOT switch this back
-# to `npm install -g @anthropic-ai/claude-code`: ~/.npmrc sets prefix=$HOME/.local, so
+# to `npm install -g @anthropic-ai/claude-code`: with an npm prefix of $HOME/.local (as ~/.npmrc once set),
 # the npm copy overwrites the native launcher and Claude Code then reports "Multiple
 # installations found" + a config mismatch. `command` skips the `claude` shell function.
 alias upgrade_claude='command claude update'
@@ -234,7 +234,7 @@ alias count-words='wc -w'
 alias size='wc -c' # this may shadow a builtin tool used with binary compilation workflows
 
 # vibe-kanban
-alias vk='HOST=0.0.0.0 BACKEND_PORT=10001 TMPDIR=$XDG_CACHE_HOME/vibe-kanban npx vibe-kanban'
+alias vk='HOST=0.0.0.0 BACKEND_PORT=10001 TMPDIR=$XDG_CACHE_HOME/vibe-kanban mise x npm:vibe-kanban -- vibe-kanban'
 alias backlog='nix run github:MrLesk/Backlog.md'
 alias hogs='hr; echo "Memory hogs:"; memhogs; hr; echo "CPU hogs:"; cpuhogs; hr; echo "GPU hogs:"; gpuhogs; hr; echo "Network hogs:"; nethogs; hr; echo "Disk hogs:"; diskhogs; hr'
 alias entropy='cd $CODE/entropy_shield'

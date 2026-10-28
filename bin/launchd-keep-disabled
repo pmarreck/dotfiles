@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+
+# Keep chosen launchd jobs disabled across macOS updates, which can silently
+# re-enable them. For each label not marked `disabled` in
+# `launchctl print-disabled` (absent counts as enabled), disable it, boot it
+# out (stop + unload), and report the drift loudly. Exits 1 when it had to
+# re-disable anything, so a scheduled run surfaces the drift in its log.
+# Which labels to keep off is a per-machine choice made by the caller (e.g. a
+# LaunchAgent's ProgramArguments), never hard-coded here.
+#
+# Env overrides (tests):
+#   LAUNCHD_KEEP_DISABLED_LAUNCHCTL  launchctl binary to call
+#   LAUNCHD_KEEP_DISABLED_DOMAIN     launchd domain (default gui/<uid>)
+launchd-keep-disabled() {
+	case "${1:-}" in
+		-h|--help)
+			echo "usage: launchd-keep-disabled LABEL..."
+			echo "Disable (and boot out) each launchd LABEL that is not already disabled in the user's gui domain."
+			echo "Exits 1 if any label had drifted back to enabled, 2 on usage error."
+			return 0
+			;;
+	esac
+	if [ "$#" -eq 0 ]; then
+		echo "usage: launchd-keep-disabled LABEL..." >&2
+		return 2
+	fi
+	local launchctl="${LAUNCHD_KEEP_DISABLED_LAUNCHCTL:-/bin/launchctl}"
+	local domain="${LAUNCHD_KEEP_DISABLED_DOMAIN:-gui/$(id -u)}"
+	local table label already=0 redisabled=0
+	table=$("$launchctl" print-disabled "$domain" 2>/dev/null)
+	for label in "$@"; do
+		if grep -qF "\"$label\" => disabled" <<<"$table"; then
+			((already++))
+			continue
+		fi
+		echo "RE-ENABLED: $label (disabling and booting it out again)" >&2
+		"$launchctl" disable "$domain/$label"
+		# bootout, not kill: a disabled-but-loaded job is still relaunched on
+		# demand by its launch events until it is unloaded.
+		"$launchctl" bootout "$domain/$label" >/dev/null 2>&1
+		((redisabled++))
+	done
+	echo "$(date '+%Y-%m-%d %H:%M:%S') launchd-keep-disabled: $already already disabled, $redisabled re-disabled"
+	[ "$redisabled" -eq 0 ]
+}
+
+# Run the function if this script is executed directly
+if ! (return 0 2>/dev/null); then
+	# Check if we are running tests
+	if [ "$1" = "--test" ]; then
+		# Run tests from the test file
+		_test_file="$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
+		if [ -f "$_test_file" ]; then . "$_test_file" > /dev/null; fi
+	else
+		# If called directly, pass all arguments to the function
+		$(basename "${0##\-}") "$@"
+	fi
+fi

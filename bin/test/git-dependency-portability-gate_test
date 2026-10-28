@@ -1,0 +1,510 @@
+#!/usr/bin/env bash
+# Real-index contract for the staged dependency portability gate.
+set -u
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+gate="$root/bin/git-dependency-portability-gate"
+bash_path="$(command -v bash)"
+work="$(mktemp -d "${TMPDIR:-/tmp}/dependency-portability-test.XXXXXXXX")" || exit 1
+trap 'command rm -rf -- "$work"' EXIT
+hooks="$work/composed-hooks"
+mkdir -p "$hooks"
+# shellcheck disable=SC2016 # The generated fixture expands these at hook runtime.
+printf '#!%s\nroot=%q\n"$root/bin/git-staged-gates" || exit "$?"\ntarget="$(git rev-parse --git-common-dir)/hooks/pre-commit"\n[ ! -x "$target" ] || exec "$target" "$@"\n' \
+	"$bash_path" "$root" > "$hooks/pre-commit"
+chmod +x "$hooks/pre-commit"
+
+export GIT_CONFIG_GLOBAL="$work/global-config" GIT_CONFIG_NOSYSTEM=1
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE ALLOW_NONPORTABLE_DEPENDENCIES
+
+tests=0
+failures=0
+check() {
+	tests=$((tests + 1))
+	if "$@"; then return; fi
+	printf 'FAIL: %s\n' "$*" >&2
+	failures=$((failures + 1))
+}
+
+repo="$work/repo"
+git init -q "$repo" || exit 1
+cd "$repo" || exit 1
+git config user.name 'Dependency gate test'
+git config user.email 'dependency-gate@example.invalid'
+git config commit.gpgsign false
+git config core.hooksPath "$hooks"
+printf 'fixture\n' > README
+git add README
+git -c core.hooksPath=/dev/null commit -qm initial || exit 1
+
+stage_manifest() {
+	local path=$1 content=$2
+	mkdir -p "$(dirname "$path")"
+	printf '%s' "$content" > "$path"
+	git add -- "$path"
+}
+
+clear_manifest() {
+	local path=$1
+	git reset -q HEAD -- "$path" 2>/dev/null || :
+	command rm -f -- "$path"
+}
+
+run_gate() {
+	output=$("$gate" 2>&1)
+	rc=$?
+}
+
+output=$("$gate" --help 2>&1); rc=$?
+check test "$rc" -eq 0
+check test "${output#*'Usage: git-dependency-portability-gate'}" != "$output"
+output=$("$gate" --about 2>&1); rc=$?
+check test "$rc" -eq 0
+check test "$(printf '%s\n' "$output" | wc -l)" -eq 1
+check test "${output#*'PF=linux-amd64'}" != "$output"
+output=$("$gate" --not-an-option 2>&1); rc=$?
+check test "$rc" -eq 2
+
+# A tracked intra-repository workspace may use parent traversal that stays inside.
+mkdir -p crates/shared nested/app
+printf '[package]\nname = "shared"\nversion = "0.1.0"\n' > crates/shared/Cargo.toml
+git add crates/shared/Cargo.toml
+stage_manifest nested/app/Cargo.toml $'[dependencies]\nshared = { path = "../../crates/shared" }\n'
+run_gate
+check test "$rc" -eq 0
+clear_manifest nested/app/Cargo.toml
+git reset -q HEAD -- crates/shared/Cargo.toml
+command rm -f crates/shared/Cargo.toml
+
+# Comments and unrelated strings must not become dependency references.
+stage_manifest Cargo.toml $'# bad = { path = "/home/example/private" }\n[package]\nname = "fixture"\ndescription = "path = /home/example/private"\n[dependencies]\nserde = "1"\n'
+run_gate
+check test "$rc" -eq 0
+clear_manifest Cargo.toml
+
+# Host-absolute and repository-escaping dependency paths are refused.
+# shellcheck disable=SC2016 # Literal expansion syntax is input to the gate.
+for bad_path in '/home/example/private' 'C:\Users\example\private' '\\server\share\private' '$HOME/private' '${WORKSPACE}/private' '%USERPROFILE%\private' '../../outside'; do
+	stage_manifest Cargo.toml "[dependencies]
+bad = { path = \"$bad_path\" }
+"
+	run_gate
+	check test "$rc" -eq 1
+	check test "${output#*Cargo.toml}" != "$output"
+	clear_manifest Cargo.toml
+done
+
+# The index is authoritative in both directions.
+stage_manifest Cargo.toml $'[dependencies]\nserde = "1"\n'
+printf '[dependencies]\nbad = { path = "/home/example/private" }\n' > Cargo.toml
+run_gate
+check test "$rc" -eq 0
+git add Cargo.toml
+printf '[dependencies]\nserde = "1"\n' > Cargo.toml
+run_gate
+check test "$rc" -eq 1
+clear_manifest Cargo.toml
+
+# Override is exact, requires a human reason, and remains conspicuous.
+stage_manifest Cargo.toml $'[dependencies]\nbad = { path = "/home/example/private" }\n'
+output=$(ALLOW_NONPORTABLE_DEPENDENCIES=1 "$gate" 2>&1); rc=$?
+check test "$rc" -eq 1
+output=$(ALLOW_NONPORTABLE_DEPENDENCIES='temporary upstream fixture; tracked in issue 42' "$gate" 2>&1); rc=$?
+check test "$rc" -eq 0
+check test "${output#*temporary upstream fixture}" != "$output"
+
+# A real commit proves global composition: gate first, repository hook second.
+printf '#!%s\nprintf "ran\\n" >> local-hook-log\n' "$bash_path" > .git/hooks/pre-commit
+chmod +x .git/hooks/pre-commit
+output=$(git commit -qm blocked 2>&1); rc=$?
+check test "$rc" -ne 0
+check test ! -e local-hook-log
+
+stage_manifest Cargo.toml $'[dependencies]\nserde = "1"\n'
+output=$(git commit -qm safe 2>&1); rc=$?
+check test "$rc" -eq 0
+check test "$(wc -l < local-hook-log 2>/dev/null)" -eq 1
+
+# Cargo dependency-bearing forms are classified as a set.
+unsafe_cargo_forms=(
+	$'[dev-dependencies]\nbad = { path = "/home/example/dev" }\n'
+	$'[build-dependencies.bad]\npath = "/home/example/build"\n'
+	$'[workspace.dependencies]\n"quoted.dep" = {\n  path = "/home/example/workspace"\n}\n'
+	$'[target.\'cfg(unix)\'.dependencies]\nbad.path = "/home/example/target"\n'
+	$'[patch.crates-io.bad]\npath = "/home/example/patch"\n'
+	$'workspace.dependencies.bad = { path = "/home/example/dotted" }\n'
+	$'[dependencies."quoted.dep"]\npath = \'/home/example/quoted\'\n'
+	$'[dependencies.bad]\npath = "\\u002fhome\\u002fexample\\u002funicode"\n'
+	$'[dependencies.bad]\npath = "C:\\\\Users\\\\example\\\\escaped"\n'
+)
+for manifest in "${unsafe_cargo_forms[@]}"; do
+	stage_manifest Cargo.toml "$manifest"
+	run_gate
+	check test "$rc" -eq 1
+done
+
+# Dependency-looking text outside dependency fields stays allowed.
+stage_manifest Cargo.toml $'# [dependencies]\n# bad = { path = "/home/example/comment" }\n[lib]\npath = "/home/example/src/lib.rs"\n[package]\ndescription = "bad = { path = \'/home/example/docs\' }"\n'
+run_gate
+check test "$rc" -eq 0
+
+# Lockfile local sources are dependencies; remote pinned/registry sources are not local.
+stage_manifest Cargo.lock $'version = 4\n[[package]]\nname = "bad"\nversion = "0.1.0"\nsource = "git+file:///home/example/bad#0123456789abcdef"\n'
+run_gate
+check test "$rc" -eq 1
+stage_manifest Cargo.lock $'version = 4\n[[package]]\nname = "safe"\nversion = "1.0.0"\nsource = "registry+https://github.com/rust-lang/crates.io-index"\nchecksum = "0123456789abcdef"\n'
+run_gate
+check test "$rc" -eq 0
+
+# Cargo source replacement paths are checked; runner/tool paths are not dependencies.
+mkdir -p '.cargo'
+stage_manifest '.cargo/config.toml' $'[source.local]\ndirectory = "/home/example/vendor"\n'
+run_gate
+check test "$rc" -eq 1
+stage_manifest '.cargo/config' $'paths = ["../../outside"]\n'
+run_gate
+check test "$rc" -eq 1
+clear_manifest '.cargo/config'
+stage_manifest '.cargo/config.toml' $'[target.x86_64-unknown-linux-gnu]\nrunner = "/home/example/tooling/runner"\n'
+run_gate
+check test "$rc" -eq 0
+
+mkdir -p vendor/core nested-project/vendor/core
+printf 'vendored\n' > vendor/core/source.txt
+printf 'nested vendored\n' > nested-project/vendor/core/source.txt
+git add vendor/core/source.txt nested-project/vendor/core/source.txt
+stage_manifest '.cargo/config.toml' $'[source.vendored]\ndirectory = "vendor"\n'
+run_gate
+check test "$rc" -eq 0
+stage_manifest 'nested-project/.cargo/config' $'[source.vendored]\ndirectory = "vendor"\n'
+run_gate
+check test "$rc" -eq 0
+stage_manifest 'nested-project/.cargo/config' $'[source.bad]\ndirectory = "../../outside"\n'
+run_gate
+check test "$rc" -eq 1
+clear_manifest 'nested-project/.cargo/config'
+clear_manifest '.cargo/config.toml'
+git reset -q HEAD -- vendor/core/source.txt nested-project/vendor/core/source.txt
+command rm -rf -- vendor nested-project
+
+# Relevant filenames may contain spaces.
+stage_manifest 'workspace with spaces/Cargo.toml' $'[dependencies]\nbad = { path = "/home/example/spaces" }\n'
+run_gate
+check test "$rc" -eq 1
+clear_manifest 'workspace with spaces/Cargo.toml'
+
+# Renamed manifests use the new staged blob; deleted manifests require no inspection.
+mkdir -p old
+printf '[dependencies]\nserde = "1"\n' > old/Cargo.toml
+git add old/Cargo.toml
+git -c core.hooksPath=/dev/null commit -qm old-manifest
+mkdir -p 'renamed space'
+git mv old/Cargo.toml 'renamed space/Cargo.toml'
+printf '[dependencies]\nbad = { path = "/home/example/renamed" }\n' > 'renamed space/Cargo.toml'
+git add 'renamed space/Cargo.toml'
+run_gate
+check test "$rc" -eq 1
+git reset -q HEAD -- old/Cargo.toml 'renamed space/Cargo.toml'
+command rm -rf -- old 'renamed space'
+
+mkdir -p deleted
+printf '[dependencies]\nbad = { path = "/home/example/historical" }\n' > deleted/Cargo.toml
+git add deleted/Cargo.toml
+git -c core.hooksPath=/dev/null commit -qm historical-bad-manifest
+git rm -q deleted/Cargo.toml
+run_gate
+check test "$rc" -eq 0
+git -c core.hooksPath=/dev/null commit -qm delete-historical-manifest
+
+# Tracked symlinks cannot carry an in-root spelling to a host or root escape.
+mkdir -p deps
+ln -s /home/example/private deps/out
+git add deps/out
+stage_manifest Cargo.toml $'[dependencies]\nbad = { path = "deps/out" }\n'
+run_gate
+check test "$rc" -eq 1
+
+# A symlink-only index change must invalidate and recheck an unchanged manifest.
+git reset -q HEAD -- Cargo.toml deps/out 2>/dev/null || :
+command rm -f deps/out
+mkdir -p deps/real
+printf '[package]\nname = "real"\nversion = "0.1.0"\n' > deps/real/Cargo.toml
+ln -s real deps/local
+stage_manifest Cargo.toml $'[dependencies]\nlocal = { path = "deps/local" }\n'
+git add deps/real/Cargo.toml deps/local
+git -c core.hooksPath=/dev/null commit -qm safe-symlink-dependency
+command rm deps/local
+ln -s /home/example/private deps/local
+git add deps/local
+run_gate
+check test "$rc" -eq 1
+git reset -q HEAD -- deps/local
+
+# Zig ZON scans only dependency .path/.url fields, with comments and metadata excluded.
+stage_manifest build.zig.zon $'.{\n  .name = .fixture,\n  .version = "0.0.0",\n  .dependencies = .{\n    .bad = .{ .path = "/home/example/zig" },\n  },\n}\n'
+run_gate
+check test "$rc" -eq 1
+stage_manifest build.zig.zon $'.{\n  .name = .fixture,\n  .version = "0.0.0",\n  .dependencies = .{\n    .bad = .{ .url = "git+file:///home/example/zig" },\n  },\n}\n'
+run_gate
+check test "$rc" -eq 1
+stage_manifest build.zig.zon $'.{\n  // .path = "/home/example/comment"\n  .name = .fixture,\n  .version = "/home/example/metadata",\n  .dependencies = .{\n    .safe = .{\n      .url = "https://example.invalid/safe.tar.gz",\n      .hash = "safe-hash",\n    },\n  },\n}\n'
+run_gate
+check test "$rc" -eq 0
+
+mkdir -p zig-dep
+printf '.{ .name = .zig_dep, .version = "0.0.0" }\n' > zig-dep/build.zig.zon
+git add zig-dep/build.zig.zon
+stage_manifest build.zig.zon $'.{\n  .name = .fixture,\n  .version = "0.0.0",\n  .dependencies = .{\n    .safe = .{ .path = "zig-dep" },\n  },\n}\n'
+run_gate
+check test "$rc" -eq 0
+stage_manifest build.zig.zon $'.{\n  .name = .fixture,\n  .version = "0.0.0",\n  .dependencies = .{\n    .dynamic = .{ .path = dependency_path() },\n  },\n}\n'
+run_gate
+check test "$rc" -eq 1
+clear_manifest build.zig.zon
+git reset -q HEAD -- zig-dep/build.zig.zon
+command rm -rf -- zig-dep
+
+# Nix checks static dependency-bearing fields and path literals without evaluating code.
+stage_manifest flake.nix $'{\n  description = "path:/home/example/documentation";\n  inputs.safe.url = "github:example/safe/0123456789abcdef0123456789abcdef01234567";\n  outputs = { self, safe }: { };\n}\n'
+run_gate
+check test "$rc" -eq 0
+stage_manifest flake.nix $'{\n  outputs = { self }: {\n    packages.x86_64-linux.default = derivation {\n      name = "fixture";\n      system = "x86_64-linux";\n      builder = "/bin/sh";\n      buildPhase = \'\'echo ok >/dev/null\'\';\n    };\n  };\n}\n'
+run_gate
+check test "$rc" -eq 0
+
+# Nix indented-string escapes are content, not closing delimiters. Exercise
+# escaped interpolation, shell quoting, every escape family and runtime paths
+# as a classifier set before proving the same behavior through a real commit.
+nix_escaped_interpolation=''
+IFS= read -r -d '' nix_escaped_interpolation <<'EOF'
+{
+  shellHook = ''
+    export ZIG_GLOBAL_CACHE_DIR="''${ZIG_GLOBAL_CACHE_DIR:-$HOME/.cache/zig}"
+    export ZIG_LOCAL_CACHE_DIR="''${ZIG_LOCAL_CACHE_DIR:-$PWD/zig-cache}"
+  '';
+}
+EOF
+nix_nested_shell_quoting=''
+IFS= read -r -d '' nix_nested_shell_quoting <<'EOF'
+{
+  shellHook = ''
+    printf '%s\n' "cache=''${CACHE_DIR:-$HOME/.cache/zig}"
+    printf '%s\n' 'single quotes remain ordinary'
+    nested="outer \"''${INNER_CACHE:-/var/tmp/nested}\""
+  '';
+}
+EOF
+nix_indented_escapes=''
+IFS= read -r -d '' nix_indented_escapes <<'EOF'
+{
+  text = ''
+    literal dollar: ''$
+    literal quotes: '''
+    newline escape: ''\n
+    carriage escape: ''\r
+    tab escape: ''\t
+    arbitrary escape: ''\q
+    double dollar curly: $${RUNTIME_VALUE}
+    runtime path: /var/tmp/cache
+  '';
+}
+EOF
+nix_runtime_paths=''
+IFS= read -r -d '' nix_runtime_paths <<'EOF'
+{
+  shellHook = ''
+    export CACHE=/var/tmp/cache
+    export HOME_CACHE="$HOME/.cache/tool"
+    export LOCAL_URL=file:///var/tmp/source
+    export RELATIVE_CACHE=../runtime-cache
+  '';
+}
+EOF
+nix_nested_string_expression=''
+IFS= read -r -d '' nix_nested_string_expression <<'EOF'
+{
+  text = ''
+    outer: ${let nested = ''
+      export CACHE=/var/tmp/nested
+      export HOME_CACHE="''${INNER_CACHE:-$HOME/.cache/nested}"
+    ''; in nested}
+  '';
+}
+EOF
+nix_indented_safe_cases=(
+	"$nix_escaped_interpolation"
+	"$nix_nested_shell_quoting"
+	"$nix_indented_escapes"
+	"$nix_runtime_paths"
+	"$nix_nested_string_expression"
+)
+for manifest in "${nix_indented_safe_cases[@]}"; do
+	stage_manifest flake.nix "$manifest"
+	run_gate
+	check test "$rc" -eq 0
+done
+
+stage_manifest flake.nix "$nix_escaped_interpolation"
+output=$(git commit -qm safe-nix-indented-string 2>&1); rc=$?
+check test "$rc" -eq 0
+
+# The staged Nix blob remains authoritative when its worktree differs.
+nix_unsafe_path=''
+IFS= read -r -d '' nix_unsafe_path <<'EOF'
+{
+  shellHook = ''echo /var/tmp/runtime'';
+  outputs = { self }: { bad = import /home/example/private; };
+}
+EOF
+stage_manifest flake.nix "$nix_escaped_interpolation"
+printf '%s' "$nix_unsafe_path" > flake.nix
+run_gate
+check test "$rc" -eq 0
+git add flake.nix
+printf '%s' "$nix_escaped_interpolation" > flake.nix
+run_gate
+check test "$rc" -eq 1
+git reset -q HEAD -- flake.nix
+
+# Nix attribute-set merge operators are syntax, including when tightly packed;
+# an actual absolute path in the same syntactic neighborhood must still fail.
+stage_manifest flake.nix $'{\n  outputs = { self }: let\n    spaced = { one = 1; } // { two = 2; };\n    tight = { three = 3; }//{ four = 4; };\n    multiline = { five = 5; } //\n      { six = 6; };\n    chained = ({ seven = 7; }//{ eight = 8; }) // { nine = 9; };\n  in spaced // tight // multiline // chained;\n}\n'
+run_gate
+check test "$rc" -eq 0
+stage_manifest flake.nix $'{\n  outputs = { self }: {\n    divisions = [ (6 / 2) (9 / 3) ];\n  };\n}\n'
+run_gate
+check test "$rc" -eq 0
+stage_manifest flake.nix $'{\n  outputs = { self }: let\n    merged = { one = 1; } // { two = 2; };\n    quotient = 6 / 2;\n  in { bad = import /home/example/private; inherit merged quotient; };\n}\n'
+run_gate
+check test "$rc" -eq 1
+for local_source in \
+	'path:/home/example/nix' \
+	'file:///home/example/nix' \
+	'git+file:///home/example/nix'
+do
+	stage_manifest flake.nix "{
+  inputs.bad.url = \"$local_source\";
+  outputs = { self, bad }: { };
+}
+"
+	run_gate
+	check test "$rc" -eq 1
+done
+
+mkdir -p tracked-src
+printf '{ }\n' > tracked-src/default.nix
+git add tracked-src/default.nix
+stage_manifest flake.nix $'{\n  outputs = { self }: {\n    packages.x86_64-linux.default = import ./tracked-src;\n  };\n}\n'
+run_gate
+check test "$rc" -eq 0
+stage_manifest flake.nix $'{\n  outputs = { self }: {\n    packages.x86_64-linux.default = import /home/example/private;\n  };\n}\n'
+run_gate
+check test "$rc" -eq 1
+stage_manifest flake.nix $'{\n  inputs.bad.url = builtins.getEnv "LOCAL_FLAKE";\n  outputs = { self, bad }: { };\n}\n'
+run_gate
+check test "$rc" -eq 1
+clear_manifest flake.nix
+git reset -q HEAD -- tracked-src/default.nix
+command rm -rf -- tracked-src
+
+# Lock nodes with local source types/URLs fail; an immutable remote node passes.
+stage_manifest flake.lock $'{\n  "version": 7,\n  "root": "root",\n  "nodes": {\n    "root": { "inputs": { "bad": "bad" } },\n    "bad": {\n      "locked": { "type": "path", "path": "/home/example/private", "narHash": "sha256-bad" },\n      "original": { "type": "path", "path": "/home/example/private" }\n    }\n  }\n}\n'
+run_gate
+check test "$rc" -eq 1
+stage_manifest flake.lock $'{\n  "version": 7,\n  "root": "root",\n  "nodes": {\n    "root": { "inputs": { "safe": "safe" } },\n    "safe": {\n      "locked": {\n        "type": "github", "owner": "example", "repo": "safe",\n        "rev": "0123456789abcdef0123456789abcdef01234567",\n        "narHash": "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="\n      },\n      "original": { "type": "github", "owner": "example", "repo": "safe" }\n    }\n  }\n}\n'
+run_gate
+check test "$rc" -eq 0
+stage_manifest flake.lock $'{\n  "version": 7,\n  "root": "root",\n  "nodes": {\n    "root": { "inputs": { "safe": "safe" } },\n    "safe": {\n      "locked": {\n        "type": "file",\n        "url": "https://example.invalid/asset.dat",\n        "narHash": "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="\n      },\n      "original": { "type": "file", "url": "https://example.invalid/asset.dat" }\n    }\n  }\n}\n'
+run_gate
+check test "$rc" -eq 0
+
+# Exact Nix staging mapping permits only an untracked in-root destination.
+stage_manifest build.zig.zon $'.{\n  .name = .fixture,\n  .version = "0.0.0",\n  .dependencies = .{\n    .staged = .{ .path = ".deps/safe" },\n  },\n}\n'
+stage_manifest flake.nix $'{\n  inputs.safe = {\n    url = "github:example/safe/0123456789abcdef0123456789abcdef01234567";\n    flake = false;\n  };\n  outputs = { self, safe }: { };\n}\n'
+stage_manifest flake.lock $'{\n  "version": 7,\n  "root": "root",\n  "nodes": {\n    "root": { "inputs": { "safe": "safe" } },\n    "safe": {\n      "flake": false,\n      "locked": {\n        "type": "github", "owner": "example", "repo": "safe",\n        "rev": "0123456789abcdef0123456789abcdef01234567",\n        "narHash": "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="\n      },\n      "original": { "type": "github", "owner": "example", "repo": "safe" }\n    }\n  }\n}\n'
+stage_manifest .dependency-portability.json $'{\n  "schema": "dependency-portability/v1",\n  "nixStaging": [\n    {\n      "manifest": "build.zig.zon",\n      "path": ".deps/safe",\n      "input": "safe",\n      "staging": "flake.nix"\n    }\n  ]\n}\n'
+run_gate
+check test "$rc" -eq 0
+
+# A missing revision or content hash invalidates the exact exception.
+stage_manifest flake.lock $'{\n  "version": 7,\n  "root": "root",\n  "nodes": {\n    "root": { "inputs": { "safe": "safe" } },\n    "safe": {\n      "locked": {\n        "type": "github", "owner": "example", "repo": "safe",\n        "ref": "main",\n        "narHash": "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="\n      }\n    }\n  }\n}\n'
+run_gate
+check test "$rc" -eq 1
+
+# Commit a valid mapping, then prove policy/lock-only changes recheck the manifest.
+git reset -q HEAD -- flake.lock
+stage_manifest flake.lock $'{\n  "version": 7,\n  "root": "root",\n  "nodes": {\n    "root": { "inputs": { "safe": "safe" } },\n    "safe": {\n      "flake": false,\n      "locked": {\n        "type": "github", "owner": "example", "repo": "safe",\n        "rev": "0123456789abcdef0123456789abcdef01234567",\n        "narHash": "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="\n      }\n    }\n  }\n}\n'
+git add build.zig.zon flake.nix flake.lock .dependency-portability.json
+git -c core.hooksPath=/dev/null commit -qm valid-nix-staging-policy
+git rm -q .dependency-portability.json
+run_gate
+check test "$rc" -eq 1
+git reset -q HEAD -- .dependency-portability.json
+stage_manifest flake.lock $'{\n  "version": 7,\n  "root": "root",\n  "nodes": {\n    "root": { "inputs": { "safe": "safe" } },\n    "safe": { "locked": { "type": "github", "rev": "0123456789abcdef0123456789abcdef01234567" } }\n  }\n}\n'
+run_gate
+check test "$rc" -eq 1
+git reset -q HEAD -- flake.lock
+
+# Cargo Git fields reject local sources, while unsupported multiline dependency
+# strings fail closed with a reviewable limitation.
+stage_manifest Cargo.toml $'[dependencies]\nbad = { git = "file:///home/example/git-dep", rev = "0123456" }\n'
+run_gate
+check test "$rc" -eq 1
+stage_manifest Cargo.toml $'[dependencies]\nbad = { "path" = "/home/example/quoted-inline" }\n'
+run_gate
+check test "$rc" -eq 1
+stage_manifest Cargo.toml $'[dependencies.bad]\npath = """/home/example/multiline"""\n'
+run_gate
+check test "$rc" -eq 1
+check test "${output#*static TOML string}" != "$output"
+git reset -q HEAD -- Cargo.toml
+
+stage_manifest '.cargo/config.toml' $'[source.local]\nregistry = "git+file:///home/example/registry"\n'
+run_gate
+check test "$rc" -eq 1
+git reset -q HEAD -- '.cargo/config.toml'
+
+# Exception records match exact literal paths and cannot excuse host paths.
+stage_manifest .dependency-portability.json $'{\n  "schema": "dependency-portability/v1",\n  "nixStaging": [\n    {\n      "manifest": "build.zig.zon",\n      "path": ".deps/other",\n      "input": "safe",\n      "staging": "flake.nix"\n    }\n  ]\n}\n'
+run_gate
+check test "$rc" -eq 1
+stage_manifest build.zig.zon $'.{\n  .name = .fixture,\n  .version = "0.0.0",\n  .dependencies = .{\n    .bad = .{ .path = "/home/example/cannot-except" },\n  },\n}\n'
+stage_manifest .dependency-portability.json $'{\n  "schema": "dependency-portability/v1",\n  "nixStaging": [\n    {\n      "manifest": "build.zig.zon",\n      "path": "/home/example/cannot-except",\n      "input": "safe",\n      "staging": "flake.nix"\n    }\n  ]\n}\n'
+run_gate
+check test "$rc" -eq 1
+git reset -q HEAD -- build.zig.zon .dependency-portability.json
+
+# The staging producer must itself be a tracked regular in-root file.
+ln -s /home/example/private producer.nix
+git add producer.nix
+stage_manifest .dependency-portability.json $'{\n  "schema": "dependency-portability/v1",\n  "nixStaging": [\n    {\n      "manifest": "build.zig.zon",\n      "path": ".deps/safe",\n      "input": "safe",\n      "staging": "producer.nix"\n    }\n  ]\n}\n'
+run_gate
+check test "$rc" -eq 1
+git reset -q HEAD -- producer.nix .dependency-portability.json
+command rm -f producer.nix
+
+# Root-input follows paths resolve to the same pinned node.
+stage_manifest flake.lock $'{\n  "version": 7,\n  "root": "root",\n  "nodes": {\n    "root": { "inputs": { "pins": "pins", "safe": ["pins", "safe"] } },\n    "pins": { "inputs": { "safe": "safe" } },\n    "safe": {\n      "locked": {\n        "type": "github", "owner": "example", "repo": "safe",\n        "rev": "0123456789abcdef0123456789abcdef01234567",\n        "narHash": "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="\n      }\n    }\n  }\n}\n'
+run_gate
+check test "$rc" -eq 0
+git reset -q HEAD -- flake.lock
+
+# A remote file input with a content hash may back the exact staging record.
+stage_manifest flake.lock $'{\n  "version": 7,\n  "root": "root",\n  "nodes": {\n    "root": { "inputs": { "safe": "safe" } },\n    "safe": {\n      "locked": {\n        "type": "file",\n        "url": "https://example.invalid/asset.dat",\n        "narHash": "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="\n      }\n    }\n  }\n}\n'
+run_gate
+check test "$rc" -eq 0
+git reset -q HEAD -- flake.lock
+
+# Deleting a tracked symlink invalidates unchanged manifests too.
+mkdir -p symlink-case/real
+printf '[package]\nname = "symlink-real"\nversion = "0.1.0"\n' > symlink-case/real/Cargo.toml
+ln -s symlink-case/real dependency-link
+stage_manifest symlink-case/Cargo.toml $'[dependencies]\nreal = { path = "../dependency-link" }\n'
+git add symlink-case/real/Cargo.toml dependency-link
+git -c core.hooksPath=/dev/null commit -qm safe-dependency-link
+git rm -q dependency-link
+run_gate
+check test "$rc" -eq 1
+
+printf '%s checks, %s failures\n' "$tests" "$failures"
+test "$failures" -eq 0

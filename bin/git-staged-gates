@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Run shared staged-content commit gates in fixed fail-fast order.
+set -u
+
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P) || exit 2
+"$root/bin/git-conflict-marker-gate" || exit "$?"
+exec "$root/bin/git-dependency-portability-gate" "$@"

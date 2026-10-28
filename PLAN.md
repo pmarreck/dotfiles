@@ -1,5 +1,62 @@
 # dotfiles — TODO / Plans
 
+## Active: declarative mise and suite reconciliation (2026-10-23)
+
+- [x] Change the `vk` alias from ephemeral `npx` resolution to the mise-managed `vibe-kanban` executable, with an alias-contract regression and focused shell verification. Completed 2026-10-24 10:19 EDT: the injected `npx` test failed first, then 3/3 alias-contract checks and ShellCheck passed with `mise x npm:vibe-kanban -- vibe-kanban`.
+- [x] Coordinate declarative activation of mise, `b3sum`, and `expect` with Mechatron Prime. Completed 2026-10-24 10:41 EDT: generation 368 is active, all three commands resolve from the system profile, and Mechatron Prime's 38-file host suite passes.
+- [ ] Confirm the declared Node tool, rerun every dotfiles gate, resolve any remaining failures, finish the pending merge, push, and verify exact-commit CI.
+
+## Active: shared capture owner coordination (2026-10-15)
+
+- [ ] Await Mechatron Prime's owned `capture`/`strace -f` child-pipe deadlock regression and placement decision; do not rerun the expensive incident or modify the shared helper unless that owner delegates the fix.
+
+## Active: canonical platform environment and PATH (2026-10-23)
+
+- [ ] Implement the owner-approved `OS`/`ARCH`/`PLATFORM`/`PF`/`WSL` contract and current-PF project-bin discovery with failing-first set classifiers, preserve generic bins and existing tools, document migration evidence, update shared guidance, and reply to the coordinator.
+- [ ] After the core PATH contract passes, qualify Printable Binary's `bin/linux-amd64/printable-binary` from verified checkpoint `6822f66` and RotShield's current-PF commands against real shell resolution, preserve their generic portable scripts and rollback paths, then report evidence to both project owners and the coordinator.
+
+## Active: staged dependency portability gate (2026-10-23)
+
+- [x] Isolate `shadows_test` from the owner's unbounded live `PATH` and exported search functions while preserving its behavioral and kernel-growth controls. Completed 2026-10-28 01:52 EDT: the focused suite fell from more than eight minutes to 4.909 seconds; all 19 tests and ShellCheck pass.
+- [x] Repair Nix indented-string escaped-interpolation tokenization with failing-first disposable-repository commit regressions; preserve unsafe dependency and staged/worktree rejection controls, run complete gates, commit, reply to Codescan, and Trash the handled note. Completed 2026-10-28 01:00 EDT: the original scanner failed 4/95 escaped-interpolation controls and 1/96 after adding nested Nix interpolation; the iterative lexer passes 96/96, the complete 198-file host suite, and the sandboxed Nix check.
+- [x] Reproduce and fix the valid Nix arithmetic `/` false positive while preserving rejection of absolute Nix paths; return the repair to Turing's independent parser-backed controls. Completed 2026-10-23 22:25 EDT: 88/88 local checks, 14/14 parser-backed Nix cases, 21/21 prior independent cases, and live dispatch control pass.
+- [x] Reproduce and fix the live Nix `//` merge-operator false positive with a staged classifier set that still rejects actual absolute path literals; notify Printable Binary after focused and independent controls pass. Completed 2026-10-23 22:25 EDT: exact `e578c595047c` alternate index and independent merge variants pass without an override.
+- [x] Add a staged-blob pre-commit gate for nonportable dependency references, with parser-aware manifest coverage, repository-boundary and tracked-symlink checks, narrow Nix staging exceptions, a reason-required loud override, disposable-repository commit tests, complete-suite evidence, and coordinator review. Completed 2026-10-28 01:00 EDT with hook-backed disposable-repository commit controls, parser-aware Nix coverage, the complete 198-file host suite, and the sandboxed Nix check; coordinator delivery follows the merge commit.
+
+## Active — nightly LaunchServices prune + siriknowledged disable (2026-10-13)
+
+- [x] Add `bin/lsregister-prune-dead` with a set-classifier test: unregister registrations whose bundle path is gone; keep live ones and anything on an unmounted `/Volumes/<name>`.
+  Curiosity poke: paths with spaces, apostrophes, `&` and parentheses must round-trip from `lsregister -dump` into `lsregister -u`.
+  Completed 2026-10-13 12:02 EDT: test red (command missing), then green; live dry run found 0 dead after the manual cleanup of 79.
+- [x] Add generic `bin/launchd-keep-disabled LABEL...` (labels are a per-machine choice, never hard-coded, because dotfiles sync to every device).
+  Completed 2026-10-13 12:08 EDT: uses `disable` + `bootout`, not `kill`. A disabled-but-loaded job was observed being respawned "because xpc event" 10s after a kill; bootout unloaded it.
+- [x] Add tracked LaunchAgent `com.pmarreck.lsregister-prune-dead` (nightly 03:15), install it, verify one live run.
+  Completed 2026-10-13 12:05 EDT. The m4max-only `com.pmarreck.launchd-keep-disabled` agent (siriknowledged) is installed untracked; its record lives in the Obsidian vault at `Machines/m4max.md`.
+  Context: dead Sparkle `Launcher/<random>/Updater.app` copies made siriknowledged spin about 66 CPU-hours over 8.7 days; upstream report https://github.com/sparkle-project/Sparkle/issues/2933. `lsregister -gc` does not remove them; `lsregister -u <missing path>` does.
+- [x] Retire `manual_configuration_changelog.txt`: verify each claim, migrate the still-valid ones to the vault's `Machines/` notes, then remove the file.
+  Completed 2026-10-13 12:16 EDT: fonts, voices, the fstab no-fsck line and oh-my-bash (installed, not loaded) migrated to vault `Machines/m4max.md`; MAME (binary gone, `bin/mame` wrapper broken) and the Arch-only items were dropped as no longer true. The file was moved to `~/.Trash/` and remains in git history.
+- [x] Push `63c6842d` and the changelog retirement. Completed 2026-10-14 10:35 EDT: full suite green (193/193) after the fixes below and the nix-darwin switch that activated `b3sum`. Was blocked: after rebasing onto `origin/master`, 3 upstream test files fail on this Mac, also on a pristine `origin/master` worktree: `erect-agent-stack_latest_context_test` (120s timeout), `mandelroc_test` (`jumpscript` not on PATH), `repo-maintenance-cli_test` ("initial repo maintenance exited 1").
+  Root causes found 2026-10-14 (all environmental, not code): erect-agent-stack's fixture writer needs `node`, absent since nvm's Node was deleted (fixed by the mise cutover; the BSD `wc` padding fix `= 0` → `-eq 0` is also required); `~/Code/jumpscript` was never cloned on this Mac (cloned and built; `mandelroc_test` green); `b3sum` is declared in the nix-darwin flake but not yet activated (`repo-maintenance` errors "b3sum failed for project"), resolved by the 10:18 EDT `darwin-rebuild switch`.
+
+## Active: suite repair and branch reconciliation (2026-10-15)
+
+- [x] Protect agent-owned cgroups from `steam-procs` cleanup after Herdr exposed co-located live Wine helpers. Completed 2026-10-23 22:20 EDT: the new hermetic cgroup case failed first; all 15 focused cases, live invariants, and ShellCheck then passed.
+- [ ] Restore the complete suite to green, preserve the current hook work, reconcile `master` with `origin/master` without rewriting either history, push, and verify the exact remote commit.
+
+## Active: Herdr layout and session identity
+
+- [x] Add AI/CLI launcher layout, two-shell restoration selection and exact-process Codex session-report guard; all 193 host suites and ShellCheck pass (done 2026-10-15 13:03 EDT; commit 98d24dc; context: docs/herdr-session-identity.md).
+- [ ] Finish queued sandbox verification and reconcile pre-existing local/remote branch divergence before pushing the Herdr layout/session guard commit; preserve unrelated in-progress edits.
+
+## Active: bedtime reminder and overnight-work offer (2026-10-13)
+
+- [x] Test and update bedtime context to offer bounded opt-in overnight work, preserve authorized progress and budget/stop controls, and permit declining extra token spending without changing the reminder schedule (done 2026-10-15 22:38 EDT; 193 host test files and the sandboxed flake check pass).
+
+## Active: Linux edit desktop environment (2026-10-02)
+
+- [x] Recover Linux desktop display variables for edit from user systemd only when both are missing; preserve macOS, SSH, existing displays, argument boundaries, and caller environment; 15 focused cases, all 191 host suites with valid PATH, sandboxed Nix check, and live Wayland/GPU launch passed (done 2026-10-02 14:34 EDT).
+- [x] Isolate bc_line_length_test from inherited relative PATH entries; its private-home fixture passes in both the 193-file host suite and the sandboxed flake check (done 2026-10-15 22:38 EDT).
+
 ## Active: repository maintenance and fleet report repair (2026-09-29)
 
 - [x] Reproduce the test-fixture overwrite, isolate custom-state reports, and publish a fresh fleet report (done 2026-09-29 12:18 EDT).
@@ -1078,7 +1135,7 @@ ASCII `^[A-Z][a-z]`, retaining acronyms and one-letter uppercase words.
   service needs node it is currently broken). These are GENERATED artifacts — fix by
   regenerating them after the mise migration so they capture a clean PATH, not by
   hand-editing. Peter to confirm what generates each.
-- [~] macOS Node manager: nvm was an INTERIM (2026-08-25: Node v24.19.0 via nvm 0.40.7
+- [x] macOS Node manager: nvm was an INTERIM (2026-08-25: Node v24.19.0 via nvm 0.40.7
   + a `.pathconfig` resolver that exposed node to non-interactive hook shells).
   SUPERSEDED 2026-08-26 by the fleet-wide **mise** decision: mise installed via Nix
   (`pkgs.mise` in flake.nix), `mise use -g node@lts`, shims on PATH via `.pathconfig`.
@@ -1089,6 +1146,20 @@ ASCII `^[A-Z][a-z]`, retaining acronyms and one-letter uppercase words.
   runtimes; per-project overridable; committed config**. bun/deno available
   side-by-side (bun already in flake) for wasm/speed. `shell_startup_test` stays the
   control (node/npm across all 3 shell quadrants).
+  Completed Phase 2 2026-10-14 10:30 EDT: global config lives in the `~/.config` repo
+  (`mise/config.toml`, `node = "lts"`, installed 24.21.0); shims only, no `mise
+  activate`, placed behind the Nix PATH entries so Nix wins collisions; asdf-era
+  `.tool-versions` (node 16/elixir/erlang/postgres/yarn pins) removed; nvm removed
+  (`.bashrc` loader, `.pathconfig` resolver, `contained_nvm.bash` and its test);
+  `~/.npmrc` relinked to `npmrc` so `npm -g` tools live in `~/.npm-global` and survive
+  Node upgrades. `shell_startup_test` now also asserts node resolves via the mise
+  shims in every quadrant (verified red with a planted `~/bin/node`).
+  - Decided 2026-10-14: mise does NOT read `.nvmrc`/`.node-version` (its default since
+    idiomatic files went opt-in); projects pin Node in `flake.nix`, never global state.
+    The only `.nvmrc` user, a dormant third-party `~/Code/ollama-gui` clone with no
+    local work, was moved to Trash 2026-10-14.
+  - Curiosity poke: a long-lived parent shell keeps its pre-change PATH, so tools and
+    agents launched from it still lack node until the shell restarts.
 - [x] CCBC — Peter named the "Country/Community Boundary Conflict": Nix is the
   country, language communities value ease-of-use over strict determinism, and
   the treaty is that Nix owns everything up to the project boundary while the

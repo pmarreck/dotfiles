@@ -4,6 +4,7 @@
 	name = Peter Marreck
 	email = lumbergh@gmail.com
 [core]
+	hooksPath = ~/dotfiles/.global-githooks
 	precomposeUnicode = true
 	#pager = delta --tabs=2
 	pager = hunk pager
