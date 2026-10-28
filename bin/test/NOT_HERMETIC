@@ -53,7 +53,6 @@ mandelroc_test
 capture_test
 show_test
 hr_test
-mdff_test
 block-attribution_test
 
 # ── Requires external services, credentials, or large media toolchains ───────

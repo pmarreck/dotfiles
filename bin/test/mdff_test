@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC1091  # The Nix fixture provides $HOME/bin/assert.
 
 source "$HOME/bin/assert"
 
@@ -20,8 +21,9 @@ create_test_env() {
 	base=$(mktemp -d "${TMPDIR:-/tmp}/mdff_test.XXXXXX")
 	tmp_dirs+=("$base")
 	mkdir -p "$base/bin" "$base/work"
-	cat >"$base/bin/mdfind" <<'STUB'
-#!/usr/bin/env bash
+	{
+		printf '#!%s\n' "$(type -P bash)"
+		cat <<'STUB'
 if [ -n "${MDFF_STUB_LOG:-}" ]; then
 	printf '%s\n' "$@" >"$MDFF_STUB_LOG"
 fi
@@ -32,6 +34,7 @@ if [ -n "${MDFF_STUB_ERR_TEXT:-}" ]; then
 	printf '%s\n' "$MDFF_STUB_ERR_TEXT" >&2
 fi
 STUB
+	} >"$base/bin/mdfind"
 	chmod +x "$base/bin/mdfind"
 	printf '%s' "$base"
 }

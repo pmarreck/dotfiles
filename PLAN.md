@@ -1353,6 +1353,8 @@ ASCII `^[A-Z][a-z]`, retaining acronyms and one-letter uppercase words.
     repairable suites (`run_test_suite`, `counted`, `strip_ansi`, `date`,
     `date_difference_days`, `sed`, `stat`, `histogram`, `rule30`, and
     `warhammer_quote`). The manifest is down to 34 explicit exclusions.
+  - Progress 2026-10-28 05:28 EDT: graduated `mdff`; its fake `mdfind` now
+    uses the Nix-resolved Bash interpreter. The manifest is down to 33.
 - [ ] Migrate the 9 legacy memories still in `~/.claude/projects/*/memory/` into
   `~/MEMORIES` via the `memories` skill (another agent's migration is unfinished).
 
