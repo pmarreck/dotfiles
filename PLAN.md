@@ -4,7 +4,6 @@ Open work is listed in priority order. Completed history is in `docs/PLAN_LOG.md
 
 ## Current
 
-- [ ] Finish migrating this legacy plan to the planning-work format, preserving completed history and open-item context in their canonical homes.
 - [ ] Graduate the seven remaining tests from `NOT_HERMETIC`, separating truly host-bound tests from fixable isolation gaps (context: docs/plan_context/legacy-open-work.md#active--suite-gating-2026-07-25).
 - [ ] Await Mechatron Prime's owned `capture`/`strace -f` child-pipe deadlock regression and placement decision; do not rerun or modify the shared helper without delegation.
 - [ ] Decide whether the pre-push gate should test each outgoing commit, up to five, in detached disposable worktrees (context: docs/plan_context/legacy-open-work.md#active--suite-gating-2026-07-25).
@@ -40,4 +39,5 @@ Open work is listed in priority order. Completed history is in `docs/PLAN_LOG.md
 
 ## Recent completions
 
+- [x] Migrate the legacy plan to the planning-work format, preserving completed history and open-item context in their canonical homes (done 2026-10-28 10:31 EDT; commit e837c79).
 - [x] Globally prioritize every current `$CODE/*/bin/$PF` directory ahead of every general project bin while retaining unmigrated and legacy command paths behind both groups (done 2026-10-28 10:25 EDT; commit d3fa0b6).
