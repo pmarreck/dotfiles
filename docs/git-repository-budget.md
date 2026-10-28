@@ -37,9 +37,10 @@ escape the budget; configuration is the owner's deliberate policy control.
 The wrapper resolves the underlying Git executable and preserves its arguments,
 streams and exit status. Creation-capable operations hold an advisory OS lock
 in the common Git directory across inspection and execution, so participating
-creators in different linked worktrees cannot race for the last slot. Kernel
-lock ownership ends when the processes exit; the persistent lock filename is
-not a stale-lock marker and must not be deleted to unlock it.
+creators in different linked worktrees cannot race for the last slot. The wrapper
+explicitly unlocks on completion, including when a hook leaves a background
+child alive. The persistent lock filename is not a stale-lock marker and must
+not be deleted to unlock it.
 
 The reference-transaction check computes the prospective local branch set from
 current refs and the transaction's additions/deletions, rather than assuming

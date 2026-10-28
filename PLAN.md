@@ -5,6 +5,7 @@ Open work is listed in priority order. Completed history is in `docs/PLAN_LOG.md
 ## Current
 
 - [x] Add configurable shared-repository branch/worktree caps with warn-at-four/max-at-five/refuse-six defaults; existing work is preserved, concurrent creation and custom hooks are covered, 60 focused checks and all 204 Nix test files pass (done 2026-10-28 13:39 EDT).
+- [x] Close alias-level hook override and background-hook lock retention regressions; preserve ordinary hook configuration and release owned locks explicitly, with 64 focused checks and all 204 Nix test files passing (done 2026-10-28 13:47 EDT).
 
 - [ ] Await Mechatron Prime's owned `capture`/`strace -f` child-pipe deadlock regression and placement decision; do not rerun or modify the shared helper without delegation.
 - [ ] Decide whether the pre-push gate should test each outgoing commit, up to five, in detached disposable worktrees (context: docs/plan_context/legacy-open-work.md#active--suite-gating-2026-07-25).

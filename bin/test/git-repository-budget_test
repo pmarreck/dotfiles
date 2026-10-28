@@ -87,8 +87,17 @@ run -c sample.fixture=retained commit -qm configuration --allow-empty; check tes
 check test "$(cat "$work/repo/observed-hooks" 2>/dev/null)" = custom-hooks
 check test "$(cat "$work/repo/observed-config" 2>/dev/null)" = retained
 run branch custom-six; check test "$rc" -ne 0; check test "$(count)" -eq 5
+run -c alias.unhooked='-c core.hooksPath=/dev/null branch' unhooked alias-six; check test "$rc" -ne 0; check test "$(count)" -eq 5
 printf '#!%s\nexit 23\n' "$(command -v bash)" > "$work/repo/custom-hooks/pre-commit"
 chmod +x "$work/repo/custom-hooks/pre-commit"
 run commit -qm refused --allow-empty; check test "$rc" -ne 0
+# A background hook must not retain the repository mutex after Git returns.
+mkfifo "$work/repo/hook-wait"
+printf '#!%s\n(read -r ignored < hook-wait) >/dev/null 2>&1 &\nprintf "%%s\\n" "$!" > hook-pid\n' "$(command -v bash)" > "$work/repo/custom-hooks/post-checkout"
+chmod +x "$work/repo/custom-hooks/post-checkout"
+run checkout main; check test "$rc" -eq 0
+output=$(timeout 3 "$gate" --run "$real_git" -C "$work/repo" branch -f custom-five HEAD 2>&1); rc=$?
+check test "$rc" -eq 0
+if [[ -s $work/repo/hook-pid ]]; then kill "$(cat "$work/repo/hook-pid")" 2>/dev/null; fi
 printf '%s checks, %s failures\n' "$tests" "$failures"
 test "$failures" -eq 0

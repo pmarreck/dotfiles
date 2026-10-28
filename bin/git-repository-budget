@@ -6,9 +6,18 @@ ffi.cdef[[
 int open(const char *, int, ...); int close(int); int flock(int, int);
 int fcntl(int, int, ...); int setenv(const char *, const char *, int);
 int fork(void); int waitpid(int, int *, int); int execvp(const char *, char *const []);
+int getpid(void); int kill(int, int);
 void _exit(int);
 char *realpath(const char *, char *); void free(void *);
 ]]
+local held_lock
+local function release_lock()
+	if held_lock then
+		-- close() alone leaves flock held by inherited descriptors in background
+		-- hook processes. Unlock explicitly, including on a failed inspection.
+		ffi.C.flock(held_lock,8); ffi.C.close(held_lock); held_lock=nil
+	end
+end
 local function quote(s) return "'" .. s:gsub("'", "'\\''") .. "'" end
 local function shell(argv)
 	local parts = {}; for _, a in ipairs(argv) do parts[#parts+1] = quote(a) end
@@ -113,8 +122,6 @@ local reads = {status=true, diff=true, log=true, show=true, config=true, version
 local function run(raw, args)
 	local original=extend({raw}, unpack(args))
 	local base, command=prefix(raw,args)
-	local native_base=base
-	local native_command=command
 	if not command[1] or reads[command[1]] then exec(original) end
 	for _=1,16 do
 		if mutations[command[1]] then break end
@@ -139,17 +146,18 @@ local function run(raw, args)
 	common=ffi.string(resolved); ffi.C.free(resolved)
 	local lock_path=common.."/agent-repository-budget.lock"
 	local inherited=os.getenv("GIT_REPOSITORY_BUDGET_LOCK") or ""
-	local fd,path=inherited:match("^(%d+):(.*)$"); fd=tonumber(fd)
+	local owner,fd,path=inherited:match("^(%d+):(%d+):(.*)$"); fd=tonumber(fd); owner=tonumber(owner)
 	local owned=false
-	if not (fd and path == lock_path and ffi.C.fcntl(fd,1) >= 0) then
+	if not (fd and path == lock_path and ffi.C.fcntl(fd,1) >= 0 and ffi.C.kill(owner,0)==0) then
 		local create = jit.os == "OSX" and 512 or 64
 		fd=ffi.C.open(lock_path,bit.bor(2,create),ffi.new("int",384)); assert(fd>=0,"cannot open repository budget lock")
+		held_lock=fd
 		if ffi.C.flock(fd,bit.bor(2,4)) ~= 0 then
 			io.stderr:write("Repository budget: waiting for another Git operation in this shared repository.\n")
 			assert(ffi.C.flock(fd,2)==0,"cannot lock repository budget")
 		end
 		owned=true
-		assert(ffi.C.setenv("GIT_REPOSITORY_BUDGET_LOCK",fd..":"..lock_path,1)==0)
+		assert(ffi.C.setenv("GIT_REPOSITORY_BUDGET_LOCK",ffi.C.getpid()..":"..fd..":"..lock_path,1)==0)
 	end
 	assert(ffi.C.setenv("GIT_REPOSITORY_BUDGET_GIT",raw,1)==0)
 	-- Preserve all existing hooks while interposing the reference check even
@@ -162,7 +170,9 @@ local function run(raw, args)
 	if delegate==proxy_path then delegate=assert(os.getenv("GIT_REPOSITORY_BUDGET_DELEGATE"),"missing inherited hook delegate") end
 	assert(delegate~=proxy_path,"recursive hook delegation")
 	assert(ffi.C.setenv("GIT_REPOSITORY_BUDGET_DELEGATE",delegate,1)==0)
-	original=extend(native_base,"-c","core.hooksPath="..proxy_path,unpack(native_command))
+	-- Execute the resolved normal alias so its global options precede our final
+	-- hook selection. Otherwise an alias could accidentally turn this check off.
+	original=extend(base,"-c","core.hooksPath="..proxy_path,unpack(command))
 	local adding=command[1]=="worktree" and command[2]=="add"
 	-- Git's native branch-copy implementation can bypass reference-transaction.
 	-- Cover both ordinary and forced copies before invoking it.
@@ -181,14 +191,14 @@ local function run(raw, args)
 			copied=not existing["refs/heads/"..names[#names]]
 			if copied then
 				copy_max=limit(base,"Branches")
-				if copy_before+1>copy_max then if owned then ffi.C.close(fd) end; return refuse("local branches",copy_before,copy_before+1,copy_max) end
+				if copy_before+1>copy_max then release_lock(); return refuse("local branches",copy_before,copy_before+1,copy_max) end
 			end
 		end
 	end
 	local maximum,before
 	if adding then
 		maximum=limit(base,"Worktrees"); before=worktrees(base)
-		if before+1>maximum then if owned then ffi.C.close(fd) end; return refuse("worktrees",before,before+1,maximum) end
+		if before+1>maximum then release_lock(); return refuse("worktrees",before,before+1,maximum) end
 	end
 	local pid=ffi.C.fork(); assert(pid>=0,"cannot start Git")
 	if pid==0 then local ok=pcall(exec,original); ffi.C._exit(ok and 0 or 127) end
@@ -198,7 +208,7 @@ local function run(raw, args)
 	local code=signal~=0 and 128+signal or bit.rshift(result[0],8)
 	if code==0 and adding then notice("worktrees",worktrees(base),maximum,false) end
 	if code==0 and copied then local _,n=heads(base); notice("local branches",n,copy_max,false) end
-	if owned then ffi.C.close(fd) end
+	release_lock()
 	return code
 end
 local function reference(state)
@@ -242,5 +252,6 @@ local function main()
 	return 2
 end
 local ok,code=pcall(main)
+release_lock()
 if not ok then io.stderr:write("Repository budget ERROR: "..tostring(code).."\n"); code=2 end
 os.exit(code)
