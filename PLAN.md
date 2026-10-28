@@ -13,7 +13,6 @@ Open work is listed in priority order. Completed history is in `docs/PLAN_LOG.md
 - [ ] Reconcile the dirty, behind macOS checkout without discarding its startup work (context: docs/plan_context/legacy-open-work.md#active--cross-host-fastfetch-alias-2026-09-04).
 - [ ] Complete fleet-wide mise activation on remaining NixOS hosts and regenerate the two stale macOS LaunchAgents after identifying their generators (context: docs/plan_context/legacy-open-work.md#active--shell-helper-argument-correctness-2026-07-27).
 - [ ] Restore the missing attribution and Git guard hooks on the affected NixOS host.
-- [ ] Route disposable Cargo and Zig compiler state through the readiness-gated development cache policy with repository-isolated caches and directory-change refresh.
 - [ ] Test Codex bracketed-paste submission with the target Herdr terminal unattached, visible, and attached but hidden.
 
 ## Code maintenance
@@ -37,6 +36,7 @@ Open work is listed in priority order. Completed history is in `docs/PLAN_LOG.md
 
 ## Recent completions
 
+- [x] Finish the readiness-gated development-cache policy: repository-isolated Cargo and Zig local caches, shared Zig global cache, prompt-time directory refresh, revocation after readiness loss, and live Codex/Claude environment verification (done 2026-10-28 11:22 EDT).
 - [x] Review and migrate the nine remaining legacy Claude memories into the private shared memory root, preserving their original creation instants and validating the complete index (done 2026-10-28 11:15 EDT).
 - [x] Audit the seven remaining `NOT_HERMETIC` tests: graduate JPEG, PNG, search-guard, and Mandelroc coverage; retain only three tests that intentionally inspect live terminal or installed user/system state. The Nix suite now admits 201 of 204 host tests (done 2026-10-28 11:06 EDT; commits 6d20220, d251d22, 92fc570, 30d7806; context: docs/plan_context/legacy-open-work.md#active--suite-gating-2026-07-25).
 - [x] Migrate the legacy plan to the planning-work format, preserving completed history and open-item context in their canonical homes (done 2026-10-28 10:31 EDT; commit e837c79).
