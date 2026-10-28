@@ -15,7 +15,6 @@
 # point: it is how a test graduates to being hermetic.
 
 # ── Requires real hardware / kernel interfaces the sandbox does not expose ────
-cpuhogs_test
 diskhogs_test
 gpuhogs_test
 memhogs_test

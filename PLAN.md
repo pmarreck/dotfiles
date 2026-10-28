@@ -1362,6 +1362,9 @@ ASCII `^[A-Z][a-z]`, retaining acronyms and one-letter uppercase words.
     builds PrintableBinary's canonical Zig implementation from pinned public
     source and toolchain inputs, and the filter emits no diagnostics. The
     manifest is down to 30.
+  - Progress 2026-10-28 07:13 EDT: graduated `cpuhogs`; every process-data
+    source and the CPU count were already injected, and its help capture now
+    stays in the test-owned fixture directory. The manifest is down to 29.
 - [ ] Migrate the 9 legacy memories still in `~/.claude/projects/*/memory/` into
   `~/MEMORIES` via the `memories` skill (another agent's migration is unfinished).
 
