@@ -1419,6 +1419,12 @@ ASCII `^[A-Z][a-z]`, retaining acronyms and one-letter uppercase words.
     resolves its command and both adapters, and proves only the staged diff is
     sent. Focused ShellCheck, all 184 Nix-admitted files, and all 204 host files
     pass. The manifest is down to 20.
+  - Progress 2026-10-28 09:00 EDT: graduated `sessions`; the first Nix run
+    reproduced eight failures because its injected tmux adapter exited 126
+    through absent `/usr/bin/env`. The test now resolves Bash and the command,
+    uses one private temp root and HOME, and passes focused ShellCheck, all 13
+    behavior cases, all 185 Nix-admitted files, and all 204 host files. The
+    manifest is down to 19.
 - [ ] Migrate the 9 legacy memories still in `~/.claude/projects/*/memory/` into
   `~/MEMORIES` via the `memories` skill (another agent's migration is unfinished).
 

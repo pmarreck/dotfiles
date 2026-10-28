@@ -15,7 +15,8 @@
 
 set -u
 
-PATH="$HOME/dotfiles/bin:$PATH"
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+cmd="$script_dir/../sessions"
 
 tests=0
 fails=0
@@ -35,7 +36,9 @@ assert_eq() {
 	fi
 }
 
-WORK=$(mktemp -d --tmpdir sessions_test.XXXXXX)
+WORK=$(mktemp -d "${TMPDIR:-/tmp}/sessions_test.XXXXXX")
+mkdir -p "$WORK/home"
+export HOME="$WORK/home"
 trap 'rm -rf "$WORK"' EXIT
 
 # Build a fake tmux that emits canned `list-sessions` output. $1 = output file
@@ -44,8 +47,8 @@ trap 'rm -rf "$WORK"' EXIT
 make_fake_tmux() {
 	local sessions_text="$1"
 	printf '%s' "$sessions_text" >"$WORK/sessions.txt"
-	cat >"$WORK/tmux" <<'FAKE'
-#!/usr/bin/env bash
+	printf '#!%s\n' "$(type -P bash)" >"$WORK/tmux"
+	cat >>"$WORK/tmux" <<'FAKE'
 work="${0%/tmux}"
 if [ "$1" = "list-sessions" ]; then
 	shift
@@ -65,7 +68,7 @@ make_fake_tmux "$THREE"
 
 # ─── no args: passthrough verbatim ───────────────────────────────────────────
 echo "==> no args (passthrough)"
-out=$(sessions 2>/dev/null); rc=$?
+out=$("$cmd" 2>/dev/null); rc=$?
 assert_eq "$rc" "0" "sessions (no args) exits 0"
 assert_eq "$out" "main: 3 windows (created Thu) (attached)
 work: 1 windows (created Thu)
@@ -73,37 +76,37 @@ scratch: 2 windows (created Thu) (attached)" "sessions with no args lists all se
 
 # ─── --attached ──────────────────────────────────────────────────────────────
 echo "==> --attached"
-out=$(sessions --attached 2>/dev/null); rc=$?
+out=$("$cmd" --attached 2>/dev/null); rc=$?
 assert_eq "$rc" "0" "sessions --attached exits 0"
 assert_eq "$out" "main: 3 windows (created Thu) (attached)
 scratch: 2 windows (created Thu) (attached)" "sessions --attached shows only attached sessions"
 
 # ─── --headless / --unattached ───────────────────────────────────────────────
 echo "==> --headless / --unattached"
-out=$(sessions --headless 2>/dev/null)
+out=$("$cmd" --headless 2>/dev/null)
 assert_eq "$out" "work: 1 windows (created Thu)" "sessions --headless shows only non-attached sessions"
-out=$(sessions --unattached 2>/dev/null)
+out=$("$cmd" --unattached 2>/dev/null)
 assert_eq "$out" "work: 1 windows (created Thu)" "sessions --unattached is a synonym for --headless"
 
 # ─── empty filter result still exits 0 ───────────────────────────────────────
 echo "==> empty filter result"
 make_fake_tmux $'work: 1 windows (created Thu)\n'   # no attached sessions
-out=$(sessions --attached 2>/dev/null); rc=$?
+out=$("$cmd" --attached 2>/dev/null); rc=$?
 assert_eq "$rc" "0" "sessions --attached exits 0 even when nothing matches"
 assert_eq "$out" "" "sessions --attached yields empty output when no attached sessions"
 make_fake_tmux "$THREE"
 
 # ─── passthrough of extra args to tmux list-sessions ─────────────────────────
 echo "==> extra args passthrough"
-sessions -F '#S' >/dev/null 2>&1
+"$cmd" -F '#S' >/dev/null 2>&1
 assert_eq "$(cat "$WORK/tmux_args")" "-F #S " "extra args are forwarded to tmux list-sessions"
 
 # ─── help / about ────────────────────────────────────────────────────────────
 echo "==> help / about"
-out=$(sessions --help 2>/dev/null); rc=$?
+out=$("$cmd" --help 2>/dev/null); rc=$?
 assert_eq "$rc" "0" "sessions --help exits 0"
 case "$out" in *Usage:*) echo "✓ --help shows usage"; ((tests++));; *) echo "✗ --help shows usage" >&2; ((tests++)); ((fails++));; esac
-out=$(sessions --about 2>/dev/null); rc=$?
+out=$("$cmd" --about 2>/dev/null); rc=$?
 assert_eq "$rc" "0" "sessions --about exits 0"
 lines=$(printf '%s' "$out" | grep -c '')
 assert_eq "$lines" "1" "sessions --about is a single line"
