@@ -1471,6 +1471,12 @@ ASCII `^[A-Z][a-z]`, retaining acronyms and one-letter uppercase words.
     under one trap-owned root, and declared `rsync` coverage replaces the
     prior sandbox skip. All 20 focused assertions, all 193 Nix-admitted files,
     and all 204 host files pass. The manifest is down to 11.
+  - Progress 2026-10-28 09:56 EDT: graduated `darktide-patch-mods`; its
+    admission run reproduced 21 fixture-interpreter failures. All executable
+    adapters now use resolved Bash, logs are real private files, state is
+    trap-owned, and inherited search wrappers cannot redirect `find` through
+    live HOME. All 40 focused assertions, all 194 Nix-admitted files, and all
+    204 host files pass. The manifest is down to 10.
 - [ ] Migrate the 9 legacy memories still in `~/.claude/projects/*/memory/` into
   `~/MEMORIES` via the `memories` skill (another agent's migration is unfinished).
 

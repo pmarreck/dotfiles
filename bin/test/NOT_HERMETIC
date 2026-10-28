@@ -36,5 +36,4 @@ decrypt_test
 jpeg_test
 jpegxl_test
 png_test
-darktide-patch-mods_test
 rg_test
