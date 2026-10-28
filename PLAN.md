@@ -5,7 +5,7 @@
 - [x] Run the default pre-push suite inside this repository's declared Nix development environment so hermetic tool dependencies such as `zip` cannot disappear from the ambient host `PATH`; preserve injected-runner tests and nothing-to-push short-circuiting. Completed 2026-10-28 02:46 EDT: the old direct-runner contract failed first; 13/13 gate tests, 64/64 parallel `kill-session` repetitions, 153/153 hermetic tests, and all 197 host test files then passed.
 - [x] Change the `vk` alias from ephemeral `npx` resolution to the mise-managed `vibe-kanban` executable, with an alias-contract regression and focused shell verification. Completed 2026-10-24 10:19 EDT: the injected `npx` test failed first, then 3/3 alias-contract checks and ShellCheck passed with `mise x npm:vibe-kanban -- vibe-kanban`.
 - [x] Coordinate declarative activation of mise, `b3sum`, and `expect` with Mechatron Prime. Completed 2026-10-24 10:41 EDT: generation 368 is active, all three commands resolve from the system profile, and Mechatron Prime's 38-file host suite passes.
-- [ ] Confirm the declared Node tool, rerun every dotfiles gate, resolve any remaining failures, finish the pending merge, push, and verify exact-commit CI.
+- [x] Confirm the declared Node tool, rerun every dotfiles gate, resolve any remaining failures, finish the pending merge, push, and verify exact-commit CI. Completed 2026-10-28 03:00 EDT: the host resolves declared Node 24.20.0 and `nix develop` resolves flake-pinned Node 24.18.0; the 153-test hermetic gate, complete 197-file host suite, and enforced pre-push gate passed; `origin/master` matches `e2788fe`; Mechatron Prime CI passed that exact commit in 64 seconds.
 
 ## Active: shared capture owner coordination (2026-10-15)
 
@@ -50,7 +50,7 @@
 ## Active: suite repair and branch reconciliation (2026-10-15)
 
 - [x] Protect agent-owned cgroups from `steam-procs` cleanup after Herdr exposed co-located live Wine helpers. Completed 2026-10-23 22:20 EDT: the new hermetic cgroup case failed first; all 15 focused cases, live invariants, and ShellCheck then passed.
-- [ ] Restore the complete suite to green, preserve the current hook work, reconcile `master` with `origin/master` without rewriting either history, push, and verify the exact remote commit.
+- [x] Restore the complete suite to green, preserve the current hook work, reconcile `master` with `origin/master` without rewriting either history, push, and verify the exact remote commit. Completed 2026-10-28 03:00 EDT: merge commits `9c935fb` and `4e6ce82` preserve both histories; the complete suite and Nix check pass; local, `origin/master`, and successful Mechatron Prime CI all identify `e2788fe`.
 
 ## Active: Herdr layout and session identity
 
