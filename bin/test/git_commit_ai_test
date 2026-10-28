@@ -6,11 +6,17 @@ tests=0
 ((tests++))
 echo "Testing: git_commit_ai prefers staged diff when staged and unstaged exist..."
 
-temp_dir=$(mktemp -d --tmpdir)
-stub_bin=$(mktemp -d --tmpdir)
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+cmd="$script_dir/../git_commit_ai"
+work_root=$(mktemp -d "${TMPDIR:-/tmp}/git_commit_ai_test.XXXXXX")
+temp_dir="$work_root/repo"
+stub_bin="$work_root/bin"
+mkdir -p "$temp_dir" "$stub_bin" "$work_root/home" "$work_root/xdg-config"
 
+# Invoked by the EXIT trap.
+# shellcheck disable=SC2329
 cleanup() {
-	rm -rf "$temp_dir" "$stub_bin"
+	rm -rf "$work_root"
 }
 trap cleanup EXIT
 
@@ -55,13 +61,23 @@ fi
 
 echo "200"
 STUB
-chmod +x "$stub_bin/curl"
 
 cat > "$stub_bin/clip" <<'STUB'
 #!/usr/bin/env bash
 exit 0
 STUB
-chmod +x "$stub_bin/clip"
+
+set_test_shebang() {
+	local stub="$1" stub_body
+	stub_body=$(<"$stub")
+	printf '#!%s\n%s\n' "$(type -P bash)" "${stub_body#*$'\n'}" >"$stub"
+}
+
+for stub in "$stub_bin/curl" "$stub_bin/clip"; do
+	set_test_shebang "$stub"
+done
+
+chmod +x "$stub_bin/curl" "$stub_bin/clip"
 
 capture_file="$temp_dir/capture.txt"
 response_file="$temp_dir/response.json"
@@ -72,9 +88,11 @@ export OPENAI_HOST="localhost"
 export OPENAI_PATH="/api/chat"
 export OPENAI_PROTOCOL="http"
 
-PATH="$stub_bin:$HOME/dotfiles/bin:$PATH"
+PATH="$stub_bin:$script_dir/..:$PATH"
 run_status=0
 (
+	export HOME="$work_root/home"
+	export XDG_CONFIG_HOME="$work_root/xdg-config"
 	cd "$temp_dir" || exit 1
 	git init -q
 	printf "base\n" > file.txt
@@ -87,7 +105,7 @@ run_status=0
 	git add file.txt
 	printf "base\nSTAGED\nUNSTAGED\n" > file.txt
 
-	git_commit_ai >/dev/null 2>"$temp_dir/git_commit_ai_err.log"
+	"$cmd" >/dev/null 2>"$temp_dir/git_commit_ai_err.log"
 	exit "$?"
 )
 run_status=$?

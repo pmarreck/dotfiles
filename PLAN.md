@@ -1413,6 +1413,12 @@ ASCII `^[A-Z][a-z]`, retaining acronyms and one-letter uppercase words.
     command, temp root, and Bash without HOME or `/usr/bin/env`; focused
     ShellCheck, all six argument-contract cases, and all 183 Nix-admitted files
     pass. The manifest is down to 21.
+  - Progress 2026-10-28 08:54 EDT: graduated `git_commit_ai`; the first Nix run
+    reproduced its curl adapter failing through absent `/usr/bin/env` and
+    captured no request. The test now uses one private repository/HOME/XDG root,
+    resolves its command and both adapters, and proves only the staged diff is
+    sent. Focused ShellCheck, all 184 Nix-admitted files, and all 204 host files
+    pass. The manifest is down to 20.
 - [ ] Migrate the 9 legacy memories still in `~/.claude/projects/*/memory/` into
   `~/MEMORIES` via the `memories` skill (another agent's migration is unfinished).
 

@@ -14,9 +14,6 @@
 # attached to the entry. Removing an entry is a deliberate diff — that is the
 # point: it is how a test graduates to being hermetic.
 
-# ── Requires network access (the sandbox has none, by design) ────────────────
-git_commit_ai_test
-
 # ── Requires a real terminal, tmux server, or interactive session ────────────
 sessions_test
 apply-hooks_test
