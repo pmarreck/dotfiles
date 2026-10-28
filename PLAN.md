@@ -1403,6 +1403,11 @@ ASCII `^[A-Z][a-z]`, retaining acronyms and one-letter uppercase words.
     The test now resolves the command and Bash itself, uses a private HOME, and
     passes focused ShellCheck plus all 181 Nix-admitted files. The manifest is
     down to 23.
+  - Progress 2026-10-28 08:40 EDT: graduated `find_github_forks_with_file`; the
+    first Nix run reproduced five cases failing because the fully stubbed `gh`
+    adapter used `/usr/bin/env`. The test now resolves its command, temp files,
+    Bash, `gh`, and `xargs`; focused ShellCheck, all six cases, and all 182
+    Nix-admitted files pass. The manifest is down to 22.
 - [ ] Migrate the 9 legacy memories still in `~/.claude/projects/*/memory/` into
   `~/MEMORIES` via the `memories` skill (another agent's migration is unfinished).
 

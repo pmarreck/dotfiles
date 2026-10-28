@@ -6,7 +6,9 @@
 fails=0
 tests=0
 
-tmp_dir=$(mktemp -d --tmpdir)
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+cmd="$script_dir/../find_github_forks_with_file"
+tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/find_github_forks_with_file_test.XXXXXX")
 if [[ ! -d "$tmp_dir" ]]; then
 	echo "FAIL: Failed to create temp directory" >&2
 	exit 1
@@ -18,6 +20,8 @@ if [[ -z "$real_xargs" ]]; then
 	exit 1
 fi
 
+# Invoked by the EXIT trap.
+# shellcheck disable=SC2329
 cleanup() {
 	rm -rf "$tmp_dir"
 }
@@ -132,12 +136,23 @@ fi
 
 exec "\$real_xargs" "\$@"
 EOF
+
+set_test_shebang() {
+	local stub="$1" stub_body
+	stub_body=$(<"$stub")
+	printf '#!%s\n%s\n' "$(type -P bash)" "${stub_body#*$'\n'}" >"$stub"
+}
+
+for stub in "$tmp_dir/gh" "$tmp_dir/xargs"; do
+	set_test_shebang "$stub"
+done
+
 chmod +x "$tmp_dir/xargs"
 
 # Test 0: About output
 ((tests++))
 echo "Testing: --about shows one-line description..."
-if output=$(find_github_forks_with_file --about 2>&1); then
+if output=$("$cmd" --about 2>&1); then
 	if [[ "$output" == *"find_github_forks_with_file - Searches for a specific file across all forks of a GitHub repository"* ]]; then
 		echo "OK: --about outputs description"
 	else
@@ -155,10 +170,10 @@ echo
 # Test 1: Default falls back to flake.nix when env var is unset
 ((tests++))
 echo "Testing: default uses flake.nix when FIND_GH_FORKS_DEFAULT_PATH is unset..."
-stdout_file=$(mktemp --tmpdir)
-stderr_file=$(mktemp --tmpdir)
+stdout_file="$tmp_dir/stdout"
+stderr_file="$tmp_dir/stderr"
 
-PATH="$tmp_dir:$PATH" find_github_forks_with_file owner/repo >"$stdout_file" 2>"$stderr_file"
+PATH="$tmp_dir:$PATH" "$cmd" owner/repo >"$stdout_file" 2>"$stderr_file"
 exit_code=$?
 
 if [[ $exit_code -eq 0 ]] && ! grep -q "xargs:" "$stderr_file"; then
@@ -192,11 +207,11 @@ echo
 # Test 2: Default uses FIND_GH_FORKS_DEFAULT_PATH when set
 ((tests++))
 echo "Testing: default uses FIND_GH_FORKS_DEFAULT_PATH when set..."
-stdout_file=$(mktemp --tmpdir)
-stderr_file=$(mktemp --tmpdir)
+stdout_file="$tmp_dir/stdout"
+stderr_file="$tmp_dir/stderr"
 
 PATH="$tmp_dir:$PATH" FIND_GH_FORKS_DEFAULT_PATH="config/default.conf" \
-	find_github_forks_with_file owner/repo >"$stdout_file" 2>"$stderr_file"
+	"$cmd" owner/repo >"$stdout_file" 2>"$stderr_file"
 exit_code=$?
 
 if [[ $exit_code -eq 0 ]] && ! grep -q "xargs:" "$stderr_file"; then
@@ -230,10 +245,10 @@ echo
 # Test 3: No xargs warnings and expected output
 ((tests++))
 echo "Testing: find_github_forks_with_file runs without xargs warnings..."
-stdout_file=$(mktemp --tmpdir)
-stderr_file=$(mktemp --tmpdir)
+stdout_file="$tmp_dir/stdout"
+stderr_file="$tmp_dir/stderr"
 
-PATH="$tmp_dir:$PATH" find_github_forks_with_file --file build.zig owner/repo >"$stdout_file" 2>"$stderr_file"
+PATH="$tmp_dir:$PATH" "$cmd" --file build.zig owner/repo >"$stdout_file" 2>"$stderr_file"
 exit_code=$?
 
 if [[ $exit_code -eq 0 ]] && ! grep -q "xargs:" "$stderr_file"; then
@@ -267,10 +282,10 @@ echo
 # Test 4: --path supports repo-relative paths without --recursive
 ((tests++))
 echo "Testing: --path accepts repo-relative paths..."
-stdout_file=$(mktemp --tmpdir)
-stderr_file=$(mktemp --tmpdir)
+stdout_file="$tmp_dir/stdout"
+stderr_file="$tmp_dir/stderr"
 
-PATH="$tmp_dir:$PATH" find_github_forks_with_file --path src/build.zig owner/repo >"$stdout_file" 2>"$stderr_file"
+PATH="$tmp_dir:$PATH" "$cmd" --path src/build.zig owner/repo >"$stdout_file" 2>"$stderr_file"
 exit_code=$?
 
 if [[ $exit_code -eq 0 ]] && ! grep -q "xargs:" "$stderr_file"; then
@@ -304,10 +319,10 @@ echo
 # Test 5: Recursive search finds nested paths
 ((tests++))
 echo "Testing: --recursive finds nested paths without warnings..."
-stdout_file=$(mktemp --tmpdir)
-stderr_file=$(mktemp --tmpdir)
+stdout_file="$tmp_dir/stdout"
+stderr_file="$tmp_dir/stderr"
 
-PATH="$tmp_dir:$PATH" find_github_forks_with_file --recursive --file build.zig owner/repo >"$stdout_file" 2>"$stderr_file"
+PATH="$tmp_dir:$PATH" "$cmd" --recursive --file build.zig owner/repo >"$stdout_file" 2>"$stderr_file"
 exit_code=$?
 
 if [[ $exit_code -eq 0 ]] && ! grep -q "xargs:" "$stderr_file"; then
