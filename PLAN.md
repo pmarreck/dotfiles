@@ -1431,6 +1431,12 @@ ASCII `^[A-Z][a-z]`, retaining acronyms and one-letter uppercase words.
     and the nested shell uses a private HOME with the repository as a read-only
     source fixture. Focused ShellCheck, both hook lifecycle regressions, all 186
     Nix-admitted files, and all 204 host files pass. The manifest is down to 18.
+  - Progress 2026-10-28 09:12 EDT: graduated `newterm`; the first Nix run
+    reproduced all three injected detach adapters exiting 126 through absent
+    `/usr/bin/env`. The test now resolves Bash and the command, owns every case
+    under one trap-cleaned root and private HOME, and passes focused ShellCheck,
+    all three platform behaviors, all 187 Nix-admitted files, and all 204 host
+    files. The manifest is down to 17.
 - [ ] Migrate the 9 legacy memories still in `~/.claude/projects/*/memory/` into
   `~/MEMORIES` via the `memories` skill (another agent's migration is unfinished).
 
