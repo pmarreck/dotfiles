@@ -68,11 +68,16 @@ shopt -q login_shell && LOGIN_SHELL=true || LOGIN_SHELL=false
 [[ $- == *i* ]] && INTERACTIVE_SHELL=true || INTERACTIVE_SHELL=false
 
 # Detect if being run by Claude CLI or other LLM assistants and skip complex setup
-if [[ "${PPID:-}" ]] && ps -p "${PPID}" -o comm= 2>/dev/null | "${GREP_QUIET_ARRAY[@]}" "claude\|llm\|assistant"; then
+_llm_parent_command=''
+if [[ -n "${PPID:-}" ]]; then
+	_llm_parent_command=$(ps -p "${PPID}" -o comm= 2>/dev/null)
+fi
+if [[ "$_llm_parent_command" =~ (claude|llm|assistant) ]]; then
 		export SKIP_COMPLEX_SHELL_SETUP=true
 elif [[ "$0" == *"claude"* ]] || [[ "${_:-}" == *"claude"* ]]; then
 		export SKIP_COMPLEX_SHELL_SETUP=true
 fi
+unset _llm_parent_command
 
 # most things should be sourced via source_relative... except source_relative itself
 # if the function is not already defined, define it. use posix syntax for portability
@@ -173,11 +178,11 @@ unset VISUAL EDITOR
 		unset -f _zed_is_editor
 	fi
 
-# Compilation flags
-# export ARCHFLAGS="-arch arm64"
-ARCHFLAGS="-arch $(uname -a | rev | cut -d ' ' -f 2 | rev)"
-export ARCHFLAGS
-# note: "aarch64" may need to be mutated to "arm64" in some cases
+# Compilation flags used by macOS native-extension builds.
+if [ "$OS" = macos ]; then
+	ARCHFLAGS="-arch $(uname -m)"
+	export ARCHFLAGS
+fi
 
 # ssh
 export SSH_KEY_PATH="$HOME/.ssh/id_ed25519"
@@ -228,9 +233,9 @@ fi
 # echo "AWK in .bashrc:258 is: $AWK"
 # using the right awk is a PITA on macOS vs. Linux so let's ensure GNU Awk everywhere
 is_gnu_awk=$($AWK --version | "${GREP_QUIET_ARRAY[@]}" -m 1 'GNU Awk' && echo true || echo false)
-[ "${OS}$(basename "$AWK")" == "macosawk" ] && \
-	$is_gnu_awk && \
+if [ "$OS" = macos ] && [ "$(basename "$AWK")" = awk ] && [ "$is_gnu_awk" = false ]; then
 	echo "WARNING: The awk on PATH is not GNU Awk on macOS, which may cause problems" >&2
+fi
 
 # # asdf config
 # [[ -s "$HOME/.asdf/asdf.sh" ]] && source "$HOME/.asdf/asdf.sh"

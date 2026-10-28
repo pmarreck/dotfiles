@@ -103,7 +103,7 @@ fi
 #alias deploy_staging='git push gigalixir staging:master'
 
 # log all terminal output to a file
-alias log='/usr/bin/script -a ~/Terminal.log; source ~/.bash_profile'
+alias log='script -a ~/Terminal.log; source ~/.bash_profile'
 
 # This was inevitable.
 needs curl
@@ -192,7 +192,7 @@ alias t='supertop'
 alias ag='antigravity'
 alias agy='antigravity'
 
-needs timeout 2>/dev/null || needs uutils-timeout "please install uutils-coreutils" && alias timeout='uutils-timeout'
+needs timeout 2>/dev/null || { needs uutils-timeout "please install uutils-coreutils" && alias timeout='uutils-timeout'; }
 # hacker news TUI
 alias hn='clx --nerdfonts --no-less-verify --comment-width 120'
 

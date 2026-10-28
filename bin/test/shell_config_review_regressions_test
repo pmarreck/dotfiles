@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+# shellcheck disable=SC2016,SC2123,SC2329 # Literal config probes, intentional PATH fixture, trap callback.
+
+set -u
+
+repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)
+fails=0
+fixture_root=$(mktemp -d --tmpdir shell_config_review_regressions_test.XXXXXX)
+test_rm=$(type -P rm)
+test_tmp_root=${TMPDIR:-/tmp}
+test_tmp_root=${test_tmp_root%/}
+case "$fixture_root" in
+	"$test_tmp_root"/shell_config_review_regressions_test.*) ;;
+	*) printf 'Refusing to clean unexpected fixture path: %s\n' "$fixture_root" >&2; exit 1 ;;
+esac
+cleanup() {
+	"$test_rm" -rf -- "$fixture_root"
+}
+trap cleanup EXIT
+
+fail() {
+	printf 'FAIL: %s\n' "$1" >&2
+	fails=$((fails + 1))
+}
+
+require_literal() {
+	local file="$1" text="$2" description="$3"
+	rg -qF -- "$text" "$repo_root/$file" || fail "$description"
+}
+
+reject_literal() {
+	local file="$1" text="$2" description="$3"
+	rg -qF -- "$text" "$repo_root/$file" && fail "$description"
+}
+
+reject_literal .profile '$INTERACTIVE_SHELL && $LOGIN_SHELL' ".profile has no fail-open shell predicate"
+require_literal .profile '${INTERACTIVE_SHELL:-false} && ${LOGIN_SHELL:-false}' ".profile defaults shell predicates closed"
+reject_literal .envconfig '$INTERACTIVE_SHELL && $LOGIN_SHELL' ".envconfig has no fail-open shell predicate"
+require_literal .envconfig 'command -v append_dotfile_progress >/dev/null 2>&1' ".envconfig checks its optional progress adapter"
+
+reject_literal .aliases '/usr/bin/script' "log alias resolves script through PATH"
+require_literal .aliases "alias log='script -a ~/Terminal.log; source ~/.bash_profile'" "log alias retains its command after portability fix"
+require_literal .aliases "needs timeout 2>/dev/null || { needs uutils-timeout \"please install uutils-coreutils\" && alias timeout='uutils-timeout'; }" "timeout fallback alias is grouped"
+
+reject_literal .bashrc '"claude\|llm\|assistant"' "parent-agent detection has no fixed-string alternation"
+require_literal .bashrc '=~ (claude|llm|assistant)' "parent-agent detection uses Bash regular-expression alternation"
+reject_literal .bashrc 'uname -a | rev' "architecture flags do not parse uname prose"
+require_literal .bashrc 'ARCHFLAGS="-arch $(uname -m)"' "macOS architecture flags use uname -m"
+require_literal .bashrc '[ "$OS" = macos ]' "architecture flags are macOS-gated"
+reject_literal .bashrc '$is_gnu_awk &&' "GNU Awk warning is not inverted"
+require_literal .bashrc '[ "$is_gnu_awk" = false ]' "GNU Awk warning requires a non-GNU implementation"
+
+require_literal .envconfig '[[ -v BASH_INT_MAX ]] || declare -irx BASH_INT_MAX=' "maximum Bash integer is reload-safe"
+require_literal .envconfig '[[ -v BASH_INT_MIN ]] || declare -irx BASH_INT_MIN=' "minimum Bash integer is reload-safe"
+require_literal .envconfig 'if [ -t 0 ]; then' "GPG terminal is exported only from a TTY"
+require_literal .envconfig 'GPG_TTY="$(tty)"' "GPG terminal uses the active TTY"
+reject_literal .envconfig 'KERL_CONFIGURE_OPTIONS="--disable-parallel-configure --disable-debug --disable-silent-rules --without-javac --enable-shared-zlib --enable-dynamic-ssl-lib --enable-sctp --enable-threads --enable-kernel-poll --enable-wx --enable-darwin-64bit"' "Darwin kerl option is not unconditional"
+
+# shellcheck source=/dev/null # These tracked wrappers are the subject under test.
+. "$repo_root/bin/src/claude.bash"
+# shellcheck source=/dev/null
+. "$repo_root/bin/src/codex.bash"
+mkdir -p "$fixture_root/empty-path"
+saved_path=$PATH
+PATH="$fixture_root/empty-path"
+claude --version >"$fixture_root/claude.stdout" 2>"$fixture_root/claude.stderr"
+claude_rc=$?
+codex --version >"$fixture_root/codex.stdout" 2>"$fixture_root/codex.stderr"
+codex_rc=$?
+PATH=$saved_path
+[ "$claude_rc" -eq 127 ] || fail "missing Claude executable returns 127"
+[ ! -s "$fixture_root/claude.stdout" ] || fail "missing Claude executable has clean stdout"
+[ "$(<"$fixture_root/claude.stderr")" = "claude not found" ] || fail "missing Claude executable has one exact diagnostic"
+[ "$codex_rc" -eq 127 ] || fail "missing Codex executable returns 127"
+[ ! -s "$fixture_root/codex.stdout" ] || fail "missing Codex executable has clean stdout"
+[ "$(<"$fixture_root/codex.stderr")" = "codex not found" ] || fail "missing Codex executable has one exact diagnostic"
+
+exit "$fails"

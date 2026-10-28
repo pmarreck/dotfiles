@@ -194,6 +194,7 @@ annotate=[
 	bin/test/rule30_test = tests for rule30: row width, determinism, and locale-independence
 	bin/test/run_test_suite_test = Checks test discovery, exit status, parallel order, and top-level runner
 	bin/test/session_test = Pure mocked-tmux regression suite for attach, switch, argument forwarding, and session . cwd shorthand
+	bin/test/shell_config_review_regressions_test = Regression coverage for reviewed shell startup, alias, portability, and wrapper contracts
 	bin/test/shell_startup_test = Host startup coverage across Bash login, interactive, and BASH_ENV quadrants, including interactive rehash loading.
 	bin/test/shell_startup_time_test = Single real tmux/login-shell push-gate smoke with explicit multi-sample benchmark controls
 	bin/test/show_test = Classifier-set and CLI regressions for language detection, Markdown rendering, completion loading, and URL routing

@@ -17,7 +17,6 @@ Open work is listed in priority order. Completed history is in `docs/PLAN_LOG.md
 
 ## Code maintenance
 
-- [ ] Complete code-review remediation wave 2: fail-open guards, alias grouping, dead detection regex, readonly guards, warning logic, empty-path guards, portable `script`, `ARCHFLAGS`, and project-bin shadowing (context: docs/plan_context/legacy-open-work.md#active--code-review-remediation-2026-07-2425).
 - [ ] Replace unsafe `${EDIT}` expansions across the remaining 38 sites, with failing `set -u` regressions first.
 - [ ] Decide whether to finish and wire `.shellenv` or remove the orphaned refactor, accounting for login-shell order on both supported operating systems.
 - [ ] Remove `diskhogs`' unconditional sudo requirement while preserving an explicit privileged all-user mode (context: docs/plan_context/legacy-open-work.md#active--cross-platform-gpu-observability-started-2026-07-24).
@@ -36,6 +35,7 @@ Open work is listed in priority order. Completed history is in `docs/PLAN_LOG.md
 
 ## Recent completions
 
+- [x] Complete code-review remediation wave 2 with one regression suite covering fail-closed startup predicates, alias grouping, parent-agent detection, reload safety, terminal guards, portable commands, architecture flags, missing-executable wrappers, and the previously completed project-bin ordering (done 2026-10-28 11:29 EDT).
 - [x] Finish the readiness-gated development-cache policy: repository-isolated Cargo and Zig local caches, shared Zig global cache, prompt-time directory refresh, revocation after readiness loss, and live Codex/Claude environment verification (done 2026-10-28 11:22 EDT).
 - [x] Review and migrate the nine remaining legacy Claude memories into the private shared memory root, preserving their original creation instants and validating the complete index (done 2026-10-28 11:15 EDT).
 - [x] Audit the seven remaining `NOT_HERMETIC` tests: graduate JPEG, PNG, search-guard, and Mandelroc coverage; retain only three tests that intentionally inspect live terminal or installed user/system state. The Nix suite now admits 201 of 204 host tests (done 2026-10-28 11:06 EDT; commits 6d20220, d251d22, 92fc570, 30d7806; context: docs/plan_context/legacy-open-work.md#active--suite-gating-2026-07-25).

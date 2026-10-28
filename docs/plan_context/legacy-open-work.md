@@ -222,7 +222,7 @@ ASCII `^[A-Z][a-z]`, retaining acronyms and one-letter uppercase words.
 
 Driven by `CODE_REVIEW.md` (6-reviewer audit). Wave 1 + the nix-PATH bug are done.
 
-- [ ] Wave 2 (remaining): fail-open guards (`.profile:15`, `.envconfig:3`), `timeout` alias grouping (`.aliases:195`), dead LLM-detect regex (`.bashrc:71`, `rg --fixed-strings` vs BRE `\|`), readonly re-declare guard (`.envconfig:298`), inverted awk warning, `claude/codex.bash` empty-path guard, `/usr/bin/script` (`.aliases:106`), `ARCHFLAGS` (`.bashrc:178`), 🔒 `~/Code/*/bin` PATH-shadowing.
+- [x] Wave 2: fail-open guards, timeout alias grouping, parent-agent detection, readonly re-declare guards, Awk warning logic, agent-wrapper empty-path guards, portable `script`, macOS `ARCHFLAGS`, terminal-only GPG state, platform-specific kerl flags, and project-bin shadowing (completed 2026-10-28 11:29 EDT).
 - [ ] Wave 3: `${EDIT}` → `${EDIT:-}` across 38 sites / 17 files (`set -u` abort).
 - [ ] Wave 4: decide + execute `.shellenv` (orphaned half-finished refactor — finish+wire then delete live duplicates, or delete). NOTE: changes login-shell load order on BOTH OSes; only Linux is testable from here.
 
