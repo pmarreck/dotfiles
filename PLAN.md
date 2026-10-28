@@ -813,11 +813,15 @@ ASCII `^[A-Z][a-z]`, retaining acronyms and one-letter uppercase words.
   `confirm`, and it buffers all stdin before approval. Its executable currently
   defines the function without invoking it, so repair remains separate work
   before using it in an installer pipeline.
-- [ ] Repair `confirm`'s executable entry point under TDD and verify that denial
+- [x] Repair `confirm`'s executable entry point under TDD and verify that denial
   emits zero stdout bytes while approval emits the complete buffered script.
   Curiosity poke: interruption, empty input, downloader failure, temporary-file
   cleanup, and a downstream shell that starts immediately all need fail-closed
   behavior.
+  Completed 2026-10-28 04:41 EDT: direct execution now buffers before review,
+  requires an explicit yes, cleans up on signals, and emits all approved bytes
+  or none. Command mode observes producer failures and refuses partial output;
+  30 focused checks, all 201 host test files, and the hermetic Nix gate pass.
 
 ## Active — one Codex installation and updater (2026-08-04)
 

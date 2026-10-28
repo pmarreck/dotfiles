@@ -1,0 +1,183 @@
+#!/usr/bin/env bash
+# Real-PTY CLI coverage for confirm's buffered all-or-nothing output contract.
+# shellcheck disable=SC2016  # Downstream command bodies expand in child Bash.
+set -u
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+tool="$root/bin/confirm"
+tmp="$(mktemp -d "${TMPDIR:-/tmp}/confirm-test.XXXXXX")"
+scratch="$tmp/scratch"
+mkdir -p "$scratch"
+trap 'rm -rf -- "$tmp"' EXIT
+fails=0
+
+check() {
+	local label="$1"
+	shift
+	if "$@" > "$tmp/check.out" 2> "$tmp/check.err"; then
+		printf 'ok - %s\n' "$label"
+	else
+		printf 'not ok - %s\n' "$label" >&2
+		fails=$((fails + 1))
+	fi
+}
+
+run_prompt() {
+	local answer="$1" command="$2" transcript="$3"
+	env CONFIRM_TEST_ANSWER="$answer" CONFIRM_TEST_COMMAND="$command" \
+		expect > "$transcript" 2> "$tmp/expect.err" <<'EXPECT'
+set timeout 5
+log_user 1
+spawn -noecho bash -o pipefail -c $env(CONFIRM_TEST_COMMAND)
+expect {
+	-exact {Pass the complete buffered input? [y/N] } {
+		if {$env(CONFIRM_TEST_ANSWER) eq "INT"} {
+			send -- "\003"
+		} else {
+			send -- "$env(CONFIRM_TEST_ANSWER)\r"
+		}
+	}
+	eof { exit 97 }
+	timeout { exit 98 }
+}
+expect eof
+set result [wait]
+exit [lindex $result 3]
+EXPECT
+}
+
+run_downstream_prompt() {
+	local command="$1" ready="$2" received="$3" transcript="$4"
+	env CONFIRM_TEST_COMMAND="$command" CONFIRM_TEST_READY="$ready" \
+		CONFIRM_TEST_RECEIVED="$received" \
+		expect > "$transcript" 2> "$tmp/expect.err" <<'EXPECT'
+set timeout 5
+log_user 1
+spawn -noecho bash -o pipefail -c $env(CONFIRM_TEST_COMMAND)
+expect {
+	-exact {Pass the complete buffered input? [y/N] } {}
+	eof { exit 97 }
+	timeout { exit 98 }
+}
+set ready [open $env(CONFIRM_TEST_READY) r]
+gets $ready token
+close $ready
+if {$token ne "ready"} { exit 99 }
+if {![file exists $env(CONFIRM_TEST_RECEIVED)]} { exit 100 }
+if {[file size $env(CONFIRM_TEST_RECEIVED)] != 0} { exit 101 }
+send -- "y\r"
+expect eof
+set result [wait]
+exit [lindex $result 3]
+EXPECT
+}
+
+payload="$tmp/payload"
+printf '#!/usr/bin/env bash\nprintf '\''one\\ntwo\\n'\''\n' > "$payload"
+
+"$tool" --help > "$tmp/help.out" 2> "$tmp/help.err"
+status=$?
+check '--help succeeds' test "$status" = 0
+check '--help documents explicit approval' grep -Fq '[y/N]' "$tmp/help.out"
+check '--help is clean on stderr' test ! -s "$tmp/help.err"
+
+bash -c 'source "$1"; test "$(type -t confirm)" = function' _ "$tool" \
+	> "$tmp/source.out" 2> "$tmp/source.err"
+status=$?
+check 'sourcing defines the function' test "$status" = 0
+check 'sourcing is silent' test ! -s "$tmp/source.out"
+check 'sourcing has clean stderr' test ! -s "$tmp/source.err"
+
+printf -v command 'cat %q | TMPDIR=%q %q > %q' "$payload" "$scratch" "$tool" "$tmp/approved"
+run_prompt y "$command" "$tmp/approve.transcript"
+status=$?
+check 'explicit approval succeeds' test "$status" = 0
+check 'approval emits the complete input byte-for-byte' cmp -s "$payload" "$tmp/approved"
+check 'approval displays the buffered input for review' grep -Fq '#!/usr/bin/env bash' "$tmp/approve.transcript"
+
+printf -v command 'cat %q | TMPDIR=%q %q > %q' "$payload" "$scratch" "$tool" "$tmp/denied"
+run_prompt n "$command" "$tmp/deny.transcript"
+status=$?
+check 'explicit denial fails' test "$status" = 1
+check 'denial emits zero stdout bytes' test ! -s "$tmp/denied"
+
+printf -v command 'cat %q | TMPDIR=%q %q > %q' "$payload" "$scratch" "$tool" "$tmp/default-denied"
+run_prompt '' "$command" "$tmp/default-deny.transcript"
+status=$?
+check 'empty confirmation fails closed' test "$status" = 1
+check 'empty confirmation emits zero stdout bytes' test ! -s "$tmp/default-denied"
+
+classifier_fails=0
+for answer in y Y yes YES yEs; do
+	printf -v command 'cat %q | TMPDIR=%q %q > %q' "$payload" "$scratch" "$tool" "$tmp/accepted-$answer"
+	run_prompt "$answer" "$command" "$tmp/accepted-$answer.transcript"
+	status=$?
+	if [ "$status" != 0 ] || ! cmp -s "$payload" "$tmp/accepted-$answer"; then
+		classifier_fails=$((classifier_fails + 1))
+	fi
+done
+for answer in n N no NO later perhaps; do
+	printf -v command 'cat %q | TMPDIR=%q %q > %q' "$payload" "$scratch" "$tool" "$tmp/rejected-$answer"
+	run_prompt "$answer" "$command" "$tmp/rejected-$answer.transcript"
+	status=$?
+	if [ "$status" != 1 ] || [ -s "$tmp/rejected-$answer" ]; then
+		classifier_fails=$((classifier_fails + 1))
+	fi
+done
+check 'approval responses are classified over accepted and rejected sets' test "$classifier_fails" = 0
+
+printf -v command 'cat %q | TMPDIR=%q %q > %q' "$payload" "$scratch" "$tool" "$tmp/interrupted"
+run_prompt INT "$command" "$tmp/interrupt.transcript"
+status=$?
+check 'interrupt returns the conventional status' test "$status" = 130
+check 'interrupt emits zero stdout bytes' test ! -s "$tmp/interrupted"
+
+printf '' | TMPDIR="$scratch" "$tool" > "$tmp/empty.out" 2> "$tmp/empty.err"
+status=$?
+check 'empty input fails before prompting' test "$status" = 65
+check 'empty input emits zero stdout bytes' test ! -s "$tmp/empty.out"
+check 'empty input explains the failure' grep -Fq 'empty input' "$tmp/empty.err"
+
+# An empty downloader failure is indistinguishable from any other empty input,
+# but it must still fail closed when the caller enables pipefail.
+bash -o pipefail -c 'bash -c "exit 22" | TMPDIR="$1" "$2" > "$3" 2> "$4"' \
+	_ "$scratch" "$tool" "$tmp/downloader.out" "$tmp/downloader.err"
+status=$?
+check 'empty downloader failure keeps the pipeline failed' test "$status" = 65
+check 'empty downloader failure emits zero stdout bytes' test ! -s "$tmp/downloader.out"
+
+# Command mode can observe a producer that emits a dangerous partial response
+# before failing, which an ordinary byte-stream pipeline cannot communicate.
+TMPDIR="$scratch" "$tool" -- bash -c \
+	'printf "#!/usr/bin/env bash\necho partial\n"; exit 22' \
+	> "$tmp/partial.out" 2> "$tmp/partial.err"
+status=$?
+check 'command mode preserves a failing producer status' test "$status" = 22
+check 'a partial failed download emits zero stdout bytes' test ! -s "$tmp/partial.out"
+check 'a partial failed download never prompts' test "$(grep -Fc '[y/N]' "$tmp/partial.err")" = 0
+check 'a partial failed download explains the producer failure' grep -Fq 'producer failed' "$tmp/partial.err"
+
+printf -v command 'TMPDIR=%q %q -- cat %q > %q' "$scratch" "$tool" "$payload" "$tmp/command-approved"
+run_prompt yes "$command" "$tmp/command-approve.transcript"
+status=$?
+check 'successful command mode reaches approval' test "$status" = 0
+check 'successful command mode emits the complete producer output' cmp -s "$payload" "$tmp/command-approved"
+
+ready="$tmp/downstream.ready"
+received="$tmp/downstream.received"
+mkfifo "$ready"
+downstream_body=': > "$2"; printf "ready\n" > "$1"; cat > "$2"'
+printf -v command 'cat %q | TMPDIR=%q %q | bash -c %q _ %q %q' \
+	"$payload" "$scratch" "$tool" "$downstream_body" "$ready" "$received"
+run_downstream_prompt "$command" "$ready" "$received" "$tmp/downstream.transcript"
+status=$?
+check 'an already-started downstream succeeds after approval' test "$status" = 0
+check 'the downstream receives the complete approved bytes' cmp -s "$payload" "$received"
+
+leftovers="$(rg --files "$scratch")"
+check 'every temporary buffer is cleaned up' test -z "$leftovers"
+
+if [ "$fails" = 0 ]; then
+	printf 'confirm tests passed\n'
+fi
+exit "$fails"
