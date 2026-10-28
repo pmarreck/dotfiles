@@ -1488,6 +1488,11 @@ ASCII `^[A-Z][a-z]`, retaining acronyms and one-letter uppercase words.
     delegate to the isolated encryption/decryption contract. Concurrent test
     entries now receive distinct private GnuPG roots. All 196 Nix-admitted
     files and all 204 host files pass. The manifest is down to 8.
+  - Progress 2026-10-28 10:18 EDT: graduated `jpegxl`; the admission run
+    reproduced 25 failures from absent `cjxl`/`djxl`. The declared libjxl
+    toolchain now runs all 26 asserted behaviors under private state; Linux
+    mtime detection and generated adapter shebangs are fixed. All 197
+    Nix-admitted files and all 204 host files pass. The manifest is down to 7.
 - [ ] Migrate the 9 legacy memories still in `~/.claude/projects/*/memory/` into
   `~/MEMORIES` via the `memories` skill (another agent's migration is unfinished).
 

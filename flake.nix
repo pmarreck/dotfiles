@@ -58,6 +58,7 @@
           util-linux   # hexdump
           xxd
           imagemagick  # magick
+          libjxl       # cjxl, djxl
           ffmpeg       # ffmpeg, ffprobe
           tokei        # fleet-status local primary-language fallback
         ]) ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.procps ]

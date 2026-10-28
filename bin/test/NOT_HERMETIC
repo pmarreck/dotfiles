@@ -32,6 +32,5 @@ block-attribution_test
 
 # ── Requires external services, credentials, or large media toolchains ───────
 jpeg_test
-jpegxl_test
 png_test
 rg_test
