@@ -51,7 +51,6 @@ get-all-git-stati_test
 # and a Roc toolchain.
 mandelroc_test
 capture_test
-hr_test
 block-attribution_test
 
 # ── Requires external services, credentials, or large media toolchains ───────

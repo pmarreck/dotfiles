@@ -1358,6 +1358,8 @@ ASCII `^[A-Z][a-z]`, retaining acronyms and one-letter uppercase words.
   - Progress 2026-10-28 05:39 EDT: graduated `show`; its generated adapters
     use resolved interpreters, zsh completion is exercised, and the sandbox
     fixture preserves generated-artifact mtimes. The manifest is down to 32.
+  - Progress 2026-10-28 05:55 EDT: graduated `hr`; terminal-width detection now
+    runs in a deterministic 37-column PTY. The manifest is down to 31.
 - [ ] Migrate the 9 legacy memories still in `~/.claude/projects/*/memory/` into
   `~/MEMORIES` via the `memories` skill (another agent's migration is unfinished).
 
