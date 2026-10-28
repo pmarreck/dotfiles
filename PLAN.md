@@ -1385,6 +1385,9 @@ ASCII `^[A-Z][a-z]`, retaining acronyms and one-letter uppercase words.
   - Progress 2026-10-28 07:44 EDT: graduated `memhogs`; its generated `ps`
     adapter uses the resolved Bash interpreter, avoids `errexit`, and keeps help
     capture in the test-owned fixture directory. The manifest is down to 27.
+  - Progress 2026-10-28 07:52 EDT: graduated `diskhogs`; its injected `iotop`,
+    `fs_usage`, and `sudo` adapters now use the resolved Bash interpreter. The
+    manifest is down to 26.
 - [ ] Migrate the 9 legacy memories still in `~/.claude/projects/*/memory/` into
   `~/MEMORIES` via the `memories` skill (another agent's migration is unfinished).
 

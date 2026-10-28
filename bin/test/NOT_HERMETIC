@@ -15,7 +15,6 @@
 # point: it is how a test graduates to being hermetic.
 
 # ── Requires real hardware / kernel interfaces the sandbox does not expose ────
-diskhogs_test
 nethogs_test
 fingerprint_hw_os_test
 distro_pretty_test

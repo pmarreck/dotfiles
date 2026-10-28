@@ -46,6 +46,16 @@ cat <<'EOF' > "$sudo_stub"
 printf '%s\n' "$*" > "$DISKHOGS_TEST_SUDO_LOG"
 EOF
 
+set_test_shebang() {
+	local stub="$1" stub_body
+	stub_body=$(<"$stub")
+	printf '#!%s\n%s\n' "$(type -P bash)" "${stub_body#*$'\n'}" >"$stub"
+}
+
+for stub in "$iotop_stub" "$fs_usage_stub" "$sudo_stub"; do
+	set_test_shebang "$stub"
+done
+
 chmod +x "$iotop_stub" "$fs_usage_stub" "$sudo_stub"
 
 run_diskhogs() {
