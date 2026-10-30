@@ -21,6 +21,9 @@ fi
 # even when an agent runtime prepends its own rg/find/fd binaries before ~/bin.
 . "$HOME/dotfiles/bin/src/rg_guard_env.bash"
 
+# Host-side copying must not smuggle undeclared Nix-store dependencies into builds.
+. "$HOME/dotfiles/bin/src/nix_store_copy_env.bash"
+
 # XDG vars per spec: https://specifications.freedesktop.org/basedir-spec/basedir-spec-latest.html
 export XDG_STATE_HOME="$HOME/.local/state"
 export XDG_DATA_HOME="$HOME/.local/share"

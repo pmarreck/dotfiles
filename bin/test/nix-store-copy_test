@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+set -u
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)
+work=$(mktemp -d "${TMPDIR:-/tmp}/store-copy-test.XXXXXXXX") || exit 1
+trap 'command rm -rf -- "$work"' EXIT
+mkdir -p "$work/native" "$work/local" || exit 1
+export COPY_TEST_CALL="$work/call"
+unset ALLOW_NIX_STORE_COPY
+for tool in cp install rsync; do
+	# shellcheck disable=SC2016 # Variables belong to the recording child script.
+	printf '#!%s\nprintf "%%s\\0" "$@" > "$COPY_TEST_CALL"\nexit "${COPY_TEST_EXIT:-0}"\n' "$(command -v bash)" > "$work/native/$tool"
+	chmod +x "$work/native/$tool"
+done
+ln -s /nix/store "$work/store-alias"
+ln -s /nix/store/hash-package/file "$work/file-alias"
+ln -s /nix/store/hash-output "$work/result"
+ln -s /nix/store/hash-output "$work/local:alias"
+ln -s /nix/store/hash-output "$work/-store-alias"
+printf 'local bytes\n' > "$work/local/source"
+PATH="$work/native:$PATH"
+tests=0 failures=0
+check() { tests=$((tests+1)); if "$@"; then return; fi; printf 'FAIL: %s\n' "$*" >&2; failures=$((failures+1)); }
+run() { command rm -f "$COPY_TEST_CALL"; output=$("$root/bin/$tool" "$@" 2>&1); rc=$?; }
+for tool in cp install rsync; do
+	for source in /nix/store/hash-source/file /nix/store /nix/store/ "$work/store-alias/hash-source/file" "$work/file-alias" "$work/result/bin/app"; do
+		run "$source" "$work/local/target"
+		check test "$rc" -eq 77
+		check test ! -e "$COPY_TEST_CALL"
+		check test "${output#*flake.nix}" != "$output"
+		check test "${output#*CI}" != "$output"
+	done
+	for source in "$work/local/source" /nix/storehouse/file /tmp/example/nix/store/file; do
+		run -- "$source" "$work/local/target with spaces"
+		check test "$rc" -eq 0
+		printf '%s\0' -- "$source" "$work/local/target with spaces" > "$work/expected"
+		check cmp "$work/expected" "$COPY_TEST_CALL"
+	done
+	# Override is scoped to a single invocation, with a visible reason.
+	command rm -f "$COPY_TEST_CALL"
+	output=$(ALLOW_NIX_STORE_COPY='Exporting the declared release output' "$root/bin/$tool" /nix/store/hash-output/app "$work/local" 2>&1); rc=$?
+	check test "$rc" -eq 0
+	check test -e "$COPY_TEST_CALL"
+	check test "${output#*WARNING}" != "$output"
+	check test "${output#*Exporting the declared release output}" != "$output"
+	command rm -f "$COPY_TEST_CALL"
+	output=$(ALLOW_NIX_STORE_COPY=1 "$root/bin/$tool" /nix/store/hash-output/app "$work/local" 2>&1); rc=$?
+	check test "$rc" -eq 77
+	check test ! -e "$COPY_TEST_CALL"
+	for reason in '              ' $'An export\nwith hidden lines'; do
+		command rm -f "$COPY_TEST_CALL"
+		output=$(ALLOW_NIX_STORE_COPY="$reason" "$root/bin/$tool" /nix/store/hash-output/app "$work/local" 2>&1); rc=$?
+		check test "$rc" -eq 77
+		check test ! -e "$COPY_TEST_CALL"
+	done
+	output=$(COPY_TEST_EXIT=23 "$root/bin/$tool" "$work/local/source" "$work/local/target" 2>&1); rc=$?
+	check test "$rc" -eq 23
+done
+tool='cp'
+run -t "$work/local" /nix/store/hash-source/file
+check test "$rc" -eq 77
+run --target-directory="$work/local" /nix/store/hash-source/file
+check test "$rc" -eq 77
+run -- /nix/store/../store/hash-source/file "$work/local"
+check test "$rc" -eq 77
+tool=rsync
+run -a host:/nix/store/hash-source/ "$work/local"
+check test "$rc" -eq 77
+run --files-from=/nix/store/hash-source/list "$work/local/source" "$work/local/target"
+check test "$rc" -eq 77
+# Relative paths beneath a symlinked store directory must also be rejected.
+output=$(cd "$work" && "$root/bin/cp" result/bin/app local/target 2>&1); rc=$?
+check test "$rc" -eq 77
+output=$(cd "$work" && "$root/bin/cp" local:alias/bin/app local/target 2>&1); rc=$?
+check test "$rc" -eq 77
+output=$(cd "$work" && "$root/bin/cp" -- -store-alias/bin/app local/target 2>&1); rc=$?
+check test "$rc" -eq 77
+# Exported functions cover a child shell with a different executable first on PATH.
+mkdir -p "$work/home"
+ln -s "$root/bin" "$work/home/bin"
+output=$(HOME="$work/home" bash -c 'source "$1"; bash -c '\''cp /nix/store/hash-source/file "$2"'\'' bash unused "$2"' bash "$root/bin/src/nix_store_copy_env.bash" "$work/local/target" 2>&1); rc=$?
+check test "$rc" -eq 77
+# Exercise the real native copy adapter using only disposable local files.
+native_path=''
+while IFS= read -r candidate; do
+	[[ $candidate == "$work/native/cp" || $candidate -ef "$root/bin/cp" ]] && continue
+	native_path=${candidate%/*}; break
+done < <(type -a -p cp)
+check test -n "$native_path"
+output=$(PATH="$native_path:$PATH" "$root/bin/cp" "$work/local/source" "$work/local/actual-copy" 2>&1); rc=$?
+check test "$rc" -eq 0
+check cmp "$work/local/source" "$work/local/actual-copy"
+printf '%s checks, %s failures\n' "$tests" "$failures"
+test "$failures" -eq 0

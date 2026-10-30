@@ -4,6 +4,8 @@ Open work is listed in priority order. Completed history is in `docs/PLAN_LOG.md
 
 ## Current
 
+- [x] Block ad hoc Nix-store copies through cp/install/rsync and inherited Bash functions; explain pinned flake staging, require reasoned export exceptions, and pass 135 focused checks plus all 205 Nix test files (context: docs/nix-store-copy-guard.md; done 2026-10-30 13:52 EDT).
+
 - [x] Add configurable shared-repository branch/worktree caps with warn-at-four/max-at-five/refuse-six defaults; existing work is preserved, concurrent creation and custom hooks are covered, 60 focused checks and all 204 Nix test files pass (done 2026-10-28 13:39 EDT).
 - [x] Close alias-level hook override and background-hook lock retention regressions; preserve ordinary hook configuration and release owned locks explicitly, with 64 focused checks and all 204 Nix test files passing (done 2026-10-28 13:47 EDT).
 
@@ -41,6 +43,5 @@ Open work is listed in priority order. Completed history is in `docs/PLAN_LOG.md
 - [x] Complete code-review remediation wave 2 with one regression suite covering fail-closed startup predicates, alias grouping, parent-agent detection, reload safety, terminal guards, portable commands, architecture flags, missing-executable wrappers, and the previously completed project-bin ordering (done 2026-10-28 11:29 EDT).
 - [x] Finish the readiness-gated development-cache policy: repository-isolated Cargo and Zig local caches, shared Zig global cache, prompt-time directory refresh, revocation after readiness loss, and live Codex/Claude environment verification (done 2026-10-28 11:22 EDT).
 - [x] Review and migrate the nine remaining legacy Claude memories into the private shared memory root, preserving their original creation instants and validating the complete index (done 2026-10-28 11:15 EDT).
-- [x] Audit the seven remaining `NOT_HERMETIC` tests: graduate JPEG, PNG, search-guard, and Mandelroc coverage; retain only three tests that intentionally inspect live terminal or installed user/system state. The Nix suite now admits 201 of 204 host tests (done 2026-10-28 11:06 EDT; commits 6d20220, d251d22, 92fc570, 30d7806; context: docs/plan_context/legacy-open-work.md#active--suite-gating-2026-07-25).
 - [x] Migrate the legacy plan to the planning-work format, preserving completed history and open-item context in their canonical homes (done 2026-10-28 10:31 EDT; commit e837c79).
 - [x] Globally prioritize every current `$CODE/*/bin/$PF` directory ahead of every general project bin while retaining unmigrated and legacy command paths behind both groups (done 2026-10-28 10:25 EDT; commit d3fa0b6).

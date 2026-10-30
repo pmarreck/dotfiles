@@ -286,3 +286,7 @@ Completed PLAN.md items retired by plan-retire, oldest retirement first.
   - Curiosity poke: Codex persists CLI trust overrides in `config.toml`; tests must use real project roots or clean their temporary entries afterward.
 - [x] [Recent] Make `erect-agent-stack --agent codex` bypass first-run project trust, recognize Codex readiness, and submit `--ping` via bracketed paste plus a plain Enter without timing sleeps. (2026-07-17 10:10 EDT)
 - [x] [Recent] Preserve NixOS privileged-wrapper precedence when rebuilding PATH, with a regression test for `sudo`. (2026-07-10 14:51 EDT)
+
+## Retired 2026-10-30
+
+- [x] [Recent completions] Audit the seven remaining `NOT_HERMETIC` tests: graduate JPEG, PNG, search-guard, and Mandelroc coverage; retain only three tests that intentionally inspect live terminal or installed user/system state. The Nix suite now admits 201 of 204 host tests (done 2026-10-28 11:06 EDT; commits 6d20220, d251d22, 92fc570, 30d7806; context: docs/plan_context/legacy-open-work.md#active--suite-gating-2026-07-25).

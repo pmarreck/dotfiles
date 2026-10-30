@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+# Shared cp/install/rsync accident guard. This is not a security sandbox.
+set -u
+tool=${0##*/}
+case "$tool" in cp|install|rsync) ;; *) exit 64 ;; esac
+
+refuse() {
+	printf '%s: REFUSING ad hoc Nix-store copy: %q\n' "$tool" "$1" >&2
+	# shellcheck disable=SC2016 # These are Nix references, not shell expansions.
+	printf '%s\n' \
+		'Copying an undeclared store dependency hides its source, version and build inputs.' \
+		'A local copy may work while clean CI or another platform cannot reproduce it.' \
+		'Declare a pinned input/package in flake.nix and stage it inside the derivation' \
+		'using the declared Nix reference (for example ${inputs.engine} or ${pkgs.foo}).' \
+		'Use nix build to obtain outputs; do not scavenge dependencies from the store.' \
+		'For an intentional export/inspection copy, set ALLOW_NIX_STORE_COPY to a' \
+		'specific reason for this command only. Never use it to hide an undeclared dependency.' >&2
+	exit 77
+}
+
+real=''
+while IFS= read -r candidate; do
+	[[ -f $candidate && -x $candidate && ! $candidate -ef ${BASH_SOURCE[0]} ]] || continue
+	real=$candidate
+	break
+done < <(type -a -p "$tool" 2>/dev/null)
+if [[ -z $real ]]; then
+	printf '%s: underlying executable not found on PATH\n' "$tool" >&2
+	exit 127
+fi
+
+resolver=''
+for command_name in realpath grealpath; do
+	if command -v "$command_name" >/dev/null 2>&1; then
+		# Require GNU -m: resolve symlink ancestors even for a missing leaf.
+		if "$command_name" -m -- / >/dev/null 2>&1; then resolver=$command_name; break; fi
+	fi
+done
+
+store_operand=''
+end_options=false
+for operand in "$@"; do
+	if ! "$end_options" && [[ $operand == -- ]]; then end_options=true; continue; fi
+	path=$operand
+	# Conservatively inspect path-valued options too, without rewriting argv.
+	if ! "$end_options"; then
+		case "$path" in --*=*) path=${path#*=} ;; esac
+	fi
+	case "$path" in
+		/nix/store|/nix/store/*|*:/nix/store|*:/nix/store/*) store_operand=$operand; break ;;
+	esac
+	# After --, a leading dash is a filename. Colons are local for cp/install.
+	if ! "$end_options" && [[ $path == -* ]]; then continue; fi
+	if [[ $tool == rsync && $path != /* && $path == *:* ]]; then continue; fi
+	if [[ -z $resolver ]]; then
+		printf '%s: GNU realpath is required to check Nix-store symlink aliases; add coreutils to the Nix environment.\n' "$tool" >&2
+		exit 77
+	fi
+	resolved=$("$resolver" -m -- "$path" 2>/dev/null) || {
+		printf '%s: cannot resolve copy operand %q safely\n' "$tool" "$path" >&2
+		exit 77
+	}
+	case "$resolved" in /nix/store|/nix/store/*) store_operand=$operand; break ;; esac
+done
+
+if [[ -n $store_operand ]]; then
+	reason=${ALLOW_NIX_STORE_COPY:-}
+	# A reason, not a boolean switch; keep warnings one line and terminal-safe.
+	if (( ${#reason} < 12 )) || [[ ! $reason =~ [[:alnum:]]+.*[[:space:]]+[[:alnum:]]+ || $reason == *[[:cntrl:]]* ]]; then
+		refuse "$store_operand"
+	fi
+	printf '%s: WARNING: Nix-store copy override: %s\n' "$tool" "$reason" >&2
+fi
+exec "$real" "$@"
