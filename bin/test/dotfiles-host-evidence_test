@@ -40,6 +40,25 @@ mkdir -p "$work/empty-path-prefix"
 PATH="$work/empty-path-prefix:$PATH" \
 	"$gate" --verify "$work/repo" "$first" >"$work/output" 2>&1; rc=$?
 check test "$rc" = 0
+native_git=''
+while IFS= read -r candidate; do
+	[[ "$candidate" -ef "$root/bin/git" ]] && continue
+	native_git=$candidate
+	break
+done < <(type -a -p git)
+mkdir -p "$work/alternate-git"
+printf '#!%s\nexec %q "$@"\n' "$BASH" "$native_git" >"$work/alternate-git/git"
+chmod +x "$work/alternate-git/git"
+PATH="$work/alternate-git:$PATH" \
+	"$gate" --verify "$work/repo" "$first" >"$work/output" 2>&1; rc=$?
+check test "$rc" = 0
+resolved_bash=$(command -v bash)
+mkdir -p "$work/alternate-bash"
+printf '#!%s\nexec %q "$@"\n' "$BASH" "$resolved_bash" >"$work/alternate-bash/bash"
+chmod +x "$work/alternate-bash/bash"
+PATH="$work/alternate-bash:$PATH" \
+	"$gate" --verify "$work/repo" "$first" >"$work/output" 2>&1; rc=$?
+check test "$rc" = 0
 FAKE_NIX_VERSION='nix fixture 2' \
 	"$gate" --verify "$work/repo" "$first" >"$work/output" 2>&1; rc=$?
 check test "$rc" != 0

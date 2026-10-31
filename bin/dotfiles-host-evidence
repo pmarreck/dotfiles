@@ -22,10 +22,9 @@ if not osname or not arch then refuse('unsupported Nix host platform') end
 local function tool_identity(name,version_argument)
 	local path=run('command -v '..q(name))
 	if not path then refuse('cannot find required host runtime: '..name) end
-	local resolved=run('readlink -f '..q(path)) or run('realpath '..q(path)) or path
 	local version=run(q(path)..' '..version_argument..' 2>&1 | head -n 1')
 	if not version or version=='' then refuse('cannot identify host runtime version: '..name) end
-	return table.concat({name,path,resolved,version},'|')
+	return table.concat({name,version},'|')
 end
 local runtimes=table.concat({
 	tool_identity('bash','--version'),
@@ -35,7 +34,7 @@ local runtimes=table.concat({
 },'\n')
 local kernel=run('uname -a'); if not kernel then refuse('cannot identify host kernel') end
 local profile=run('readlink -f /run/current-system') or ''
-local identity=table.concat({'host-tests-v4',root,sha,osname,arch,runtimes,kernel,profile},'\n')
+local identity=table.concat({'host-tests-v6',root,sha,osname,arch,runtimes,kernel,profile},'\n')
 local key=run('printf %s '..q(identity)..' | git hash-object --stdin'); if not key then refuse('cannot hash test identity') end
 if action=='--key' then print(key); os.exit(0) end
 local directory=(os.getenv('XDG_STATE_HOME') or (assert(os.getenv('HOME'))..'/.local/state'))..'/dotfiles-host-evidence'
