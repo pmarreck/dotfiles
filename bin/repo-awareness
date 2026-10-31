@@ -1,0 +1,150 @@
+#!/usr/bin/env luajit
+-- Shared Git measurements and policy; harness adapters only select events/output.
+local json = require('cjson.safe')
+local ffi = require('ffi')
+ffi.cdef[[int open(const char*, int, ...); int close(int); int flock(int,int); int getpid(void);]]
+local function quote(s) return "'" .. s:gsub("'", "'\\''") .. "'" end
+local function run(s)
+	-- Lua 5.1 popen:close is not a portable child-exit-status interface.
+	local p = io.popen('('..s..') 2>/dev/null; printf "\\0%s" "$?"', 'r'); if not p then return nil end
+	local data = p:read('*a'); p:close()
+	local body,status=data:match('^(.*)%z(%d+)$'); if status=='0' then return body end
+end
+local function trim(s) return s and s:gsub('[\r\n]+$', '') end
+local function read(path) local f=io.open(path,'rb'); if not f then return nil end; local s=f:read('*a'); f:close(); return s end
+local function git(root, args) return run('git -C '..quote(root)..' '..args) end
+local mode, repo, harness = 'hook', '.', 'claude'
+local i=1
+while i<=#arg do
+	local a=arg[i]
+	if a=='--json' then mode='json'
+	elseif a=='--commit' then mode='commit'
+	elseif a=='--repo' or a=='--harness' then
+		i=i+1; if not arg[i] then error('missing '..a..' value') end
+		if a=='--repo' then repo=arg[i] else harness=arg[i] end
+	elseif a=='--help' then
+		print('repo-awareness [--json | --commit] [--repo PATH] [--harness codex|claude|grok|gemini]\nHook mode reads event JSON. Counts use cached upstream refs, never fetch.'); os.exit(0)
+	else error('unknown argument: '..a) end
+	i=i+1
+end
+-- Grok imports Claude settings. Its prompt hooks discard context, so imported
+-- adapters must obey the host's event contract too, sharing one debounce key.
+if os.getenv('GROK_SESSION_ID') then harness='grok' end
+local input={}
+if mode=='hook' then
+	input=json.decode(io.read('*a') or '') or {}
+	repo=input.cwd or input.current_working_directory or input.workspace_dir or input.workspaceRoot or os.getenv('PWD') or '.'
+end
+local root=trim(git(repo,'rev-parse --show-toplevel')); if not root then os.exit(0) end
+local function setting(env, key, default)
+	local v=os.getenv(env) or trim(git(root,'config --get '..key))
+	local n=tonumber(v); if n and n>=1 and n==math.floor(n) then return n end
+	return default
+end
+local threshold=setting('REPO_DIRTY_LINES','repoAwareness.dirtyLines',500)
+local interval=setting('REPO_DIRTY_INTERVAL','repoAwareness.dirtyInterval',3600)
+local function docs(path) return path:lower():match('%.md$') ~= nil end
+local function counts(diff)
+	local added,removed,binary=0,0,0
+	for row in (diff or ''):gmatch('([^%z]+)%z') do
+		local a,b,path=row:match('^([^\t]+)\t([^\t]+)\t(.*)$')
+		if path and not docs(path) then
+			if a=='-' then binary=binary+1 else added=added+tonumber(a); removed=removed+tonumber(b) end
+		end
+	end
+	return added,removed,binary
+end
+local function collect()
+	local s={added=0,removed=0,binary_files=0,untracked_unmeasured=0,threshold=threshold}
+	s.branch=trim(git(root,'symbolic-ref --quiet --short HEAD')); s.detached=not s.branch
+	s.upstream=trim(git(root,"rev-parse --abbrev-ref --symbolic-full-name '@{u}'"))
+	if s.upstream then
+		local b,a=(git(root,'rev-list --left-right --count '..quote(s.upstream..'...HEAD')) or ''):match('(%d+)%s+(%d+)')
+		s.behind=tonumber(b); s.ahead=tonumber(a)
+	end
+	local has_head=git(root,'rev-parse --verify HEAD')~=nil
+	-- Disable external diff/textconv; rename detection off keeps NUL records simple.
+	local prefix='-c core.fsmonitor=false diff --no-ext-diff --no-textconv --no-renames --numstat -z '
+	local diff=has_head and git(root,prefix..'HEAD --') or ''
+	s.incomplete=diff==nil
+	s.added,s.removed,s.binary_files=counts(diff)
+	local staged=git(root,prefix..'--cached --')
+	local sa,sr=counts(staged); s.staged_lines=sa+sr
+	if not staged then s.incomplete=true end
+	local untracked=git(root,'ls-files --others --exclude-standard -z'..(has_head and '' or ' --cached --deduplicate'))
+	if not untracked then s.incomplete=true end
+	local budget=4*1024*1024
+	for path in (untracked or ''):gmatch('([^%z]+)%z') do
+		if not docs(path) then
+			-- Never follow an untracked symlink into arbitrary user data or a device.
+			local safe=run('test -f '..quote(root..'/'..path)..' && test ! -L '..quote(root..'/'..path)..' && printf yes')
+			local f=safe and budget>0 and io.open(root..'/'..path,'rb')
+			if f then
+				local data=f:read(budget+1) or ''; f:close()
+				if #data>budget then s.untracked_unmeasured=s.untracked_unmeasured+1; budget=0
+				else
+					budget=budget-#data
+					if data:find('\0',1,true) then s.binary_files=s.binary_files+1
+					else local _,n=data:gsub('\n',''); if #data>0 and data:sub(-1)~='\n' then n=n+1 end; s.added=s.added+n end
+				end
+			else s.untracked_unmeasured=s.untracked_unmeasured+1 end
+		end
+	end
+	s.changed_lines=s.added+s.removed
+	-- Net changes and staged changes overlap; never add them together.
+	s.pending_lines=math.max(s.changed_lines,s.staged_lines)
+	return s
+end
+local function message(s)
+	local msg=string.format('Git checkpoint: %d uncommitted non-Markdown line changes (+%d/-%d, net HEAD to working tree, including untracked text); %s ahead, %s behind.',s.changed_lines,s.added,s.removed,tostring(s.ahead or 'unknown'),tostring(s.behind or 'unknown'))
+	msg=msg..string.format(' Index separately contains %d changed lines (not added to the net count).',s.staged_lines)
+	if s.binary_files>0 or s.untracked_unmeasured>0 or s.incomplete then msg=msg..string.format(' Also %d binary files and %d unmeasured untracked files; incomplete counts are not a clean bill of health.',s.binary_files,s.untracked_unmeasured) end
+	if s.detached then msg=msg..' Detached HEAD; preserve work before choosing a branch.' end
+	if s.pending_lines>=threshold then msg=msg..' ALERT: Get a coherent increment to a valid green test state, then commit. Do not remove, skip, weaken or hide test coverage to get green.' end
+	if (s.ahead or 0)>1 then msg=msg..' ALERT: With valid test evidence, consider a push/sync.' end
+	if (s.behind or 0)>0 then msg=msg..' NOTICE: Remote commits are not integrated; fetch and reconcile without discarding local work.' end
+	if s.upstream then msg=msg..' Counts use cached '..s.upstream..'; no fetch was performed.' else msg=msg..' No usable upstream: divergence is unknown, not zero.' end
+	return msg
+end
+if mode~='hook' then
+	local s=collect(); print(mode=='json' and assert(json.encode(s)) or message(s)); os.exit(0)
+end
+local event=input.hook_event_name or input.hookEventName or input.event or 'PostToolUse'
+local session=input.session_id or input.sessionId or input.thread_id or input.threadId or input.conversation_id or os.getenv('GROK_SESSION_ID') or 'default'
+local directory=(os.getenv('XDG_STATE_HOME') or ((os.getenv('HOME') or '.')..'/.local/state'))..'/repo-awareness'
+if not run('mkdir -p '..quote(directory)) then os.exit(0) end
+local key=trim(run('printf %s '..quote(session..'\n'..root)..' | git hash-object --stdin')); if not key then os.exit(0) end
+local path=directory..'/'..key
+local fd=ffi.C.open(path..'.lock',2+(jit.os=='OSX' and 512 or 64),ffi.cast('int',384))
+if fd<0 then os.exit(0) end
+if ffi.C.flock(fd,2+4)~=0 then ffi.C.close(fd); os.exit(0) end
+local state=json.decode(read(path) or '') or {}
+local now=tonumber(os.getenv('REPO_AWARENESS_NOW')) or os.time()
+local function save()
+	local temp=path..'.'..tostring(ffi.C.getpid()); local f=io.open(temp,'wb')
+	if f then f:write(assert(json.encode(state))); f:close(); os.rename(temp,path) end
+end
+local marker=event=='PreCompact' or event=='PostCompact' or event=='PreCompress'
+if marker then state.compacted=true; save(); ffi.C.close(fd); os.exit(0) end
+local force=(event=='SessionStart' and input.source=='compact') or state.compacted
+-- Grok drops prompt-hook context. Never consume its pending notification there.
+if harness=='grok' and event~='PostToolUse' and event~='PreToolUse' then ffi.C.close(fd); os.exit(0) end
+local deadline=math.min((state.dirty_at or math.huge)+interval,(state.drift_at or math.huge)+3600)
+if not force and now<deadline and state.sample and now-(state.sample_at or 0)<30 and now>=(state.sample_at or 0) then ffi.C.close(fd); os.exit(0) end
+local s=collect(); state.sample=s; state.sample_at=now
+local function due(name,active,seconds)
+	if not active then state[name]=nil; return false end
+	if not state[name] or now-state[name]>=seconds or now<state[name] then return true end
+	return false
+end
+local drift=(s.ahead or 0)>1 or (s.behind or 0)>0
+local dirty_due=due('dirty_at',s.pending_lines>=threshold,interval)
+local drift_due=due('drift_at',drift,3600)
+local emit=force or dirty_due or drift_due
+if emit then
+	if s.pending_lines>=threshold then state.dirty_at=now end
+	if drift then state.drift_at=now end
+	state.compacted=nil
+end
+save(); ffi.C.close(fd)
+if emit then print(assert(json.encode({hookSpecificOutput={hookEventName=event,additionalContext=message(s)}}))) end

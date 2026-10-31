@@ -4,6 +4,9 @@ Open work is listed in priority order. Completed history is in `docs/PLAN_LOG.md
 
 ## Current
 
+- [x] Deliver shared 500-line/hourly repository advisories and commit/compaction adapters; installed backed-up configurations, passed 43 focused assertions and all 207 Nix test files in 53 seconds; actual context delivery after each harness reload remains to be observed (context: docs/repository-awareness.md; done 2026-10-31 09:35 EDT).
+- [ ] Choose cached exact-revision Nix evidence versus CI-only merge/release enforcement before implementing the new hard gate; never automatically rerun a full suite inside that gate (context: docs/repository-awareness.md).
+
 - [x] Block ad hoc Nix-store copies through cp/install/rsync and inherited Bash functions; explain pinned flake staging, require reasoned export exceptions, and pass 135 focused checks plus all 205 Nix test files (context: docs/nix-store-copy-guard.md; done 2026-10-30 13:52 EDT).
 
 - [x] Add configurable shared-repository branch/worktree caps with warn-at-four/max-at-five/refuse-six defaults; existing work is preserved, concurrent creation and custom hooks are covered, 60 focused checks and all 204 Nix test files pass (done 2026-10-28 13:39 EDT).
@@ -44,4 +47,3 @@ Open work is listed in priority order. Completed history is in `docs/PLAN_LOG.md
 - [x] Finish the readiness-gated development-cache policy: repository-isolated Cargo and Zig local caches, shared Zig global cache, prompt-time directory refresh, revocation after readiness loss, and live Codex/Claude environment verification (done 2026-10-28 11:22 EDT).
 - [x] Review and migrate the nine remaining legacy Claude memories into the private shared memory root, preserving their original creation instants and validating the complete index (done 2026-10-28 11:15 EDT).
 - [x] Migrate the legacy plan to the planning-work format, preserving completed history and open-item context in their canonical homes (done 2026-10-28 10:31 EDT; commit e837c79).
-- [x] Globally prioritize every current `$CODE/*/bin/$PF` directory ahead of every general project bin while retaining unmigrated and legacy command paths behind both groups (done 2026-10-28 10:25 EDT; commit d3fa0b6).

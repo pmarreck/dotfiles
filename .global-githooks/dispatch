@@ -3,6 +3,10 @@
 set -u
 hook=${0##*/}
 root=$(cd "$(dirname "$0")/.." && pwd -P) || exit 2
+if [[ $hook == post-commit && ${REPO_AWARENESS_REPORTED:-0} != 1 ]]; then
+	"$root/bin/repo-awareness" --commit >&2 || printf 'Repository awareness unavailable; commit was preserved.\n' >&2
+	export REPO_AWARENESS_REPORTED=1
+fi
 case "$hook" in
 	pre-commit|pre-merge-commit)
 		"$root/bin/git-staged-gates" || exit "$?"

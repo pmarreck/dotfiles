@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+set -u
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)
+work=$(mktemp -d "${TMPDIR:-/tmp}/awareness-install.XXXXXXXX") || exit 1
+trap 'command rm -rf -- "$work"' EXIT
+export HOME="$work/home"
+mkdir -p "$HOME/.codex" "$HOME/.claude"
+printf '%s\n' '{"keep":[],"hooks":{"PostToolUse":[{"hooks":[{"type":"command","command":"keep-me"},{"type":"command","command":"$HOME/dotfiles/bin/git-remote-drift-hook"}]}]}}' > "$HOME/.codex/hooks.json"
+printf '%s\n' '{"permissions":{"allow":[]}}' > "$HOME/.claude/settings.json"
+failures=0 checks=0
+check() { checks=$((checks+1)); if "$@"; then return; fi; printf 'FAIL %s\n' "$*" >&2; failures=$((failures+1)); }
+output=$("$root/bin/install-repo-awareness-hooks" 2>&1); status=$?
+check test "$status" = 0
+check jq -e '.keep == [] and ([.hooks.PostToolUse[].hooks[].command] | any(. == "keep-me"))' "$HOME/.codex/hooks.json" >/dev/null
+check jq -e '[.hooks.PostToolUse[].hooks[].command] | all(contains("git-remote-drift-hook") | not)' "$HOME/.codex/hooks.json" >/dev/null
+check jq -e '[.hooks.SessionStart[] | select(.matcher == "compact")] | length == 1' "$HOME/.codex/hooks.json" >/dev/null
+check jq -e '.permissions.allow == []' "$HOME/.claude/settings.json" >/dev/null
+check jq -e '.hooks.PreCompress[0].hooks[0].timeout == 5000' "$HOME/.gemini/settings.json" >/dev/null
+check jq -e '.hooks.PostCompact[0].hooks[0].command | contains("--harness grok")' "$HOME/.grok/hooks/repo-awareness.json" >/dev/null
+first=$(cat "$HOME/.codex/hooks.json")
+output=$("$root/bin/install-repo-awareness-hooks" 2>&1); status=$?
+check test "$status" = 0
+check test "$output" = 'Repository awareness hooks already current.'
+check test "$(cat "$HOME/.codex/hooks.json")" = "$first"
+# Bad existing JSON must not erase settings, or partially replace earlier files.
+printf 'broken' > "$HOME/.claude/settings.json"
+output=$("$root/bin/install-repo-awareness-hooks" 2>&1); status=$?
+check test "$status" != 0
+check test "$(cat "$HOME/.claude/settings.json")" = broken
+check test "$(cat "$HOME/.codex/hooks.json")" = "$first"
+printf '%s checks, %s failures\n' "$checks" "$failures"
+test "$failures" = 0

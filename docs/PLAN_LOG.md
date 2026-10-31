@@ -290,3 +290,7 @@ Completed PLAN.md items retired by plan-retire, oldest retirement first.
 ## Retired 2026-10-30
 
 - [x] [Recent completions] Audit the seven remaining `NOT_HERMETIC` tests: graduate JPEG, PNG, search-guard, and Mandelroc coverage; retain only three tests that intentionally inspect live terminal or installed user/system state. The Nix suite now admits 201 of 204 host tests (done 2026-10-28 11:06 EDT; commits 6d20220, d251d22, 92fc570, 30d7806; context: docs/plan_context/legacy-open-work.md#active--suite-gating-2026-07-25).
+
+## Retired 2026-10-31
+
+- [x] [Recent completions] Globally prioritize every current `$CODE/*/bin/$PF` directory ahead of every general project bin while retaining unmigrated and legacy command paths behind both groups (done 2026-10-28 10:25 EDT; commit d3fa0b6).

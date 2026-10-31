@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P) || exit 2
+if [[ ${REPO_AWARENESS_REPORTED:-0} != 1 ]]; then
+	"$root/bin/repo-awareness" --commit >&2 || printf 'Repository awareness unavailable; commit was preserved.\n' >&2
+fi
+exit 0
