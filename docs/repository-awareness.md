@@ -148,9 +148,10 @@ result, supplemental host execution time and total wall time separately.
 
 A clean successful `./test` records a host qualification under
 `$XDG_STATE_HOME/dotfiles-host-evidence` (with the usual HOME fallback), keyed by
-repository, exact commit, kernel, system profile, PATH, and the resolved Bash,
-Nix, Git and LuaJIT executables and versions actually used by the host phase. It
-does not evaluate an unused development shell. A real rerun invalidates the old
+repository, exact commit, kernel, system profile, and the resolved Bash, Nix,
+Git and LuaJIT executables and versions actually used by the host phase. Raw
+PATH ordering is not identity when it resolves those same runtimes. The key does
+not evaluate an unused development shell. A real rerun invalidates the old
 qualification before testing; failure leaves it invalid. Checkout/runtime
 changes prevent recording success. Injected
 test runners never create qualifications. These local receipts are writable

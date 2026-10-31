@@ -36,6 +36,10 @@ check test "$rc" != 0
 check test "$rc" = 0
 "$gate" --verify "$work/repo" "$first" >"$work/output" 2>&1; rc=$?
 check test "$rc" = 0
+mkdir -p "$work/empty-path-prefix"
+PATH="$work/empty-path-prefix:$PATH" \
+	"$gate" --verify "$work/repo" "$first" >"$work/output" 2>&1; rc=$?
+check test "$rc" = 0
 FAKE_NIX_VERSION='nix fixture 2' \
 	"$gate" --verify "$work/repo" "$first" >"$work/output" 2>&1; rc=$?
 check test "$rc" != 0
