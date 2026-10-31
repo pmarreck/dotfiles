@@ -14,7 +14,7 @@ git -C "$work/repo" add .
 git -C "$work/repo" commit -qm initial > "$work/commit.log" 2>&1 || exit 1
 first=$(git -C "$work/repo" rev-parse HEAD)
 # shellcheck disable=SC2016 # Generated adapter expands these at runtime.
-printf '#!%s\nif [[ $1 == develop ]]; then while (($#)); do if [[ $1 == -c ]]; then shift; exec "$@"; fi; shift; done; exit 99; fi\nprintf "%%s" "${FAKE_SHELL_DRV:-/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-shell.drv}"\n' "$BASH" > "$work/bin/nix"
+printf '#!%s\nif [[ $1 == eval ]]; then printf "%%s" "${FAKE_SHELL_DRV:-/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-shell.drv}"; exit; fi\nif [[ $1 == --version ]]; then printf "%%s\\n" "${FAKE_NIX_VERSION:-nix fixture 1}"; exit; fi\nexit 99\n' "$BASH" > "$work/bin/nix"
 chmod +x "$work/bin/nix"
 PATH="$work/bin:$PATH"
 gate="$root/bin/dotfiles-host-evidence"
@@ -36,7 +36,7 @@ check test "$rc" != 0
 check test "$rc" = 0
 "$gate" --verify "$work/repo" "$first" >"$work/output" 2>&1; rc=$?
 check test "$rc" = 0
-FAKE_SHELL_DRV=/nix/store/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-shell.drv \
+FAKE_NIX_VERSION='nix fixture 2' \
 	"$gate" --verify "$work/repo" "$first" >"$work/output" 2>&1; rc=$?
 check test "$rc" != 0
 git -C "$work/repo" commit -qm second --allow-empty > "$work/commit.log" 2>&1 || exit 1
