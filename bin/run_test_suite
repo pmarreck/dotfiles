@@ -12,6 +12,9 @@ Options:
 	-h, --help       Show this help message
 	--test           Run the runner's associated tests
 	--test-dir DIR   Discover tests in DIR instead of bin/test
+	--manifest FILE  Run exactly the tests named by FILE
+	--exclude-manifest FILE
+	                 Run the exact complement of FILE
 	-j, --jobs N     Run N test files concurrently (default 16, or
 	                 $RUN_TEST_SUITE_JOBS). Use 1 for serial execution.
 	                 Results are always reported in discovery order, so
@@ -19,6 +22,22 @@ Options:
 
 The compatibility command test_dotfiles invokes this same runner.
 EOF
+}
+
+_run_test_suite_write_result() {
+	local destination="$1" status="$2" total="$3" passed="$4" failed="$5" summed_status="$6"
+	local directory temporary
+	directory=${destination%/*}
+	[[ "$directory" == "$destination" ]] && directory=.
+	temporary=$(mktemp "$directory/.run-test-suite-result.XXXXXXXX") || return 1
+	{
+		printf 'run-test-suite-result-v1\n'
+		printf 'status=%s\n' "$status"
+		printf 'total=%s\n' "$total"
+		printf 'passed=%s\n' "$passed"
+		printf 'failed=%s\n' "$failed"
+		printf 'summed_status=%s\n' "$summed_status"
+	} >"$temporary" && mv -- "$temporary" "$destination"
 }
 
 run_test_suite() {
@@ -30,12 +49,17 @@ run_test_suite() {
 	local test_files=()
 	local test_file
 	local test_name
+	local manifest_file=
+	local manifest_mode=
+	local manifest_entries=()
 	local status
 	local summed_status=0
 	local passed=0
 	local failed=0
 	local total
 	local index=0
+	local result_file="${RUN_TEST_SUITE_RESULT_FILE:-}"
+	local result_status=failed
 	# Progress is deliberately separate from the deterministic report below.
 	# The pre-push gate sends this fd straight to the terminal while retaining
 	# stdout/stderr as the failure report. Direct runs default to stderr.
@@ -45,6 +69,10 @@ run_test_suite() {
 	# Keep the pool explicitly bounded: using every core made a tmux-dependent test
 	# race its own session startup. `--jobs 1` restores fully serial execution.
 	local jobs="${RUN_TEST_SUITE_JOBS:-16}"
+	if [[ -n "$result_file" ]] && ! _run_test_suite_write_result "$result_file" pending 0 0 0 0; then
+		printf 'Error: cannot initialize runner result: %s\n' "$result_file" >&2
+		return 2
+	fi
 	# `wait -n` is the pool primitive and needs bash 4.3+. Rather than emit subtly
 	# wrong results on an older bash, fall back to serial.
 	if (( BASH_VERSINFO[0] < 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] < 3) )); then
@@ -67,6 +95,19 @@ run_test_suite() {
 					return 2
 				fi
 				test_dir="$2"
+				shift 2
+				;;
+			--manifest | --exclude-manifest)
+				if (( $# < 2 )); then
+					printf 'Error: %s requires a readable manifest file.\n' "$1" >&2
+					return 2
+				fi
+				if [[ -n "$manifest_mode" ]]; then
+					printf 'Error: only one manifest selection mode may be used.\n' >&2
+					return 2
+				fi
+				manifest_mode=$1
+				manifest_file=$2
 				shift 2
 				;;
 			-j | --jobs)
@@ -109,6 +150,61 @@ run_test_suite() {
 		return 2
 	fi
 
+	if [[ -n "$manifest_mode" ]]; then
+		if [[ ! -f "$manifest_file" || ! -r "$manifest_file" ]]; then
+			printf 'Error: manifest is missing or unreadable: %s\n' "$manifest_file" >&2
+			return 2
+		fi
+		local raw_entry entry prior duplicate
+		while IFS= read -r raw_entry || [[ -n "$raw_entry" ]]; do
+			entry=${raw_entry%%#*}
+			entry=${entry#"${entry%%[![:space:]]*}"}
+			entry=${entry%"${entry##*[![:space:]]}"}
+			[[ -n "$entry" ]] || continue
+			if [[ ! "$entry" =~ ^[A-Za-z0-9._+-]+_test$ ]]; then
+				printf 'Error: invalid manifest entry: %s\n' "$entry" >&2
+				return 2
+			fi
+			duplicate=false
+			for prior in "${manifest_entries[@]}"; do
+				if [[ "$prior" == "$entry" ]]; then duplicate=true; break; fi
+			done
+			if "$duplicate"; then
+				printf 'Error: duplicate manifest entry: %s\n' "$entry" >&2
+				return 2
+			fi
+			if [[ ! -e "$test_dir/$entry" ]]; then
+				printf 'Error: stale manifest entry has no discovered test: %s\n' "$entry" >&2
+				return 2
+			fi
+			manifest_entries+=("$entry")
+		done <"$manifest_file"
+		if (( ${#manifest_entries[@]} == 0 )); then
+			printf 'Error: manifest selected no tests: %s\n' "$manifest_file" >&2
+			return 2
+		fi
+
+		local selected_files=()
+		local listed=false
+		for test_file in "${test_files[@]}"; do
+			test_name=${test_file##*/}
+			listed=false
+			for entry in "${manifest_entries[@]}"; do
+				if [[ "$entry" == "$test_name" ]]; then listed=true; break; fi
+			done
+			if { [[ "$manifest_mode" == --manifest ]] && "$listed"; } ||
+				{ [[ "$manifest_mode" == --exclude-manifest ]] && ! "$listed"; }; then
+				selected_files+=("$test_file")
+			fi
+		done
+		test_files=("${selected_files[@]}")
+		total=${#test_files[@]}
+		if (( total == 0 )); then
+			printf 'Error: manifest selection left no tests to run: %s\n' "$manifest_file" >&2
+			return 2
+		fi
+	fi
+
 	printf 'Running %s test files from %s (jobs: %s)\n' "$total" "$test_dir" "$jobs"
 
 	# Execute concurrently into per-test scratch files, then report strictly in
@@ -126,6 +222,9 @@ run_test_suite() {
 			(( running-- ))
 		done
 		(
+			# A child test may print anything, but it cannot write the runner's
+			# machine result or inherit its destination as a testing hook.
+			unset RUN_TEST_SUITE_RESULT_FILE
 			local_file="${test_files[$slot]}"
 			local_name="${local_file##*/}"
 			printf 'started [%s/%s]: %s\n' "$((slot + 1))" "$total" "$local_name" >&"$progress_fd"
@@ -179,6 +278,13 @@ run_test_suite() {
 			fi
 		fi
 	done
+
+	(( failed == 0 )) && result_status=valid-pass
+	if [[ -n "$result_file" ]] && ! _run_test_suite_write_result "$result_file" \
+		"$result_status" "$total" "$passed" "$failed" "$summed_status"; then
+		printf 'Error: cannot finalize runner result: %s\n' "$result_file" >&2
+		return 2
+	fi
 
 	if (( failed == 0 )); then
 		printf '\nAll %s test files passed.\n' "$total"

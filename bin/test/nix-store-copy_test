@@ -35,6 +35,24 @@ for tool in cp install rsync; do
 		printf '%s\0' -- "$source" "$work/local/target with spaces" > "$work/expected"
 		check cmp "$work/expected" "$COPY_TEST_CALL"
 	done
+	# A derivation must be able to install its local build result into its own
+	# declared output. Merely spoofing $out outside a builder must not bypass the
+	# guard, and an unrelated store source remains forbidden inside a builder.
+	command rm -f "$COPY_TEST_CALL"
+	output=$(env -u NIX_BUILD_TOP out=/nix/store/hash-current-output "$root/bin/$tool" \
+		"$work/local/source" /nix/store/hash-current-output/result 2>&1); rc=$?
+	check test "$rc" -eq 77
+	check test ! -e "$COPY_TEST_CALL"
+	command rm -f "$COPY_TEST_CALL"
+	output=$(NIX_BUILD_TOP="$work" out=/nix/store/hash-current-output "$root/bin/$tool" \
+		"$work/local/source" /nix/store/hash-current-output/result 2>&1); rc=$?
+	check test "$rc" -eq 0
+	check test -e "$COPY_TEST_CALL"
+	command rm -f "$COPY_TEST_CALL"
+	output=$(NIX_BUILD_TOP="$work" out=/nix/store/hash-current-output "$root/bin/$tool" \
+		/nix/store/hash-undeclared-source/file /nix/store/hash-current-output/result 2>&1); rc=$?
+	check test "$rc" -eq 77
+	check test ! -e "$COPY_TEST_CALL"
 	# Override is scoped to a single invocation, with a visible reason.
 	command rm -f "$COPY_TEST_CALL"
 	output=$(ALLOW_NIX_STORE_COPY='Exporting the declared release output' "$root/bin/$tool" /nix/store/hash-output/app "$work/local" 2>&1); rc=$?

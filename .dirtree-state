@@ -189,6 +189,7 @@ annotate=[
 	bin/test/obsidian_alias_test = Tests Obsidian GUI alias dispatch to the existing vault on Linux and macOS
 	bin/test/path_export_policy_test = Push-gated classifier forbidding tracked PATH export commands outside .pathconfig
 	bin/test/pathconfig_code_bin_denylist_test = tests that denylisted $CODE project bin dirs never reach PATH, by discovery or inheritance
+	bin/test/pathconfig_foreign_nix_e2e_test = Host-only control proving a freshly realized Nix package survives the interactive PATH rebuild.
 	bin/test/pathconfig_foreign_path_test = regression tests: .pathconfig must preserve FOREIGN PATH injections (nix shell/develop, direnv) across its ORIG_PATH rebuild; set-based classifier with paired specificity case + e2e that forces on-the-fly nix instantiation of a run-unique derivation and asserts it resolves in the new interactive shell
 	bin/test/pathconfig_pf_test = Disposable set-classifier tests for current-PF project PATH discovery
 	bin/test/pkill_test = Argument mapping and harmless real process-tree regression tests for pkill guard

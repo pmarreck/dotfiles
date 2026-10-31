@@ -1,4 +1,364 @@
 #!/usr/bin/env bash
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-exec "$repo_root/bin/run_test_suite" "$@"
+runner="$repo_root/bin/run_test_suite"
+manifest="$repo_root/bin/test/NOT_HERMETIC"
+min_file="$repo_root/bin/test/MIN_TEST_COUNT"
+skips_file="$repo_root/bin/test/ALLOWED_SKIPS"
+evidence_command="$repo_root/bin/dotfiles-host-evidence"
+
+usage() {
+	cat <<'EOF'
+Usage: ./test
+
+Build or reuse the hermetic Nix check, then run only the supplemental host
+checks declared in bin/test/NOT_HERMETIC. A clean committed run records the
+host evidence required by the read-only pre-push gate.
+
+Runner selection options such as --test-dir and --jobs remain available as
+editing aids; they run bin/run_test_suite directly and do not record evidence.
+EOF
+}
+
+now_ns() {
+	if [[ -n "${DOTFILES_TEST_CLOCK:-}" ]]; then
+		"$DOTFILES_TEST_CLOCK"
+		return
+	fi
+	if command -v perl >/dev/null 2>&1; then
+		perl -MTime::HiRes=clock_gettime,CLOCK_MONOTONIC \
+			-e 'printf "%.0f\n", clock_gettime(CLOCK_MONOTONIC) * 1000000000'
+		return
+	fi
+	printf 'test: Perl Time::HiRes is required for monotonic phase timing.\n' >&2
+	return 1
+}
+
+format_ns() {
+	local nanoseconds="$1" milliseconds
+	milliseconds=$((nanoseconds / 1000000))
+	printf '%d.%03ds' "$((milliseconds / 1000))" "$((milliseconds % 1000))"
+}
+
+test_inventory() {
+	local nullglob_was_set=false noglob_was_set=false path
+	local paths=()
+	shopt -q nullglob && nullglob_was_set=true
+	[[ "$-" == *f* ]] && noglob_was_set=true
+	set +f
+	shopt -s nullglob
+	paths=("$repo_root"/bin/test/*_test)
+	"$nullglob_was_set" || shopt -u nullglob
+	"$noglob_was_set" && set -f
+	TEST_INVENTORY_COUNT=${#paths[@]}
+	TEST_INVENTORY_HASH=$(
+		for path in "${paths[@]}"; do printf '%s\0' "${path##*/}"; done |
+			git hash-object --stdin
+	) || return 1
+}
+
+manifest_count() {
+	awk '
+		{
+			sub(/#.*/, "")
+			gsub(/^[[:space:]]+|[[:space:]]+$/, "")
+			if ($0 != "") count++
+		}
+		END { print count + 0 }
+	' "$manifest"
+}
+
+file_hash() {
+	git hash-object "$1"
+}
+
+minimum_count() {
+	local minimum
+	minimum=$(awk '/^[0-9]+/ { print $1; exit }' "$min_file" 2>/dev/null)
+	if [[ ! "$minimum" =~ ^[1-9][0-9]*$ ]]; then
+		printf 'test: missing or invalid minimum test count: %s\n' "$min_file" >&2
+		return 1
+	fi
+	printf '%s\n' "$minimum"
+}
+
+skip_is_allowed() {
+	local line="$1" entry
+	[[ -r "$skips_file" ]] || return 1
+	while IFS= read -r entry || [[ -n "$entry" ]]; do
+		case "$entry" in '' | \#*) continue ;; esac
+		case "$line" in *"$entry"*) return 0 ;; esac
+	done <"$skips_file"
+	return 1
+}
+
+read_runner_result() {
+	local result="$1" line key value
+	local seen_status=0 seen_total=0 seen_passed=0 seen_failed=0 seen_sum=0
+	RUNNER_STATUS=''
+	RUNNER_TOTAL=''
+	RUNNER_PASSED=''
+	RUNNER_FAILED=''
+	RUNNER_SUMMED_STATUS=''
+	IFS= read -r line <"$result" || return 1
+	[[ "$line" == run-test-suite-result-v1 ]] || return 1
+	while IFS='=' read -r key value; do
+		case "$key" in
+			status) ((seen_status++)); RUNNER_STATUS=$value ;;
+			total) ((seen_total++)); RUNNER_TOTAL=$value ;;
+			passed) ((seen_passed++)); RUNNER_PASSED=$value ;;
+			failed) ((seen_failed++)); RUNNER_FAILED=$value ;;
+			summed_status) ((seen_sum++)); RUNNER_SUMMED_STATUS=$value ;;
+			*) return 1 ;;
+		esac
+	done < <(tail -n +2 "$result")
+	(( seen_status == 1 && seen_total == 1 && seen_passed == 1 && seen_failed == 1 && seen_sum == 1 )) || return 1
+	[[ "$RUNNER_STATUS" == valid-pass || "$RUNNER_STATUS" == failed ]] || return 1
+	[[ "$RUNNER_TOTAL" =~ ^[1-9][0-9]*$ ]] || return 1
+	[[ "$RUNNER_PASSED" =~ ^[0-9]+$ && "$RUNNER_FAILED" =~ ^[0-9]+$ ]] || return 1
+	[[ "$RUNNER_SUMMED_STATUS" =~ ^[0-9]+$ ]] || return 1
+	(( RUNNER_PASSED + RUNNER_FAILED == RUNNER_TOTAL ))
+}
+
+validate_report() {
+	local report="$1" result="$2" runner_status="$3" expected_count="$4" phase="$5"
+	local summary_count line verdict=0
+	summary_count=$(awk -v expected="$expected_count" \
+		'$0 == "All " expected " test files passed." { count++ } END { print count + 0 }' "$report")
+
+	if (( runner_status != 0 )); then
+		printf 'test: %s runner exited %s.\n' "$phase" "$runner_status" >&2
+		verdict=1
+	fi
+	if ! read_runner_result "$result"; then
+		printf 'test: %s runner result is malformed or incomplete.\n' "$phase" >&2
+		verdict=1
+		RUNNER_STATUS=malformed RUNNER_TOTAL=0 RUNNER_PASSED=0 RUNNER_FAILED=0 RUNNER_SUMMED_STATUS=0
+	else
+		if [[ "$RUNNER_STATUS" != valid-pass || "$RUNNER_FAILED" != 0 || "$RUNNER_SUMMED_STATUS" != 0 ]]; then
+			printf 'test: %s machine result reports failure (%s failed; summed status %s).\n' \
+				"$phase" "$RUNNER_FAILED" "$RUNNER_SUMMED_STATUS" >&2
+			verdict=1
+		fi
+		if [[ "$RUNNER_TOTAL" != "$expected_count" || "$RUNNER_PASSED" != "$expected_count" ]]; then
+			printf 'test: %s ran %s tests with %s passes; expected exactly %s.\n' \
+				"$phase" "$RUNNER_TOTAL" "$RUNNER_PASSED" "$expected_count" >&2
+			verdict=1
+		fi
+	fi
+	if (( summary_count != 1 )); then
+		printf 'test: %s runner did not provide one matching all-green completion summary.\n' "$phase" >&2
+		verdict=1
+	fi
+	while IFS= read -r line; do
+		if ! skip_is_allowed "$line"; then
+			printf 'test: unapproved skip in %s: %s\n' "$phase" "$line" >&2
+			verdict=1
+		fi
+	done < <(awk '/SKIPPED \(asserted nothing\)/' "$report")
+
+	VALIDATED_PASS_COUNT=$RUNNER_PASSED
+	return "$verdict"
+}
+
+run_reported_phase() {
+	local selection="$1" expected_count="$2" phase="$3"
+	local start end report result status
+	report=$(mktemp --tmpdir "dotfiles-${phase// /-}.XXXXXX") || return 1
+	result="$report.result"
+	start=$(now_ns) || return 1
+	RUN_TEST_SUITE_PROGRESS_FD=3 RUN_TEST_SUITE_RESULT_FILE="$result" \
+		"$runner" "$selection" "$manifest" \
+		3>&2 >"$report" 2>&1 </dev/null
+	status=$?
+	end=$(now_ns) || return 1
+	PHASE_EXECUTION_NS=$((end - start))
+	cat "$report"
+	if validate_report "$report" "$result" "$status" "$expected_count" "$phase"; then
+		command rm -f -- "$report" "$result"
+		return 0
+	fi
+	printf 'test: %s report kept at %s (machine result: %s)\n' "$phase" "$report" "$result" >&2
+	return 1
+}
+
+write_nix_evidence() {
+	local destination="$1" selected_count="$2" excluded_count="$3" execution_ns="$4"
+	local destination_dir temp manifest_hash
+	destination_dir=${destination%/*}
+	[[ "$destination_dir" == "$destination" ]] && destination_dir=.
+	mkdir -p "$destination_dir" || return 1
+	manifest_hash=$(file_hash "$manifest") || return 1
+	temp=$(mktemp "$destination_dir/.dotfiles-test-evidence.XXXXXXXX") || return 1
+	{
+		printf 'dotfiles-test-evidence-v1\n'
+		printf 'status=valid-pass\n'
+		printf 'inventory_total=%s\n' "$TEST_INVENTORY_COUNT"
+		printf 'inventory_hash=%s\n' "$TEST_INVENTORY_HASH"
+		printf 'manifest_hash=%s\n' "$manifest_hash"
+		printf 'selected_count=%s\n' "$selected_count"
+		printf 'excluded_count=%s\n' "$excluded_count"
+		printf 'execution_ns=%s\n' "$execution_ns"
+	} >"$temp" && mv -- "$temp" "$destination"
+}
+
+run_nix_phase() {
+	local destination="$1" excluded selected minimum
+	test_inventory || return 1
+	excluded=$(manifest_count) || return 1
+	selected=$((TEST_INVENTORY_COUNT - excluded))
+	if (( excluded <= 0 || selected <= 0 )); then
+		printf 'test: invalid hermetic/supplemental partition (%s total, %s excluded).\n' \
+			"$TEST_INVENTORY_COUNT" "$excluded" >&2
+		return 1
+	fi
+	minimum=$(minimum_count) || return 1
+	if (( TEST_INVENTORY_COUNT < minimum )); then
+		printf 'test: inventory has %s tests; committed floor is %s.\n' \
+			"$TEST_INVENTORY_COUNT" "$minimum" >&2
+		return 1
+	fi
+	if ! run_reported_phase --exclude-manifest "$selected" 'hermetic Nix phase'; then
+		return 1
+	fi
+	write_nix_evidence "$destination" "$selected" "$excluded" "$PHASE_EXECUTION_NS"
+}
+
+read_nix_evidence() {
+	local evidence_file="$1" line key value
+	NIX_STATUS=
+	NIX_INVENTORY_TOTAL=
+	NIX_INVENTORY_HASH=
+	NIX_MANIFEST_HASH=
+	NIX_SELECTED_COUNT=
+	NIX_EXCLUDED_COUNT=
+	NIX_EXECUTION_NS=
+	IFS= read -r line <"$evidence_file" || return 1
+	[[ "$line" == dotfiles-test-evidence-v1 ]] || return 1
+	while IFS='=' read -r key value; do
+		case "$key" in
+			status) NIX_STATUS=$value ;;
+			inventory_total) NIX_INVENTORY_TOTAL=$value ;;
+			inventory_hash) NIX_INVENTORY_HASH=$value ;;
+			manifest_hash) NIX_MANIFEST_HASH=$value ;;
+			selected_count) NIX_SELECTED_COUNT=$value ;;
+			excluded_count) NIX_EXCLUDED_COUNT=$value ;;
+			execution_ns) NIX_EXECUTION_NS=$value ;;
+			*) return 1 ;;
+		esac
+	done < <(tail -n +2 "$evidence_file")
+	[[ "$NIX_STATUS" == valid-pass ]] || return 1
+	[[ "$NIX_INVENTORY_TOTAL" =~ ^[1-9][0-9]*$ ]] || return 1
+	[[ "$NIX_SELECTED_COUNT" =~ ^[1-9][0-9]*$ ]] || return 1
+	[[ "$NIX_EXCLUDED_COUNT" =~ ^[1-9][0-9]*$ ]] || return 1
+	[[ "$NIX_EXECUTION_NS" =~ ^[0-9]+$ ]] || return 1
+	[[ "$NIX_INVENTORY_HASH" =~ ^[0-9a-f]{40}$ ]] || return 1
+	[[ "$NIX_MANIFEST_HASH" =~ ^[0-9a-f]{40}$ ]] || return 1
+	(( NIX_SELECTED_COUNT + NIX_EXCLUDED_COUNT == NIX_INVENTORY_TOTAL ))
+}
+
+host_system() {
+	local os arch
+	case "$(uname -s)" in Linux) os=linux ;; Darwin) os=darwin ;; *) return 1 ;; esac
+	case "$(uname -m)" in x86_64 | amd64) arch=x86_64 ;; arm64 | aarch64) arch=aarch64 ;; *) return 1 ;; esac
+	printf '%s-%s\n' "$arch" "$os"
+}
+
+run_complete() {
+	local total_start build_start build_end host_start host_end total_end
+	local checkout_status='' commit='' evidence_key='' system nix_output nix_status
+	local nix_result='' output_path='' extra_output=false current_manifest_hash minimum combined
+
+	total_start=$(now_ns) || return 1
+	if git -C "$repo_root" rev-parse --verify HEAD >/dev/null 2>&1; then
+		checkout_status=$(git -C "$repo_root" status --porcelain --untracked-files=normal) || return 1
+		if [[ -z "$checkout_status" ]]; then
+			commit=$(git -C "$repo_root" rev-parse HEAD) || return 1
+			evidence_key=$("$evidence_command" --key "$repo_root" "$commit") || return 1
+			"$evidence_command" --invalidate "$repo_root" "$commit" || return 1
+		else
+			printf 'test: dirty checkout; tests will run but cannot record committed host evidence.\n' >&2
+		fi
+	fi
+
+	system=$(host_system) || {
+		printf 'test: unsupported host platform for the Nix check.\n' >&2
+		return 1
+	}
+	build_start=$(now_ns) || return 1
+	nix_output=$(nix build --no-link --print-out-paths "$repo_root#checks.$system.test")
+	nix_status=$?
+	build_end=$(now_ns) || return 1
+	if (( nix_status != 0 )); then
+		printf 'test: Nix check preparation failed with status %s.\n' "$nix_status" >&2
+		return "$nix_status"
+	fi
+	while IFS= read -r output_path; do
+		[[ -n "$output_path" ]] || continue
+		if [[ -n "$nix_result" ]]; then extra_output=true; break; fi
+		nix_result=$output_path
+	done <<<"$nix_output"
+	if "$extra_output" || [[ -z "$nix_result" || ! -r "$nix_result/result" ]]; then
+		printf 'test: Nix returned no single readable check evidence result.\n' >&2
+		return 1
+	fi
+	if ! read_nix_evidence "$nix_result/result"; then
+		printf 'test: Nix check evidence is malformed or incomplete.\n' >&2
+		return 1
+	fi
+	test_inventory || return 1
+	current_manifest_hash=$(file_hash "$manifest") || return 1
+	if [[ "$NIX_INVENTORY_TOTAL" != "$TEST_INVENTORY_COUNT" ||
+		"$NIX_INVENTORY_HASH" != "$TEST_INVENTORY_HASH" ||
+		"$NIX_MANIFEST_HASH" != "$current_manifest_hash" ]]; then
+		printf 'test: test inventory or selection manifest changed after the Nix check.\n' >&2
+		return 1
+	fi
+
+	host_start=$(now_ns) || return 1
+	if ! run_reported_phase --manifest "$NIX_EXCLUDED_COUNT" 'supplemental host phase'; then
+		return 1
+	fi
+	host_end=$(now_ns) || return 1
+	combined=$((NIX_SELECTED_COUNT + VALIDATED_PASS_COUNT))
+	minimum=$(minimum_count) || return 1
+	if (( combined != NIX_INVENTORY_TOTAL || combined < minimum )); then
+		printf 'test: combined phases prove %s tests, inventory %s, floor %s.\n' \
+			"$combined" "$NIX_INVENTORY_TOTAL" "$minimum" >&2
+		return 1
+	fi
+
+	if [[ -n "$evidence_key" ]]; then
+		"$evidence_command" --record "$repo_root" "$commit" "$evidence_key" || return 1
+	fi
+	total_end=$(now_ns) || return 1
+	printf 'Nix setup/build: %s\n' "$(format_ns "$((build_end - build_start))")"
+	printf 'Hermetic execution evidence: %s (%s tests; reused when cached)\n' \
+		"$(format_ns "$NIX_EXECUTION_NS")" "$NIX_SELECTED_COUNT"
+	printf 'Supplemental host execution: %s (%s tests)\n' \
+		"$(format_ns "$((host_end - host_start))")" "$VALIDATED_PASS_COUNT"
+	printf 'Total ./test: %s\n' "$(format_ns "$((total_end - total_start))")"
+	printf 'All %s test files passed.\n' "$combined"
+}
+
+case "${1:-}" in
+	-h | --help)
+		usage
+		exit 0
+		;;
+	--nix-phase)
+		if (( $# != 2 )); then
+			printf 'test: --nix-phase requires one evidence output path.\n' >&2
+			exit 2
+		fi
+		run_nix_phase "$2"
+		exit $?
+		;;
+	'')
+		run_complete
+		exit $?
+		;;
+	*)
+		exec "$runner" "$@"
+		;;
+esac

@@ -124,28 +124,10 @@
 
               cd "$HOME/dotfiles"
 
-              # Remove the tests that cannot run in a sandbox, and say so out loud.
-              # A gate that quietly runs fewer tests than it appears to is the exact
-              # failure this whole exercise is guarding against, so the excluded set
-              # is committed (bin/test/NOT_HERMETIC), printed here in full, and
-              # counted. Shrinking coverage is then a visible diff, not a silent one.
-              excluded=0
-              echo "── excluded from the hermetic check (see bin/test/NOT_HERMETIC) ──"
-              while IFS= read -r entry; do
-                entry="''${entry%%#*}"
-                entry="$(echo "$entry" | tr -d '[:space:]')"
-                [ -z "$entry" ] && continue
-                if [ -e "bin/test/$entry" ]; then
-                  rm -f "bin/test/$entry"
-                  excluded=$((excluded + 1))
-                  echo "  excluded: $entry"
-                else
-                  echo "  STALE ENTRY (no such test): $entry" >&2
-                fi
-              done < bin/test/NOT_HERMETIC
-              echo "── $excluded tests excluded; the rest must pass ──"
-
-              bin/run_test_suite
+              # The unified entry point owns report validation and uses the same
+              # strict manifest parser as the later host phase. This internal mode
+              # runs the manifest complement directly and never invokes Nix again.
+              ./test --nix-phase "$NIX_BUILD_TOP/dotfiles-test-evidence"
 
               runHook postCheck
             '';
@@ -153,7 +135,7 @@
 
             installPhase = ''
               mkdir -p "$out"
-              echo "dotfiles suite passed" > "$out/result"
+              cp "$NIX_BUILD_TOP/dotfiles-test-evidence" "$out/result"
             '';
           };
         };

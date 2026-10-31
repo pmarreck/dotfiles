@@ -38,6 +38,10 @@ for command_name in realpath grealpath; do
 done
 
 store_operand=''
+declared_output=''
+if [[ -n "${NIX_BUILD_TOP:-}" && -d "$NIX_BUILD_TOP" ]]; then
+	case "${out:-}" in /nix/store/*) declared_output=${out%/} ;; esac
+fi
 end_options=false
 for operand in "$@"; do
 	if ! "$end_options" && [[ $operand == -- ]]; then end_options=true; continue; fi
@@ -45,6 +49,9 @@ for operand in "$@"; do
 	# Conservatively inspect path-valued options too, without rewriting argv.
 	if ! "$end_options"; then
 		case "$path" in --*=*) path=${path#*=} ;; esac
+	fi
+	if [[ -n "$declared_output" ]]; then
+		case "$path" in "$declared_output" | "$declared_output"/*) continue ;; esac
 	fi
 	case "$path" in
 		/nix/store|/nix/store/*|*:/nix/store|*:/nix/store/*) store_operand=$operand; break ;;
@@ -60,6 +67,9 @@ for operand in "$@"; do
 		printf '%s: cannot resolve copy operand %q safely\n' "$tool" "$path" >&2
 		exit 77
 	}
+	if [[ -n "$declared_output" ]]; then
+		case "$resolved" in "$declared_output" | "$declared_output"/*) continue ;; esac
+	fi
 	case "$resolved" in /nix/store|/nix/store/*) store_operand=$operand; break ;; esac
 done
 

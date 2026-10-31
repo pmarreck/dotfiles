@@ -108,13 +108,13 @@ capture fallback
 check 'cwd fallback exit' "$rc" 0
 check 'cwd fallback stderr' "$err" ''
 check 'cwd fallback reminder' "$(jq -r '.hookSpecificOutput.additionalContext | startswith("CODESCAN CONFIGURED")' <<< "$out")" true
-local_bad_json() { printf 'not json' | XDG_STATE_HOME="$scratch/state" bash "$hook"; }
+local_bad_json() { XDG_STATE_HOME="$scratch/state" bash "$hook" <<< 'not json'; }
 out='' err='' rc=0
 capture local_bad_json
 check 'malformed input exit' "$rc" 0
 check 'malformed input stdout' "$out" ''
 check 'malformed input stderr' "$err" ''
-invalid_cwd() { printf '{"tool_name":"Read","cwd":123}' | bash "$hook"; }
+invalid_cwd() { bash "$hook" <<< '{"tool_name":"Read","cwd":123}'; }
 capture invalid_cwd
 check 'invalid cwd exit' "$rc" 0
 check 'invalid cwd stdout' "$out" ''

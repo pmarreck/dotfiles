@@ -1,19 +1,12 @@
 #!/usr/bin/env bash
-# pre-push-gate_test — the gate must demand a VALID pass, not merely exit 0.
-#
-# A gate that cannot tell "155 passed" from "0 discovered" is not a gate. These
-# assertions treat it as a classifier over sets: each dimension is exercised in
-# both directions, because a check that only ever sees the good case will happily
-# pass the bad one too.
-#
-# The runner is injected via PRE_PUSH_GATE_RUNNER so the gate's decision logic is
-# tested against synthetic reports instead of a 35-second suite run — the gate is
-# business logic and deserves to be tested like it.
+# pre-push-gate_test — pushes verify evidence and never launch tests.
+# The explicit legacy check route delegates to the unified ./test entry point.
 
 set -u
+# shellcheck disable=SC2016 # Generated adapters expand fixture variables at runtime.
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
-GATE="$repo_root/bin/pre-push-gate"
+SOURCE_GATE="$repo_root/bin/pre-push-gate"
 
 tests=0
 fails=0
@@ -23,127 +16,28 @@ bad()  { { echo "✗ $1"; shift; [ $# -gt 0 ] && printf '  %s\n' "$@"; } >&2; ((
 WORK=$(mktemp -d --tmpdir pre_push_gate_test.XXXXXX)
 trap 'rm -rf "$WORK"' EXIT
 
-# Build a fake runner emitting a synthetic report. $1=exit code, $2=#PASS lines,
-# rest=extra lines appended (e.g. a skip marker).
-make_runner() {
-	local rc="$1" n="$2"; shift 2
-	{
-		# $BASH, not /usr/bin/env: this file is written at run time, so the
-		# flake's `patchShebangs bin` never sees it, and /usr/bin/env is absent
-		# inside the Nix sandbox. An unrunnable fake runner makes the gate see an
-		# empty report — which the gate correctly refuses, failing tests that
-		# assert a valid pass.
-		printf '#!%s\n' "$BASH"
-		printf 'i=0; while [ "$i" -lt %s ]; do printf "PASS fake_%%s_test\\n" "$i"; i=$((i+1)); done\n' "$n"
-		for extra in "$@"; do printf 'printf "%%s\\n" %q\n' "$extra"; done
-		# Emit the canonical success summary only on the green path, mirroring the
-		# real runner. The gate keys on this POSITIVE evidence rather than on the
-		# absence of failure, because absence is not observable: bash truncates a
-		# child's exit status modulo 256, so a runner exiting 256 is indistinguish-
-		# able from one exiting 0. That wrap is the reason run_test_suite caps its
-		# summed status at 255, and run_test_suite_test asserts the cap directly —
-		# which is where that assertion can actually bite.
-		if [ "$rc" = 0 ]; then printf 'printf "\\nAll %%s test files passed.\\n" %s\n' "$n"; fi
-		printf 'exit %s\n' "$rc"
-	} >"$WORK/runner"
-	chmod +x "$WORK/runner"
-	printf '%s' "$WORK/runner"
-}
-
-run_gate() { # echoes exit code
-	PRE_PUSH_GATE_RUNNER="$1" PRE_PUSH_GATE_MIN_TESTS="${2:-155}" \
-		"$GATE" --check-only >/dev/null 2>&1
-	printf '%s' "$?"
-}
-
-# ── The happy case must actually pass, or every negative below is meaningless ──
-((tests++))
-r=$(make_runner 0 155)
-[ "$(run_gate "$r")" = 0 ] && ok "green suite at the floor passes" \
-	|| bad "a green suite meeting the floor must pass"
-
-# ── Exit-code integrity ───────────────────────────────────────────────────────
-((tests++))
-r=$(make_runner 1 155)
-[ "$(run_gate "$r")" != 0 ] && ok "non-zero runner status fails the gate" \
-	|| bad "a failing suite must fail the gate"
-
-# Exit 0 with failures in the report is the shape a broken runner takes; the gate
-# must not accept it just because the process status looked clean.
-((tests++))
-r=$(make_runner 0 155 'FAIL something_test (exit 1)')
-[ "$(run_gate "$r")" != 0 ] && ok "reported failures fail the gate even at exit 0" \
-	|| bad "a report containing FAIL must fail the gate regardless of exit status"
-
-# ── Test-count floor — the discovery-failure guard ────────────────────────────
-((tests++))
-r=$(make_runner 0 0)
-[ "$(run_gate "$r")" != 0 ] && ok "zero discovered tests fails despite exit 0" \
-	|| bad "0 tests with exit 0 is the canonical false green and must fail"
-
-((tests++))
-r=$(make_runner 0 154)
-[ "$(run_gate "$r")" != 0 ] && ok "one test short of the floor fails" \
-	|| bad "a count below the floor must fail"
-
-((tests++))
-r=$(make_runner 0 156)
-[ "$(run_gate "$r")" = 0 ] && ok "more tests than the floor passes" \
-	|| bad "growing the suite must not fail the gate"
-
-# ── Skip accounting ───────────────────────────────────────────────────────────
-((tests++))
-r=$(make_runner 0 155 '⊘ SKIPPED (asserted nothing): output-format check (every emitted line ends in .app)')
-[ "$(run_gate "$r")" = 0 ] && ok "an allowlisted skip is tolerated" \
-	|| bad "a skip on the committed allowlist must not fail the push"
-
-((tests++))
-r=$(make_runner 0 155 '⊘ SKIPPED (asserted nothing): some brand new hole nobody approved')
-[ "$(run_gate "$r")" != 0 ] && ok "an unlisted skip fails the gate" \
-	|| bad "a skip that is not on the allowlist must fail the push"
-
-# ── A refusal must leave the evidence behind ─────────────────────────────────
-# The gate captures the whole run into a report and then deleted it on exit, so
-# a refusal told the operator only "FAIL foo_test (exit 1)" and destroyed the
-# one artifact explaining why. That is the worst possible trade for a rare or
-# intermittent failure: the cheapest moment to diagnose it is the moment it
-# happened, and by then the report is gone. (Cost a real investigation on
-# 2026-08-01.) Both directions are asserted — a gate that simply never cleaned
-# up would pass the first of these and fail the second.
-#
-# TMPDIR is pointed at a private directory so the assertions can count what the
-# gate left behind without racing any other gate run.
-gate_into_tmpdir() { # $1=private tmpdir  $2=runner  $3=stderr file ; echoes exit code
-	TMPDIR="$1" PRE_PUSH_GATE_RUNNER="$2" PRE_PUSH_GATE_MIN_TESTS=155 \
-		"$GATE" --check-only >/dev/null 2>"$3"
-	printf '%s' "$?"
-}
-
-((tests++))
-priv="$WORK/report_kept"; mkdir -p "$priv"
-gate_err="$WORK/gate_refuse_stderr"
-rc=$(gate_into_tmpdir "$priv" "$(make_runner 1 155)" "$gate_err")
-kept=$(ls -1 "$priv" 2>/dev/null | wc -l)
-kept_path=$(grep -oE "$priv/[^[:space:]]+" "$gate_err" | head -1)
-if [ "$rc" != 0 ] && [ "$kept" -eq 1 ] && [ -n "$kept_path" ] && [ -s "$kept_path" ] \
-	&& grep -q 'PASS fake_0_test' "$kept_path"; then
-	ok "a refused push keeps the report and prints where it is"
-else
-	bad "the report was destroyed on refusal — nothing left to diagnose" \
-		"exit=$rc  files_kept=$kept  path_printed='$kept_path'" \
-		"stderr: $(tr '\n' ' ' < "$gate_err")"
-fi
-
-((tests++))
-priv_ok="$WORK/report_cleaned"; mkdir -p "$priv_ok"
-rc=$(gate_into_tmpdir "$priv_ok" "$(make_runner 0 155)" "$WORK/gate_pass_stderr")
-left=$(ls -1 "$priv_ok" 2>/dev/null | wc -l)
-if [ "$rc" = 0 ] && [ "$left" -eq 0 ]; then
-	ok "a green run cleans its report up"
-else
-	bad "a passing gate littered TMPDIR" "exit=$rc  left behind: $(ls -1 "$priv_ok" | tr '\n' ' ')"
-fi
-
+hook_root="$WORK/hook-root"
+mkdir -p "$hook_root/bin"
+cp "$SOURCE_GATE" "$hook_root/bin/pre-push-gate"
+GATE="$hook_root/bin/pre-push-gate"
+push_log="$WORK/push-evidence-input"
+host_log="$WORK/host-evidence-argv"
+{
+	printf '#!%s\n' "$BASH"
+	# shellcheck disable=SC2016 # Generated adapter expands this at runtime.
+	printf 'cat > "$PUSH_EVIDENCE_LOG"\n'
+	# shellcheck disable=SC2016 # Generated adapter expands this at runtime.
+	printf 'exit "${PUSH_EVIDENCE_STATUS:-0}"\n'
+} >"$hook_root/bin/git-push-evidence"
+{
+	printf '#!%s\n' "$BASH"
+	# shellcheck disable=SC2016 # Generated adapter expands this at runtime.
+	printf 'printf "%%s\\n" "$*" >> "$HOST_EVIDENCE_LOG"\n'
+	# shellcheck disable=SC2016 # Generated adapter expands this at runtime.
+	printf 'exit "${HOST_EVIDENCE_STATUS:-0}"\n'
+} >"$hook_root/bin/dotfiles-host-evidence"
+chmod +x "$hook_root/bin/pre-push-gate" "$hook_root/bin/git-push-evidence" \
+	"$hook_root/bin/dotfiles-host-evidence"
 
 # ── "Nothing to push" must not run the suite ──────────────────────────────────
 # Running 160 tests to push zero commits is not just slow, it is a meaningless
@@ -154,23 +48,23 @@ fi
 # Tested in BOTH directions: a gate that always skipped would pass the first
 # assertion and is caught by the second.
 _marker="$WORK/runner_ran"
-_wrapped() { # wrap a runner so we can observe whether it was invoked at all
-	local inner="$1" w="$WORK/wrapper"
-	{ printf '#!%s\n' "$BASH"; printf 'touch %q\n' "$_marker"; printf 'exec %q "$@"\n' "$inner"; } > "$w"
-	chmod +x "$w"; printf '%s' "$w"
-}
-_hook_gate() { # $1=runner $2=local sha $3=remote sha ; echoes exit code
-	printf 'refs/heads/master %s refs/heads/master %s\n' "$2" "$3" \
-		| PRE_PUSH_GATE_RUNNER="$1" PRE_PUSH_GATE_MIN_TESTS=155 "$GATE" >/dev/null 2>&1
+forbidden_runner="$hook_root/test"
+printf '#!%s\nprintf "ran\\n" >%q\nexit 99\n' "$BASH" "$_marker" >"$forbidden_runner"
+chmod +x "$forbidden_runner"
+_hook_gate() { # $1=local sha $2=remote sha ; echoes exit code
+	printf 'refs/heads/master %s refs/heads/master %s\n' "$1" "$2" \
+		| PUSH_EVIDENCE_LOG="$push_log" HOST_EVIDENCE_LOG="$host_log" \
+		"$GATE" >/dev/null 2>&1
 	printf '%s' "$?"
 }
 _same=1111111111111111111111111111111111111111
 _diff=2222222222222222222222222222222222222222
 
 ((tests++))
-rm -f "$_marker"; w=$(_wrapped "$(make_runner 0 155)")
-rc=$(_hook_gate "$w" "$_same" "$_same")
-if [ "$rc" = 0 ] && [ ! -e "$_marker" ]; then
+rm -f "$_marker"
+rm -f "$push_log" "$host_log"
+rc=$(_hook_gate "$_same" "$_same")
+if [ "$rc" = 0 ] && [ ! -e "$_marker" ] && [ -s "$push_log" ] && [ ! -e "$host_log" ]; then
 	ok "nothing to push → suite skipped entirely"
 else
 	bad "an up-to-date ref must skip the suite and pass" \
@@ -178,52 +72,60 @@ else
 fi
 
 ((tests++))
-rm -f "$_marker"; w=$(_wrapped "$(make_runner 0 155)")
-rc=$(_hook_gate "$w" "$_diff" "$_same")
-if [ ! -e "$_marker" ] && [ "$rc" != 0 ]; then
+rm -f "$_marker"
+rm -f "$push_log" "$host_log"
+rc=$(PUSH_EVIDENCE_STATUS=19 _hook_gate "$_diff" "$_same")
+if [ ! -e "$_marker" ] && [ "$rc" = 19 ] && [ -s "$push_log" ] && [ ! -e "$host_log" ]; then
 	ok "commits without evidence are refused without running the suite"
 else
 	bad "push must verify cached evidence, never launch the suite" "exit=$rc"
 fi
 
-# ── The default suite must run inside this repository's declared Nix shell ───
-# Exercise a disposable copy of the gate so the old direct-runner behavior does
-# not invoke the live 197-file suite. The fake nix adapter records the contract
-# and then executes the fixture runner after `-c`.
+((tests++))
+rm -f "$_marker" "$push_log" "$host_log"
+rc=$(_hook_gate "$_diff" "$_same")
+expected_update="refs/heads/master $_diff refs/heads/master $_same"
+expected_host="--verify $hook_root $_diff"
+if [ "$rc" = 0 ] && [ ! -e "$_marker" ] \
+	&& [ "$(cat "$push_log")" = "$expected_update" ] \
+	&& [ "$(cat "$host_log")" = "$expected_host" ]; then
+	ok "changed tips verify both cached evidence classes without running tests"
+else
+	bad "changed tips did not verify the exact cached evidence set" "exit=$rc"
+fi
+
+# ── Legacy explicit-check mode delegates to the one complete entry point ─────
+# Exercise a disposable copy so compatibility cannot run the live suite.
 default_root="$WORK/default-runner-repo"
-fake_nix_bin="$WORK/fake-nix-bin"
-mkdir -p "$default_root/bin/test" "$fake_nix_bin"
+mkdir -p "$default_root/bin"
 cp "$GATE" "$default_root/bin/pre-push-gate"
-cp "$(make_runner 0 155)" "$default_root/bin/run_test_suite"
-chmod +x "$default_root/bin/pre-push-gate" "$default_root/bin/run_test_suite"
-printf '155\n' > "$default_root/bin/test/MIN_TEST_COUNT"
-: > "$default_root/bin/test/ALLOWED_SKIPS"
-nix_log="$WORK/nix-argv"
+entry_log="$WORK/test-entry-argv"
+# shellcheck disable=SC2016 # Generated fixture expands these at runtime.
 {
 	printf '#!%s\n' "$BASH"
-	# shellcheck disable=SC2016 # The generated adapter expands these at runtime.
-	printf 'printf "%%s\\n" "$@" > "$NIX_LOG"\n'
-	printf 'while (($#)); do\n'
-	# shellcheck disable=SC2016 # The generated adapter expands these at runtime.
-	printf '\tif [[ "$1" == -c ]]; then shift; exec "$@"; fi\n'
-	printf '\tshift\n'
-	printf 'done\n'
-	printf 'exit 98\n'
-} > "$fake_nix_bin/nix"
-chmod +x "$fake_nix_bin/nix"
+	printf ': > "$TEST_ENTRY_LOG"\n'
+	printf 'for argument in "$@"; do printf "%%s\\n" "$argument" >> "$TEST_ENTRY_LOG"; done\n'
+	printf 'exit "${TEST_ENTRY_STATUS:-0}"\n'
+} > "$default_root/test"
+chmod +x "$default_root/bin/pre-push-gate" "$default_root/test"
 
 ((tests++))
-PATH="$fake_nix_bin:$PATH" NIX_LOG="$nix_log" \
+TEST_ENTRY_LOG="$entry_log" "$default_root/bin/pre-push-gate" --check-only >/dev/null 2>&1
+rc=$?
+if [ "$rc" = 0 ] && [ -f "$entry_log" ] && [ ! -s "$entry_log" ]; then
+	ok "--check-only delegates to the unified ./test entry point"
+else
+	bad "--check-only bypassed the unified ./test entry point" "exit=$rc"
+fi
+
+((tests++))
+TEST_ENTRY_LOG="$entry_log" TEST_ENTRY_STATUS=23 \
 	"$default_root/bin/pre-push-gate" --check-only >/dev/null 2>&1
 rc=$?
-expected_nix_args=$(printf '%s\n' develop "$default_root" -c "$default_root/bin/run_test_suite")
-actual_nix_args=$([ -f "$nix_log" ] && cat "$nix_log")
-if [ "$rc" = 0 ] && [ "$actual_nix_args" = "$expected_nix_args" ]; then
-	ok "default runner enters this repository's Nix development environment"
+if [ "$rc" = 23 ]; then
+	ok "--check-only preserves the unified entry point failure"
 else
-	bad "default runner bypassed the declared Nix development environment" \
-		"exit=$rc" "expected nix argv: ${expected_nix_args//$'\n'/ }" \
-		"actual nix argv: ${actual_nix_args//$'\n'/ }"
+	bad "--check-only lost the unified entry point status" "exit=$rc"
 fi
 
 echo

@@ -1,0 +1,242 @@
+#!/usr/bin/env bash
+
+set -u
+
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)
+work=$(mktemp -d "${TMPDIR:-/tmp}/unified-test-entry.XXXXXXXX") || exit 1
+trap 'command rm -rf -- "$work"' EXIT
+
+repo="$work/repo"
+adapters="$work/adapters"
+nix_result="$work/nix-result"
+mkdir -p "$repo/bin/test" "$adapters" "$nix_result" "$work/home" "$work/state"
+cp "$root/test" "$repo/test"
+chmod +x "$repo/test"
+
+for name in sandbox_a_test sandbox_b_test host_a_test host_b_test host_c_test; do
+	printf '#!%s\nexit 0\n' "$BASH" >"$repo/bin/test/$name"
+	chmod +x "$repo/bin/test/$name"
+done
+printf 'host_a_test\nhost_b_test\nhost_c_test\n' >"$repo/bin/test/NOT_HERMETIC"
+printf '5\n' >"$repo/bin/test/MIN_TEST_COUNT"
+: >"$repo/bin/test/ALLOWED_SKIPS"
+
+printf '#!%s\n' "$BASH" >"$repo/bin/run_test_suite"
+cat >>"$repo/bin/run_test_suite" <<'EOF'
+printf '%s\n' "$@" >>"$TEST_RUNNER_LOG"
+count=5
+for arg in "$@"; do
+	[[ "$arg" == --manifest ]] && count=3
+	[[ "$arg" == --exclude-manifest ]] && count=2
+done
+count=${HOST_PASS_COUNT:-$count}
+result_status=valid-pass
+result_failed=0
+result_passed=$count
+result_sum=0
+if (( ${HOST_RUNNER_STATUS:-0} != 0 )) || [[ -n "${HOST_REPORT_FAIL:-}" ]]; then
+	result_status=failed
+	result_failed=1
+	result_passed=$((count - 1))
+	result_sum=${HOST_RUNNER_STATUS:-1}
+	(( result_sum == 0 )) && result_sum=1
+fi
+if [[ -n "${RUN_TEST_SUITE_RESULT_FILE:-}" ]]; then
+	cat >"$RUN_TEST_SUITE_RESULT_FILE" <<RESULT
+run-test-suite-result-v1
+status=$result_status
+total=$count
+passed=$result_passed
+failed=$result_failed
+summed_status=$result_sum
+RESULT
+fi
+i=1
+while (( i <= count )); do
+	printf 'PASS fixture_%s_test\n' "$i"
+	((i++))
+done
+printf 'PASS misleading child assertion\n'
+if [[ -n "${HOST_SKIP:-}" ]]; then
+	printf '⊘ SKIPPED (asserted nothing): %s\n' "$HOST_SKIP"
+fi
+if [[ -n "${HOST_REPORT_FAIL:-}" ]]; then
+	printf 'FAIL fixture_reported_failure_test (exit 1)\n'
+fi
+if (( ${HOST_RUNNER_STATUS:-0} != 0 )); then
+	printf 'FAIL fixture_failure_test (exit %s)\n' "$HOST_RUNNER_STATUS"
+	exit "$HOST_RUNNER_STATUS"
+fi
+if [[ -z "${HOST_NO_SUMMARY:-}" ]]; then
+	printf '\nAll %s test files passed.\n' "$count"
+fi
+EOF
+chmod +x "$repo/bin/run_test_suite"
+
+printf '#!%s\n' "$BASH" >"$repo/bin/dotfiles-host-evidence"
+cat >>"$repo/bin/dotfiles-host-evidence" <<'EOF'
+printf '%s\n' "$*" >>"$TEST_EVIDENCE_LOG"
+case "$1" in
+	--key) printf 'fixture-key\n' ;;
+	--invalidate|--record|--verify) ;;
+	*) exit 2 ;;
+esac
+EOF
+chmod +x "$repo/bin/dotfiles-host-evidence"
+
+printf '#!%s\n' "$BASH" >"$adapters/nix"
+cat >>"$adapters/nix" <<'EOF'
+printf '%s\n' "$@" >"$TEST_NIX_LOG"
+if (( ${TEST_NIX_STATUS:-0} != 0 )); then exit "$TEST_NIX_STATUS"; fi
+printf '%s\n' "$TEST_NIX_RESULT"
+EOF
+chmod +x "$adapters/nix"
+
+printf '#!%s\n' "$BASH" >"$adapters/clock"
+cat >>"$adapters/clock" <<'EOF'
+value=0
+[[ -r "$TEST_CLOCK_STATE" ]] && read -r value <"$TEST_CLOCK_STATE"
+value=$((value + 100000000))
+printf '%s\n' "$value" >"$TEST_CLOCK_STATE"
+printf '%s\n' "$value"
+EOF
+chmod +x "$adapters/clock"
+
+write_nix_result() {
+	local selected=${1:-2}
+	local inventory_hash manifest_hash
+	inventory_hash=$(printf '%s\0' host_a_test host_b_test host_c_test sandbox_a_test sandbox_b_test | git hash-object --stdin)
+	manifest_hash=$(git hash-object "$repo/bin/test/NOT_HERMETIC")
+	cat >"$nix_result/result" <<EOF
+dotfiles-test-evidence-v1
+status=valid-pass
+inventory_total=5
+inventory_hash=$inventory_hash
+manifest_hash=$manifest_hash
+selected_count=$selected
+excluded_count=3
+execution_ns=250000000
+EOF
+}
+write_nix_result
+
+git -C "$repo" init -q
+git -C "$repo" config core.hooksPath /dev/null
+git -C "$repo" config user.name Test
+git -C "$repo" config user.email test@example.invalid
+git -C "$repo" add .
+git -C "$repo" commit -qm fixture
+
+export HOME="$work/home"
+export XDG_STATE_HOME="$work/state"
+export GIT_CONFIG_GLOBAL=/dev/null
+export GIT_CONFIG_NOSYSTEM=1
+PATH="$adapters:$PATH"
+export DOTFILES_TEST_CLOCK="$adapters/clock"
+export TEST_CLOCK_STATE="$work/clock-state"
+export TEST_NIX_LOG="$work/nix.log"
+export TEST_NIX_RESULT="$nix_result"
+export TEST_RUNNER_LOG="$work/runner.log"
+export TEST_EVIDENCE_LOG="$work/evidence.log"
+unset -f rg 2>/dev/null
+
+checks=0
+failures=0
+check() {
+	((checks++))
+	if "$@"; then return; fi
+	printf 'FAIL %s\n' "$*" >&2
+	((failures++))
+}
+no_recorded_evidence() {
+	! rg -q '^--record ' "$TEST_EVIDENCE_LOG"
+}
+
+run_default() {
+	: >"$TEST_NIX_LOG"
+	: >"$TEST_RUNNER_LOG"
+	: >"$TEST_EVIDENCE_LOG"
+	: >"$TEST_CLOCK_STATE"
+	output=$(cd "$repo" && ./test 2>&1)
+	rc=$?
+}
+
+run_default
+check test "$rc" = 0
+check rg -q '^build$' "$TEST_NIX_LOG"
+check rg -q -- '--no-link' "$TEST_NIX_LOG"
+check rg -q -- '--print-out-paths' "$TEST_NIX_LOG"
+check rg -q -- '#checks\.x86_64-linux\.test$' "$TEST_NIX_LOG"
+check test "$(tr '\n' ' ' <"$TEST_RUNNER_LOG")" = "--manifest $repo/bin/test/NOT_HERMETIC "
+check rg -q '^--key ' "$TEST_EVIDENCE_LOG"
+check rg -q '^--invalidate ' "$TEST_EVIDENCE_LOG"
+check rg -q '^--record .* fixture-key$' "$TEST_EVIDENCE_LOG"
+check test "$(git -C "$repo" status --porcelain)" = ''
+check test "${output#*Nix setup/build:}" != "$output"
+check test "${output#*Hermetic execution evidence:}" != "$output"
+check test "${output#*Supplemental host execution:}" != "$output"
+check test "${output#*All 5 test files passed.}" != "$output"
+
+HOST_RUNNER_STATUS=7 run_default
+check test "$rc" != 0
+check rg -q '^--invalidate ' "$TEST_EVIDENCE_LOG"
+check no_recorded_evidence
+
+HOST_REPORT_FAIL=1 run_default
+check test "$rc" != 0
+
+HOST_PASS_COUNT=2 run_default
+check test "$rc" != 0
+
+HOST_NO_SUMMARY=1 run_default
+check test "$rc" != 0
+
+printf 'approved fixture gap\n' >"$repo/bin/test/ALLOWED_SKIPS"
+git -C "$repo" add bin/test/ALLOWED_SKIPS
+git -C "$repo" commit -qm allow-skip
+HOST_SKIP='approved fixture gap' run_default
+check test "$rc" = 0
+: >"$repo/bin/test/ALLOWED_SKIPS"
+git -C "$repo" add bin/test/ALLOWED_SKIPS
+git -C "$repo" commit -qm restore-skip-policy
+
+printf '6\n' >"$repo/bin/test/MIN_TEST_COUNT"
+git -C "$repo" add bin/test/MIN_TEST_COUNT
+git -C "$repo" commit -qm raise-floor
+run_default
+check test "$rc" != 0
+printf '5\n' >"$repo/bin/test/MIN_TEST_COUNT"
+git -C "$repo" add bin/test/MIN_TEST_COUNT
+git -C "$repo" commit -qm restore-floor
+
+printf 'dirty\n' >"$repo/dirty-marker"
+run_default
+check test "$rc" = 0
+check test ! -s "$TEST_EVIDENCE_LOG"
+check test "${output#*cannot record committed host evidence}" != "$output"
+command rm -- "$repo/dirty-marker"
+
+write_nix_result 1
+run_default
+check test "$rc" != 0
+check test ! -s "$TEST_RUNNER_LOG"
+check rg -q '^--invalidate ' "$TEST_EVIDENCE_LOG"
+write_nix_result
+
+: >"$TEST_NIX_LOG"
+: >"$TEST_RUNNER_LOG"
+phase_result="$work/internal-phase-result"
+phase_output=$(cd "$repo" && ./test --nix-phase "$phase_result" 2>&1)
+phase_status=$?
+check test "$phase_status" = 0
+check test ! -s "$TEST_NIX_LOG"
+check test "$(tr '\n' ' ' <"$TEST_RUNNER_LOG")" = "--exclude-manifest $repo/bin/test/NOT_HERMETIC "
+check rg -q '^selected_count=2$' "$phase_result"
+check test "${phase_output#*All 2 test files passed.}" != "$phase_output"
+
+HOST_SKIP='unapproved gap' run_default
+check test "$rc" != 0
+check no_recorded_evidence
+
+printf '%s checks, %s failures\n' "$checks" "$failures"
+test "$failures" = 0

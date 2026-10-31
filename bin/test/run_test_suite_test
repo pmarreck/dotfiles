@@ -18,7 +18,7 @@ test_run_test_suite() {
 	tmpdir=$(mktemp -d --tmpdir run_test_suite_test.XXXXXX)
 	trap 'rm -rf "$tmpdir"' EXIT
 
-	mkdir -p "$tmpdir/mixed" "$tmpdir/passing" "$tmpdir/empty" "$tmpdir/nonexec" "$tmpdir/capped" "$tmpdir/home"
+	mkdir -p "$tmpdir/mixed" "$tmpdir/passing" "$tmpdir/structured" "$tmpdir/empty" "$tmpdir/nonexec" "$tmpdir/capped" "$tmpdir/selection" "$tmpdir/home"
 	printf '%s\n' "#!$bash_bin" 'printf "fixture pass\\n"' 'exit 0' >"$tmpdir/mixed/a_pass_test"
 	printf '%s\n' "#!$bash_bin" 'printf "fixture failure two\\n" >&2' 'exit 2' >"$tmpdir/mixed/b_fail_test"
 	printf '%s\n' "#!$bash_bin" 'printf "fixture failure three\\n" >&2' 'exit 3' >"$tmpdir/mixed/c_fail_test"
@@ -27,10 +27,24 @@ test_run_test_suite() {
 
 	printf '%s\n' "#!$bash_bin" 'exit 0' >"$tmpdir/passing/pass_test"
 	chmod +x "$tmpdir/passing/pass_test"
+	# shellcheck disable=SC2016 # Generated fixture expands this at runtime.
+	printf '%s\n' "#!$bash_bin" \
+		'printf "PASS misleading child assertion\\n"' \
+		'[[ -z "${RUN_TEST_SUITE_RESULT_FILE:-}" ]] || printf "forged\\n" >"$RUN_TEST_SUITE_RESULT_FILE"' \
+		'exit 0' >"$tmpdir/structured/misleading_test"
+	chmod +x "$tmpdir/structured/misleading_test"
 	printf '%s\n' "#!$bash_bin" 'exit 0' >"$tmpdir/nonexec/cannot_run_test"
 	printf '%s\n' "#!$bash_bin" 'exit 100' >"$tmpdir/capped/a_hundred_test"
 	printf '%s\n' "#!$bash_bin" 'exit 200' >"$tmpdir/capped/two_hundred_test"
 	chmod +x "$tmpdir/capped/a_hundred_test" "$tmpdir/capped/two_hundred_test"
+	for name in a_host_test b_sandbox_test c_host_test; do
+		printf '%s\n' "#!$bash_bin" "printf '%s\\n' '$name'" 'exit 0' >"$tmpdir/selection/$name"
+		chmod +x "$tmpdir/selection/$name"
+	done
+	printf '# host-only set\na_host_test\nc_host_test # inline reason\n' >"$tmpdir/host.manifest"
+	printf 'a_host_test\na_host_test\n' >"$tmpdir/duplicate.manifest"
+	printf 'missing_test\n' >"$tmpdir/stale.manifest"
+	printf '../a_host_test\n' >"$tmpdir/escaping.manifest"
 
 	(( tests++ ))
 	output=$(HOME="$tmpdir/home" "$runner" --test-dir "$tmpdir/mixed" 2>&1)
@@ -49,6 +63,34 @@ test_run_test_suite() {
 		printf '✓ run_test_suite reports an all-green suite\n'
 	else
 		printf '✗ run_test_suite should report an all-green suite\nStatus: %s\nOutput: %q\n' "$actual" "$output" >&2
+		(( fails++ ))
+	fi
+
+	(( tests++ ))
+	result_file="$tmpdir/runner-result"
+	output=$(HOME="$tmpdir/home" RUN_TEST_SUITE_RESULT_FILE="$result_file" \
+		"$runner" --test-dir "$tmpdir/structured" 2>&1)
+	actual=$?
+	expected_result=$'run-test-suite-result-v1\nstatus=valid-pass\ntotal=1\npassed=1\nfailed=0\nsummed_status=0'
+	if [[ "$actual" == 0 && "$(<"$result_file")" == "$expected_result" \
+		&& "$output" == *'PASS misleading child assertion'* ]]; then
+		printf '✓ machine result cannot be inflated or forged by child output\n'
+	else
+		printf '✗ runner must own an exact structured result\nStatus: %s\nOutput: %q\nResult: %q\n' \
+			"$actual" "$output" "$(<"$result_file")" >&2
+		(( fails++ ))
+	fi
+
+	(( tests++ ))
+	output=$(HOME="$tmpdir/home" RUN_TEST_SUITE_RESULT_FILE="$result_file" \
+		"$runner" --test-dir "$tmpdir/mixed" 2>&1)
+	actual=$?
+	expected_result=$'run-test-suite-result-v1\nstatus=failed\ntotal=3\npassed=1\nfailed=2\nsummed_status=5'
+	if [[ "$actual" == 5 && "$(<"$result_file")" == "$expected_result" ]]; then
+		printf '✓ machine result records exact failing-suite totals\n'
+	else
+		printf '✗ failing suite must write its exact structured result\nStatus: %s\nOutput: %q\nResult: %q\n' \
+			"$actual" "$output" "$(<"$result_file")" >&2
 		(( fails++ ))
 	fi
 
@@ -185,6 +227,43 @@ test_run_test_suite() {
 		printf '✗ --jobs 0 should be rejected\nStatus: %s\nOutput: %q\n' "$actual" "$output" >&2
 		(( fails++ ))
 	fi
+
+	(( tests++ ))
+	output=$(HOME="$tmpdir/home" "$runner" --test-dir "$tmpdir/selection" --manifest "$tmpdir/host.manifest" 2>&1)
+	actual=$?
+	if [[ "$actual" == 0 && "$output" == *'All 2 test files passed'* && "$output" == *'PASS a_host_test'* && "$output" == *'PASS c_host_test'* && "$output" != *'PASS b_sandbox_test'* ]]; then
+		printf '✓ manifest mode runs exactly the declared test set\n'
+	else
+		printf '✗ manifest mode selected the wrong test set\nStatus: %s\nOutput: %q\n' "$actual" "$output" >&2
+		(( fails++ ))
+	fi
+
+	(( tests++ ))
+	output=$(HOME="$tmpdir/home" "$runner" --test-dir "$tmpdir/selection" --exclude-manifest "$tmpdir/host.manifest" 2>&1)
+	actual=$?
+	if [[ "$actual" == 0 && "$output" == *'All 1 test files passed'* && "$output" == *'PASS b_sandbox_test'* && "$output" != *'PASS a_host_test'* && "$output" != *'PASS c_host_test'* ]]; then
+		printf '✓ exclusion mode runs the exact complement of the same manifest\n'
+	else
+		printf '✗ exclusion mode did not select the manifest complement\nStatus: %s\nOutput: %q\n' "$actual" "$output" >&2
+		(( fails++ ))
+	fi
+
+	for bad_manifest in duplicate stale escaping; do
+		(( tests++ ))
+		output=$(HOME="$tmpdir/home" "$runner" --test-dir "$tmpdir/selection" --manifest "$tmpdir/$bad_manifest.manifest" 2>&1)
+		actual=$?
+		case "$bad_manifest" in
+			duplicate) expected_diagnostic='duplicate manifest entry' ;;
+			stale) expected_diagnostic='stale manifest entry' ;;
+			escaping) expected_diagnostic='invalid manifest entry' ;;
+		esac
+		if (( actual != 0 )) && [[ "$output" == *"$expected_diagnostic"* ]]; then
+			printf '✓ %s manifest is rejected\n' "$bad_manifest"
+		else
+			printf '✗ %s manifest should fail closed\nStatus: %s\nOutput: %q\n' "$bad_manifest" "$actual" "$output" >&2
+			(( fails++ ))
+		fi
+	done
 
 	if (( fails > 0 )); then
 		printf '%s of %s run_test_suite tests failed!\n' "$fails" "$tests" >&2

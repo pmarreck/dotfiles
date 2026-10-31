@@ -105,7 +105,9 @@ must describe the complete required suite, including applicable integration
 checks. Only the owner changes its scope; agents must not reduce it to pass.
 
 ```sh
-# Explicit preparation. This may build and run the tests, once.
+# Preferred complete preparation: build/reuse Nix, then run host-only checks.
+./test
+# Nix-only preparation remains available for repositories without host checks.
 git-push-evidence --prepare HEAD
 # Query only. The push hook performs the same kind of verification.
 git-push-evidence --check HEAD
@@ -127,11 +129,24 @@ native Git with custom hooks or `--no-verify` can bypass local enforcement; this
 is an accidental-error control, not a protected remote policy. Unrelated custom
 pre-push hooks are preserved and may still run their own tests until migrated.
 
-Dotfiles' own previous pre-push runner now verifies cached evidence instead.
-Its extra host-only requirements remain: explicitly run
-`pre-push-gate --check-only` in the clean committed checkout. The existing test
-floor, skip allowlist, explicit completion summary and failure checks still
-apply. Success records a host qualification under
+Dotfiles' root `./test` is the one complete entry point. It builds or reuses
+`checks.<system>.test`, validates that check's structured inventory evidence,
+then runs only the exact host-only set in `bin/test/NOT_HERMETIC`. The same
+manifest selects the host phase and its exact complement in Nix, so neither
+phase can silently omit or duplicate a test. The Nix sandbox currently owns 210
+files and the supplemental host phase owns four; a cached Nix result therefore
+does not rerun 210 files merely to qualify four host checks.
+
+`pre-push-gate --check-only` is retained as a compatibility spelling for
+`./test`. Hook mode is read-only: it never launches tests or writes evidence.
+The test floor, skip allowlist, explicit completion summary and failure checks
+still apply. The runner writes an atomic machine result whose destination is
+removed from child environments; child output that happens to begin with
+`PASS` or `FAIL` cannot inflate, suppress or forge suite totals. `./test`
+reports Nix setup/build time, the hermetic execution time carried by the cached
+result, supplemental host execution time and total wall time separately.
+
+A clean successful `./test` records a host qualification under
 `$XDG_STATE_HOME/dotfiles-host-evidence` (with the usual HOME fallback), keyed by
 repository, exact commit, Nix devShell derivation, kernel, system profile and
 PATH. A real rerun invalidates the old qualification before testing; failure

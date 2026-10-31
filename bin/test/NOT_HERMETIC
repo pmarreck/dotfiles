@@ -1,11 +1,11 @@
 # Tests that cannot run inside the Nix build sandbox, with the reason for each.
 #
-# These tests are NOT broken and NOT skipped locally — `bin/run_test_suite` runs
-# every one of them on a real machine, and the pre-push gate requires them green.
-# They are excluded only from `checks.<system>.test`, the hermetic flake check
-# that Mechatron builds, because the sandbox deliberately has no network, no
-# hardware access, no terminal, no user account, and none of the sibling
-# repositories under ~/Code.
+# These tests are NOT broken and NOT skipped locally — the root `./test` runs
+# every one of them as its supplemental host phase, and the read-only pre-push
+# gate requires evidence from that complete run. They are excluded only from
+# `checks.<system>.test`, the hermetic flake check that Mechatron builds, because
+# the sandbox deliberately has no network, host Nix daemon, hardware access,
+# terminal, user account, or sibling repositories under ~/Code.
 #
 # The flake prints this list and its count on every run, so the exclusion is
 # visible in the CI log rather than implied by a smaller number.
@@ -20,6 +20,8 @@ shell_startup_test
 # ── Requires the user's live system configuration or account layout ──────────
 # pathconfig asserts NixOS wrapper ordering under /run/wrappers.
 pathconfig_bash_prepend_test
+# This deliberately realizes a unique package through the host Nix daemon.
+pathconfig_foreign_nix_e2e_test
 # block-attribution validates the installed global Claude hook, which is owned
 # outside this repository and intentionally absent from the sandbox fixture.
 block-attribution_test
