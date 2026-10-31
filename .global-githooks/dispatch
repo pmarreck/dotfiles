@@ -40,6 +40,9 @@ if [[ $hook == reference-transaction && ${GIT_REPOSITORY_BUDGET_CHECKED_PARENT:-
 fi
 # Automatic merges should also honor a repository's pre-commit check.
 if [[ $hook == pre-merge-commit && ! -x $target ]]; then target="$delegate/pre-commit"; fi
+if [[ $hook == pre-push ]]; then
+	exec "$root/bin/git-push-evidence-hook" "$target" "$@"
+fi
 if [[ -x $target ]]; then
 	if [[ $target -ef $0 ]]; then
 		printf 'ERROR: recursive Git hook delegation: %s\n' "$target" >&2

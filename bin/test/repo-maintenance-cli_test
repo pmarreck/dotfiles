@@ -14,6 +14,10 @@ state="$scratch/state"
 latest="$scratch/Fleet Status.md"
 history="$scratch/Fleet Status History.md"
 mkdir -p "$root"
+# Seed disposable remote state without invoking unrelated user push hooks.
+mkdir "$scratch/native-tools"
+ln -s "$(git --exec-path)/git" "$scratch/native-tools/git"
+PATH="$scratch/native-tools:$PATH"
 git init -q --bare -b main "$remote"
 git init -q -b main "$seed"
 git -C "$seed" config user.name FleetTest

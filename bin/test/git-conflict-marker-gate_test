@@ -100,10 +100,11 @@ check test "$rc" -ne 0
 # Non-commit hook stdin/argv and exit status survive global hook selection.
 printf '#!%s\nprintf "%%s\\n" "$@" > received-args\ncat > received-input\nexit 17\n' "$bash_path" > .git/hooks/pre-push
 chmod +x .git/hooks/pre-push
-printf 'push payload\n' > "$work/push-input"
+push_payload='(delete) 0000000000000000000000000000000000000000 refs/heads/obsolete 1111111111111111111111111111111111111111'
+printf '%s\n' "$push_payload" > "$work/push-input"
 output=$(git hook run --to-stdin="$work/push-input" pre-push -- origin 'ssh://example.invalid/repo' 2>&1); rc=$?
 check test "$rc" -eq 17
-check test "$(cat received-input 2>/dev/null)" = 'push payload'
+check test "$(cat received-input 2>/dev/null)" = "$push_payload"
 check test "$(head -n 1 received-args 2>/dev/null)" = origin
 
 # Empty staging and missing repository are distinct.

@@ -1,0 +1,30 @@
+#!/usr/bin/env luajit
+-- Additional qualification for the host-only suites excluded from the Nix check.
+local function q(s) return "'"..s:gsub("'","'\\''").."'" end
+local function run(s)
+	local p=assert(io.popen('('..s..') 2>/dev/null; printf "\\0%s" "$?"','r'))
+	local data=p:read('*a'); p:close(); local body,status=data:match('^(.*)%z(%d+)$')
+	if status=='0' then return body:gsub('[\r\n]+$','') end
+end
+local function refuse(s) io.stderr:write('Host test evidence: '..s..'\n'); os.exit(1) end
+if #arg~=3 or (arg[1]~='--key' and arg[1]~='--verify') then refuse('usage: dotfiles-host-evidence --key|--verify ROOT REV') end
+local root=run('git -C '..q(arg[2])..' rev-parse --show-toplevel')
+if not root then refuse('not a Git checkout') end
+local sha=run('git -C '..q(root)..' rev-parse --verify --end-of-options '..q(arg[3]..'^{commit}'))
+if not sha then refuse('invalid revision') end
+local osname=({Linux='linux',OSX='darwin'})[jit.os]
+local arch=({x64='x86_64',arm64='aarch64'})[jit.arch]
+if not osname or not arch then refuse('unsupported Nix host platform') end
+local url='git+file://'..root:gsub('[^%w/_.~-]',function(c) return string.format('%%%02X',c:byte()) end)..'?allRefs=1&rev='..sha
+local timer=run('command -v timeout || command -v gtimeout'); if not timer then refuse('GNU timeout is required') end
+local drv=run(q(timer)..' --kill-after=2s 10s nix eval --offline --no-update-lock-file --no-write-lock-file --option allow-import-from-derivation false --raw '..q(url..'#devShells.'..arch..'-'..osname..'.default.drvPath'))
+if not drv or not drv:match('^/nix/store/[a-z0-9]+%-[^\n]+%.drv$') then refuse('cannot identify the pinned test runtime; prepare its Nix inputs explicitly') end
+local kernel=run('uname -a'); if not kernel then refuse('cannot identify host kernel') end
+local profile=run('readlink -f /run/current-system') or ''
+local identity=table.concat({'host-tests-v1',root,sha,drv,kernel,profile,os.getenv('PATH') or ''},'\n')
+local key=run('printf %s '..q(identity)..' | git hash-object --stdin'); if not key then refuse('cannot hash test identity') end
+if arg[1]=='--key' then print(key); os.exit(0) end
+local directory=(os.getenv('XDG_STATE_HOME') or (assert(os.getenv('HOME'))..'/.local/state'))..'/dotfiles-host-evidence'
+local f=io.open(directory..'/'..key,'rb'); local data=f and f:read('*a'); if f then f:close() end
+if data~='valid-pass\n' then refuse('missing matching full-suite result for '..sha..'. No tests were run. In the clean checkout of that revision, run pre-push-gate --check-only explicitly.') end
+io.stderr:write('Host test evidence: matching full-suite result for '..sha..'.\n')

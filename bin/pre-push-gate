@@ -18,7 +18,7 @@
 # evidence rather than on the absence of a non-zero status.
 #
 # Usage:
-#   pre-push-gate                Run as a git pre-push hook (reads refs on stdin)
+#   pre-push-gate                Verify cached evidence (reads refs on stdin)
 #   pre-push-gate --check-only   Run the suite and validate; skip all git logic
 #   pre-push-gate -h|--help
 #
@@ -43,7 +43,8 @@ _help() {
 	cat <<'EOF'
 Usage: pre-push-gate [--check-only]
 
-Runs the test suite and refuses the push unless the result is a valid pass:
+Hook mode only verifies cached Nix and host-suite evidence. It never runs tests.
+--check-only explicitly runs the test suite and records a valid pass:
 the runner reported success, at least MIN_TEST_COUNT tests actually ran, and
 every skipped check is on the committed allowlist.
 
@@ -77,32 +78,37 @@ if [ -n "${PRE_PUSH_GATE_SKIP:-}" ]; then
 	exit 1
 fi
 
-# Hook mode: decide whether anything is actually being pushed before spending
-# ~35s on the suite. Git contacts the remote BEFORE invoking pre-push and feeds
-# us "<local ref> <local sha> <remote ref> <remote sha>" per ref, where the
-# remote sha is the freshly negotiated remote state — so this needs no fetch.
-# A ref whose local sha equals its remote sha has nothing to send; an all-zero
-# local sha is a deletion. If no ref carries new commits there is no new code to
-# validate, and running the gate would be both slow and meaningless.
-# --check-only deliberately skips this and always runs (that is its purpose).
-# `! -t 0`: in hook mode git always hands us a pipe. If someone runs the gate
-# by hand from a terminal there is no ref list to read, and blocking on the tty
-# is how SIGTTIN suspends a push — so fall through and run the suite instead.
-if [ "$check_only" -eq 0 ] && [ ! -t 0 ]; then
-	pushing=0
+# Hook mode: verify existing evidence only; even missing evidence must not launch
+# a test runner. Preserve the complete input for the shared Nix gate.
+if [ "$check_only" -eq 0 ]; then
+	if [ -t 0 ]; then echo 'pre-push-gate: supply Git ref input, or explicitly use --check-only.' >&2; exit 2; fi
+	updates=$(cat) || exit 1
+	[ -n "$updates" ] || exit 0
+	printf '%s\n' "$updates" | "$repo_root/bin/git-push-evidence" || exit "$?"
 	while read -r _lref lsha _rref rsha; do
-		[ -z "${lsha:-}" ] && continue
-		case "$lsha" in *[!0]*) : ;; *) continue ;; esac   # all-zero local = delete
-		[ "$lsha" = "${rsha:-}" ] && continue              # already up to date
-		pushing=1
-	done
-	if [ "$pushing" -eq 0 ]; then
-		echo "pre-push-gate: nothing to push — skipping the suite" >&2
-		exit 0
-	fi
+		case "$lsha" in *[!0]*) ;; *) continue ;; esac
+		[ "$lsha" != "$rsha" ] || continue
+		"$repo_root/bin/dotfiles-host-evidence" --verify "$repo_root" "$lsha" || exit "$?"
+	done <<< "$updates"
+	exit 0
 fi
 
 report="$(mktemp --tmpdir pre_push_gate.XXXXXX)"
+# Only the real full suite may qualify the clean current commit. Injected test
+# runners never create live receipts. Invalidate before running so a failed rerun
+# cannot leave an older green witness usable for this same identity.
+evidence_key=''
+evidence_dir="${XDG_STATE_HOME:-$HOME/.local/state}/dotfiles-host-evidence"
+if [ -z "${PRE_PUSH_GATE_RUNNER:-}" ] && git -C "$repo_root" rev-parse --verify HEAD >/dev/null 2>&1; then
+	checkout_status=$(git -C "$repo_root" status --porcelain --untracked-files=normal) || exit 1
+	if [ -z "$checkout_status" ]; then
+		evidence_key=$("$repo_root/bin/dotfiles-host-evidence" --key "$repo_root" HEAD) || exit 1
+		mkdir -p "$evidence_dir" || exit 1
+		printf 'pending\n' > "$evidence_dir/$evidence_key" || exit 1
+	else
+		echo 'pre-push-gate: dirty checkout; tests may run, but cannot create committed host evidence.' >&2
+	fi
+fi
 # The report is the only explanation of WHY a push was refused, and a refusal is
 # exactly when that explanation is needed and cannot be regenerated on demand —
 # an intermittent failure is gone by the time you re-run. So the default is to
@@ -175,6 +181,16 @@ if grep -q 'SKIPPED (asserted nothing)' "$report"; then
 fi
 
 if [ "$verdict" -eq 0 ]; then
+	if [ -n "$evidence_key" ]; then
+		after_key=$("$repo_root/bin/dotfiles-host-evidence" --key "$repo_root" HEAD) || exit 1
+		checkout_status=$(git -C "$repo_root" status --porcelain --untracked-files=normal) || exit 1
+		if [ "$after_key" != "$evidence_key" ] || [ -n "$checkout_status" ]; then
+			echo 'pre-push-gate: checkout or runtime changed during tests; no cached evidence recorded.' >&2
+			exit 1
+		fi
+		temp=$(mktemp "$evidence_dir/.receipt.XXXXXXXX") || exit 1
+		printf 'valid-pass\n' > "$temp" && mv -- "$temp" "$evidence_dir/$evidence_key" || exit 1
+	fi
 	_gate_report_disposition=discard
 	echo "pre-push-gate: valid pass — $pass_count tests ran, none skipped without approval." >&2
 else

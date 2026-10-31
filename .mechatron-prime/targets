@@ -6,5 +6,6 @@
 # a terminal, the user's account, sibling ~/Code repos). That exclusion list is
 # committed and printed in full by the check, so the CI log always states what
 # was left out. The complete suite still runs locally and is what the pre-push
-# gate requires.
+# gate requires through matching cached host qualification; it never reruns the
+# suite implicitly during a push.
 checks.x86_64-linux.test

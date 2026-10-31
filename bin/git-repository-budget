@@ -112,13 +112,13 @@ local function prefix(raw, args)
 	local rest={}; for j=i,#args do rest[#rest+1]=args[j] end
 	return base,rest
 end
-local mutations = {branch=true, checkout=true, switch=true, worktree=true, fetch=true,
+local mutations = {branch=true, checkout=true, switch=true, worktree=true, fetch=true, push=true,
 	pull=true, ["update-ref"]=true, ["symbolic-ref"]=true, commit=true, merge=true,
 	rebase=true, reset=true, ["cherry-pick"]=true, am=true, revert=true}
 local reads = {status=true, diff=true, log=true, show=true, config=true, version=true,
 	help=true, ["rev-parse"]=true, ["for-each-ref"]=true, ["cat-file"]=true,
 	["ls-files"]=true, ["show-ref"]=true, ["rev-list"]=true, ["merge-base"]=true,
-	add=true, init=true, clone=true, push=true}
+	add=true, init=true, clone=true}
 local function run(raw, args)
 	local original=extend({raw}, unpack(args))
 	local base, command=prefix(raw,args)

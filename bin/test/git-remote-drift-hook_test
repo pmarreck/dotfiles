@@ -24,6 +24,11 @@ done
 scratch="$(mktemp -d "${TMPDIR:-/tmp}/git-remote-drift-test.XXXXXX")"
 trap 'if command -v rm-safe >/dev/null 2>&1; then rm-safe -r "$scratch" >/dev/null 2>&1; else rm -rf "$scratch"; fi' EXIT
 mkdir -p "$scratch/state" "$scratch/outside"
+# This suite measures divergence, not push authorization. Fixture-only native
+# Git avoids applying unrelated host policy; push enforcement has its own tests.
+mkdir "$scratch/native-tools"
+ln -s "$(git --exec-path)/git" "$scratch/native-tools/git"
+PATH="$scratch/native-tools:$PATH"
 git init --bare "$scratch/remote.git" >/dev/null 2>&1
 git clone -q "$scratch/remote.git" "$scratch/repo" 2>/dev/null
 git -C "$scratch/repo" config user.name Test

@@ -5,7 +5,7 @@ Open work is listed in priority order. Completed history is in `docs/PLAN_LOG.md
 ## Current
 
 - [x] Deliver shared 500-line/hourly repository advisories and commit/compaction adapters; installed backed-up configurations, passed 43 focused assertions and all 207 Nix test files in 53 seconds; actual context delivery after each harness reload remains to be observed (context: docs/repository-awareness.md; done 2026-10-31 09:35 EDT).
-- [ ] Choose cached exact-revision Nix evidence versus CI-only merge/release enforcement before implementing the new hard gate; never automatically rerun a full suite inside that gate (context: docs/repository-awareness.md).
+- [x] Implement approved cached test evidence for pushed tips with explicit preparation, current-platform manifest discovery and supplemental host qualification; push hooks only verify evidence and preserve custom delegates (context: docs/repository-awareness.md; done 2026-10-31 10:05 EDT).
 
 - [x] Block ad hoc Nix-store copies through cp/install/rsync and inherited Bash functions; explain pinned flake staging, require reasoned export exceptions, and pass 135 focused checks plus all 205 Nix test files (context: docs/nix-store-copy-guard.md; done 2026-10-30 13:52 EDT).
 
@@ -13,7 +13,7 @@ Open work is listed in priority order. Completed history is in `docs/PLAN_LOG.md
 - [x] Close alias-level hook override and background-hook lock retention regressions; preserve ordinary hook configuration and release owned locks explicitly, with 64 focused checks and all 204 Nix test files passing (done 2026-10-28 13:47 EDT).
 
 - [ ] Await Mechatron Prime's owned `capture`/`strace -f` child-pipe deadlock regression and placement decision; do not rerun or modify the shared helper without delegation.
-- [ ] Decide whether the pre-push gate should test each outgoing commit, up to five, in detached disposable worktrees (context: docs/plan_context/legacy-open-work.md#active--suite-gating-2026-07-25).
+- [x] Should the push gate rerun tests on each outgoing commit? Answer: No; the approved cached-evidence design verifies each published tip without creating worktrees or running tests inside the hook (context: docs/repository-awareness.md; done 2026-10-31 10:05 EDT).
 
 ## Host coordination
 
@@ -45,5 +45,3 @@ Open work is listed in priority order. Completed history is in `docs/PLAN_LOG.md
 - [x] Replace 229 unsafe `${EDIT}` expansions across 153 live, generated, and dormant shell files with nounset-safe defaults after a repository-wide classifier failed on the old set; retain the byte-preserved randompass predecessor as the sole explicit exception (done 2026-10-28 11:34 EDT).
 - [x] Complete code-review remediation wave 2 with one regression suite covering fail-closed startup predicates, alias grouping, parent-agent detection, reload safety, terminal guards, portable commands, architecture flags, missing-executable wrappers, and the previously completed project-bin ordering (done 2026-10-28 11:29 EDT).
 - [x] Finish the readiness-gated development-cache policy: repository-isolated Cargo and Zig local caches, shared Zig global cache, prompt-time directory refresh, revocation after readiness loss, and live Codex/Claude environment verification (done 2026-10-28 11:22 EDT).
-- [x] Review and migrate the nine remaining legacy Claude memories into the private shared memory root, preserving their original creation instants and validating the complete index (done 2026-10-28 11:15 EDT).
-- [x] Migrate the legacy plan to the planning-work format, preserving completed history and open-item context in their canonical homes (done 2026-10-28 10:31 EDT; commit e837c79).

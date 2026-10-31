@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Capture once so every hook sees the same bytes and arguments.
+set -u
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P) || exit 2
+delegate=${1:?Expected delegate path (empty is permitted)}
+shift
+umask 077
+work=$(mktemp -d "${TMPDIR:-/tmp}/push-evidence-hook.XXXXXXXX") || exit 2
+trap 'command rm -rf -- "$work"' EXIT
+cat > "$work/input" || exit 2
+repository=$(git rev-parse --absolute-git-dir) || exit 2
+digest=$(git hash-object "$work/input") || exit 2
+identity="$repository:$digest"
+if [[ ${REPO_PUSH_EVIDENCE_CHECKED:-} != "$identity" ]]; then
+	"$root/bin/git-push-evidence" < "$work/input" || exit "$?"
+	export REPO_PUSH_EVIDENCE_CHECKED="$identity"
+fi
+if [[ -n $delegate && -x $delegate && ! -d $delegate ]]; then
+	"$delegate" "$@" < "$work/input"
+	exit "$?"
+fi
+exit 0

@@ -180,10 +180,10 @@ fi
 ((tests++))
 rm -f "$_marker"; w=$(_wrapped "$(make_runner 0 155)")
 rc=$(_hook_gate "$w" "$_diff" "$_same")
-if [ -e "$_marker" ]; then
-	ok "commits to push → suite still runs"
+if [ ! -e "$_marker" ] && [ "$rc" != 0 ]; then
+	ok "commits without evidence are refused without running the suite"
 else
-	bad "a ref with new commits MUST still run the suite" "exit=$rc"
+	bad "push must verify cached evidence, never launch the suite" "exit=$rc"
 fi
 
 # ── The default suite must run inside this repository's declared Nix shell ───

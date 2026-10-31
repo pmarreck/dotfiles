@@ -294,3 +294,5 @@ Completed PLAN.md items retired by plan-retire, oldest retirement first.
 ## Retired 2026-10-31
 
 - [x] [Recent completions] Globally prioritize every current `$CODE/*/bin/$PF` directory ahead of every general project bin while retaining unmigrated and legacy command paths behind both groups (done 2026-10-28 10:25 EDT; commit d3fa0b6).
+- [x] [Recent completions] Review and migrate the nine remaining legacy Claude memories into the private shared memory root, preserving their original creation instants and validating the complete index (done 2026-10-28 11:15 EDT).
+- [x] [Recent completions] Migrate the legacy plan to the planning-work format, preserving completed history and open-item context in their canonical homes (done 2026-10-28 10:31 EDT; commit e837c79).

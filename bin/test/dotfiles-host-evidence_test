@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+set -u
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)
+work=$(mktemp -d "${TMPDIR:-/tmp}/host-evidence.XXXXXXXX") || exit 1
+trap 'command rm -rf -- "$work"' EXIT
+export HOME="$work/home" XDG_STATE_HOME="$work/state" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+mkdir -p "$HOME" "$work/repo" "$work/bin"
+git -C "$work/repo" init -q
+git -C "$work/repo" config core.hooksPath /dev/null
+git -C "$work/repo" config user.name Test
+git -C "$work/repo" config user.email test@example.invalid
+printf 'source\n' > "$work/repo/flake.nix"
+git -C "$work/repo" add .
+git -C "$work/repo" commit -qm initial > "$work/commit.log" 2>&1 || exit 1
+first=$(git -C "$work/repo" rev-parse HEAD)
+printf '#!%s\nif [[ $1 == develop ]]; then while (($#)); do if [[ $1 == -c ]]; then shift; exec "$@"; fi; shift; done; exit 99; fi\nprintf "%%s" "${FAKE_SHELL_DRV:-/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-shell.drv}"\n' "$BASH" > "$work/bin/nix"
+chmod +x "$work/bin/nix"
+PATH="$work/bin:$PATH"
+gate="$root/bin/dotfiles-host-evidence"
+checks=0 failures=0
+check() { checks=$((checks+1)); if "$@"; then return; fi; printf 'FAIL %s\n' "$*" >&2; failures=$((failures+1)); }
+key=$("$gate" --key "$work/repo" "$first" 2> "$work/error"); rc=$?
+check test "$rc" = 0
+check test "${#key}" = 40
+output=$("$gate" --verify "$work/repo" "$first" 2>&1); rc=$?
+check test "$rc" != 0
+mkdir -p "$XDG_STATE_HOME/dotfiles-host-evidence"
+printf 'valid-pass\n' > "$XDG_STATE_HOME/dotfiles-host-evidence/$key"
+output=$("$gate" --verify "$work/repo" "$first" 2>&1); rc=$?
+check test "$rc" = 0
+output=$(FAKE_SHELL_DRV=/nix/store/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-shell.drv "$gate" --verify "$work/repo" "$first" 2>&1); rc=$?
+check test "$rc" != 0
+git -C "$work/repo" commit -qm second --allow-empty > "$work/commit.log" 2>&1 || exit 1
+output=$("$gate" --verify "$work/repo" HEAD 2>&1); rc=$?
+check test "$rc" != 0
+printf 'failed\n' > "$XDG_STATE_HOME/dotfiles-host-evidence/$key"
+output=$("$gate" --verify "$work/repo" "$first" 2>&1); rc=$?
+check test "$rc" != 0
+# Exercise the real receipt writer with an injected Nix process adapter, never
+# the live suite: success records, a later failed rerun revokes the same receipt.
+mkdir -p "$work/repo/bin/test"
+command cp "$root/bin/pre-push-gate" "$root/bin/dotfiles-host-evidence" "$work/repo/bin/"
+printf '#!%s\nprintf "PASS fixture_test\\nAll 1 test files passed.\\n"\nexit "${FIXTURE_TEST_EXIT:-0}"\n' "$BASH" > "$work/repo/bin/run_test_suite"
+chmod +x "$work/repo/bin/run_test_suite"
+printf '1\n' > "$work/repo/bin/test/MIN_TEST_COUNT"
+: > "$work/repo/bin/test/ALLOWED_SKIPS"
+git -C "$work/repo" add .
+git -C "$work/repo" commit -qm suite > "$work/commit.log" 2>&1 || exit 1
+output=$("$work/repo/bin/pre-push-gate" --check-only 2>&1); rc=$?
+check test "$rc" = 0
+output=$("$gate" --verify "$work/repo" HEAD 2>&1); rc=$?
+check test "$rc" = 0
+output=$(FIXTURE_TEST_EXIT=1 "$work/repo/bin/pre-push-gate" --check-only 2>&1); rc=$?
+check test "$rc" != 0
+output=$("$gate" --verify "$work/repo" HEAD 2>&1); rc=$?
+check test "$rc" != 0
+native_git=$(git --exec-path)/git
+printf '#!%s\nfor a in "$@"; do if [[ $a == status ]]; then exit 71; fi; done\nexec %q "$@"\n' "$BASH" "$native_git" > "$work/bin/git"
+chmod +x "$work/bin/git"
+output=$("$work/repo/bin/pre-push-gate" --check-only 2>&1); rc=$?
+check test "$rc" != 0
+printf '%s checks, %s failures\n' "$checks" "$failures"
+test "$failures" = 0

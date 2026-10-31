@@ -75,19 +75,70 @@ post-commit hooks. The wrapper also covers custom hook directories. Native Git
 invoked with a different custom hook directory can bypass the shared dispatcher;
 this remains an accidental-error control, not an adversarial sandbox.
 
-## Push-test policy under discussion
+## Cached test evidence before pushing
 
-Do not turn a push into an unannounced full test run. The proposed hard gate
-checks already-successful Nix check outputs for the **pushed revision**, rather
+Do not turn a push into an unannounced full test run. The hard gate
+checks already-successful Nix check outputs for each **pushed commit tip**, rather
 than accepting an unrelated checkout's last green result. `nix path-info` does
 not build or substitute outputs. Evaluation must also disallow import-from-
 derivation builds, remain offline and have a bounded timeout. Absent or stale
 evidence needs an explicit diagnosis, not an automatic rebuild.
 
-The alternative is to leave pushes unrestricted and require green CI before
-merge/release. Selection and rollout of that hard gate are pending. Existing
-project-specific pre-push hooks remain unchanged, including hooks that run tests.
-No new push-test gate is installed by `install-repo-awareness-hooks`.
+`git-push-evidence` reads the actual ref updates supplied by Git. Every changed
+tip must qualify; annotated tags resolve to their commits. Deletions and unchanged
+refs need no evidence. Intermediate commits are not individually qualified: the
+gate establishes the tested state at each published tip. Dirty working files
+never substitute for the pushed source. Bare repositories and tags of noncommit
+objects are refused rather than falsely labeled tested.
+
+Declare required attributes in a tracked `.push-checks` file, one
+`checks.SYSTEM.NAME` per line. Blank lines and `#` comments are allowed. Without
+that file, the gate uses the current host platform's `checks.*` entries in the
+committed `.mechatron-prime/targets` manifest. The host is identified from the
+LuaJIT runtime's OS and architecture; cross-OS checks stay with CI. Packages are
+not accepted as test evidence. Explicit declarations can require other platforms
+too, provided their successful outputs have been obtained from trusted builders.
+An explicit owner-configured `git config --add pushEvidence.check ATTRIBUTE`
+overrides file selection. Missing declarations or missing flakes refuse the
+push and explain what is needed; they never imply a green suite. The check list
+must describe the complete required suite, including applicable integration
+checks. Only the owner changes its scope; agents must not reduce it to pass.
+
+```sh
+# Explicit preparation. This may build and run the tests, once.
+git-push-evidence --prepare HEAD
+# Query only. The push hook performs the same kind of verification.
+git-push-evidence --check HEAD
+git push
+```
+
+The query runs offline, refuses lock updates and import-from-derivation builds,
+and has a 10-second timeout. `git config pushEvidence.timeoutSeconds N` can set
+1..120 seconds. Preparation is explicit and permits ordinary pinned dependency
+downloads. No human-readable log or arbitrary project-written green marker
+replaces Nix's realized check output. A collected output, missing input cache or
+cold evaluation timeout refuses the push; the diagnostic gives the preparation
+command. Evaluation itself is not guaranteed to be instantaneous.
+
+The global dispatcher and PATH Git wrapper apply the gate and preserve existing
+hook arguments, input bytes and failure status, including custom hook directories.
+Repeated shared dispatch for the same repository/ref input is suppressed. Direct
+native Git with custom hooks or `--no-verify` can bypass local enforcement; this
+is an accidental-error control, not a protected remote policy. Unrelated custom
+pre-push hooks are preserved and may still run their own tests until migrated.
+
+Dotfiles' own previous pre-push runner now verifies cached evidence instead.
+Its extra host-only requirements remain: explicitly run
+`pre-push-gate --check-only` in the clean committed checkout. The existing test
+floor, skip allowlist, explicit completion summary and failure checks still
+apply. Success records a host qualification under
+`$XDG_STATE_HOME/dotfiles-host-evidence` (with the usual HOME fallback), keyed by
+repository, exact commit, Nix devShell derivation, kernel, system profile and
+PATH. A real rerun invalidates the old qualification before testing; failure
+leaves it invalid. Checkout/runtime changes prevent recording success. Injected
+test runners never create qualifications. These local receipts are writable
+accident-prevention records, not signatures or proof that arbitrary host state
+has remained unchanged. The reproducible Nix check remains independently required.
 
 Mechatron Prime CI invokes ordinary `nix build`, not forced `--rebuild`. Identical
 derivations with available successful outputs can therefore reuse results;

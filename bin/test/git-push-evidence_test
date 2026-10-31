@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+set -u
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)
+work=$(mktemp -d "${TMPDIR:-/tmp}/push-evidence.XXXXXXXX") || exit 1
+trap 'command rm -rf -- "$work"' EXIT
+export HOME="$work/home" GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
+unset -f rg 2>/dev/null
+mkdir -p "$HOME" "$work/repo with space" "$work/bin"
+repo="$work/repo with space"
+git -C "$repo" init -q
+git -C "$repo" config core.hooksPath /dev/null
+git -C "$repo" config user.name Test
+git -C "$repo" config user.email test@example.invalid
+printf '{ outputs = _: {}; }\n' > "$repo/flake.nix"
+printf 'checks.x86_64-linux.test\n' > "$repo/.push-checks"
+printf 'good\n' > "$repo/source"
+git -C "$repo" add .
+git -C "$repo" commit -qm initial > "$work/commit.log" 2>&1 || exit 1
+first=$(git -C "$repo" rev-parse HEAD)
+printf 'changed\n' > "$repo/source"
+git -C "$repo" commit -qam changed > "$work/commit.log" 2>&1 || exit 1
+second=$(git -C "$repo" rev-parse HEAD)
+# Only the immutable first revision has evidence in this controlled adapter.
+printf '#!%s\n' "$BASH" > "$work/bin/nix"
+cat >> "$work/bin/nix" <<'EOF'
+printf '%s\n' "$@" >> "$EVIDENCE_CALLS"
+case "$1" in
+ path-info)
+  for a in "$@"; do
+   case "$a" in git+file:*)
+    [[ $a == *"rev=$EVIDENCE_FIRST"* ]] || exit 1
+    [[ $a == *'#checks.x86_64-linux.test' ]] || exit 1
+   esac
+  done
+  printf '/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-qualified-test\n';;
+ build) printf '/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-qualified-test\n';;
+ *) exit 89;;
+esac
+EOF
+chmod +x "$work/bin/nix"
+PATH="$work/bin:$PATH"
+export EVIDENCE_CALLS="$work/calls" EVIDENCE_FIRST="$first"
+checks=0 failures=0
+check() { checks=$((checks+1)); if "$@"; then return; fi; printf 'FAIL %s\n' "$*" >&2; failures=$((failures+1)); }
+gate() { output=$(cd "$repo" && "$root/bin/git-push-evidence" "$@" 2>&1); rc=$?; }
+gate --check "$first"; check test "$rc" = 0
+check test -s "$EVIDENCE_CALLS"
+check rg -q -- '--offline' "$EVIDENCE_CALLS"
+check rg -q -- '--no-write-lock-file' "$EVIDENCE_CALLS"
+check rg -q -- 'allow-import-from-derivation' "$EVIDENCE_CALLS"
+check rg -q -- '%20space' "$EVIDENCE_CALLS"
+gate --check "$second"; check test "$rc" != 0
+check test "${output#*No tests were run}" != "$output"
+# Dirty tracked work must not substitute for the revision being pushed.
+printf 'good\n' > "$repo/source"
+gate --check "$second"; check test "$rc" != 0
+gate --check "$first"; check test "$rc" = 0
+# Ref updates: all tips must qualify; deletion-only pushes need no evidence.
+zero=0000000000000000000000000000000000000000
+output=$(printf 'refs/heads/a %s refs/heads/a %s\nrefs/heads/b %s refs/heads/b %s\n' "$first" "$zero" "$second" "$zero" | (cd "$repo" && "$root/bin/git-push-evidence") 2>&1); rc=$?
+check test "$rc" != 0
+: > "$EVIDENCE_CALLS"
+output=$(printf '(delete) %s refs/heads/a %s\n' "$zero" "$first" | (cd "$repo" && "$root/bin/git-push-evidence") 2>&1); rc=$?
+check test "$rc" = 0
+check test ! -s "$EVIDENCE_CALLS"
+gate --prepare "$first"; check test "$rc" = 0
+check rg -q '^build$' "$EVIDENCE_CALLS"
+: > "$EVIDENCE_CALLS"
+gate --check "$first"; check test "$rc" = 0
+check test "$(rg -c '^build$' "$EVIDENCE_CALLS")" = ''
+gate --check nonsense; check test "$rc" != 0
+git -C "$repo" tag -a -m release version "$first"
+gate --check version; check test "$rc" = 0
+git -C "$repo" config --add pushEvidence.check 'packages.x86_64-linux.default'
+gate --check "$first"; check test "$rc" != 0
+check test "${output#*checks.}" != "$output"
+git -C "$repo" config --unset-all pushEvidence.check
+# A real push through a custom hook directory must still apply the shared gate,
+# and preserve the delegate's argv, stdin and refusal status.
+git init -q --bare "$work/remote.git"
+mkdir "$repo/custom-hooks"
+printf '#!%s\ncat > .git/delegate-input\nprintf "%%s\\n" "$@" > .git/delegate-args\nexit "${DELEGATE_STATUS:-0}"\n' "$BASH" > "$repo/custom-hooks/pre-push"
+chmod +x "$repo/custom-hooks/pre-push"
+git -C "$repo" config core.hooksPath custom-hooks
+output=$(git -C "$repo" push "$work/remote.git" "$first:refs/heads/release" 2>&1); rc=$?
+check test "$rc" = 0
+check test -s "$repo/.git/delegate-input"
+first_input=$(cat "$repo/.git/delegate-input")
+output=$(git -C "$repo" push "$work/remote.git" "$second:refs/heads/release" 2>&1); rc=$?
+check test "$rc" != 0
+check test "$(cat "$repo/.git/delegate-input")" = "$first_input"
+check test "$(git --git-dir="$work/remote.git" rev-parse refs/heads/release)" = "$first"
+output=$(DELEGATE_STATUS=19 git -C "$repo" push "$work/remote.git" "$first:refs/heads/other" 2>&1); rc=$?
+check test "$rc" != 0
+# Automatic manifest discovery selects this host, not every remote CI platform.
+command rm "$repo/.push-checks"
+mkdir "$repo/.mechatron-prime"
+printf 'checks.x86_64-linux.test\nchecks.aarch64-darwin.test\npackages.x86_64-linux.default\n' > "$repo/.mechatron-prime/targets"
+git -C "$repo" add .push-checks .mechatron-prime
+git -C "$repo" commit -qm manifest > "$work/commit.log" 2>&1 || exit 1
+export EVIDENCE_FIRST=$(git -C "$repo" rev-parse HEAD)
+gate --check HEAD; check test "$rc" = 0
+printf '%s checks, %s failures\n' "$checks" "$failures"
+test "$failures" = 0

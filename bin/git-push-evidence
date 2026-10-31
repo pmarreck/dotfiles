@@ -1,0 +1,103 @@
+#!/usr/bin/env luajit
+-- Query completed Nix checks for immutable pushed tips. Only --prepare builds.
+local function quote(s) return "'"..s:gsub("'", "'\\''").."'" end
+local function capture(command)
+	local p=assert(io.popen('('..command..') 2>&1; printf "\\0%s" "$?"','r'))
+	local data=p:read('*a'); p:close()
+	local body,status=data:match('^(.*)%z(%d+)$'); return body,tonumber(status)
+end
+local function trim(s) return (s or ''):gsub('[\r\n]+$','') end
+local function git(args) return capture('git '..args) end
+local function fail(s) io.stderr:write('Push evidence: '..s..'\n'); os.exit(1) end
+if arg[1]=='--help' or arg[1]=='-h' then
+	print([[git-push-evidence [--check REV | --prepare REV]
+Default: inspect git pre-push ref updates on stdin; never run tests.
+--check: query already-realized checks for REV (also never runs tests).
+--prepare: explicitly build the required checks for immutable REV.
+Checks: git config --add pushEvidence.check checks.SYSTEM.NAME;
+otherwise committed .push-checks, then checks from .mechatron-prime/targets.
+No declaration or no successful cached outputs means refusal.]])
+	os.exit(0)
+end
+local prepare=arg[1]=='--prepare'
+if #arg>0 and not ((prepare or arg[1]=='--check') and #arg==2) then fail('invalid arguments; use --help') end
+local revisions={}
+if #arg>0 then revisions[1]=arg[2]
+else
+	for line in io.lines() do
+		local localref,sha,remoteref,remote=line:match('^(%S+) (%x+) (%S+) (%x+)$')
+		if not localref or (#sha~=40 and #sha~=64) or #remote~=#sha then fail('malformed Git pre-push input') end
+		if not sha:match('^0+$') and sha~=remote then revisions[#revisions+1]=sha end
+	end
+end
+if #revisions==0 then os.exit(0) end
+local root,rc=git('rev-parse --show-toplevel'); if rc~=0 then fail('a working repository is required') end
+root=trim(root)
+local url='git+file://'..root:gsub('[^%w/_.~-]',function(c) return string.format('%%%02X',c:byte()) end)
+local configured,status=git('config --get-all pushEvidence.check')
+if status~=0 and status~=1 then fail('cannot read required-check configuration') end
+local host_os=({Linux='linux',OSX='darwin'})[jit.os]
+local host_arch=({x64='x86_64',arm64='aarch64'})[jit.arch]
+local host_prefix=host_os and host_arch and ('checks.'..host_arch..'-'..host_os..'.')
+local function blob(sha,path)
+	local kind,krc=git('ls-tree '..quote(sha)..' -- '..quote(path))
+	if krc~=0 then fail('cannot inspect committed '..path) end
+	if kind=='' then return nil end
+	if not kind:match('^100%d+ blob ') then fail(path..' must be a regular committed file') end
+	local data,drc=git('show '..quote(sha..':'..path)); if drc~=0 then fail('cannot read committed '..path) end
+	return data
+end
+local installables,seen={},{}
+for _,revision in ipairs(revisions) do
+	local sha,src=git('rev-parse --verify --end-of-options '..quote(revision..'^{commit}'))
+	if src~=0 then fail('revision does not resolve to a commit: '..revision) end
+	sha=trim(sha)
+	if not seen[sha] then
+		seen[sha]=true
+		if not blob(sha,'flake.nix') then fail(sha..' has no flake.nix; declare reproducible test checks first') end
+		local declaration,manifest
+		if status==0 then declaration=configured
+		else
+			declaration=blob(sha,'.push-checks')
+			if not declaration then declaration=blob(sha,'.mechatron-prime/targets'); manifest=true end
+		end
+		local count,attributes=0,{}
+		for line in (declaration or ''):gmatch('[^\r\n]+') do
+			local attribute=line:gsub('#.*$',''):match('^%s*(.-)%s*$')
+			if attribute~='' and (not manifest or (host_prefix and attribute:sub(1,#host_prefix)==host_prefix)) then
+				if not attribute:match('^checks%.[%w_-]+%.[%w_.-]+$') or attribute:find('..',1,true) then
+					fail('required attributes must be checks.SYSTEM.NAME, not package outputs or commands')
+				end
+				if not attributes[attribute] then
+					attributes[attribute]=true; count=count+1
+					installables[#installables+1]=url..'?allRefs=1&rev='..sha..'#'..attribute
+				end
+			end
+		end
+		if count==0 then fail('no required checks declared for '..sha..'; add committed .push-checks or configure pushEvidence.check') end
+	end
+end
+local args={}
+for _,i in ipairs(installables) do args[#args+1]=quote(i) end
+local operation=prepare and 'build --no-link --print-out-paths' or 'path-info --offline'
+local command='nix '..operation..' --no-update-lock-file --no-write-lock-file --option allow-import-from-derivation false '..table.concat(args,' ')
+if not prepare then
+	local limit,lrc=git('config --get pushEvidence.timeoutSeconds'); limit=trim(limit)
+	if lrc==1 then limit='10' elseif lrc~=0 or not limit:match('^[1-9]%d*$') or tonumber(limit)>120 then fail('pushEvidence.timeoutSeconds must be 1..120') end
+	local timer,trc=capture('command -v timeout || command -v gtimeout')
+	if trc~=0 then fail('GNU timeout is required for bounded verification') end
+	command=quote(trim(timer))..' --kill-after=2s '..limit..'s '..command
+else
+	io.stderr:write('Preparing required test evidence explicitly; this may build and run tests.\n')
+end
+local output,result=capture(command)
+if result~=0 then
+	io.stderr:write(output or '')
+	if not prepare then
+		fail('missing, stale or unavailable cached check output (status '..tostring(result)..'). No tests were run. Prepare explicitly with git-push-evidence --prepare REV, then retry. Do not weaken test coverage to obtain green.')
+	end
+	fail('test preparation failed; no successful evidence was granted')
+end
+-- Do not accept an empty successful adapter response as positive evidence.
+if not output:match('/nix/store/[a-z0-9]+%-[^\r\n]+') then fail('Nix returned no successful check output') end
+io.stderr:write('Push evidence: verified '..#installables..' required check target(s) for the selected commit tip(s).\n')

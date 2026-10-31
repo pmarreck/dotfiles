@@ -12,6 +12,11 @@ trap 'rm -rf "$scratch"' EXIT
 scan_root="$scratch/fleet root"
 remote_root="$scratch/remotes"
 mkdir -p "$scan_root" "$remote_root"
+# Fixture setup deliberately uses native Git; push enforcement is tested by
+# git-push-evidence_test, while this suite checks the status classifier.
+mkdir "$scratch/native-tools"
+ln -s "$(git --exec-path)/git" "$scratch/native-tools/git"
+PATH="$scratch/native-tools:$PATH"
 
 git_in() {
 	local repo="$1"

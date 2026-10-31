@@ -18,6 +18,7 @@ if [[ $hook == post-commit && ${REPO_AWARENESS_REPORTED:-0} != 1 ]]; then
 	export REPO_AWARENESS_REPORTED=1
 fi
 if [[ $hook != reference-transaction ]]; then
+	if [[ $hook == pre-push ]]; then exec "$root/bin/git-push-evidence-hook" "$target" "$@"; fi
 	if [[ -x $target && ! -d $target ]]; then exec "$target" "$@"; fi
 	exit 0
 fi
