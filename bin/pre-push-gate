@@ -10,7 +10,8 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 
 help() {
 	cat <<'EOF'
-Usage: pre-push-gate [--check-only]
+Usage: pre-push-gate [REMOTE_NAME REMOTE_URL]
+       pre-push-gate --check-only
 
 Hook mode verifies cached Nix and supplemental host evidence for every changed
 tip read from Git's pre-push input. It never runs tests.
@@ -23,6 +24,10 @@ EOF
 
 case "$#:${1:-}" in
 	0:)
+		;;
+	2:*)
+		# Git supplies the remote name and URL to pre-push hooks. Ref updates
+		# remain on stdin; the evidence classifiers consume those bytes below.
 		;;
 	1:-h | 1:--help)
 		help

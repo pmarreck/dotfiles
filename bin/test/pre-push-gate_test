@@ -54,7 +54,7 @@ chmod +x "$forbidden_runner"
 _hook_gate() { # $1=local sha $2=remote sha ; echoes exit code
 	printf 'refs/heads/master %s refs/heads/master %s\n' "$1" "$2" \
 		| PUSH_EVIDENCE_LOG="$push_log" HOST_EVIDENCE_LOG="$host_log" \
-		"$GATE" >/dev/null 2>&1
+		"$GATE" origin https://example.invalid/repository.git >/dev/null 2>&1
 	printf '%s' "$?"
 }
 _same=1111111111111111111111111111111111111111
