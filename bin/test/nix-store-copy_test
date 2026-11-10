@@ -28,6 +28,11 @@ for tool in cp install rsync; do
 		check test ! -e "$COPY_TEST_CALL"
 		check test "${output#*flake.nix}" != "$output"
 		check test "${output#*CI}" != "$output"
+		# The refusal steers toward reading outputs in place and confines the
+		# override to release delivery; it must not invite a routine export.
+		check test "${output#*--out-link}" != "$output"
+		check test "${output#*release delivery}" != "$output"
+		check test "${output#*export/inspection}" = "$output"
 	done
 	for source in "$work/local/source" /nix/storehouse/file /tmp/example/nix/store/file; do
 		run -- "$source" "$work/local/target with spaces"
@@ -55,11 +60,11 @@ for tool in cp install rsync; do
 	check test ! -e "$COPY_TEST_CALL"
 	# Override is scoped to a single invocation, with a visible reason.
 	command rm -f "$COPY_TEST_CALL"
-	output=$(ALLOW_NIX_STORE_COPY='Exporting the declared release output' "$root/bin/$tool" /nix/store/hash-output/app "$work/local" 2>&1); rc=$?
+	output=$(ALLOW_NIX_STORE_COPY='Signing the derivation-built release bundle' "$root/bin/$tool" /nix/store/hash-output/app "$work/local" 2>&1); rc=$?
 	check test "$rc" -eq 0
 	check test -e "$COPY_TEST_CALL"
 	check test "${output#*WARNING}" != "$output"
-	check test "${output#*Exporting the declared release output}" != "$output"
+	check test "${output#*Signing the derivation-built release bundle}" != "$output"
 	command rm -f "$COPY_TEST_CALL"
 	output=$(ALLOW_NIX_STORE_COPY=1 "$root/bin/$tool" /nix/store/hash-output/app "$work/local" 2>&1); rc=$?
 	check test "$rc" -eq 77

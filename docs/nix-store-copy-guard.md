@@ -27,21 +27,45 @@ Nix builders use their declared tools, not the developer's host PATH wrappers
 or exported shell functions. The guard does not edit or intercept Nix itself.
 If a derivation deliberately includes these wrappers, it must account for them.
 
-## Intentional exports
+## Read outputs in place
 
-Exporting a known release output or copying a bounded file for inspection is
-different from scavenging dependencies. The wrapper cannot prove that intent,
-so even a `result/bin/app` symlink requires a reason:
+A build product is used from its store path. Nothing in a project's build,
+test or run scripts copies it out, and nothing searches the store to find it:
 
 ```sh
-nix build .#app
-ALLOW_NIX_STORE_COPY='Exporting the declared release output' cp result/bin/app ./release/
+nix build .#app --out-link .nix-out/app      # retained link, also a GC root
+.nix-out/app/bin/app --version               # run, link against or test it there
+nix build .#app --no-link --print-out-paths  # or just ask for the path
 ```
 
-The override applies to one invocation and prints its reason on stderr. It
-requires at least 12 characters, two words, and no control characters. Do not
-export it globally or use it to conceal missing flake inputs. It does not make
-an exported binary relocatable; packaging must establish that separately.
+Tests take the product directory as a parameter. The command on PATH is a
+relative link from `bin/<platform>/` into the retained link. A script that
+expects a compiler's flat output directory is changed to take that parameter;
+the layout is not recreated by copying. The shared `writing-nix` skill's
+consuming-build-outputs reference has the full pattern.
+
+## The override is for release delivery
+
+`ALLOW_NIX_STORE_COPY` is reserved for two release steps, both acting on an
+artifact that a derivation assembled:
+
+- the writable copy that credentialed signing or notarization needs, because
+  those credentials must not enter a derivation or the store;
+- sending that artifact to a destination with no Nix store, when the transfer
+  tool is one of the wrapped commands.
+
+```sh
+nix build .#dist --out-link .nix-out/dist
+ALLOW_NIX_STORE_COPY='Signing the derivation-built release bundle' \
+	cp -R .nix-out/dist/Example.app "$scratch/"
+```
+
+The wrapper cannot prove intent, so the reason is recorded rather than
+verified. The override applies to one invocation and prints its reason on
+stderr. It requires at least 12 characters, two words, and no control
+characters. Do not export it globally, put it in a build, test or run script,
+or use it to conceal missing flake inputs. It does not make a copied binary
+relocatable; packaging must establish that separately.
 
 ## Scope and limitations
 
@@ -49,7 +73,7 @@ an exported binary relocatable; packaging must establish that separately.
   including dangling aliases whose remaining path does not exist yet.
 - Conservatively checks every path-like argument, including option values and
   store destinations. This can refuse metadata reads such as a store-backed
-  `--files-from` list; use a reasoned exception when appropriate.
+  `--files-from` list; restructure the command rather than reaching for the override.
 - Recognizes explicit remote `host:/nix/store/...` operands. It does not resolve
   remote aliases or inspect remote files.
 - Does not walk source directories to find nested symlinks. It does not inspect
