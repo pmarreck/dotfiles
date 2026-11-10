@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.pmarreck.normalize-filenames</string>
+
+    <!-- luajit via the STABLE nix-darwin symlink, never a versioned /nix/store path
+         (that hash changes on every darwin-rebuild and would break this agent).
+         Only folders whose files no catalog tracks by path: Music, Movies and
+         Pictures are left out on purpose. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/run/current-system/sw/bin/luajit</string>
+        <string>/Users/pmarreck/dotfiles/bin/normalize-filenames</string>
+        <string>--apply</string>
+        <string>--no-progress</string>
+        <string>/Users/pmarreck/Documents</string>
+        <string>/Users/pmarreck/Desktop</string>
+        <string>/Users/pmarreck/Downloads</string>
+    </array>
+
+    <!-- Nightly at 03:30. A missed run (asleep) fires once on wake. -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>3</integer>
+        <key>Minute</key>
+        <integer>30</integer>
+    </dict>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>Nice</key>
+    <integer>10</integer>
+    <key>LowPriorityIO</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/pmarreck/Library/Logs/normalize-filenames.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/pmarreck/Library/Logs/normalize-filenames.log</string>
+</dict>
+</plist>

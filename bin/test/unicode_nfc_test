@@ -1,0 +1,142 @@
+#!/usr/bin/env luajit
+
+-- Tests bin/src/unicode_nfc.lua against Unicode's own NormalizationTest.txt
+-- (an oracle this code did not write), checks every other scalar value is
+-- NFC-invariant, and checks the committed data table matches a fresh
+-- generation from the same Unicode Character Database.
+-- UCD location: $UNICODE_UCD_DIR, else nixpkgs#unicode-character-database
+-- pinned by this repo's flake.lock.
+
+local script_dir = arg[0]:match("^(.*)/[^/]*$") or "."
+local src_dir = script_dir .. "/../src"
+package.path = src_dir .. "/?.lua;" .. package.path
+
+local fails, tests = 0, 0
+local function check(label, cond, detail)
+	tests = tests + 1
+	if cond then return end
+	fails = fails + 1
+	io.stderr:write("FAIL ", label, detail and ("\n  " .. detail) or "", "\n")
+end
+
+local function ucd_dir()
+	local env = os.getenv("UNICODE_UCD_DIR")
+	if env and env ~= "" then return env end
+	-- --inputs-from needs an absolute path; a relative one parses as a registry name.
+	local p = io.popen("cd '" .. script_dir .. "/../..' && nix build --no-link --print-out-paths --inputs-from \"$PWD\""
+		.. " nixpkgs#unicode-character-database 2>/dev/null")
+	local out = p:read("*l")
+	p:close()
+	assert(out and out ~= "", "cannot locate the Unicode Character Database; set UNICODE_UCD_DIR")
+	return out .. "/share/unicode"
+end
+local UCD = ucd_dir()
+
+local ok, nfc = pcall(require, "unicode_nfc")
+check("unicode_nfc module loads", ok, tostring(nfc))
+if not ok then
+	io.stderr:write(string.format("%d of %d unicode_nfc tests failed\n", fails, tests))
+	os.exit(1)
+end
+
+local function utf8_encode(cps)
+	local t = {}
+	for _, cp in ipairs(cps) do
+		if cp < 0x80 then t[#t + 1] = string.char(cp)
+		elseif cp < 0x800 then
+			t[#t + 1] = string.char(0xC0 + math.floor(cp / 0x40), 0x80 + cp % 0x40)
+		elseif cp < 0x10000 then
+			t[#t + 1] = string.char(0xE0 + math.floor(cp / 0x1000), 0x80 + math.floor(cp / 0x40) % 0x40, 0x80 + cp % 0x40)
+		else
+			t[#t + 1] = string.char(0xF0 + math.floor(cp / 0x40000), 0x80 + math.floor(cp / 0x1000) % 0x40,
+				0x80 + math.floor(cp / 0x40) % 0x40, 0x80 + cp % 0x40)
+		end
+	end
+	return table.concat(t)
+end
+
+local function hexseq(field)
+	local cps = {}
+	for h in field:gmatch("%x+") do cps[#cps + 1] = tonumber(h, 16) end
+	return utf8_encode(cps)
+end
+
+-- 1. The committed table is exactly what the generator produces.
+do
+	local f = io.open(src_dir .. "/unicode_nfc_data.lua", "rb")
+	local committed = f and f:read("*a")
+	if f then f:close() end
+	local p = io.popen("luajit '" .. src_dir .. "/gen_unicode_nfc_data.lua' '" .. UCD .. "'")
+	local fresh = p:read("*a")
+	p:close()
+	check("committed unicode_nfc_data.lua matches a fresh generation", committed ~= nil and committed == fresh,
+		"regenerate: luajit bin/src/gen_unicode_nfc_data.lua \"$UNICODE_UCD_DIR\" > bin/src/unicode_nfc_data.lua")
+end
+
+-- 2. NormalizationTest.txt: c2 == NFC(c1) == NFC(c2) == NFC(c3), c4 == NFC(c4) == NFC(c5).
+local part1 = {}
+do
+	local part, lines, bad, shown = nil, 0, 0, 0
+	for line in io.lines(UCD .. "/NormalizationTest.txt") do
+		local p = line:match("^@(Part%d)")
+		if p then
+			part = p
+		elseif line:find("^%x") then
+			local c1, c2, c3, c4, c5 = line:match("^([^;]*);([^;]*);([^;]*);([^;]*);([^;]*);")
+			c1, c2, c3, c4, c5 = hexseq(c1), hexseq(c2), hexseq(c3), hexseq(c4), hexseq(c5)
+			if part == "Part1" then part1[tonumber(line:match("^(%x+)"), 16)] = true end
+			lines = lines + 1
+			local good = nfc.normalize(c1) == c2 and nfc.normalize(c2) == c2 and nfc.normalize(c3) == c2
+				and nfc.normalize(c4) == c4 and nfc.normalize(c5) == c4
+			if not good then
+				bad = bad + 1
+				if shown < 5 then
+					shown = shown + 1
+					io.stderr:write("  mismatch: ", line:sub(1, 80), "\n")
+				end
+			end
+		end
+	end
+	check("NormalizationTest.txt was read", lines > 15000, "only " .. lines .. " lines")
+	check("NormalizationTest.txt NFC conformance", bad == 0, bad .. " of " .. lines .. " lines failed")
+end
+
+-- 3. Every scalar value not listed in Part 1 is unchanged by NFC.
+do
+	local bad, first = 0, nil
+	for cp = 0, 0x10FFFF do
+		if not part1[cp] and (cp < 0xD800 or cp > 0xDFFF) then
+			local s = utf8_encode({ cp })
+			if nfc.normalize(s) ~= s then
+				bad = bad + 1
+				first = first or string.format("U+%04X", cp)
+			end
+		end
+	end
+	check("code points outside Part 1 are NFC-invariant", bad == 0, bad .. " changed, first " .. tostring(first))
+end
+
+-- 4. Malformed UTF-8 is rejected, never silently repaired.
+for label, s in pairs({
+	["stray continuation byte"] = "a\128b",
+	["overlong slash"] = "\192\175",
+	["UTF-16 surrogate"] = "\237\160\128",
+	["truncated sequence"] = "x\226\130",
+	["above U+10FFFF"] = "\244\144\128\128",
+}) do
+	local out, err = nfc.normalize(s)
+	check("rejects " .. label, out == nil and err == "invalid UTF-8", tostring(out) .. " / " .. tostring(err))
+end
+
+-- 5. Behavior on file-name shaped inputs.
+check("ASCII is returned unchanged", nfc.normalize("Plain name.pdf") == "Plain name.pdf")
+check("decomposed é composes", nfc.normalize("Re\204\129sume\204\129") == "R\195\169sum\195\169")
+check("is_nfc spots a decomposed name", nfc.is_nfc("Go\204\136del") == false and nfc.is_nfc("G\195\182del") == true)
+check("Hangul jamo compose to a syllable", nfc.normalize("\225\132\146\225\133\161\225\134\171") == "\237\149\156")
+
+if fails == 0 then
+	print(string.format("All %d unicode_nfc tests passed!", tests))
+	os.exit(0)
+end
+io.stderr:write(string.format("%d of %d unicode_nfc tests failed\n", fails, tests))
+os.exit(1)

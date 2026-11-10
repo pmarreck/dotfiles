@@ -1,5 +1,16 @@
 # dotfiles — TODO / Plans
 
+## Active: no system Python; NFC file names (2026-11-09)
+
+- [x] `timed`: drop the python3/python clock fallbacks (perl, then whole seconds). Test simulates BSD date with no perl and asserts no Python call. Completed 2026-11-09 20:20 EST.
+- [x] `mlx-server test`: pretty-print with `jq` instead of `python3 -m json.tool`; capture curl output first because jq exits 0 on empty input. New `mlx-server_test`. Completed 2026-11-09 20:22 EST.
+- [x] Port `update_nix_git_hash` from Bash+Python to LuaJIT (same CLI, plus `--about`). New contract test with mocked git/nix covers dry run, tag/branch/rev resolution, rev insertion, ref override, `%FILE%`, and file restoration on all three build-failure modes. Completed 2026-11-09 20:24 EST.
+- [x] Replace the vendored 4,000-line `git-filter-repo` with a launcher for `nixpkgs#git-filter-repo`. Completed 2026-11-09 20:25 EST.
+- [x] Add `bin/python-stub` (linked as python, python3, pip, pip3): refuses with a flake hint; callers whose command line matches `~/.config/python-stub/allowed-callers` (untracked, per machine) get a GC-rooted `nix build nixpkgs#python3`. Needed because peon-ping's Claude hooks call python3 76 times. Completed 2026-11-09 20:27 EST.
+- [x] Add `normalize-filenames` (LuaJIT): pure-Lua NFC in `bin/src/unicode_nfc.lua` with tables generated from the Unicode Character Database 17.0.0; `unicode_nfc_test` checks NormalizationTest.txt, NFC invariance of every other scalar value, and generator drift (4 mutants killed). Exclusive two-step renames; skips git work trees, bundles and metadata dirs. Completed 2026-11-09 20:36 EST.
+- [x] Nightly LaunchAgent `com.pmarreck.normalize-filenames` (03:30) on Documents, Desktop, Downloads; installed and one live run verified (exit 0). Music, Movies and Pictures are excluded because catalogs track their files by path. Completed 2026-11-09 20:38 EST.
+- [ ] Verify the Linux Nix check (`checks.x86_64-linux.test`): the collision branch of `normalize-filenames_test` and the `renameat2` path only run on a byte-preserving file system, and this Mac has no Linux builder.
+
 ## Active: resumable `getfile --unzip` (2026-10-22)
 
 - [x] `--unzip` downloads each URL resumably (`wget -c` / `curl -C -`), extracts it with bsdtar, then trashes the archive via rm-safe; failures keep the archive for a rerun. Plain-mode curl fallback now resumes too. Completed 2026-10-22 19:00 EDT.

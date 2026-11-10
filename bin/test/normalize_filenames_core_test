@@ -1,0 +1,99 @@
+#!/usr/bin/env luajit
+
+-- Unit tests for the pure planning core of normalize-filenames. Inputs are
+-- synthetic path lists, so collisions and malformed names that some file
+-- systems refuse to create are still covered.
+
+local script_dir = arg[0]:match("^(.*)/[^/]*$") or "."
+package.path = script_dir .. "/../src/?.lua;" .. package.path
+
+local fails, tests = 0, 0
+local function check(label, cond, detail)
+	tests = tests + 1
+	if cond then return end
+	fails = fails + 1
+	io.stderr:write("FAIL ", label, detail and ("\n  " .. detail) or "", "\n")
+end
+
+local ok, core = pcall(require, "normalize_filenames")
+check("normalize_filenames module loads", ok, tostring(core))
+if not ok then
+	io.stderr:write(string.format("%d of %d normalize_filenames core tests failed\n", fails, tests))
+	os.exit(1)
+end
+
+-- Decomposed (NFD) and composed (NFC) spellings used below.
+local GODEL_NFD, GODEL_NFC = "Go\204\136del", "G\195\182del"
+local RESUME_NFD, RESUME_NFC = "Re\204\129sume\204\129.pdf", "R\195\169sum\195\169.pdf"
+local ESCHER_NFD, ESCHER_NFC = "Esche\204\129r", "Esch\195\169r"
+-- Two different non-NFC spellings of U+1EAD (a with dot below and circumflex).
+local A_DOT_HAT, A_HAT_DOT, A_COMPOSED = "a\204\163\204\130", "a\204\130\204\163", "\225\186\173"
+
+local function describe(actions)
+	local lines = {}
+	for i, a in ipairs(actions) do
+		lines[i] = a.kind .. " " .. core.escape_bytes(a.path) .. (a.new_path and (" -> " .. core.escape_bytes(a.new_path)) or "")
+	end
+	return table.concat(lines, "\n")
+end
+
+local function expect(label, entries, expected_lines)
+	local got = describe(core.plan(entries))
+	local want = table.concat(expected_lines, "\n")
+	check(label, got == want, "expected:\n" .. want .. "\n  got:\n" .. got)
+end
+
+expect("composed names need nothing", { "/r/" .. GODEL_NFC, "/r/plain.txt", "/r/sub", "/r/sub/" .. RESUME_NFC }, {})
+
+expect("a decomposed file is renamed in place", { "/r/" .. RESUME_NFD, "/r/other.txt" }, {
+	"rename /r/" .. RESUME_NFD .. " -> /r/" .. RESUME_NFC,
+})
+
+expect("children are renamed before their decomposed parent, under the old parent path",
+	{ "/r/" .. GODEL_NFD, "/r/" .. GODEL_NFD .. "/" .. ESCHER_NFD, "/r/" .. GODEL_NFD .. "/fine.txt" }, {
+		"rename /r/" .. GODEL_NFD .. "/" .. ESCHER_NFD .. " -> /r/" .. GODEL_NFD .. "/" .. ESCHER_NFC,
+		"rename /r/" .. GODEL_NFD .. " -> /r/" .. GODEL_NFC,
+	})
+
+expect("an existing composed sibling is a collision, not an overwrite", { "/r/" .. GODEL_NFD, "/r/" .. GODEL_NFC }, {
+	"collision /r/" .. GODEL_NFD .. " -> /r/" .. GODEL_NFC,
+})
+
+expect("a composed name elsewhere is not a collision", { "/r/a/" .. GODEL_NFD, "/r/b/" .. GODEL_NFC }, {
+	"rename /r/a/" .. GODEL_NFD .. " -> /r/a/" .. GODEL_NFC,
+})
+
+-- Byte order decides which spelling wins: A_HAT_DOT sorts first (0x82 < 0xA3).
+expect("two spellings that compose to one name: first renames, second collides",
+	{ "/r/" .. A_DOT_HAT, "/r/" .. A_HAT_DOT }, {
+		"rename /r/" .. A_HAT_DOT .. " -> /r/" .. A_COMPOSED,
+		"collision /r/" .. A_DOT_HAT .. " -> /r/" .. A_COMPOSED,
+	})
+
+expect("malformed UTF-8 is reported and left alone", { "/r/bad\255name", "/r/" .. RESUME_NFD }, {
+	"rename /r/" .. RESUME_NFD .. " -> /r/" .. RESUME_NFC,
+	"invalid /r/bad\\xFFname",
+})
+
+expect("nothing inside a git work tree is touched, including its root",
+	{ "/r/" .. GODEL_NFD, "/r/" .. GODEL_NFD .. "/.git", "/r/" .. GODEL_NFD .. "/" .. ESCHER_NFD,
+		"/r/" .. GODEL_NFD .. "/deep/" .. RESUME_NFD, "/r/" .. RESUME_NFD }, {
+		"rename /r/" .. RESUME_NFD .. " -> /r/" .. RESUME_NFC,
+	})
+
+expect("a git file (worktree or submodule link) also marks a repo",
+	{ "/r/sub", "/r/sub/.git", "/r/sub/" .. ESCHER_NFD }, {})
+
+check("escape_bytes keeps valid UTF-8 and escapes stray bytes",
+	core.escape_bytes("G\195\182del\128\255") == "G\195\182del\\x80\\xFF", core.escape_bytes("G\195\182del\128\255"))
+
+check("format_progress groups thousands", core.format_progress(1234567) == "normalize-filenames: scanned 1,234,567 entries",
+	core.format_progress(1234567))
+check("format_progress handles small counts", core.format_progress(7) == "normalize-filenames: scanned 7 entries")
+
+if fails == 0 then
+	print(string.format("All %d normalize_filenames core tests passed!", tests))
+	os.exit(0)
+end
+io.stderr:write(string.format("%d of %d normalize_filenames core tests failed\n", fails, tests))
+os.exit(1)

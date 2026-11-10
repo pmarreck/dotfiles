@@ -1,0 +1,273 @@
+#!/usr/bin/env luajit
+
+-- normalize-filenames: rename files and directories whose names are not in
+-- Unicode NFC (composed) form, so the same visible name is always the same
+-- bytes. Dry run unless --apply. Git work trees, macOS bundles and a few
+-- metadata directories are never touched. Renames use an exclusive two-step
+-- rename (old -> temp -> new) that refuses to overwrite anything.
+
+local source_path = debug.getinfo(1, "S").source:sub(2)
+local script_dir = source_path:match("^(.*)/[^/]+$") or "."
+package.path = script_dir .. "/src/?.lua;" .. package.path
+
+local ffi = require("ffi")
+local core = require("normalize_filenames")
+local nfc = require("unicode_nfc")
+
+local ABOUT = "normalize-filenames: rename files to Unicode NFC (composed) names (Unicode "
+	.. nfc.unicode_version .. ", " .. ffi.os .. "/" .. ffi.arch .. ")"
+
+local DEFAULT_EXCLUDES = {
+	".entropy_shield", ".docscan", ".Trash", ".Trashes", ".Spotlight-V100", ".fseventsd",
+	".DocumentRevisions-V100", ".TemporaryItems", ".zfs", ".snapshot", "node_modules",
+}
+-- Directories macOS presents as single documents or apps; their insides are
+-- managed by the owning program.
+local BUNDLE_PATTERNS = {
+	"*.app", "*.appex", "*.bundle", "*.framework", "*.plugin", "*.kext", "*.xpc",
+	"*.photoslibrary", "*.photolibrary", "*.musiclibrary", "*.tvlibrary", "*.imovielibrary",
+	"*.fcpbundle", "*.logicx", "*.band", "*.xcodeproj", "*.xcworkspace", "*.playground",
+	"*.pkg", "*.mpkg", "*.rtfd", "*.pages", "*.numbers", "*.key", "*.scriv",
+	"*.sparsebundle", "*.lrlibrary", "*.lrdata",
+}
+
+local USAGE = [[
+Usage: normalize-filenames [OPTIONS] DIR...
+
+Rename files and directories under each DIR whose names are not in Unicode
+NFC (composed) form. Without --apply, only reports what it would do.
+
+Never touched: anything inside a git work tree (a DIR inside one is refused),
+macOS bundles (*.app, *.photoslibrary, ...), and these names:
+  ]] .. table.concat(DEFAULT_EXCLUDES, " ") .. [[
+
+
+Options:
+  --apply                Perform the renames
+  --exclude NAME         Also skip entries with exactly this name (repeatable)
+  --no-default-excludes  Do not skip the names listed above
+  --json                 Print one JSON object per action instead of text
+  --no-progress          Do not show a progress count on stderr
+  --no-color, --simple   Plain output without ANSI colors
+  --about                Print a one-line description
+  -h, --help             Show this help
+
+Exit status: 0 success, 1 a collision, malformed name or rename error was
+reported, 2 usage error.
+]]
+
+ffi.cdef [[
+int getpid(void);
+int isatty(int fd);
+char *strerror(int errnum);
+]]
+
+local EEXIST = 17
+local rename_exclusive
+if ffi.os == "OSX" then
+	ffi.cdef "int renamex_np(const char *from, const char *to, unsigned int flags);"
+	local RENAME_EXCL = 0x00000004
+	rename_exclusive = function(from, to) return ffi.C.renamex_np(from, to, RENAME_EXCL) == 0 end
+else
+	ffi.cdef "int renameat2(int olddirfd, const char *oldpath, int newdirfd, const char *newpath, unsigned int flags);"
+	local AT_FDCWD, RENAME_NOREPLACE = -100, 1
+	rename_exclusive = function(from, to) return ffi.C.renameat2(AT_FDCWD, from, AT_FDCWD, to, RENAME_NOREPLACE) == 0 end
+end
+
+local function errno_message()
+	local e = ffi.errno()
+	return ffi.string(ffi.C.strerror(e)), e
+end
+
+local function usage_error(msg)
+	io.stderr:write("normalize-filenames: ", msg, "\n")
+	os.exit(2)
+end
+
+local function shell_quote(s)
+	return "'" .. s:gsub("'", "'\\''") .. "'"
+end
+
+local function shell_ok(cmd)
+	local r = os.execute(cmd)
+	return r == true or r == 0
+end
+
+local function glob_escape(name)
+	return (name:gsub("[%*%?%[%]\\]", "\\%0"))
+end
+
+local function json_string(s)
+	return '"' .. s:gsub('[%c"\\]', function(c)
+		if c == '"' then return '\\"' elseif c == "\\" then return "\\\\" end
+		return string.format("\\u%04x", c:byte())
+	end) .. '"'
+end
+
+-- Parse argv; later options override earlier ones.
+local opts = { apply = false, json = false, progress = true, color = true, default_excludes = true, excludes = {} }
+local roots = {}
+do
+	local i = 1
+	local only_paths = false
+	while i <= #arg do
+		local a = arg[i]
+		if only_paths then roots[#roots + 1] = a
+		elseif a == "--" then only_paths = true
+		elseif a == "--apply" then opts.apply = true
+		elseif a == "--json" then opts.json = true
+		elseif a == "--no-progress" then opts.progress = false
+		elseif a == "--no-color" or a == "--simple" then opts.color = false
+		elseif a == "--no-default-excludes" then opts.default_excludes = false
+		elseif a == "--exclude" then
+			if arg[i + 1] == nil then usage_error("--exclude requires a name") end
+			i = i + 1
+			opts.excludes[#opts.excludes + 1] = arg[i]
+		elseif a == "-h" or a == "--help" then io.write(USAGE); os.exit(0)
+		elseif a == "--about" then print(ABOUT); os.exit(0)
+		elseif a:sub(1, 1) == "-" and a ~= "-" then usage_error("unknown option: " .. a)
+		else roots[#roots + 1] = a end
+		i = i + 1
+	end
+end
+if #roots == 0 then usage_error("at least one directory is required (see --help)") end
+
+local use_color = opts.color and not opts.json and os.getenv("NO_COLOR") == nil and ffi.C.isatty(1) == 1
+local show_progress = opts.progress and ffi.C.isatty(2) == 1
+local function paint(code, s) return use_color and ("\27[" .. code .. "m" .. s .. "\27[0m") or s end
+
+local function inside_git_work_tree(dir)
+	local p = dir
+	while p and p ~= "" do
+		if shell_ok("test -e " .. shell_quote(p .. "/.git")) then return true end
+		p = p:match("^(.*)/[^/]*$")
+	end
+	return false
+end
+
+-- List every entry under root (root excluded) as raw bytes, pruning excluded
+-- names and bundles but still reporting .git entries so the core can skip
+-- whole work trees.
+local function list_entries(root, counter)
+	local names = {}
+	if opts.default_excludes then
+		for _, n in ipairs(DEFAULT_EXCLUDES) do names[#names + 1] = n end
+	end
+	for _, n in ipairs(opts.excludes) do names[#names + 1] = glob_escape(n) end
+	local cmd = { "find", shell_quote(root), "-mindepth 1", "\\( -name .git -print0 -prune \\)" }
+	if #names > 0 then
+		local terms = {}
+		for _, n in ipairs(names) do terms[#terms + 1] = "-name " .. shell_quote(n) end
+		cmd[#cmd + 1] = "-o \\( " .. table.concat(terms, " -o ") .. " \\) -prune"
+	end
+	local bundle_terms = {}
+	for _, pat in ipairs(BUNDLE_PATTERNS) do bundle_terms[#bundle_terms + 1] = "-name " .. shell_quote(pat) end
+	cmd[#cmd + 1] = "-o \\( -type d \\( " .. table.concat(bundle_terms, " -o ") .. " \\) \\) -prune"
+	cmd[#cmd + 1] = "-o -print0; printf '__rc=%d' $?"
+
+	local p = io.popen(table.concat(cmd, " "), "r")
+	local entries, pending = {}, ""
+	while true do
+		local chunk = p:read(65536)
+		if not chunk then break end
+		pending = pending .. chunk
+		local start = 1
+		while true do
+			local z = pending:find("\0", start, true)
+			if not z then break end
+			entries[#entries + 1] = pending:sub(start, z - 1)
+			start = z + 1
+			counter.n = counter.n + 1
+			if show_progress and counter.n % 1000 == 0 then
+				io.stderr:write("\r", core.format_progress(counter.n), "\27[K")
+			end
+		end
+		pending = pending:sub(start)
+	end
+	p:close()
+	return entries, tonumber(pending:match("__rc=(%d+)$")) or 1
+end
+
+local counts = { rename = 0, collision = 0, invalid = 0, error = 0 }
+local seq = 0
+
+local function report(action, path, new_path, detail)
+	if opts.json then
+		local fields = { '"action":' .. json_string(action), '"path":' .. json_string(core.escape_bytes(path)) }
+		if new_path then fields[#fields + 1] = '"new_path":' .. json_string(new_path) end
+		if detail then fields[#fields + 1] = '"error":' .. json_string(detail) end
+		print("{" .. table.concat(fields, ",") .. "}")
+		return
+	end
+	local new_name = new_path and new_path:match("([^/]*)$")
+	if action == "would_rename" then
+		print(paint("36", "would rename: ") .. path .. " -> " .. new_name)
+	elseif action == "renamed" then
+		print(paint("32", "renamed: ") .. path .. " -> " .. new_name)
+	elseif action == "collision" then
+		print(paint("33", "collision: ") .. path .. " -> " .. new_name .. " (name already exists)")
+	elseif action == "invalid_utf8" then
+		print(paint("31", "invalid UTF-8: ") .. core.escape_bytes(path))
+	else
+		print(paint("31", "error: ") .. core.escape_bytes(path) .. ": " .. detail)
+	end
+end
+
+-- old -> unique temp -> new, each step refusing to overwrite. The temp hop is
+-- needed on normalization-insensitive file systems (APFS), where the old and
+-- new spellings name the same entry and a direct exclusive rename says EEXIST.
+local function perform_rename(path, new_path)
+	seq = seq + 1
+	local parent = path:match("^(.*)/[^/]*$")
+	local temp = string.format("%s/.normalize-filenames-%d-%d", parent, ffi.C.getpid(), seq)
+	if not rename_exclusive(path, temp) then
+		return "error", (errno_message())
+	end
+	if rename_exclusive(temp, new_path) then return "renamed" end
+	local msg, e = errno_message()
+	if not rename_exclusive(temp, path) then
+		return "error", msg .. "; could not restore the original name, file is now " .. temp
+	end
+	return e == EEXIST and "collision" or "error", msg
+end
+
+local scanned = { n = 0 }
+local exit_status = 0
+for _, raw_root in ipairs(roots) do
+	local root = raw_root:gsub("(.)/+$", "%1")
+	if not shell_ok("test -d " .. shell_quote(root) .. " && test ! -L " .. shell_quote(root)) then
+		usage_error("not a directory: " .. raw_root)
+	end
+	if inside_git_work_tree(root) then usage_error("inside a git work tree: " .. root) end
+
+	local entries, find_rc = list_entries(root, scanned)
+	if find_rc ~= 0 then
+		counts.error = counts.error + 1
+		io.stderr:write("normalize-filenames: find reported errors under ", root, "\n")
+	end
+	for _, a in ipairs(core.plan(entries)) do
+		if a.kind == "invalid" then
+			counts.invalid = counts.invalid + 1
+			report("invalid_utf8", a.path)
+		elseif a.kind == "collision" then
+			counts.collision = counts.collision + 1
+			report("collision", a.path, a.new_path)
+		elseif not opts.apply then
+			counts.rename = counts.rename + 1
+			report("would_rename", a.path, a.new_path)
+		else
+			local outcome, detail = perform_rename(a.path, a.new_path)
+			if outcome == "renamed" then counts.rename = counts.rename + 1
+			elseif outcome == "collision" then counts.collision = counts.collision + 1
+			else counts.error = counts.error + 1 end
+			report(outcome, a.path, a.new_path, detail)
+		end
+	end
+end
+
+if show_progress then io.stderr:write("\r\27[K") end
+if counts.collision + counts.invalid + counts.error > 0 then exit_status = 1 end
+io.stderr:write(string.format("%s; %d %s, %d collisions, %d invalid UTF-8, %d errors%s\n",
+	core.format_progress(scanned.n), counts.rename, opts.apply and "renamed" or "to rename",
+	counts.collision, counts.invalid, counts.error, opts.apply and "" or " (dry run; --apply renames)"))
+os.exit(exit_status)

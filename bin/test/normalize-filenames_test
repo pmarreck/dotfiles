@@ -1,0 +1,170 @@
+#!/usr/bin/env bash
+
+# CLI tests for normalize-filenames against a real directory tree. Names are
+# compared as raw bytes (LC_ALL=C) because composed and decomposed spellings
+# look identical when printed.
+
+set -u
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+cli="$repo_root/bin/normalize-filenames"
+scratch="$(mktemp -d "${TMPDIR:-/tmp}/normalize-filenames-test.XXXXXX")" || exit 1
+scratch="$(cd "$scratch" && pwd -P)" || exit 1
+cleanup_rm=''
+while IFS= read -r candidate; do
+	case "$candidate" in
+		*rm_safe*) ;;
+		*) cleanup_rm="$candidate"; break ;;
+	esac
+done < <(type -aP rm)
+trap '"$cleanup_rm" -rf "$scratch"' EXIT
+
+# shellcheck source=/dev/null
+source "$repo_root/bin/src/capture.bash"
+
+fails=0
+tests=0
+out=''
+err=''
+rc=0
+
+expect_eq() {
+	local label="$1" expected="$2" actual="$3"
+	((tests++))
+	if [[ "$expected" == "$actual" ]]; then return 0; fi
+	printf 'FAIL %s\nexpected: %q\nactual:   %q\n' "$label" "$expected" "$actual" >&2
+	((fails++))
+}
+
+expect_match() {
+	local label="$1" pattern="$2" actual="$3"
+	((tests++))
+	if [[ "$actual" == *"$pattern"* ]]; then return 0; fi
+	printf 'FAIL %s\nexpected to contain: %q\nactual: %q\n' "$label" "$pattern" "$actual" >&2
+	((fails++))
+}
+
+listing() {
+	(cd "$1" && LC_ALL=C find . -mindepth 1 | LC_ALL=C sort)
+}
+
+godel_nfd=$(printf 'Go\xcc\x88del')
+godel_nfc=$(printf 'G\xc3\xb6del')
+resume_nfd=$(printf 'Re\xcc\x81sume\xcc\x81 2026.pdf')
+resume_nfc=$(printf 'R\xc3\xa9sum\xc3\xa9 2026.pdf')
+escher_nfd=$(printf 'Esche\xcc\x81r')
+escher_nfc=$(printf 'Esch\xc3\xa9r')
+
+# --- help, about, usage errors ---
+capture "$cli" --help
+expect_eq "--help exits 0" 0 "$rc"
+expect_match "--help shows usage" "Usage: normalize-filenames [OPTIONS] DIR..." "$out"
+capture "$cli" -h
+expect_eq "-h exits 0" 0 "$rc"
+capture "$cli" --about
+expect_eq "--about exits 0" 0 "$rc"
+expect_eq "--about is one line" 1 "$(printf '%s\n' "$out" | wc -l | tr -d ' ')"
+capture "$cli"
+expect_eq "no directory exits 2" 2 "$rc"
+expect_match "no directory explains itself" "at least one directory is required" "$err"
+capture "$cli" --bogus "$scratch"
+expect_eq "unknown option exits 2" 2 "$rc"
+capture "$cli" "$scratch/missing"
+expect_eq "missing directory exits 2" 2 "$rc"
+expect_match "missing directory is named" "not a directory: $scratch/missing" "$err"
+
+# --- fixture tree ---
+tree="$scratch/tree with space"
+mkdir -p "$tree/$godel_nfd" "$tree/repo/.git" "$tree/Thing.app/Contents" "$tree/.entropy_shield" "$tree/skip me"
+: > "$tree/$resume_nfd"
+: > "$tree/$godel_nfd/$escher_nfd"
+: > "$tree/plain.txt"
+: > "$tree/repo/$godel_nfd"
+: > "$tree/Thing.app/Contents/$escher_nfd"
+: > "$tree/.entropy_shield/$escher_nfd"
+: > "$tree/skip me/$escher_nfd"
+before="$(listing "$tree")"
+
+capture "$cli" --exclude 'skip me' "$tree"
+expect_eq "dry run exits 0" 0 "$rc"
+expect_eq "dry run lists renames deepest first" "would rename: $tree/$godel_nfd/$escher_nfd -> $escher_nfc
+would rename: $tree/$godel_nfd -> $godel_nfc
+would rename: $tree/$resume_nfd -> $resume_nfc" "$out"
+expect_match "dry run summary says nothing changed" "dry run" "$err"
+expect_eq "dry run leaves the tree unchanged" "$before" "$(listing "$tree")"
+
+capture "$cli" --json --exclude 'skip me' "$tree"
+expect_eq "json dry run emits one object per action" \
+	"{\"action\":\"would_rename\",\"path\":\"$tree/$godel_nfd/$escher_nfd\",\"new_path\":\"$tree/$godel_nfd/$escher_nfc\"}
+{\"action\":\"would_rename\",\"path\":\"$tree/$godel_nfd\",\"new_path\":\"$tree/$godel_nfc\"}
+{\"action\":\"would_rename\",\"path\":\"$tree/$resume_nfd\",\"new_path\":\"$tree/$resume_nfc\"}" "$out"
+
+capture "$cli" --apply --exclude 'skip me' "$tree"
+expect_eq "apply exits 0" 0 "$rc"
+expect_eq "apply reports each rename" "renamed: $tree/$godel_nfd/$escher_nfd -> $escher_nfc
+renamed: $tree/$godel_nfd -> $godel_nfc
+renamed: $tree/$resume_nfd -> $resume_nfc" "$out"
+expect_eq "apply composes exactly the eligible names" "$(LC_ALL=C sort <<EOF
+./.entropy_shield
+./.entropy_shield/$escher_nfd
+./$godel_nfc
+./$godel_nfc/$escher_nfc
+./$resume_nfc
+./Thing.app
+./Thing.app/Contents
+./Thing.app/Contents/$escher_nfd
+./plain.txt
+./repo
+./repo/.git
+./repo/$godel_nfd
+./skip me
+./skip me/$escher_nfd
+EOF
+)" "$(listing "$tree")"
+((tests++))
+if [[ -n "$(find "$tree" -name '.normalize-filenames-*')" ]]; then
+	printf 'FAIL apply left a temporary name behind\n' >&2
+	((fails++))
+fi
+
+capture "$cli" --apply --exclude 'skip me' "$tree"
+expect_eq "second apply finds nothing" "" "$out"
+expect_eq "second apply exits 0" 0 "$rc"
+
+# A root inside a git work tree is refused outright.
+capture "$cli" --apply "$tree/repo"
+expect_eq "root that is a git work tree exits 2" 2 "$rc"
+expect_match "root that is a git work tree is explained" "inside a git work tree: $tree/repo" "$err"
+mkdir -p "$tree/repo/nested"
+: > "$tree/repo/nested/$escher_nfd"
+capture "$cli" --apply "$tree/repo/nested"
+expect_eq "root below a git work tree exits 2" 2 "$rc"
+expect_eq "root below a git work tree is untouched" "./$escher_nfd" "$(listing "$tree/repo/nested")"
+
+# --- an existing composed sibling ---
+# Byte-preserving file systems (ext4, ZFS, tmpfs) hold both spellings as
+# separate files, which must be reported and left alone. Normalization-
+# insensitive ones (APFS) treat them as one file, which must simply be renamed.
+dup="$scratch/dup"
+mkdir -p "$dup"
+printf 'decomposed' > "$dup/$godel_nfd"
+printf 'composed' > "$dup/$godel_nfc"
+if [[ "$(find "$dup" -mindepth 1 | wc -l | tr -d ' ')" == 2 ]]; then
+	capture "$cli" --apply "$dup"
+	expect_eq "collision exits 1" 1 "$rc"
+	expect_eq "collision is reported" "collision: $dup/$godel_nfd -> $godel_nfc (name already exists)" "$out"
+	expect_eq "collision leaves the decomposed file alone" "decomposed" "$(cat "$dup/$godel_nfd")"
+	expect_eq "collision leaves the composed file alone" "composed" "$(cat "$dup/$godel_nfc")"
+else
+	capture "$cli" --apply "$dup"
+	expect_eq "aliased spellings rename without a false collision" 0 "$rc"
+	expect_eq "aliased spellings end up composed" "./$godel_nfc" "$(listing "$dup")"
+	expect_eq "aliased spellings keep the data" "composed" "$(cat "$dup/$godel_nfc")"
+fi
+
+if ((fails == 0)); then
+	printf 'All %d normalize-filenames tests passed!\n' "$tests"
+	exit 0
+fi
+printf '%d of %d normalize-filenames tests failed\n' "$fails" "$tests" >&2
+exit 1

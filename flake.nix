@@ -73,6 +73,9 @@
               export XDG_STATE_HOME="$HOME/.local/state"
               mkdir -p "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$XDG_STATE_HOME"
               PATH="$HOME/bin:$PATH"
+              # unicode_nfc_test's oracle (NormalizationTest.txt); outside the
+              # sandbox the test finds the same pinned package through nix.
+              export UNICODE_UCD_DIR="${pkgs.unicode-character-database}/share/unicode"
               export TMPDIR="$NIX_BUILD_TOP/tmp"
               mkdir -p "$TMPDIR"
 
@@ -114,6 +117,7 @@
 
         devShells.default = pkgs.mkShell {
           packages = suiteTools ++ [ pkgs.hyperfine pkgs.shellcheck ];
+          UNICODE_UCD_DIR = "${pkgs.unicode-character-database}/share/unicode";
         };
       });
 }
