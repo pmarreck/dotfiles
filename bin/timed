@@ -402,8 +402,6 @@ get_time_ns() {
 				# BSD date doesn't support %N, will output literal 'N'
 				# Use perl as fallback for better precision on BSD/Mac
 				perl -MTime::HiRes=time -e 'printf "%.9f\n", time' 2>/dev/null || \
-				python3 -c 'import time; print(f"{time.time():.9f}")' 2>/dev/null || \
-				python -c 'import time; print("%.9f" % time.time())' 2>/dev/null || \
 				date +%s
 		else
 				date +%s.%N

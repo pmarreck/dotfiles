@@ -1,8 +1,22 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/usr/bin/env luajit
 
-usage() {
-  cat <<'EOF'
+-- update_nix_git_hash: bump a builtins.fetchGit pin (rev, optionally ref) in a
+-- .nix file and refresh its vendorHash. It writes a placeholder hash, lets a
+-- failing `nix build` report the real one, substitutes it, and verifies with a
+-- second build. Any failure restores the original file contents from memory.
+
+local ffi = require("ffi")
+
+ffi.cdef [[
+char *realpath(const char *path, char *resolved_path);
+void free(void *ptr);
+]]
+
+local PROG = "update_nix_git_hash"
+local ABOUT = "update_nix_git_hash: bump a fetchGit rev in a .nix file and refresh its vendorHash"
+local PLACEHOLDER = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+
+local USAGE = [[
 Usage: update_nix_git_hash [OPTIONS] PATH/TO/file.nix
 
 Options:
@@ -11,294 +25,228 @@ Options:
   --tag TAG           Resolve the given tag to a commit and use it.
   --expr EXPR         Custom nix build expression; %FILE% will be replaced with the target path.
   -n, --dry-run       Show actions without modifying the file.
+  --about             Print a one-line description.
   -h, --help          Show this help.
 
 The target .nix file must contain a builtins.fetchGit block and a vendorHash attribute.
 The script updates (or inserts) the rev attribute, refreshes vendorHash, and runs a
 verification build using nix.
-EOF
-}
+]]
 
-backup_path=""
+-- Set once the target has been modified, so die() can put the original back.
+local abs_target, original_contents
 
-die() {
-  if [[ -n "${backup_path:-}" && -e "$backup_path" ]]; then
-    if [[ -n "${abs_target:-}" ]]; then
-      cp "$backup_path" "$abs_target"
-    fi
-    rm -f "$backup_path"
-    backup_path=""
-  fi
-  echo "update_nix_git_hash: $*" >&2
-  exit 1
-}
+local function restore()
+	if original_contents then
+		local f = io.open(abs_target, "wb")
+		if f then
+			f:write(original_contents)
+			f:close()
+		end
+		original_contents = nil
+	end
+end
 
-ref_override=""
-rev_override=""
-tag_override=""
-build_expr=""
-dry_run=0
+local function die(msg)
+	restore()
+	io.stdout:flush()
+	io.stderr:write(PROG, ": ", msg, "\n")
+	os.exit(1)
+end
 
-positional=()
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --ref)
-      [[ $# -ge 2 ]] || die "--ref requires a value"
-      ref_override="$2"
-      shift 2
-      ;;
-    --rev)
-      [[ $# -ge 2 ]] || die "--rev requires a value"
-      rev_override="$2"
-      shift 2
-      ;;
-    --tag)
-      [[ $# -ge 2 ]] || die "--tag requires a value"
-      tag_override="$2"
-      shift 2
-      ;;
-    --expr)
-      [[ $# -ge 2 ]] || die "--expr requires a value"
-      build_expr="$2"
-      shift 2
-      ;;
-    -n|--dry-run)
-      dry_run=1
-      shift
-      ;;
-    -h|--help)
-      usage
-      exit 0
-      ;;
-    --)
-      shift
-      break
-      ;;
-    -*)
-      die "unknown option: $1"
-      ;;
-    *)
-      positional+=("$1")
-      shift
-      ;;
-  esac
-done
+local function read_file(path)
+	local f = io.open(path, "rb")
+	if not f then return nil end
+	local data = f:read("*a")
+	f:close()
+	return data
+end
 
-[[ ${#positional[@]} -eq 1 ]] || die "exactly one path to a .nix file is required"
+local function write_file(path, data)
+	local f, err = io.open(path, "wb")
+	if not f then die("cannot write " .. path .. ": " .. tostring(err)) end
+	f:write(data)
+	f:close()
+end
 
-target="${positional[0]}"
-[[ -f "$target" ]] || die "file not found: $target"
+local function shell_quote(s)
+	return "'" .. s:gsub("'", "'\\''") .. "'"
+end
 
-abs_target="$(realpath "$target")"
+-- Run a shell command and return its combined output and exit status. The
+-- status is read from a trailer the shell prints, which works the same under
+-- Lua 5.1 and 5.2 popen semantics.
+local function run(cmd)
+	local p = io.popen(cmd .. " 2>&1; printf '\\n__rc=%d' $?", "r")
+	local out = p:read("*a")
+	p:close()
+	local body, rc = out:match("^(.-)\n__rc=(%d+)$")
+	return body or out, tonumber(rc) or 1
+end
 
-if ! grep -q 'fetchGit' "$abs_target"; then
-  die "no fetchGit call detected in $target"
-fi
+local function realpath(path)
+	local resolved = ffi.C.realpath(path, nil)
+	if resolved == nil then return nil end
+	local s = ffi.string(resolved)
+	ffi.C.free(resolved)
+	return s
+end
 
-python3 - <<'PY' "$abs_target" >/tmp/update-nix-git-hash-info.$$
-import re, sys, json
-path = sys.argv[1]
-data = open(path).read()
-def grab(pattern):
-    m = re.search(pattern, data, re.MULTILINE)
-    return m.group(1) if m else ""
-info = {
-    "url": grab(r'url\s*=\s*"([^"]+)"'),
-    "ref": grab(r'ref\s*=\s*"([^"]+)"'),
-    "rev": grab(r'rev\s*=\s*"([^"]+)"')
-}
-print(json.dumps(info))
-PY
+-- First capture of a `name = "value"` assignment anywhere in the file.
+local function grab(data, name)
+	return data:match(name .. '%s*=%s*"([^"]+)"') or ""
+end
 
-trap 'rm -f /tmp/update-nix-git-hash-info.$$' EXIT
-info_json="$(cat /tmp/update-nix-git-hash-info.$$)"
-url="$(python3 - <<'PY' "$info_json"
-import json, sys
-info = json.loads(sys.argv[1])
-print(info.get("url", ""))
-PY
-)"
-[[ -n "$url" ]] || die "could not determine fetchGit url from $target"
+-- Replace the first `name = "...";` with the new value. When absent, insert it
+-- on its own line after the first `anchor = "...";` line, matching its indent.
+local function set_string_attr(data, name, value, anchors)
+	local line = name .. ' = "' .. value .. '";'
+	local replaced, n = data:gsub(name .. '%s*=%s*"[^"]+";', function() return line end, 1)
+	if n > 0 then return replaced end
+	for _, anchor in ipairs(anchors) do
+		local pos = 1
+		while pos <= #data do
+			local eol = data:find("\n", pos, true) or (#data + 1)
+			local text = data:sub(pos, eol - 1)
+			local indent, stmt = text:match('^([ \t]*)(' .. anchor .. '%s*=%s*"[^"]+";)')
+			if indent then
+				local insert_at = pos + #indent + #stmt - 1
+				return data:sub(1, insert_at) .. "\n" .. indent .. line .. data:sub(insert_at + 1)
+			end
+			pos = eol + 1
+		end
+	end
+	return nil
+end
 
-existing_ref="$(python3 - <<'PY' "$info_json"
-import json, sys
-info = json.loads(sys.argv[1])
-print(info.get("ref", ""))
-PY
-)"
+local function resolve_rev(url, ref, rev_override, tag_override)
+	if rev_override ~= "" then return rev_override end
+	if tag_override ~= "" then
+		local out, rc = run("git ls-remote --tags " .. shell_quote(url))
+		if rc ~= 0 then return nil end
+		local tag = "refs/tags/" .. tag_override
+		local hash
+		for h, r in out:gmatch("([^\t\n]+)\t([^\n]+)") do
+			if r == tag or r == tag .. "^{}" then hash = h end
+		end
+		return hash
+	end
+	local out, rc = run("git ls-remote " .. shell_quote(url) .. " " .. shell_quote(ref ~= "" and ref or "HEAD"))
+	if rc ~= 0 then return nil end
+	return out:match("^([^\t\n]*)") or ""
+end
 
-existing_rev="$(python3 - <<'PY' "$info_json"
-import json, sys
-info = json.loads(sys.argv[1])
-print(info.get("rev", ""))
-PY
-)"
+-- Pull the real hash out of a failed fixed-output build: prefer nix's
+-- "got: sha256-..." line, else the first sha256 that is not the placeholder.
+local function parse_vendor_hash(log)
+	local text = log:gsub("\27%[[0-9;]*m", "")
+	local got = text:match("got:%s*(sha256%-[0-9A-Za-z+/=]+)")
+	if got then return got end
+	for h in text:gmatch("sha256%-[0-9A-Za-z+/=]+") do
+		if h ~= PLACEHOLDER then return h end
+	end
+	return nil
+end
 
-rm -f /tmp/update-nix-git-hash-info.$$
-trap - EXIT
+local function main(argv)
+	local ref_override, rev_override, tag_override, build_expr = "", "", "", ""
+	local dry_run = false
+	local positional = {}
 
-[[ -n "$ref_override" ]] && chosen_ref="$ref_override" || chosen_ref="$existing_ref"
+	local i = 1
+	local function value_for(opt)
+		if argv[i + 1] == nil then die(opt .. " requires a value") end
+		i = i + 1
+		return argv[i]
+	end
+	while i <= #argv do
+		local a = argv[i]
+		if a == "--ref" then ref_override = value_for(a)
+		elseif a == "--rev" then rev_override = value_for(a)
+		elseif a == "--tag" then tag_override = value_for(a)
+		elseif a == "--expr" then build_expr = value_for(a)
+		elseif a == "-n" or a == "--dry-run" then dry_run = true
+		elseif a == "-h" or a == "--help" then io.write(USAGE); os.exit(0)
+		elseif a == "--about" then print(ABOUT); os.exit(0)
+		elseif a == "--" then
+			for j = i + 1, #argv do positional[#positional + 1] = argv[j] end
+			break
+		elseif a:sub(1, 1) == "-" then die("unknown option: " .. a)
+		else positional[#positional + 1] = a end
+		i = i + 1
+	end
 
-resolve_rev() {
-  local rev="$rev_override"
-  if [[ -n "$rev" ]]; then
-    printf '%s' "$rev"
-    return
-  fi
-  if [[ -n "$tag_override" ]]; then
-    git ls-remote --tags "$url" \
-      | awk -v tag="refs/tags/${tag_override}" '
-          $2 == tag || $2 == tag "^{}" { hash=$1 }
-          END { if (hash == "") exit 1; print hash }
-        ' \
-      || return 1
-    return
-  fi
-  local remote_ref="${chosen_ref:-HEAD}"
-  git ls-remote "$url" "$remote_ref" \
-    | awk 'NR==1 {print $1}' \
-    || return 1
-}
+	if #positional ~= 1 then die("exactly one path to a .nix file is required") end
+	local target = positional[1]
+	local data = read_file(target)
+	if not data then die("file not found: " .. target) end
+	abs_target = realpath(target) or target
 
-new_rev="$(resolve_rev)" || die "failed to resolve git revision"
+	if not data:find("fetchGit", 1, true) then die("no fetchGit call detected in " .. target) end
 
-[[ -n "$new_rev" ]] || die "empty revision resolved"
+	local url = grab(data, "url")
+	if url == "" then die("could not determine fetchGit url from " .. target) end
+	local existing_ref, existing_rev = grab(data, "ref"), grab(data, "rev")
+	local chosen_ref = ref_override ~= "" and ref_override or existing_ref
 
-if [[ "$dry_run" -eq 1 ]]; then
-  echo "[dry-run] would set rev to $new_rev (was ${existing_rev:-<unset>})"
-fi
+	local new_rev = resolve_rev(url, chosen_ref, rev_override, tag_override)
+	if not new_rev then die("failed to resolve git revision") end
+	if new_rev == "" then die("empty revision resolved") end
 
-if [[ "$dry_run" -eq 1 ]]; then
-  echo "[dry-run] would update vendorHash after building."
-  exit 0
-fi
+	if dry_run then
+		print("[dry-run] would set rev to " .. new_rev .. " (was " .. (existing_rev ~= "" and existing_rev or "<unset>") .. ")")
+		print("[dry-run] would update vendorHash after building.")
+		os.exit(0)
+	end
 
-backup_path="$(mktemp --tmpdir update_nix_git_hash.XXXXXX)"
-cp "$abs_target" "$backup_path"
-restore() {
-  cp "$backup_path" "$abs_target"
-  rm -f "$backup_path"
-  backup_path=""
-}
+	local updated = set_string_attr(data, "rev", new_rev, { "ref", "url" })
+	if not updated then die("could not insert rev attribute (url/ref not found)") end
+	if ref_override ~= "" then
+		updated = set_string_attr(updated, "ref", ref_override, { "url" })
+		if not updated then die("could not insert ref attribute") end
+	end
+	local with_placeholder, n = updated:gsub("vendorHash%s*=%s*[^;]+;", function()
+		return 'vendorHash = "' .. PLACEHOLDER .. '";'
+	end, 1)
+	if n == 0 then die("vendorHash attribute not found") end
 
-trap 'restore' ERR INT TERM
+	if build_expr == "" then
+		local escaped = abs_target:gsub("\\", "\\\\"):gsub('"', '\\"')
+		build_expr = 'with import <nixpkgs> {}; callPackage "' .. escaped .. '" {}'
+	else
+		build_expr = build_expr:gsub("%%FILE%%", function() return abs_target end)
+	end
+	local build_cmd = "nix build --impure --expr " .. shell_quote(build_expr)
 
-python3 - <<'PY' "$abs_target" "$new_rev"
-import re, sys
-path, new_rev = sys.argv[1:]
-data = open(path).read()
-rev_pattern = re.compile(r'rev\s*=\s*"[^"]+";')
-if rev_pattern.search(data):
-    data, count = rev_pattern.subn(f'rev = "{new_rev}";', data, count=1)
-else:
-    insert_pattern = re.compile(r'^(\s*ref\s*=\s*"[^"]+";)', re.MULTILINE)
-    m = insert_pattern.search(data)
-    if m:
-        indent = re.match(r'^\s*', m.group(1)).group(0)
-        insert_at = m.end(1)
-        data = data[:insert_at] + f'\n{indent}rev = "{new_rev}";' + data[insert_at:]
-    else:
-        insert_pattern = re.compile(r'^(\s*url\s*=\s*"[^"]+";)', re.MULTILINE)
-        m = insert_pattern.search(data)
-        if not m:
-            raise SystemExit("could not insert rev attribute (url/ref not found)")
-        indent = re.match(r'^\s*', m.group(1)).group(0)
-        insert_at = m.end(1)
-        data = data[:insert_at] + f'\n{indent}rev = "{new_rev}";' + data[insert_at:]
-open(path, 'w').write(data)
-PY
+	original_contents = data
+	write_file(abs_target, with_placeholder)
 
-if [[ -n "$ref_override" ]]; then
-  python3 - <<'PY' "$abs_target" "$ref_override"
-import re, sys
-path, new_ref = sys.argv[1:]
-data = open(path).read()
-pattern = re.compile(r'ref\s*=\s*"[^"]+";')
-if pattern.search(data):
-    data, count = pattern.subn(f'ref = "{new_ref}";', data, count=1)
-else:
-    insert_pattern = re.compile(r'^(\s*url\s*=\s*"[^"]+";)', re.MULTILINE)
-    m = insert_pattern.search(data)
-    if not m:
-        raise SystemExit("could not insert ref attribute")
-    indent = re.match(r'^\s*', m.group(1)).group(0)
-    insert_at = m.end(1)
-    data = data[:insert_at] + f'\n{indent}ref = "{new_ref}";' + data[insert_at:]
-open(path, 'w').write(data)
-PY
-fi
+	local log, rc = run(build_cmd)
+	if rc == 0 then
+		local seen = log:match("sha256%-[0-9A-Za-z+/=]+") or "none"
+		die("build succeeded while vendorHash was fake; aborting to avoid leaving placeholder. (hash seen: " .. seen .. ")")
+	end
+	local actual_hash = parse_vendor_hash(log)
+	if not actual_hash then die("failed to parse vendor hash from nix build output") end
 
-placeholder="sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+	local s, e = with_placeholder:find(PLACEHOLDER, 1, true)
+	write_file(abs_target, with_placeholder:sub(1, s - 1) .. actual_hash .. with_placeholder:sub(e + 1))
 
-python3 - <<'PY' "$abs_target" "$placeholder"
-import re, sys
-path, placeholder = sys.argv[1:]
-data = open(path).read()
-pattern = re.compile(r'vendorHash\s*=\s*[^;]+;')
-if not pattern.search(data):
-    raise SystemExit("vendorHash attribute not found")
-data, count = pattern.subn(f'vendorHash = "{placeholder}";', data, count=1)
-open(path, 'w').write(data)
-PY
+	local _, verify_rc = run(build_cmd)
+	if verify_rc ~= 0 then die("verification build failed with vendorHash " .. actual_hash) end
+	original_contents = nil
 
-if [[ -z "$build_expr" ]]; then
-  escaped_path="$(printf '%s' "$abs_target" | sed 's/\\/\\\\/g; s/"/\\"/g')"
-  build_expr="with import <nixpkgs> {}; callPackage \"${escaped_path}\" {}"
-else
-  build_expr="${build_expr//%FILE%/$abs_target}"
-fi
+	print("Updated " .. target .. ":")
+	print("  rev       -> " .. new_rev)
+	print("  vendorHash -> " .. actual_hash)
+	if ref_override ~= "" then print("  ref       -> " .. ref_override) end
+end
 
-build_log="$(mktemp --tmpdir update_nix_git_hash_build.XXXXXX)"
-if nix build --impure --expr "$build_expr" >"$build_log" 2>&1; then
-  actual_hash="$(grep -m1 -o 'sha256-[0-9A-Za-z+/=]\+' "$build_log" || true)"
-  cp "$backup_path" "$abs_target"
-  rm -f "$backup_path" "$build_log"
-  die "build succeeded while vendorHash was fake; aborting to avoid leaving placeholder. (hash seen: ${actual_hash:-none})"
-fi
-
-set +e
-actual_hash="$(python3 - <<'PY' "$build_log" "$placeholder"
-import pathlib, re, sys
-log_path, placeholder = sys.argv[1:]
-text = pathlib.Path(log_path).read_text()
-text = re.sub(r'\x1b\[[0-9;]*m', '', text)
-match = re.search(r'got:\s*(sha256-[0-9A-Za-z+/=]+)', text)
-if match:
-    value = match.group(1)
-else:
-    candidates = [h for h in re.findall(r'sha256-[0-9A-Za-z+/=]+', text) if h != placeholder]
-    if not candidates:
-        sys.exit(1)
-    value = candidates[0]
-print(value)
-PY
-)"
-status=$?
-set -e
-rm -f "$build_log"
-if [[ $status -ne 0 || -z "$actual_hash" ]]; then
-  die "failed to parse vendor hash from nix build output"
-fi
-
-python3 - <<'PY' "$abs_target" "$placeholder" "$actual_hash"
-import sys
-path, placeholder, actual = sys.argv[1:]
-data = open(path).read()
-if placeholder not in data:
-    raise SystemExit("placeholder hash not found for replacement")
-data = data.replace(placeholder, actual, 1)
-open(path, 'w').write(data)
-PY
-
-nix build --impure --expr "$build_expr" >/dev/null
-
-rm -f "$backup_path"
-backup_path=""
-trap - ERR INT TERM
-
-echo "Updated $target:"
-echo "  rev       -> $new_rev"
-echo "  vendorHash -> $actual_hash"
-if [[ -n "$ref_override" ]]; then
-  echo "  ref       -> $ref_override"
-fi
+-- An interrupt (SIGINT raises a Lua error in luajit) must not leave the
+-- placeholder hash behind.
+local ok, err = xpcall(main, debug.traceback, arg)
+if not ok then
+	restore()
+	io.stderr:write(PROG, ": ", tostring(err), "\n")
+	os.exit(1)
+end

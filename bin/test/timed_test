@@ -700,6 +700,31 @@ EOF
     fi
 }
 
+test_time_source_never_uses_python() {
+    printf "\n=== Testing clock fallback avoids Python ===\n"
+
+    # Simulate BSD date (no %N) with no working perl, so get_time_ns reaches
+    # the end of its fallback chain. A python3 or python call leaves a marker.
+    local shims="$TEST_TEMP_DIR/no-python-shims"
+    local marker="$TEST_TEMP_DIR/python-was-called"
+    mkdir -p "$shims"
+    printf '#!%s\ncase "$1" in +%%s.%%N) echo 1700000000.N ;; *) echo 1700000000 ;; esac\n' "$BASH" > "$shims/date"
+    printf '#!%s\nexit 1\n' "$BASH" > "$shims/perl"
+    printf '#!%s\n: > "%s"\necho 999.000000001\n' "$BASH" "$marker" > "$shims/python3"
+    cp "$shims/python3" "$shims/python"
+    chmod +x "$shims/date" "$shims/perl" "$shims/python3" "$shims/python"
+    ln -s "$(command -v grep)" "$shims/grep"
+
+    local output
+    output=$(PATH="$shims" get_time_ns)
+    assert_equal "1700000000" "$output" "Clock fallback: falls through to whole seconds"
+    if [[ -e "$marker" ]]; then
+        assert_equal "no python call" "python called" "Clock fallback: never invokes Python"
+    else
+        assert_equal 0 0 "Clock fallback: never invokes Python"
+    fi
+}
+
 test_multiple_options() {
     printf "\n=== Testing multiple options combined ===\n"
 
@@ -766,6 +791,7 @@ run_all_tests() {
     test_format_duration
     test_signal_handling
     test_multiple_options
+    test_time_source_never_uses_python
 
     # Print summary
     printf "\n================================\n"

@@ -53,7 +53,9 @@ case "${1:-status}" in
 		;;
 	test)
 		echo "Testing http://127.0.0.1:${PORT}/v1/models ..."
-		curl -s "http://127.0.0.1:${PORT}/v1/models" | python3 -m json.tool 2>/dev/null || echo "Server not responding"
+		# jq exits 0 on empty input, so a dead server must be caught before it.
+		models=$(curl -s "http://127.0.0.1:${PORT}/v1/models") && [ -n "$models" ] &&
+			printf '%s' "$models" | jq . 2>/dev/null || echo "Server not responding"
 		;;
 	update)
 		echo "Updating mlx-vlm..."

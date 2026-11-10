@@ -1,0 +1,247 @@
+#!/usr/bin/env bash
+
+# Contract tests for update_nix_git_hash. git and nix are mocked; any
+# python3/python call leaves a marker so the suite proves no Python is needed.
+
+set -u
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+cli="$repo_root/bin/update_nix_git_hash"
+# Resolve symlinks (macOS /tmp -> /private/tmp) so expected paths match the
+# realpath the tool builds its nix expression from.
+scratch="$(mktemp -d "${TMPDIR:-/tmp}/update-nix-git-hash-test.XXXXXX")" || exit 1
+scratch="$(cd "$scratch" && pwd -P)" || exit 1
+cleanup_rm=''
+while IFS= read -r candidate; do
+	case "$candidate" in
+		*rm_safe*) ;;
+		*) cleanup_rm="$candidate"; break ;;
+	esac
+done < <(type -aP rm)
+trap '"$cleanup_rm" -rf "$scratch"' EXIT
+
+# shellcheck source=/dev/null
+source "$repo_root/bin/src/capture.bash"
+
+fails=0
+tests=0
+out=''
+err=''
+rc=0
+
+expect_eq() {
+	local label="$1" expected="$2" actual="$3"
+	((tests++))
+	if [[ "$expected" == "$actual" ]]; then return 0; fi
+	printf 'FAIL %s\nexpected: %q\nactual:   %q\n' "$label" "$expected" "$actual" >&2
+	((fails++))
+}
+
+expect_match() {
+	local label="$1" pattern="$2" actual="$3"
+	((tests++))
+	if [[ "$actual" == *"$pattern"* ]]; then return 0; fi
+	printf 'FAIL %s\nexpected to contain: %q\nactual: %q\n' "$label" "$pattern" "$actual" >&2
+	((fails++))
+}
+
+shims="$scratch/shims"
+marker="$scratch/python-was-called"
+nix_calls="$scratch/nix-calls"
+mkdir -p "$shims"
+printf '#!%s\n: > "%s"\nexit 0\n' "$BASH" "$marker" > "$shims/python3"
+cp "$shims/python3" "$shims/python"
+
+# git ls-remote: --tags lists a tag and its peeled commit; a branch lookup
+# answers with MOCK_BRANCH_REV and echoes the requested ref.
+cat > "$shims/git" <<EOF
+#!$BASH
+[ "\$1" = ls-remote ] || exit 64
+if [ "\$2" = --tags ]; then
+	printf '%s\t%s\n' 1111111111111111111111111111111111111111 refs/tags/v1.0
+	printf '%s\t%s\n' 2222222222222222222222222222222222222222 'refs/tags/v1.0^{}'
+	exit 0
+fi
+printf '%s\t%s\n' "\${MOCK_BRANCH_REV:-abcdefabcdefabcdefabcdefabcdefabcdefabcd}" "\$3"
+EOF
+
+# nix build: MOCK_NIX selects a scenario. Each call appends its argv to a log.
+#   mismatch    first call fails with a coloured hash-mismatch, later calls pass
+#   fake-ok     every call succeeds (the placeholder hash was accepted)
+#   no-hash     every call fails without printing any hash
+#   verify-fail first call reports the hash, the verification build fails
+cat > "$shims/nix" <<EOF
+#!$BASH
+printf '%s\n' "\$*" >> "$nix_calls"
+count=\$(wc -l < "$nix_calls")
+case "\${MOCK_NIX:-mismatch}" in
+	mismatch|verify-fail)
+		if [ "\$count" -eq 1 ]; then
+			printf 'error: hash mismatch in fixed-output derivation:\n'
+			printf '         specified: sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n'
+			printf '            got:    \033[1msha256-RealHash0123456789abcdefRealHash0123456=\033[0m\n'
+			exit 1
+		fi
+		[ "\${MOCK_NIX}" = verify-fail ] && { echo 'error: build failed'; exit 1; }
+		exit 0 ;;
+	fake-ok) exit 0 ;;
+	no-hash) echo 'error: something unrelated'; exit 1 ;;
+esac
+EOF
+chmod +x "$shims/python3" "$shims/python" "$shims/git" "$shims/nix"
+
+fixture_dir="$scratch/dir with space"
+mkdir -p "$fixture_dir"
+target="$fixture_dir/pkg.nix"
+
+write_fixture() {
+	cat > "$target" <<'EOF'
+{ buildGoModule }:
+buildGoModule {
+	pname = "demo";
+	src = builtins.fetchGit {
+		url = "https://example.invalid/demo.git";
+		ref = "main";
+		rev = "0000000000000000000000000000000000000000";
+	};
+	vendorHash = "sha256-OldOldOldOldOldOldOldOldOldOldOldOldOldOld=";
+}
+EOF
+}
+
+run() {
+	: > "$nix_calls"
+	capture env PATH="$shims:$PATH" "$cli" "$@"
+}
+
+# --- help and argument errors ---
+run --help
+expect_eq "--help exits 0" 0 "$rc"
+expect_match "--help prints usage" "Usage: update_nix_git_hash [OPTIONS] PATH/TO/file.nix" "$out"
+
+run -h
+expect_eq "-h exits 0" 0 "$rc"
+
+run --about
+expect_eq "--about exits 0" 0 "$rc"
+expect_eq "--about prints one line" 1 "$(printf '%s\n' "$out" | wc -l | tr -d ' ')"
+expect_match "--about describes the tool" "fetchGit" "$out"
+
+run
+expect_eq "no path exits 1" 1 "$rc"
+expect_eq "no path explains itself" "update_nix_git_hash: exactly one path to a .nix file is required" "$err"
+
+run --bogus "$target"
+expect_eq "unknown option exits 1" 1 "$rc"
+expect_eq "unknown option is named" "update_nix_git_hash: unknown option: --bogus" "$err"
+
+run --rev
+expect_eq "--rev without value exits 1" 1 "$rc"
+expect_eq "--rev without value is explained" "update_nix_git_hash: --rev requires a value" "$err"
+
+run "$scratch/missing.nix"
+expect_eq "missing file exits 1" 1 "$rc"
+expect_eq "missing file is named" "update_nix_git_hash: file not found: $scratch/missing.nix" "$err"
+
+printf '{ }:\n{ vendorHash = "x"; }\n' > "$scratch/plain.nix"
+run "$scratch/plain.nix"
+expect_eq "file without fetchGit exits 1" 1 "$rc"
+expect_eq "file without fetchGit is explained" "update_nix_git_hash: no fetchGit call detected in $scratch/plain.nix" "$err"
+
+# --- dry run leaves the file alone and resolves the branch head ---
+write_fixture
+before="$(cat "$target")"
+run --dry-run "$target"
+expect_eq "dry run exits 0" 0 "$rc"
+expect_eq "dry run reports the plan" "[dry-run] would set rev to abcdefabcdefabcdefabcdefabcdefabcdefabcd (was 0000000000000000000000000000000000000000)
+[dry-run] would update vendorHash after building." "$out"
+expect_eq "dry run leaves the file unchanged" "$before" "$(cat "$target")"
+expect_eq "dry run never builds" "" "$(cat "$nix_calls")"
+
+run -n --tag v1.0 "$target"
+expect_match "--tag resolves the peeled tag commit" "would set rev to 2222222222222222222222222222222222222222" "$out"
+
+run -n --rev feedface "$target"
+expect_match "--rev skips the remote lookup" "would set rev to feedface (was" "$out"
+
+# --- full update: rev and vendorHash rewritten, verified by a second build ---
+write_fixture
+MOCK_NIX=mismatch run --rev 3333333333333333333333333333333333333333 "$target"
+expect_eq "update exits 0" 0 "$rc"
+expect_eq "update reports changes" "Updated $target:
+  rev       -> 3333333333333333333333333333333333333333
+  vendorHash -> sha256-RealHash0123456789abcdefRealHash0123456=" "$out"
+expect_eq "update rewrites the file" '{ buildGoModule }:
+buildGoModule {
+	pname = "demo";
+	src = builtins.fetchGit {
+		url = "https://example.invalid/demo.git";
+		ref = "main";
+		rev = "3333333333333333333333333333333333333333";
+	};
+	vendorHash = "sha256-RealHash0123456789abcdefRealHash0123456=";
+}' "$(cat "$target")"
+expect_eq "update builds twice with the default expression" \
+	"build --impure --expr with import <nixpkgs> {}; callPackage \"$target\" {}
+build --impure --expr with import <nixpkgs> {}; callPackage \"$target\" {}" "$(cat "$nix_calls")"
+
+# --- rev is inserted after ref when absent; --ref rewrites ref ---
+cat > "$target" <<'EOF'
+{ buildGoModule }:
+buildGoModule {
+	src = builtins.fetchGit {
+		url = "https://example.invalid/demo.git";
+		ref = "main";
+	};
+	vendorHash = null;
+}
+EOF
+MOCK_NIX=mismatch run --ref release --rev 4444444444444444444444444444444444444444 "$target"
+expect_eq "insert exits 0" 0 "$rc"
+expect_eq "insert adds rev under ref with matching indent and rewrites ref" '{ buildGoModule }:
+buildGoModule {
+	src = builtins.fetchGit {
+		url = "https://example.invalid/demo.git";
+		ref = "release";
+		rev = "4444444444444444444444444444444444444444";
+	};
+	vendorHash = "sha256-RealHash0123456789abcdefRealHash0123456=";
+}' "$(cat "$target")"
+expect_match "insert reports the ref change" "  ref       -> release" "$out"
+
+# --- custom expression substitutes %FILE% ---
+write_fixture
+MOCK_NIX=mismatch run --rev 5555555555555555555555555555555555555555 --expr 'import %FILE% { x = %FILE%; }' "$target"
+expect_eq "custom expression is used for both builds" \
+	"build --impure --expr import $target { x = $target; }
+build --impure --expr import $target { x = $target; }" "$(cat "$nix_calls")"
+
+# --- failures restore the original file ---
+for scenario in fake-ok no-hash verify-fail; do
+	write_fixture
+	before="$(cat "$target")"
+	MOCK_NIX=$scenario run --rev 6666666666666666666666666666666666666666 "$target"
+	expect_eq "$scenario exits 1" 1 "$rc"
+	expect_eq "$scenario restores the original file" "$before" "$(cat "$target")"
+done
+write_fixture
+MOCK_NIX=fake-ok run --rev 6666666666666666666666666666666666666666 "$target"
+expect_eq "accepted placeholder is reported" \
+	"update_nix_git_hash: build succeeded while vendorHash was fake; aborting to avoid leaving placeholder. (hash seen: none)" "$err"
+write_fixture
+MOCK_NIX=no-hash run --rev 6666666666666666666666666666666666666666 "$target"
+expect_eq "unparseable build output is reported" \
+	"update_nix_git_hash: failed to parse vendor hash from nix build output" "$err"
+
+((tests++))
+if [[ -e "$marker" ]]; then
+	printf 'FAIL update_nix_git_hash invoked Python\n' >&2
+	((fails++))
+fi
+
+if ((fails == 0)); then
+	printf 'All %d update_nix_git_hash tests passed!\n' "$tests"
+	exit 0
+fi
+printf '%d of %d update_nix_git_hash tests failed\n' "$fails" "$tests" >&2
+exit 1

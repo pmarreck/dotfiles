@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+
+# git-filter-repo is a thin launcher for the nixpkgs build of the upstream
+# tool. nix is mocked to record argv one argument per line, so the test checks
+# exact argument boundaries (including spaces) and that no local Python runs.
+
+set -u
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+cli="$repo_root/bin/git-filter-repo"
+scratch="$(mktemp -d "${TMPDIR:-/tmp}/git-filter-repo-test.XXXXXX")" || exit 1
+cleanup_rm=''
+while IFS= read -r candidate; do
+	case "$candidate" in
+		*rm_safe*) ;;
+		*) cleanup_rm="$candidate"; break ;;
+	esac
+done < <(type -aP rm)
+trap '"$cleanup_rm" -rf "$scratch"' EXIT
+
+# shellcheck source=/dev/null
+source "$repo_root/bin/src/capture.bash"
+
+fails=0
+tests=0
+out=''
+err=''
+rc=0
+
+expect_eq() {
+	local label="$1" expected="$2" actual="$3"
+	((tests++))
+	if [[ "$expected" == "$actual" ]]; then return 0; fi
+	printf 'FAIL %s\nexpected: %q\nactual:   %q\n' "$label" "$expected" "$actual" >&2
+	((fails++))
+}
+
+shims="$scratch/shims"
+marker="$scratch/python-was-called"
+mkdir -p "$shims"
+printf '#!%s\n: > "%s"\nexit 0\n' "$BASH" "$marker" > "$shims/python3"
+cp "$shims/python3" "$shims/python"
+printf '#!%s\nprintf "%%s\\n" "$@"\nexit "${MOCK_NIX_RC:-0}"\n' "$BASH" > "$shims/nix"
+chmod +x "$shims/python3" "$shims/python" "$shims/nix"
+
+capture env PATH="$shims:$PATH" "$cli" --path 'dir with space' --invert-paths --force
+expect_eq "launcher exits with nix's status" 0 "$rc"
+expect_eq "launcher runs the nixpkgs build with argv intact" "run
+nixpkgs#git-filter-repo
+--
+--path
+dir with space
+--invert-paths
+--force" "$out"
+
+capture env PATH="$shims:$PATH" MOCK_NIX_RC=3 "$cli" --analyze
+expect_eq "launcher propagates a failing status" 3 "$rc"
+
+((tests++))
+if [[ -e "$marker" ]]; then
+	printf 'FAIL git-filter-repo launcher invoked a local Python\n' >&2
+	((fails++))
+fi
+
+if ((fails == 0)); then
+	printf 'All %d git-filter-repo tests passed!\n' "$tests"
+	exit 0
+fi
+printf '%d of %d git-filter-repo tests failed\n' "$fails" "$tests" >&2
+exit 1

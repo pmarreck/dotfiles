@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+
+# Contract tests for mlx-server's connectivity check. curl is mocked, and any
+# python3/python call leaves a marker so the check proves it needs no Python.
+
+set -u
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+cli="$repo_root/bin/mlx-server"
+scratch="$(mktemp -d "${TMPDIR:-/tmp}/mlx-server-test.XXXXXX")" || exit 1
+cleanup_rm=''
+while IFS= read -r candidate; do
+	case "$candidate" in
+		*rm_safe*) ;;
+		*) cleanup_rm="$candidate"; break ;;
+	esac
+done < <(type -aP rm)
+trap '"$cleanup_rm" -rf "$scratch"' EXIT
+
+# shellcheck source=/dev/null
+source "$repo_root/bin/src/capture.bash"
+
+fails=0
+tests=0
+out=''
+err=''
+rc=0
+
+expect_eq() {
+	local label="$1" expected="$2" actual="$3"
+	((tests++))
+	if [[ "$expected" == "$actual" ]]; then return 0; fi
+	printf 'FAIL %s\nexpected: %q\nactual:   %q\n' "$label" "$expected" "$actual" >&2
+	((fails++))
+}
+
+shims="$scratch/shims"
+marker="$scratch/python-was-called"
+mkdir -p "$shims"
+printf '#!%s\n: > "%s"\nexit 0\n' "$BASH" "$marker" > "$shims/python3"
+cp "$shims/python3" "$shims/python"
+# The mock server answers with compact JSON, or fails like curl does when
+# nothing is listening (exit 7, no output).
+printf '#!%s\nif [ -n "${MOCK_CURL_DOWN:-}" ]; then exit 7; fi\nprintf %%s %q\n' \
+	"$BASH" '{"object":"list","data":[{"id":"gemma"}]}' > "$shims/curl"
+chmod +x "$shims/python3" "$shims/python" "$shims/curl"
+
+expected_json='{
+  "object": "list",
+  "data": [
+    {
+      "id": "gemma"
+    }
+  ]
+}'
+
+capture env PATH="$shims:$PATH" "$cli" test
+expect_eq "test exits 0 when the server answers" 0 "$rc"
+expect_eq "test pretty-prints the models JSON" \
+	"Testing http://127.0.0.1:8080/v1/models ...
+$expected_json" "$out"
+expect_eq "test writes nothing to stderr" "" "$err"
+
+capture env PATH="$shims:$PATH" MOCK_CURL_DOWN=1 "$cli" test
+expect_eq "test reports an unreachable server" \
+	"Testing http://127.0.0.1:8080/v1/models ...
+Server not responding" "$out"
+
+capture env PATH="$shims:$PATH" MLX_SERVER_PORT=9999 "$cli" test
+expect_eq "test honors MLX_SERVER_PORT" \
+	"Testing http://127.0.0.1:9999/v1/models ..." "${out%%$'\n'*}"
+
+((tests++))
+if [[ -e "$marker" ]]; then
+	printf 'FAIL mlx-server test invoked Python\n' >&2
+	((fails++))
+fi
+
+if ((fails == 0)); then
+	printf 'All %d mlx-server tests passed!\n' "$tests"
+	exit 0
+fi
+printf '%d of %d mlx-server tests failed\n' "$fails" "$tests" >&2
+exit 1
