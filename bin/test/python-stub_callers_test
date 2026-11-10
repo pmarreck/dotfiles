@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+
+# python-stub lets allowlisted callers run a Nix-provided interpreter. Caller
+# detection reads the process table (ps), which the macOS Nix sandbox blocks
+# because /bin/ps is setuid, so this file is listed in NOT_HERMETIC. The
+# interpreter prefix is injected via PYTHON_STUB_PREFIX so nothing is built.
+
+set -u
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+bin_dir="$repo_root/bin"
+scratch="$(mktemp -d "${TMPDIR:-/tmp}/python-stub-callers-test.XXXXXX")" || exit 1
+scratch="$(cd "$scratch" && pwd -P)" || exit 1
+cleanup_rm=''
+while IFS= read -r candidate; do
+	case "$candidate" in
+		*rm_safe*) ;;
+		*) cleanup_rm="$candidate"; break ;;
+	esac
+done < <(type -aP rm)
+trap '"$cleanup_rm" -rf "$scratch"' EXIT
+
+# shellcheck source=/dev/null
+source "$repo_root/bin/src/capture.bash"
+
+fails=0
+tests=0
+out=''
+err=''
+rc=0
+
+expect_eq() {
+	local label="$1" expected="$2" actual="$3"
+	((tests++))
+	if [[ "$expected" == "$actual" ]]; then return 0; fi
+	printf 'FAIL %s\nexpected: %q\nactual:   %q\n' "$label" "$expected" "$actual" >&2
+	((fails++))
+}
+
+expect_match() {
+	local label="$1" pattern="$2" actual="$3"
+	((tests++))
+	if [[ "$actual" == *"$pattern"* ]]; then return 0; fi
+	printf 'FAIL %s\nexpected to contain: %q\nactual: %q\n' "$label" "$pattern" "$actual" >&2
+	((fails++))
+}
+
+# A fake interpreter prefix: bin/python3 echoes its name and argv.
+prefix="$scratch/nix python"
+mkdir -p "$prefix/bin"
+printf '#!%s\nprintf "%%s|" "nix-python3" "$@"\n' "$BASH" > "$prefix/bin/python3"
+chmod +x "$prefix/bin/python3"
+
+config_home="$scratch/config"
+mkdir -p "$config_home/python-stub"
+allowed_dir="$scratch/allowed tools"
+other_dir="$scratch/other"
+mkdir -p "$allowed_dir" "$other_dir"
+printf '# programs that may use Nix python\n\n%s/\n' "$allowed_dir" > "$config_home/python-stub/allowed-callers"
+
+for dir in "$allowed_dir" "$other_dir"; do
+	printf '#!%s\npython3 -c "print(1)" "arg with space"\n' "$BASH" > "$dir/caller"
+	printf '#!%s\nv=$(python3 -c x)\nprintf "%%s" "$v"\n' "$BASH" > "$dir/subshell-caller"
+	chmod +x "$dir/caller" "$dir/subshell-caller"
+done
+printf '#!%s\npip3 install foo\n' "$BASH" > "$allowed_dir/pip-caller"
+chmod +x "$allowed_dir/pip-caller"
+
+stub_env=(env PATH="$bin_dir:$PATH" XDG_CONFIG_HOME="$config_home" PYTHON_STUB_PREFIX="$prefix")
+
+capture "${stub_env[@]}" "$allowed_dir/caller"
+expect_eq "listed caller runs Nix python" 0 "$rc"
+expect_eq "listed caller keeps argv intact" "nix-python3|-c|print(1)|arg with space|" "$out"
+
+capture "${stub_env[@]}" "$allowed_dir/subshell-caller"
+expect_eq "listed caller is recognized from a command substitution" "nix-python3|-c|x|" "$out"
+
+capture "${stub_env[@]}" "$other_dir/subshell-caller"
+expect_eq "unlisted caller in a command substitution is refused" "" "$out"
+expect_match "unlisted caller in a command substitution sees the refusal" "python3: disabled on this machine" "$err"
+
+# Listed caller asking for a tool the prefix lacks gets a clear error.
+capture "${stub_env[@]}" "$allowed_dir/pip-caller"
+expect_eq "missing tool in prefix exits 127" 127 "$rc"
+expect_match "missing tool in prefix is explained" "pip3: not provided by $prefix" "$err"
+
+# A tilde entry expands to HOME.
+printf '~/tools/\n' > "$config_home/python-stub/allowed-callers"
+mkdir -p "$scratch/home/tools"
+cp "$allowed_dir/caller" "$scratch/home/tools/caller"
+capture env HOME="$scratch/home" PATH="$bin_dir:$PATH" XDG_CONFIG_HOME="$config_home" PYTHON_STUB_PREFIX="$prefix" "$scratch/home/tools/caller"
+expect_eq "tilde allowlist entry matches under HOME" "nix-python3|-c|print(1)|arg with space|" "$out"
+
+if ((fails == 0)); then
+	printf 'All %d python-stub caller tests passed!\n' "$tests"
+	exit 0
+fi
+printf '%d of %d python-stub caller tests failed\n' "$fails" "$tests" >&2
+exit 1

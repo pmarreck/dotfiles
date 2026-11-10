@@ -22,6 +22,8 @@ memhogs_test
 nethogs_test
 fingerprint_hw_os_test
 distro_pretty_test
+# Walks the process table with ps; the macOS sandbox refuses setuid /bin/ps.
+python-stub_callers_test
 
 # ── Requires network access (the sandbox has none, by design) ────────────────
 find_github_forks_with_file_test

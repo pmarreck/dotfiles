@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# python-stub: installed as python, python3, pip and pip3 ahead of /usr/bin on
+# PATH, so nothing quietly falls back to the system Python. Project work should
+# get Python from its flake. Programs listed in the allowlist (one path prefix
+# per line, `~` allowed, `#` comments) run a Nix-provided Python instead:
+#   ${XDG_CONFIG_HOME:-~/.config}/python-stub/allowed-callers
+# The interpreter prefix is $PYTHON_STUB_PREFIX, else a GC-rooted
+# `nix build nixpkgs#python3` kept in ${XDG_CACHE_HOME:-~/.cache}/python-stub.
+
+name="${0##*/}"
+allowlist="${XDG_CONFIG_HOME:-$HOME/.config}/python-stub/allowed-callers"
+# How far up the process tree to look for an allowed caller. Command
+# substitutions and pipelines add a level or two; more than that risks
+# matching an unrelated long-lived ancestor.
+max_ancestors=3
+
+refuse() {
+	cat >&2 <<EOF
+$name: disabled on this machine (python-stub).
+Use a flake-provided Python instead, for example:
+  nix shell nixpkgs#python3 -c $name ...
+or add Python to the project's flake.nix devShell.
+To let one program use Nix's Python, add its path to $allowlist
+EOF
+	exit 127
+}
+
+# Succeeds when one of the nearest ancestors' command lines contains an
+# allowlisted path prefix.
+caller_allowed() {
+	[[ -r "$allowlist" ]] || return 1
+	local prefixes=() line
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		line="${line%%#*}"
+		line="${line#"${line%%[![:space:]]*}"}"
+		line="${line%"${line##*[![:space:]]}"}"
+		[[ -z "$line" ]] && continue
+		[[ "$line" == "~/"* ]] && line="$HOME/${line#\~/}"
+		prefixes+=("$line")
+	done < "$allowlist"
+	((${#prefixes[@]})) || return 1
+
+	local pid="$PPID" depth ppid args prefix
+	for ((depth = 0; depth < max_ancestors && pid > 1; depth++)); do
+		read -r ppid args < <(ps -o ppid= -o args= -p "$pid" 2>/dev/null) || return 1
+		for prefix in "${prefixes[@]}"; do
+			[[ "$args" == *"$prefix"* ]] && return 0
+		done
+		pid="$ppid"
+	done
+	return 1
+}
+
+caller_allowed || refuse
+
+prefix="${PYTHON_STUB_PREFIX:-}"
+if [[ -z "$prefix" ]]; then
+	prefix="${XDG_CACHE_HOME:-$HOME/.cache}/python-stub/python3"
+	if [[ ! -x "$prefix/bin/python3" ]]; then
+		mkdir -p "${prefix%/*}"
+		nix build --out-link "$prefix" nixpkgs#python3 >&2 || {
+			echo "$name: could not build nixpkgs#python3" >&2
+			exit 127
+		}
+	fi
+fi
+
+if [[ ! -x "$prefix/bin/$name" ]]; then
+	echo "$name: not provided by $prefix" >&2
+	exit 127
+fi
+exec "$prefix/bin/$name" "$@"

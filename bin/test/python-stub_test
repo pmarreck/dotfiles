@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+
+# python-stub refuses python/python3/pip/pip3 unless the calling program is on
+# the allowlist, in which case it runs a Nix-provided interpreter. The
+# interpreter prefix is injected via PYTHON_STUB_PREFIX so nothing is built.
+
+set -u
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+bin_dir="$repo_root/bin"
+scratch="$(mktemp -d "${TMPDIR:-/tmp}/python-stub-test.XXXXXX")" || exit 1
+scratch="$(cd "$scratch" && pwd -P)" || exit 1
+cleanup_rm=''
+while IFS= read -r candidate; do
+	case "$candidate" in
+		*rm_safe*) ;;
+		*) cleanup_rm="$candidate"; break ;;
+	esac
+done < <(type -aP rm)
+trap '"$cleanup_rm" -rf "$scratch"' EXIT
+
+# shellcheck source=/dev/null
+source "$repo_root/bin/src/capture.bash"
+
+fails=0
+tests=0
+out=''
+err=''
+rc=0
+
+expect_eq() {
+	local label="$1" expected="$2" actual="$3"
+	((tests++))
+	if [[ "$expected" == "$actual" ]]; then return 0; fi
+	printf 'FAIL %s\nexpected: %q\nactual:   %q\n' "$label" "$expected" "$actual" >&2
+	((fails++))
+}
+
+expect_match() {
+	local label="$1" pattern="$2" actual="$3"
+	((tests++))
+	if [[ "$actual" == *"$pattern"* ]]; then return 0; fi
+	printf 'FAIL %s\nexpected to contain: %q\nactual: %q\n' "$label" "$pattern" "$actual" >&2
+	((fails++))
+}
+
+# A fake interpreter prefix: bin/python3 echoes its name and argv.
+prefix="$scratch/nix python"
+mkdir -p "$prefix/bin"
+printf '#!%s\nprintf "%%s|" "nix-python3" "$@"\n' "$BASH" > "$prefix/bin/python3"
+chmod +x "$prefix/bin/python3"
+
+config_home="$scratch/config"
+mkdir -p "$config_home/python-stub"
+allowed_dir="$scratch/allowed tools"
+other_dir="$scratch/other"
+mkdir -p "$allowed_dir" "$other_dir"
+printf '# programs that may use Nix python\n\n%s/\n' "$allowed_dir" > "$config_home/python-stub/allowed-callers"
+
+# Caller scripts invoke python3 through PATH like a real hook would.
+for dir in "$allowed_dir" "$other_dir"; do
+	printf '#!%s\npython3 -c "print(1)" "arg with space"\n' "$BASH" > "$dir/caller"
+	printf '#!%s\nv=$(python3 -c x)\nprintf "%%s" "$v"\n' "$BASH" > "$dir/subshell-caller"
+	chmod +x "$dir/caller" "$dir/subshell-caller"
+done
+
+stub_env=(env PATH="$bin_dir:$PATH" XDG_CONFIG_HOME="$config_home" PYTHON_STUB_PREFIX="$prefix")
+
+for name in python python3 pip pip3; do
+	capture "${stub_env[@]}" "$name" --version
+	expect_eq "$name is refused from an unlisted caller" 127 "$rc"
+	expect_eq "$name refusal writes nothing to stdout" "" "$out"
+	expect_match "$name refusal names the command" "$name: disabled on this machine" "$err"
+	expect_match "$name refusal suggests a flake" "nix shell nixpkgs#python3" "$err"
+done
+
+capture "${stub_env[@]}" "$other_dir/caller"
+expect_eq "unlisted caller is refused" 127 "$rc"
+
+# Allowlisted callers are covered by python-stub_callers_test, which reads the
+# process table and so cannot run in the Nix sandbox (see NOT_HERMETIC).
+
+# No allowlist file at all: everything is refused.
+capture env PATH="$bin_dir:$PATH" XDG_CONFIG_HOME="$scratch/empty" PYTHON_STUB_PREFIX="$prefix" "$allowed_dir/caller"
+expect_eq "missing allowlist refuses" 127 "$rc"
+
+if ((fails == 0)); then
+	printf 'All %d python-stub tests passed!\n' "$tests"
+	exit 0
+fi
+printf '%d of %d python-stub tests failed\n' "$fails" "$tests" >&2
+exit 1
