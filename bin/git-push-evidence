@@ -16,7 +16,9 @@ Default: inspect git pre-push ref updates on stdin; never run tests.
 --prepare: explicitly build the required checks for immutable REV.
 Checks: git config --add pushEvidence.check checks.SYSTEM.NAME;
 otherwise committed .push-checks, then checks from .mechatron-prime/targets.
-No declaration or no successful cached outputs means refusal.]])
+No declaration or no successful cached outputs means refusal.
+A third-party fork's clone may name its upstream (git config pushEvidence.fork URL):
+a pushed tip with no flake.nix is then exempt, and the exemption is printed.]])
 	os.exit(0)
 end
 local prepare=arg[1]=='--prepare'
@@ -36,6 +38,11 @@ root=trim(root)
 local url='git+file://'..root:gsub('[^%w/_.~-]',function(c) return string.format('%%%02X',c:byte()) end)
 local configured,status=git('config --get-all pushEvidence.check')
 if status~=0 and status~=1 then fail('cannot read required-check configuration') end
+-- A third-party fork sets its own upstream's standard (SCS 2026-11-13): its clone names the upstream it forks, and a
+-- tip with no flake.nix is then exempt. A tip with a flake keeps the full rule even when marked.
+local fork,forkrc=git('config --get pushEvidence.fork'); fork=trim(fork)
+if forkrc~=0 and forkrc~=1 then fail('cannot read pushEvidence.fork') end
+if forkrc~=0 or fork=='' then fork=nil end
 local host_os=({Linux='linux',OSX='darwin'})[jit.os]
 local host_arch=({x64='x86_64',arm64='aarch64'})[jit.arch]
 local host_prefix=host_os and host_arch and ('checks.'..host_arch..'-'..host_os..'.')
@@ -47,12 +54,14 @@ local function blob(sha,path)
 	local data,drc=git('show '..quote(sha..':'..path)); if drc~=0 then fail('cannot read committed '..path) end
 	return data
 end
-local installables,seen={},{}
+local installables,seen,exempt={},{},0
 for _,revision in ipairs(revisions) do
 	local sha,src=git('rev-parse --verify --end-of-options '..quote(revision..'^{commit}'))
 	if src~=0 then fail('revision does not resolve to a commit: '..revision) end
 	sha=trim(sha)
-	if not seen[sha] then
+	if not seen[sha] and fork and not blob(sha,'flake.nix') then
+		seen[sha]=true; exempt=exempt+1
+	elseif not seen[sha] then
 		seen[sha]=true
 		if not blob(sha,'flake.nix') then fail(sha..' has no flake.nix; declare reproducible test checks first') end
 		local declaration,manifest
@@ -76,6 +85,10 @@ for _,revision in ipairs(revisions) do
 		end
 		if count==0 then fail('no required checks declared for '..sha..'; add committed .push-checks or configure pushEvidence.check') end
 	end
+end
+if exempt>0 then
+	io.stderr:write('Push evidence: exempt as a fork of '..fork..'; no checks verified for '..exempt..' commit tip(s).\n')
+	if #installables==0 then os.exit(0) end
 end
 local args={}
 for _,i in ipairs(installables) do args[#args+1]=quote(i) end

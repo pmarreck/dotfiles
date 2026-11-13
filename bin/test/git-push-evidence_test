@@ -100,5 +100,29 @@ git -C "$repo" add .push-checks .mechatron-prime
 git -C "$repo" commit -qm manifest > "$work/commit.log" 2>&1 || exit 1
 export EVIDENCE_FIRST=$(git -C "$repo" rev-parse HEAD)
 gate --check HEAD; check test "$rc" = 0
+# A third-party fork with no flake.nix is exempt only when its clone names the upstream it forks; a repository
+# with a flake keeps the full rule even when marked.
+git -C "$repo" config pushEvidence.fork https://example.invalid/upstream/project
+gate --check "$second"; check test "$rc" != 0
+git -C "$repo" config --unset pushEvidence.fork
+fork="$work/fork"
+git init -q "$fork"
+git -C "$fork" config core.hooksPath /dev/null
+git -C "$fork" config user.name Test
+git -C "$fork" config user.email test@example.invalid
+printf 'upstream code\n' > "$fork/source"
+git -C "$fork" add .
+git -C "$fork" commit -qm upstream > "$work/commit.log" 2>&1 || exit 1
+forked=$(git -C "$fork" rev-parse HEAD)
+fork_gate() { output=$(cd "$fork" && "$root/bin/git-push-evidence" "$@" 2>&1); rc=$?; }
+fork_gate --check "$forked"; check test "$rc" != 0
+check test "${output#*has no flake.nix}" != "$output"
+git -C "$fork" config pushEvidence.fork https://example.invalid/upstream/project
+: > "$EVIDENCE_CALLS"
+fork_gate --check "$forked"; check test "$rc" = 0
+check test "${output#*exempt as a fork of https://example.invalid/upstream/project; no checks verified}" != "$output"
+check test ! -s "$EVIDENCE_CALLS"
+output=$(printf 'refs/heads/fix %s refs/heads/fix %s\n' "$forked" "$zero" | (cd "$fork" && "$root/bin/git-push-evidence") 2>&1); rc=$?
+check test "$rc" = 0
 printf '%s checks, %s failures\n' "$checks" "$failures"
 test "$failures" = 0
