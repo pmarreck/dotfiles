@@ -10,6 +10,8 @@
     };
     jumpscript.url = "github:pmarreck/jumpscript/88486ae0278fa8a702314bf11d6826a21d081bac";
     roc_luajit.url = "github:pmarreck/roc_luajit/fbc131fe353ccbad9ca2f77ab652b6f75d5180fe";
+    # Locale-free ordering for the test inventory, so the Nix check and a host run list it alike.
+    romantic_collation.url = "github:pmarreck/romantic_collation/a1eab7e17248ceb8b62052b5d5017c7da2870e46";
     printable_binary_src = {
       url = "github:pmarreck/printable-binary/cdefa95e4590fa016967e0e6ccb3b96c19c44c7e";
       flake = false;
@@ -20,7 +22,7 @@
     };
   };
 
-  outputs = { self, nixpkgs, flake-utils, glob, jumpscript, roc_luajit, printable_binary_src, zig_overlay }:
+  outputs = { self, nixpkgs, flake-utils, glob, jumpscript, roc_luajit, romantic_collation, printable_binary_src, zig_overlay }:
     flake-utils.lib.eachSystem [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" ] (system:
       let
         pkgs = import nixpkgs { inherit system; };
@@ -68,6 +70,7 @@
             glob.packages.${system}.default
             jumpscript.packages.${system}.default
             roc_luajit.packages.${system}.roc
+            romantic_collation.packages.${system}.default
             printableBinary
           ];
       in {

@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# The root ./test hashes the list of test files so the Nix check and the host run can prove they ran the same
+# suite. The list must come out in the same order in any locale: the Nix sandbox runs in C and a host often in
+# en_US.UTF-8, whose glob orders differ, which made every host run refuse its own Nix evidence. The order is
+# romantic_collation's locale-free one (collate).
+
+test_test_inventory() {
+	local fails=0 tests=0 root expected output hash locale
+	root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+	if ! command -v collate >/dev/null 2>&1; then
+		printf 'collate (romantic_collation) is not on PATH\n' >&2
+		return 1
+	fi
+	expected=$(
+		set -o pipefail
+		for path in "$root"/bin/test/*_test; do printf '%s\n' "${path##*/}"; done | collate | tr '\n' '\0' |
+			git hash-object --stdin
+	) || return 1
+	for locale in C en_US.UTF-8 POSIX; do
+		tests=$((tests + 1))
+		output=$(LC_ALL=$locale "$root/test" --inventory 2>&1)
+		hash=${output#*$'\t'}
+		if [[ "$hash" != "$expected" ]]; then
+			printf 'LC_ALL=%s: inventory %s, expected the collate order %s\n' "$locale" "$output" "$expected" >&2
+			fails=$((fails + 1))
+		fi
+	done
+	tests=$((tests + 1))
+	local bare
+	bare=$(mktemp -d "${TMPDIR:-/tmp}/test_inventory.XXXXXX") || return 1
+	for tool in dirname git tr; do ln -s "$(command -v "$tool")" "$bare/$tool"; done
+	output=$(PATH=$bare "$BASH" "$root/test" --inventory 2>&1)
+	find "$bare" -delete
+	if [[ "$output" != *"collate (romantic_collation) is required"* ]]; then
+		printf 'without collate on PATH, ./test --inventory said: %s\n' "$output" >&2
+		fails=$((fails + 1))
+	fi
+	if ((fails > 0)); then
+		printf '%s of %s test_inventory tests failed!\n' "$fails" "$tests" >&2
+	else
+		printf 'All %s test_inventory tests passed!\n' "$tests"
+	fi
+	return "$fails"
+}
+
+test_test_inventory
