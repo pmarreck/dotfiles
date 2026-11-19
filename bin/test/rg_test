@@ -249,6 +249,21 @@ fi
 expect "exported agent-shell function also outranks bundled bfs" 77 'function' 'REFUSING' \
 	env PATH="$test_path" "$real_bash" -c '. "$1"; "$2" -c "type -t bfs; bfs /nix/store -type f"' bash "$shell_guard" "$real_bash"
 
+# Tests commonly give children a private, empty HOME. The functions resolve
+# the guard path when sourced, so they keep working (and guarding) there.
+mkdir -p "$tmp/source-home" "$tmp/empty-home"
+ln -s "$repo_root/bin" "$tmp/source-home/bin"
+for search_tool in rg find fd bfs; do
+	case "$search_tool" in
+		rg) search_args='needle /nix/store' ;;
+		fd) search_args='. /nix/store' ;;
+		*) search_args='/nix/store -type f' ;;
+	esac
+	# shellcheck disable=SC2016 # $1..$4 belong to the child Bash.
+	expect "exported $search_tool function still guards under an empty private HOME" 77 'function' 'REFUSING' \
+		env PATH="$test_path" HOME="$tmp/source-home" "$real_bash" -c '. "$1"; HOME="$3" "$2" -c "type -t $4; $4 $5"' bash "$shell_guard" "$real_bash" "$tmp/empty-home" "$search_tool" "$search_args"
+done
+
 if (( fails == 0 )); then
 	printf 'All %s search guard tests passed\n' "$tests"
 else

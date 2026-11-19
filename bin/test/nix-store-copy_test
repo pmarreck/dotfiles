@@ -102,6 +102,13 @@ mkdir -p "$work/home"
 ln -s "$root/bin" "$work/home/bin"
 output=$(HOME="$work/home" bash -c 'source "$1"; bash -c '\''cp /nix/store/hash-source/file "$2"'\'' bash unused "$2"' bash "$root/bin/src/nix_store_copy_env.bash" "$work/local/target" 2>&1); rc=$?
 check test "$rc" -eq 77
+# Tests commonly give children a private, empty HOME. The functions resolve
+# the guard path when sourced, so they keep working (and guarding) there.
+mkdir -p "$work/empty-home"
+for t in cp install rsync; do
+	output=$(HOME="$work/home" bash -c 'source "$1"; HOME="$3" bash -c '\''"$1" /nix/store/hash-source/file "$2"'\'' bash "$4" "$2"' bash "$root/bin/src/nix_store_copy_env.bash" "$work/local/target" "$work/empty-home" "$t" 2>&1); rc=$?
+	check test "$rc" -eq 77
+done
 # Exercise the real native copy adapter using only disposable local files.
 native_path=''
 while IFS= read -r candidate; do
