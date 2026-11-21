@@ -86,8 +86,8 @@ chmod_one() {
 }
 
 chmod_guard() {
-	local native='' candidate arg traversal=P recursive=false follow=yes preserve=false
-	local mode='' reference='' journal path operand node native_help status=0 gnu=false
+	local native='' candidate arg traversal=P recursive=false follow=yes preserve=false dereference=false
+	local mode='' reference='' journal path operand node native_help='' status=0 gnu=false
 	local -a native_flags=() operands=()
 	case "${1:-}" in
 		--log) [[ $# == 1 ]] || return 2; audit_read chmod; return ;;
@@ -123,8 +123,8 @@ chmod_guard() {
 			--recursive) recursive=true ;;
 			--preserve-root) preserve=true ;;
 			--no-preserve-root) preserve=false ;;
-			--dereference) follow=yes ;;
-			--no-dereference) follow=no ;;
+			--dereference) follow=yes; dereference=true ;;
+			--no-dereference) follow=no; dereference=false ;;
 			--reference=*) reference="${arg#*=}" ;;
 			--reference) [[ $# -gt 0 ]] || return 2; reference="$1"; shift ;;
 			--quiet|--silent|--changes|--verbose) native_flags+=("$arg") ;;
@@ -138,7 +138,7 @@ chmod_guard() {
 						case "$flag" in
 							R) recursive=true ;;
 							H|L|P) traversal="$flag" ;;
-							h) follow=no ;;
+							h) follow=no; dereference=false ;;
 							*) native_flags+=("-$flag") ;;
 						esac
 					done
@@ -161,6 +161,12 @@ chmod_guard() {
 		"$recursive" && { audit_error chmod 'recursive link-mode edits are unsupported'; return 2; }
 		native_flags+=(-h)
 	fi
+	if "$dereference" && [[ "$native_help" != *--dereference* ]]; then
+		audit_error chmod 'the native chmod does not support --dereference'; return 2
+	fi
+	if "$recursive" && "$dereference" && [[ "$traversal" == P ]]; then
+		audit_error chmod '-R --dereference requires -H or -L'; return 2
+	fi
 	[[ -n "$mode" && ${#operands[@]} -gt 0 ]] || { audit_error chmod 'a mode and at least one path are required'; return 2; }
 	journal=$(audit_batch chmod) || return 1
 	printf 'command=chmod mode=%q recursive=%s traversal=%s\n' "$mode" "$recursive" "$traversal" > "$journal/log" || return 1
@@ -178,7 +184,7 @@ chmod_guard() {
 		# search permission on a directory cannot strand its descendants.
 		if ! find "-$traversal" "$path" -depth -print0 > "$journal/tree"; then status=1; continue; fi
 		while IFS= read -r -d '' node; do
-			if [[ -L "$node" && "$traversal" != L && ( "$traversal" != H || "$node" != "$path" ) ]]; then continue; fi
+			if ! "$dereference" && [[ -L "$node" && "$traversal" != L && ( "$traversal" != H || "$node" != "$path" ) ]]; then continue; fi
 			chmod_one "$node" yes || status=1
 		done < "$journal/tree"
 	done

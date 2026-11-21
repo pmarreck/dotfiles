@@ -43,6 +43,17 @@ if [[ "$real" -ef "$chmod_guard" ]]; then
 		if [[ ! "$candidate" -ef "$chmod_guard" ]]; then real="$candidate"; break; fi
 	done < <(type -a -p chmod)
 fi
+native_help=$("$real" --help 2>/dev/null) || native_help=''
+if [[ "$native_help" == *--dereference* ]]; then
+	capture "$chmod_guard" --recursive -H --dereference 0700 "$tree"
+	check 'GNU explicit dereference' "$rc" 0
+	check 'explicit link referent mode' "$(modes "$scratch/outside")" 700
+	capture "$chmod_guard" --undo
+	check 'undo explicit dereference' "$rc" 0
+	check 'restored link referent mode' "$(modes "$scratch/outside")" 640
+	capture "$chmod_guard" --recursive -P --dereference 0700 "$tree"
+	check 'GNU incompatible traversal refused' "$rc" 2
+fi
 mkdir "$scratch/tools"
 printf '#!%s\n' "$(command -v bash)" > "$scratch/tools/chmod"
 cat >> "$scratch/tools/chmod" <<'EOF'
