@@ -3,8 +3,8 @@ set -u
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 source "$root/bin/src/capture.bash"
 wrapper="$root/bin/pkill"
-scratch="$(mktemp -d "${TMPDIR:-/tmp}/pkill-guard-test.XXXXXX")"
-trap 'if command -v rm-safe >/dev/null 2>&1; then rm-safe -r "$scratch" >/dev/null 2>&1; fi' EXIT
+scratch="$(mktemp -d "${TMPDIR:-/tmp}/pkill-guard-test.XXXXXX")" || exit 1
+export TMPDIR="$scratch" SELECTOR_ARGS="$scratch/args"
 fails=0
 check() {
 	if [[ "$2" != "$3" ]]; then
@@ -12,18 +12,15 @@ check() {
 		fails=$((fails + 1))
 	fi
 }
-mkdir -p "$scratch/tools" "$scratch/alias" "$scratch/only-wrapper"
-ln -s "$wrapper" "$scratch/alias/pkill"
+mkdir -p "$scratch/tools" "$scratch/only-wrapper"
 ln -s "$wrapper" "$scratch/only-wrapper/pkill"
 ln -s "$(command -v bash)" "$scratch/only-wrapper/bash"
-# This target prints argv as JSON; native statuses are tested independently.
-# Generated fixtures need the pinned interpreter too; Linux's Nix sandbox has
-# no /usr/bin/env, and patchShebangs cannot see files generated during tests.
-printf '#!%s\njq -n --args '\''$ARGS.positional'\'' -- "$@"\nexit "${FAKE_PKILL_STATUS:-0}"\n' "$(command -v bash)" > "$scratch/tools/pkill"
-chmod +x "$scratch/tools/pkill"
+# Selector fixtures record their argv and never admit a real process.
+printf '#!%s\njq -cn --args '\''$ARGS.positional'\'' -- "$@" > "$SELECTOR_ARGS"\nexit "${FAKE_PGREP_STATUS:-1}"\n' "$(command -v bash)" > "$scratch/tools/pgrep"
+chmod +x "$scratch/tools/pgrep" || exit 1
 fake() {
 	local platform="$1"; shift
-	PATH="$root/bin:$scratch/alias:$scratch/tools:$PATH" bash -c '
+	PATH="$scratch/tools:$PATH" bash -c '
 		OSTYPE="$1"; shift
 		source "$1"; shift
 		pkill_guard "$@"
@@ -33,78 +30,71 @@ probe() {
 	local label="$1" expected="$2" platform="$3"; shift 3
 	local out err rc
 	capture fake "$platform" "$@"
-	check "$label status" "$rc" 0
-	check "$label argv" "$(jq -c . <<< "$out" 2>/dev/null)" "$expected"
+	check "$label status" "$rc" 1
+	check "$label argv" "$(cat "$SELECTOR_ARGS")" "$expected"
 	case "$label" in
 		*override*) [[ "$err" == *'WARNING'* ]] || { printf 'FAIL %s warning absent\n' "$label"; fails=$((fails + 1)); } ;;
 		*) check "$label stderr" "$err" '' ;;
 	esac
 }
 probe 'Linux default' '["--ignore-ancestors","-f","some process"]' linux-gnu -f 'some process'
-probe 'Linux override' '["-9","-f","some process"]' linux-gnu -9 --allow-ancestors -f 'some process'
-probe 'Linux symbolic signal' '["--ignore-ancestors","-USR1","-f","some process"]' linux-gnu -USR1 -f 'some process'
+probe 'Linux override' '["-f","some process"]' linux-gnu -9 --allow-ancestors -f 'some process'
+probe 'Linux symbolic signal' '["--ignore-ancestors","-f","some process"]' linux-gnu -USR1 -f 'some process'
 probe 'literal opt-out pattern' '["--ignore-ancestors","-f","--","--allow-ancestors"]' linux-gnu -f -- --allow-ancestors
 probe 'option value' '["--ignore-ancestors","-F","--allow-ancestors","target"]' linux-gnu -F --allow-ancestors target
-probe 'cluster option value' '["--ignore-ancestors","-fF","--allow-ancestors","target"]' linux-gnu -fF --allow-ancestors target
+probe 'cluster option value' '["--ignore-ancestors","-f","-F","--allow-ancestors","target"]' linux-gnu -fF --allow-ancestors target
 probe 'long option value' '["--ignore-ancestors","--env","--allow-ancestors","target"]' linux-gnu --env --allow-ancestors target
-probe 'future native option' '["--ignore-ancestors","--future-option=abc","-x","target"]' linux-gnu --future-option=abc -x target
 probe 'Darwin default' '["-f","some process"]' darwin25 -f 'some process'
-probe 'Darwin override' '["-9","-a","-f","some process"]' darwin25 --allow-ancestors -9 -f 'some process'
-probe 'Darwin symbolic override' '["-USR1","-a","-f","some process"]' darwin25 -USR1 -f 'some process' --allow-ancestors
-probe 'Darwin override native flag' '["-a","-avf","some process"]' darwin25 -avf --allow-ancestors 'some process'
-probe 'Darwin filename not flag' '["-Fa-file","target"]' darwin25 -Fa-file target
+probe 'Darwin override' '["-a","-f","some process"]' darwin25 --allow-ancestors -9 -f 'some process'
+probe 'Darwin symbolic override' '["-a","-f","some process"]' darwin25 -USR1 -f 'some process' --allow-ancestors
+probe 'Darwin override native flag' '["-a","-a","-v","-f","some process"]' darwin25 -avf --allow-ancestors 'some process'
+probe 'Darwin filename not flag' '["-F","a-file","target"]' darwin25 -Fa-file target
 for flag in -a -v -fa -ivf; do
 	out='' err='' rc=0
+	: > "$SELECTOR_ARGS"
 	capture fake darwin25 "$flag" target
 	check "Darwin unsafe $flag status" "$rc" 77
-	check "Darwin unsafe $flag no native call" "$out" ''
+	check "Darwin unsafe $flag no selection" "$(cat "$SELECTOR_ARGS")" ''
 	[[ "$err" == *'--allow-ancestors'* ]] || { printf 'FAIL Darwin %s explanation absent\n' "$flag"; fails=$((fails + 1)); }
 done
 out='' err='' rc=0
+for flag in -v --inv --future-option=abc; do
+	: > "$SELECTOR_ARGS"
+	capture fake linux-gnu "$flag" target
+	check "Linux unsafe $flag status" "$rc" 2
+	check "Linux unsafe $flag no selection" "$(cat "$SELECTOR_ARGS")" ''
+done
 capture env PATH="$scratch/only-wrapper" bash -c 'source "$1"; OSTYPE=linux; pkill_guard target' guard "$wrapper"
-check 'missing native executable' "$rc" 127
+check 'missing native selector' "$rc" 127
 check 'missing native stdout' "$out" ''
 capture fake freebsd target
 check 'unsupported platform closed' "$rc" 78
 check 'unsupported platform stdout' "$out" ''
-# Use fake PATH to assert propagation without touching real processes.
 for status in 1 2 3 42; do
-	capture env FAKE_PKILL_STATUS="$status" PATH="$root/bin:$scratch/tools:$PATH" bash -c 'source "$1"; OSTYPE=linux; pkill_guard target' guard "$wrapper"
-	check "native exit $status" "$rc" "$status"
+	capture env FAKE_PGREP_STATUS="$status" PATH="$scratch/tools:$PATH" bash -c 'source "$1"; OSTYPE=linux; pkill_guard target' guard "$wrapper"
+	check "selector exit $status" "$rc" "$status"
 done
 
-# Real kernel/process-table evidence: a unique marker is present only in the
-# fixture shell's argv. Signal 0 does not terminate it or any other process.
-real_probe() {
-	local command="$1"; shift
-	bash --noprofile --norc -c '
-		command="$1"; shift
-		"$command" "$@" >/dev/null 2>&1
-		status=$?
-		printf "%s\n" "$status"
-		exit 0
-	' pkill-fixture "$command" "$@"
-}
 if [[ "$OSTYPE" == linux* ]]; then
-	real_pk=''
-	while IFS= read -r candidate; do
-		[[ -x "$candidate" && ! "$candidate" -ef "$wrapper" ]] || continue
-		real_pk="$candidate"; break
-	done < <(type -a -p pkill)
-	[[ -n "$real_pk" ]] || { printf 'FAIL native pkill missing\n' >&2; exit 1; }
 	marker="pkill_fixture_${BASHPID}_ancestor_only"
-	capture real_probe "$real_pk" -0 -f "$marker"
-	check 'unguarded ancestor is matched' "$out" 0
-	capture real_probe "$wrapper" -0 -f "$marker"
+	real_probe() {
+		bash --noprofile --norc -c '
+			command="$1"; shift
+			"$command" "$@" >/dev/null 2>&1
+			printf "%s\n" "$?"
+		' pkill-fixture "$wrapper" "$@"
+	}
+	capture real_probe -0 -f "$marker"
 	check 'default ancestor excluded' "$out" 1
-	capture real_probe "$wrapper" --allow-ancestors -0 -f "$marker"
+	capture real_probe --allow-ancestors -0 -f "$marker"
 	check 'explicit opt-out matches ancestor' "$out" 0
-	# An explicitly ready sibling process is still a permitted match.
 	coproc PKILL_FIXTURE { printf '%s\n' "$BASHPID"; IFS= read -r release; }
 	fixture_job="$PKILL_FIXTURE_PID"
 	read -r fixture_pid <&"${PKILL_FIXTURE[0]}"
 	capture "$wrapper" -0 -P "$BASHPID"
 	check 'non-ancestor signal 0 works' "$rc" 0
+	capture "$wrapper" --log
+	[[ "$out" == *"target pid=$fixture_pid "* ]] || { printf 'FAIL fixture absent from log\n'; fails=$((fails + 1)); }
 	printf 'release\n' >&"${PKILL_FIXTURE[1]}"
 	wait "$fixture_job"
 fi
