@@ -141,6 +141,9 @@ esac
 # claude function/wrapper
 . $HOME/dotfiles/bin/src/claude.bash
 
+# Antigravity CLI function/wrapper
+in_bash && . "$HOME/dotfiles/bin/src/agy.bash"
+
 # capture function/wrapper
 . $HOME/dotfiles/bin/src/capture.bash
 

@@ -79,4 +79,42 @@ PATH=$saved_path
 [ ! -s "$fixture_root/codex.stdout" ] || fail "missing Codex executable has clean stdout"
 [ "$(<"$fixture_root/codex.stderr")" = "codex not found" ] || fail "missing Codex executable has one exact diagnostic"
 
+mkdir -p "$fixture_root/agy-path" || exit 1
+{
+	printf '#!%s\n' "$(type -P bash)"
+	printf '%s\n' 'printf "[%s]\n" "$@"'
+} >"$fixture_root/agy-path/agy" || exit 1
+chmod +x "$fixture_root/agy-path/agy" || exit 1
+PATH="$fixture_root/agy-path:$saved_path"
+
+# Run the native fake without a wrapper on the baseline.
+if [ -f "$repo_root/bin/src/agy.bash" ]; then
+	# shellcheck source=/dev/null
+	. "$repo_root/bin/src/agy.bash"
+fi
+
+check_agy() {
+	local expected="$1" label="$2" output
+	shift 2
+	output=$(agy "$@") && [ "$output" = "$expected" ] || fail "$label"
+}
+permission='[--dangerously-skip-permissions]'
+check_agy "$permission"$'\n[--continue]' 'AGY resumes with the launch permissions flag by default'
+check_agy "$permission" 'AGY can start fresh with no other options' --noresume
+check_agy "$permission"$'\n[--continue]\n[--print]\n[--noresume]' \
+	'AGY preserves a prompt that spells the wrapper option' --print --noresume
+check_agy "$permission"$'\n[--continue]\n[--model]\n[gemini-4-neon-xhigh]' \
+	'AGY adds defaults when a model is selected' --model gemini-4-neon-xhigh
+check_agy "$permission"$'\n[--model]\n[gemini-4-neon-xhigh]' \
+	'AGY strips noresume while preserving a model argument' --model gemini-4-neon-xhigh --noresume
+check_agy "$permission"$'\n[--conversation]\n[exact-id]' \
+	'AGY honors explicit session selection' --conversation exact-id
+check_agy "$permission"$'\n[-c]' 'AGY preserves explicit resume and permission flags without duplicates' \
+	--dangerously-skip-permissions -c
+check_agy $'[--version]' 'AGY forwards version requests unchanged' --version
+check_agy $'[update]' 'AGY forwards the native updater unchanged' update
+check_agy $'[mcp]\n[add]\n[--noresume]' 'AGY preserves native subcommand arguments' mcp add --noresume
+check_agy "$permission"$'\n[--continue]\n[--]\n[--noresume]' \
+	'AGY preserves arguments after the option terminator' -- --noresume
+
 exit "$fails"
