@@ -1,0 +1,151 @@
+#!/usr/bin/env bash
+set -u
+
+fork_command="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)/fork"
+scratch=$(mktemp -d "${TMPDIR:-/tmp}/fork-test.XXXXXXXX") || exit 1
+export HOME="$scratch/home" TMPDIR="$scratch/tmp" FORK_TEST_ROOT="$scratch"
+export XDG_CONFIG_HOME="$HOME/.config" XDG_RUNTIME_DIR="$HOME/.run"
+
+cleanup() {
+	local socket
+	cd / || return
+	set +f
+	for socket in "$TMPDIR"/fork.*/s; do
+		[[ -S "$socket" ]] || continue
+		# On a failed assertion, retire only the test's disposable servers.
+		tmux -S "$socket" list-panes -aF 'pane=#{pane_id} pid=#{pane_pid} dead=#{pane_dead}' >&2
+		tmux -S "$socket" kill-server 2>/dev/null || :
+	done
+	command rm -rf -- "$scratch"
+}
+trap cleanup EXIT
+mkdir -p -- "$XDG_CONFIG_HOME" "$XDG_RUNTIME_DIR" "$TMPDIR" "$scratch/work space" "$scratch/bin" || exit 1
+cd -- "$scratch/work space" || exit 1
+
+fail() {
+	printf 'fork_test: %s\n' "$*" >&2
+	exit 1
+}
+
+check_status() {
+	local expected="$1" actual=0
+	shift
+	timeout 5 "$fork_command" "$@" </dev/null >"$scratch/stdout" 2>"$scratch/stderr" || actual=$?
+	[[ "$actual" == "$expected" ]] ||
+		fail "wanted status $expected, got $actual ($(cat "$scratch/stderr"))"
+}
+
+check_status 0 --help
+check_status 2
+check_status 2 --stack sideways :
+check_status 2 : --title
+check_status 2 --title $'line\nbreak' :
+for flag in -v -h --stack-vertical --stack-vertically --stack-horizontal --stack-horizontally; do
+	check_status 0 "$flag" :
+done
+check_status 0 --stack vertically :
+check_status 0 --stack=horizontally :
+check_status 5 'exit 2' 'exit 3'
+
+cat >"$HOME/.bashrc" <<'EOF'
+fork_fixture_exit() {
+	[[ "$-" == *i* && "$PWD" == "$FORK_TEST_ROOT/work space" ]] || exit 90
+	exit "$1"
+}
+alias fork_fixture_first='fork_fixture_exit 2'
+alias fork_fixture_second='fork_fixture_exit 3'
+EOF
+check_status 254 fork_fixture_first fork_fixture_second
+check_status 5 --shell fork_fixture_first fork_fixture_second
+
+check_status 12 'exit 7;' "$(cat <<'EOF'
+printf '%s\n' 'héllo; "world"' > result
+exit 5
+EOF
+)"
+[[ $(cat result) == 'héllo; "world"' ]] || fail "command quoting or working directory changed"
+check_status 143 'builtin kill -TERM "$$"'
+check_status 255 'exit 200' 'exit 56'
+[[ $(cat "$scratch/stderr") == *256* ]] || fail "overflow diagnostic lost the exact sum"
+
+# Hold both children open until an independent tmux client inspects their layout.
+# Completing the first child must close its pane while the second stays live.
+check_layout() {
+	local pattern="$1" title="$2" runner socket layout='' panes='' status=0 attempt
+	shift 2
+	: >"$scratch/socket"
+	timeout 8 "$@" </dev/null >"$scratch/stdout" 2>"$scratch/stderr" &
+	runner=$!
+
+	for ((attempt = 0; attempt < 200; attempt++)); do
+		if [[ -s "$scratch/socket" ]]; then
+			socket=$(<"$scratch/socket")
+			layout=$(tmux -S "$socket" list-panes -F '#{pane_left}:#{pane_top}:#{pane_width}:#{pane_height}' 2>/dev/null)
+			[[ "$layout" == *$'\n'* ]] && break
+		fi
+		sleep 0.01
+	done
+	[[ "$layout" =~ $pattern && "${BASH_REMATCH[1]}" == "${BASH_REMATCH[2]}" ]] ||
+		fail "unexpected layout ${layout:-none} ($(cat "$scratch/stderr"))"
+	if [[ -n "$title" ]]; then
+		[[ $(tmux -S "$socket" show-options -gv set-titles) == on ]] ||
+			fail "terminal title updates were disabled"
+		[[ $(tmux -S "$socket" display-message -p '#{E:set-titles-string}') == "$title" ]] ||
+			fail "terminal title did not match $title"
+	fi
+
+	tmux -S "$socket" wait-for -S release-first || fail "could not release the first pane"
+	for ((attempt = 0; attempt < 200; attempt++)); do
+		panes=$(tmux -S "$socket" list-panes -F '#{pane_index}:#{pane_dead}' 2>/dev/null)
+		[[ "$panes" == 0:0 ]] && break
+		sleep 0.01
+	done
+	[[ "$panes" == 0:0 ]] || fail "the first pane failed to close"
+	tmux -S "$socket" wait-for -S release-second || fail "could not release the second pane"
+	wait "$runner" || status=$?
+	[[ "$status" == 13 ]] || fail "expected the sum of both panes, got $status"
+	[[ ! -e "$socket" ]] || fail "the private tmux socket was left behind"
+}
+
+# shellcheck disable=SC2016
+first='printf "%s\n" "${TMUX%%,*}" > "$FORK_TEST_ROOT/socket"; tmux wait-for release-first; exit 5'
+second='tmux wait-for release-second; exit 8'
+check_layout $'^0:0:([0-9]+):[0-9]+\n0:[1-9][0-9]*:([0-9]+):[0-9]+$' '' \
+	"$fork_command" "$first" "$second"
+
+# Use small stand-ins for the two monitors to exercise the actual supertop.
+printf '#!%s\n%s\n' "$BASH" "$first" >"$scratch/bin/htop"
+printf '#!%s\n%s\n' "$BASH" "$second" >"$scratch/bin/btop"
+chmod u+x "$scratch/bin/htop" "$scratch/bin/btop" || fail "could not create monitor fixtures"
+ln -s "$fork_command" "$scratch/bin/fork" || fail "could not link fork into the fixture PATH"
+PATH="$scratch/bin:$PATH" check_layout $'^0:0:[0-9]+:([0-9]+)\n[1-9][0-9]*:0:[0-9]+:([0-9]+)$' top \
+	"${fork_command%/*}/supertop"
+
+# An attached fork must deliver terminal input to a child and return the same
+# aggregate to its caller once the tmux client exits.
+TERM=xterm-256color FORK_TEST_COMMAND="$fork_command" expect <<'TCL' || fail "interactive title, input, or exit status check failed"
+set timeout 5
+log_user 0
+set title {Monitor #{session_name} #S %Y;}
+set title_sequence "\033\]0;$title\007"
+spawn -noecho $env(FORK_TEST_COMMAND) --title=$title \
+    {printf 'fork-test-input>'; read -r line; tmux wait-for -S tty-release; [[ $line == go ]] || exit 87; exit 6} \
+    {tmux wait-for tty-release; exit 7}
+set saw_title 0
+set saw_prompt 0
+while {!$saw_title || !$saw_prompt} {
+    expect {
+        -exact $title_sequence {set saw_title 1}
+        -exact {fork-test-input>} {set saw_prompt 1}
+        timeout {exit 1}
+        eof {exit 1}
+    }
+}
+send -- "go\r"
+expect {
+    eof {}
+    timeout {exit 1}
+}
+set child [wait]
+if {[lindex $child 2] != 0 || [lindex $child 3] != 13} {exit 1}
+TCL
