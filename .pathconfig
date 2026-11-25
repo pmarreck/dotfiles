@@ -215,118 +215,97 @@ PATH_EXCLUSIONS=(
 #
 # So this is a filter over a set, not "keep ORIG_PATH, drop the rest":
 #     foreign = current PATH − ORIG_PATH − PATH_ADDITIONS
-# Our own additions stay excluded from `foreign`, which is what keeps re-sourcing
-# idempotent. Kept bash-3.2 safe (no associative arrays) — see the macOS
-# bootstrap assertions in bin/test/pathconfig_bash_prepend_test.
-_pc_known=":"
-_pc_foreign=""
+# Our own additions stay excluded from `foreign`, which keeps re-sourcing
+# idempotent. Bash 4.2 associative arrays make membership exact without a
+# subprocess or treating path punctuation as a shell pattern.
+declare -A _pc_known=()
+declare -a _pc_foreign_entries=()
 _pc_old_ifs=$IFS
 IFS=:
-for _pc_e in $ORIG_PATH; do _pc_known="${_pc_known}${_pc_e}:"; done
+for _pc_e in $ORIG_PATH; do
+	[ -n "$_pc_e" ] && _pc_known["$_pc_e"]=1
+done
 IFS=$_pc_old_ifs
-for _pc_e in "${PATH_ADDITIONS[@]}"; do _pc_known="${_pc_known}${_pc_e}:"; done
+for _pc_e in "${PATH_ADDITIONS[@]}"; do
+	[ -n "$_pc_e" ] && _pc_known["$_pc_e"]=1
+done
 IFS=:
 for _pc_e in $_pc_incoming; do
-	[ -z "$_pc_e" ] && continue
-	case "$_pc_known" in
-		*":$_pc_e:"*) ;;  # part of the pristine base or one of our additions
-		# Record it in _pc_known too, so a duplicated foreign entry stays single.
-		*) _pc_foreign="${_pc_foreign}${_pc_e}:"; _pc_known="${_pc_known}${_pc_e}:" ;;
-	esac
+	[ -n "$_pc_e" ] || continue
+	if [ -z "${_pc_known[$_pc_e]+present}" ]; then
+		_pc_foreign_entries+=("$_pc_e")
+		_pc_known["$_pc_e"]=1
+	fi
 done
 IFS=$_pc_old_ifs
-unset _pc_known _pc_e _pc_old_ifs _pc_incoming
+unset _pc_known _pc_e _pc_incoming
 
-# Rebuild PATH from the pristine base plus additions. Idempotent by construction.
-PATH="$ORIG_PATH"
-# On macOS, prepend_path itself needs awk; keep the Nix bootstrap toolchain
-# reachable while applying the declarative additions rather than waiting for its
-# later entry. NixOS owns this path's ordering because its sudo wrapper must
-# remain ahead of the raw, deliberately non-setuid system sudo.
+# Build and filter the complete precedence sequence once. PATH_ADDITIONS is
+# declarative in last-prepend-wins order, so walk it backwards. This replaces
+# one echo+awk pipeline per directory and repeated whole-PATH rescans with one
+# in-process O(n) classifier. Foreign injections retain their original order at
+# the front; the pristine base retains its internal order at the back.
+declare -a _pc_candidates=("${_pc_foreign_entries[@]}")
+for ((_pc_i = ${#PATH_ADDITIONS[@]} - 1; _pc_i >= 0; _pc_i--)); do
+	_pc_candidates+=("${PATH_ADDITIONS[_pc_i]}")
+done
+# On macOS the Nix system profile is also the early modern-Bash bootstrap. Keep
+# it reachable even when the declarative list did not already contain it. NixOS
+# owns its own ordering because its privileged wrappers must remain ahead of the
+# raw system binaries.
 if [[ "$OSTYPE" == "darwin"* && -d "/run/current-system/sw/bin" ]]; then
-	PATH="/run/current-system/sw/bin:$PATH"
+	_pc_candidates+=("/run/current-system/sw/bin")
 fi
-IGNORE_PREPEND_PATH_WARNINGS=true
-export IGNORE_PREPEND_PATH_WARNINGS
-for _dir in "${PATH_ADDITIONS[@]}"; do
-	[ -d "$_dir" ] && prepend_path "$_dir"
-done
-unset IGNORE_PREPEND_PATH_WARNINGS _dir
-
-# Re-apply the foreign entries classified above, at the FRONT and in their
-# original relative order. Front is deliberate: a tool that injected them
-# (`nix shell`, direnv, …) did so intending ITS binaries to win — that is the
-# whole point of entering the shell. They land ahead of the base, but the base's
-# own internal ordering is untouched, so NixOS's setuid sudo wrapper still
-# precedes the raw non-setuid system sudo. Placed before the exclusion and
-# existence filters below so foreign entries are held to the same standards.
-if [ -n "$_pc_foreign" ]; then
-	PATH="${_pc_foreign}${PATH}"
-fi
-unset _pc_foreign
-
-# Apply exclusions
-IGNORE_EXCLUDE_PATH_WARNINGS=true
-export IGNORE_EXCLUDE_PATH_WARNINGS
-for _excl in "${PATH_EXCLUSIONS[@]}"; do
-	exclude_path "$_excl"
-done
-
-# Strip anything leading into a denylisted project, whatever put it there.
-# Skipping it during auto-discovery above is necessary but NOT sufficient: a
-# shell started before the denial existed still carries the directory, every
-# child inherits it, and the foreign-entry classification further up
-# deliberately preserves externally injected entries and re-hoists them to the
-# FRONT — precisely the wrong move for a denied one. Denial is a property of
-# the destination, not of how the entry arrived.
-_OLD_IFS=$IFS
 IFS=:
-for _path in $PATH; do
+for _pc_e in $ORIG_PATH; do _pc_candidates+=("$_pc_e"); done
+IFS=$_pc_old_ifs
+
+declare -A _pc_seen=()
+declare -a _pc_final=()
+for _path in "${_pc_candidates[@]}"; do
+	[ -n "$_path" ] || continue
+	[ -z "${_pc_seen[$_path]+present}" ] || continue
+	_pc_seen["$_path"]=1
+
+	_pc_drop=false
+	for _excl in "${PATH_EXCLUSIONS[@]}"; do
+		if [ "$_path" = "$_excl" ]; then _pc_drop=true; break; fi
+	done
+	$_pc_drop && continue
+
+	# Denial is a property of the destination, not of how the entry arrived.
 	for _deny in "${CODE_BIN_DENYLIST[@]}"; do
 		case "$_path" in
-			"$CODE/$_deny"|"$CODE/$_deny"/*) exclude_path "$_path"; break ;;
+			"$CODE/$_deny"|"$CODE/$_deny"/*) _pc_drop=true; break ;;
 		esac
 	done
-done
-IFS=$_OLD_IFS
-unset _OLD_IFS _path _deny
+	$_pc_drop && continue
 
-unset IGNORE_EXCLUDE_PATH_WARNINGS _excl
-
-# Retire raw build paths for migrated projects even when an old parent shell
-# presents them as foreign injections. Unmigrated projects retain those paths
-# until their current PF directory exists. Remove foreign PF directories while
-# preserving the current PF and generic project bin.
-_OLD_IFS=$IFS
-IFS=:
-for _path in $PATH; do
+	# Retire raw outputs once a project publishes its current PF directory, and
+	# remove foreign PF directories while retaining generic project bins.
 	case "$_path" in
 		"$CODE"/*/result/bin|"$CODE"/*/zig-out/bin)
 			_legacy_project=${_path%/result/bin}
 			[ "$_legacy_project" = "$_path" ] && _legacy_project=${_path%/zig-out/bin}
-			[ -d "$_legacy_project/bin/$PF" ] && exclude_path "$_path"
+			[ -d "$_legacy_project/bin/$PF" ] && continue
 			;;
 		"$CODE"/*/bin/macos-arm64|"$CODE"/*/bin/linux-amd64|"$CODE"/*/bin/linux-arm64|"$CODE"/*/bin/mswin-amd64|"$CODE"/*/bin/mswin-arm64)
 			case "$_path" in
 				"$CODE"/*/bin/"$PF") ;;
-				*) exclude_path "$_path" ;;
+				*) continue ;;
 			esac
 			;;
 	esac
-done
-IFS=$_OLD_IFS
-unset _OLD_IFS _path _legacy_project
 
-# Filter out any path entries that don't actually exist as directories
-_OLD_IFS=$IFS
-IFS=:
-for _path in $PATH; do
-	if [ ! -d "$_path" ]; then
-		exclude_path "$_path"
-	fi
+	[ -d "$_path" ] || continue
+	_pc_final+=("$_path")
 done
-IFS=$_OLD_IFS
-unset _OLD_IFS _path
+
+IFS=:
+PATH="${_pc_final[*]}"
+IFS=$_pc_old_ifs
+unset _pc_old_ifs _pc_foreign_entries _pc_candidates _pc_final _pc_seen \
+	_pc_i _pc_e _path _excl _deny _pc_drop _legacy_project
 
 export PATH
 

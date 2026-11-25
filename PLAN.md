@@ -4,6 +4,7 @@ Open work is listed in priority order. Completed history is in `docs/PLAN_LOG.md
 
 ## Current
 
+- [ ] Profile real interactive terminal startup to first usable prompt, attribute dominant phases, make only evidence-backed reversible improvements, and verify the actual route plus login/non-login and SSH semantics.
 - [x] Unify the existing ./test entry point around cached Nix suite evidence plus isolated supplemental host checks, preserving complete coverage and making push verification read-only; no Home Manager migration was included (context: docs/repository-awareness.md; done 2026-10-31 12:08 EDT; commit 9bfb0ea).
 - [x] Make `.pathconfig` place each `~/Code/*/bin/$PF` platform directory before every generic `~/Code/*/bin` directory in the final PATH, with classifier-style regression coverage (done 2026-10-31 11:59 EDT; commit d3fa0b6).
 - [ ] Await Mechatron Prime's owned `capture`/`strace -f` child-pipe deadlock regression and placement decision; do not rerun or modify the shared helper without delegation.
