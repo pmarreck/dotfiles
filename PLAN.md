@@ -1,5 +1,18 @@
 # dotfiles — TODO / Plans
 
+## Active: preserve local work and reconcile GitHub (2026-11-25)
+
+- [x] Preserve the current commits and uncommitted files before integration; review their purpose and tests.
+  Curiosity poke: distinguish useful local behavior from duplicated upstream changes.
+  Completed 2026-11-25 EST: recovery branch retains the three existing local commits; private recovery copies retain the original uncommitted files. SSH-agent discovery has eight passing checks.
+- [x] Restore `AGENTS.md` as its tracked relative symlink, keeping the physical file recoverable.
+  Curiosity poke: confirm the link target exists before replacing the file.
+  Completed 2026-11-25 EST: the tracked relative target exists; the physical file is preserved privately and both instruction entry points resolve through symlinks.
+- [ ] Verify and commit the useful local changes, then merge the latest `origin/master` without rewriting existing commits.
+  Curiosity poke: preserve both sides of shell startup and test-runner changes.
+- [ ] Resolve conflicts, run the required checks, and publish the reconciled branch with verified CI.
+  Curiosity poke: confirm the final remote commit and retain recovery copies.
+
 ## Active: no system Python; NFC file names (2026-11-09)
 
 - [x] `timed`: drop the python3/python clock fallbacks (perl, then whole seconds). Test simulates BSD date with no perl and asserts no Python call. Completed 2026-11-09 20:20 EST.

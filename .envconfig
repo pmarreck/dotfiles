@@ -6,6 +6,11 @@
 # Moved from .envrc to avoid direnv
 . "${HOME}/dotfiles/bin/src/truthy.sh"
 
+# Reuse the macOS GUI login's SSH agent in remote shells, preserving forwarding.
+. "$HOME/dotfiles/bin/src/macos_ssh_agent_env.bash"
+configure_macos_ssh_agent_env
+
+
 # Keep agent subprocesses behind the /nix/store and whole-home traversal guard
 # even when an agent runtime prepends its own rg/find/fd binaries before ~/bin.
 . "$HOME/dotfiles/bin/src/rg_guard_env.bash"

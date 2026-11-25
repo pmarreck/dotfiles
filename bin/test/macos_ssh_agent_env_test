@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+set -u
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+if ! [ -f "$root/bin/src/macos_ssh_agent_env.bash" ]; then
+	printf 'FAIL: missing macOS SSH agent environment helper\n' >&2
+	exit 1
+fi
+. "$root/bin/src/macos_ssh_agent_env.bash"
+fails=0
+checks=0
+check() {
+	checks=$((checks + 1))
+	if [ "$1" != "$2" ]; then
+		printf 'FAIL: %s\n' "$3" >&2
+		fails=$((fails + 1))
+	fi
+}
+# Collect effects in process; never contact the real launch service or agent.
+launchctl() {
+	[ "$*" = 'print gui/501/com.openssh.ssh-agent' ] || return 9
+	[ "$service_status" = 0 ] || return "$service_status"
+	printf '%s\n' "$service_output"
+}
+id() { [ "$*" = '-u' ] && printf '501\n'; }
+_macos_ssh_agent_is_socket() { [ "$1" = "$valid_socket" ]; }
+service_status=0
+service_output='SSH_AUTH_SOCK => /private/tmp/launchd.example/Listeners'
+valid_socket=/private/tmp/launchd.example/Listeners
+unset SSH_AUTH_SOCK
+configure_macos_ssh_agent_env darwin25
+check "$valid_socket" "${SSH_AUTH_SOCK:-}" 'remote macOS shell discovers agent socket'
+check "$valid_socket" "$(bash -c 'printf "%s" "${SSH_AUTH_SOCK:-}"')" 'socket exported to child process'
+configure_macos_ssh_agent_env darwin25
+check "$valid_socket" "${SSH_AUTH_SOCK:-}" 'repeated setup is idempotent'
+SSH_AUTH_SOCK=/forwarded/socket
+configure_macos_ssh_agent_env darwin25
+check /forwarded/socket "$SSH_AUTH_SOCK" 'preserves existing forwarded or explicit socket'
+unset SSH_AUTH_SOCK
+configure_macos_ssh_agent_env linux-gnu
+check unset "${SSH_AUTH_SOCK-unset}" 'Linux does not acquire a macOS socket'
+service_status=1
+configure_macos_ssh_agent_env darwin25
+check unset "${SSH_AUTH_SOCK-unset}" 'absent GUI session is a quiet no-op'
+service_status=0
+service_output='SSH_AUTH_SOCK => /stale/socket'
+configure_macos_ssh_agent_env darwin25
+check unset "${SSH_AUTH_SOCK-unset}" 'rejects stale or non-socket candidate'
+service_output='unrelated output'
+configure_macos_ssh_agent_env darwin25
+check unset "${SSH_AUTH_SOCK-unset}" 'missing launchd socket is a no-op'
+printf '%s checks, %s failures\n' "$checks" "$fails"
+exit "$fails"

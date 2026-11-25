@@ -76,11 +76,16 @@ wget_bin="$tmpdir/wget-bin"
 curl_bin="$tmpdir/curl-bin"
 notrash_bin="$tmpdir/notrash-bin"
 macos_bin="$tmpdir/macos-bin"
+# The host may shadow rm with a wrapper whose dependencies are absent here.
+# Restrict the real utility to the disposable test directories.
+plain_rm=$(command -p -v rm)
+[[ -x "$plain_rm" ]] || plain_rm=$(type -P rm)
 for bin in "$wget_bin" "$curl_bin" "$notrash_bin" "$macos_bin"; do
 	mkdir -p "$bin"
-	for tool in bash cp mv rm unzip gzip; do
+	for tool in bash cp mv unzip gzip; do
 		link_tool "$bin" "$tool"
 	done
+	link_tool "$bin" rm "$plain_rm"
 done
 for bin in "$wget_bin" "$curl_bin" "$notrash_bin"; do
 	link_tool "$bin" tar "$gnu_tar"
