@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# Exercise the profile's decoration gate with real Bash modes and PTYs.
+set -u
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P) || exit 1
+work=$(mktemp -d "${TMPDIR:-/tmp}/fun-intro-startup.XXXXXXXX") || exit 1
+trap 'command rm -rf -- "$work"' EXIT
+
+mkdir -p "$work/home" "$work/cache/dotfiles/fun_intro" || exit 1
+ln -s "$root" "$work/home/dotfiles" || exit 1
+: > "$work/home/.pathconfig"
+printf 'INTRO-CACHE-MARKER\n' > "$work/cache/dotfiles/fun_intro/cached.image_incapable"
+
+# Isolate decoration selection, terminal probes, and refresh from the gate.
+# Bash still determines interactivity and login mode as it does in .bashrc.
+probe='
+    case $- in *i*) INTERACTIVE_SHELL=true ;; *) INTERACTIVE_SHELL=false ;; esac
+    if shopt -q login_shell; then LOGIN_SHELL=true; else LOGIN_SHELL=false; fi
+    check_sixel_support() { return 1; }
+    check_kitty_support() { return 1; }
+    tabs() { :; }
+    fun_intro() { :; }
+    . "$HOME/dotfiles/.profile"
+    printf "INTRO-PROBE-READY\n"
+'
+
+run_case() {
+	local label=$1 want_intro=$2 terminal=$3 benchmark=$4 use_pty=$5
+	shift 5
+	local out
+	local -a clean_env=(HOME="$work/home" XDG_CACHE_HOME="$work/cache"
+		XDG_CONFIG_HOME="$work/config" XDG_DATA_HOME="$work/data"
+		XDG_STATE_HOME="$work/state" XDG_RUNTIME_DIR="$work/run"
+		PATH="$PATH" TERM=xterm TERM_PROGRAM="$terminal" SHELL_STARTUP_BENCHMARK="$benchmark")
+	if [[ "$use_pty" == yes ]]; then
+		out=$(env -i "${clean_env[@]}" expect -N -n -f - "$BASH" --noprofile --norc "$@" -c "$probe" 2>&1 <<'TCL'
+set timeout 10
+spawn -noecho {*}$argv
+expect {
+    timeout { exit 124 }
+    eof { exit [lindex [wait] 3] }
+}
+TCL
+		) || { printf 'FAIL %s: %s\n' "$label" "$out" >&2; return 1; }
+	else
+		out=$(env -i "${clean_env[@]}" "$BASH" --noprofile --norc "$@" -c "$probe" </dev/null 2>&1) || return 1
+	fi
+	if [[ "$out" == *INTRO-PROBE-READY* ]] &&
+		{ [[ "$want_intro" == yes && "$out" == *INTRO-CACHE-MARKER*INTRO-PROBE-READY* ]] ||
+		  [[ "$want_intro" == no && "$out" != *INTRO-CACHE-MARKER* ]]; }; then
+		printf 'PASS %s\n' "$label"
+	else
+		printf 'FAIL %s (intro expected: %s): %s\n' "$label" "$want_intro" "$out" >&2
+		return 1
+	fi
+}
+
+failures=0
+run_case 'Ghostty non-login Bash' yes ghostty '' yes -i || ((failures++))
+run_case 'WezTerm non-login Bash' yes WezTerm '' yes -i || ((failures++))
+run_case 'interactive login Bash' yes ghostty '' yes --login -i || ((failures++))
+run_case 'startup benchmark' no ghostty 1 yes -i || ((failures++))
+run_case 'non-interactive Bash on a PTY' no ghostty '' yes || ((failures++))
+run_case 'interactive login flags without a TTY' no ghostty '' no --login -i || ((failures++))
+exit "$failures"

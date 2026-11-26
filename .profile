@@ -176,7 +176,8 @@ else
 fi
 export SIXEL_ENV SIXEL_CAPABLE KITTY_CAPABLE IMAGE_CAPABLE
 
-if ${INTERACTIVE_SHELL:-false} && ${LOGIN_SHELL:-false} && [ -z "$SHELL_STARTUP_BENCHMARK" ]; then
+# Terminal tabs can start interactive Bash without making it a login shell.
+if ${INTERACTIVE_SHELL:-false} && [ -t 0 ] && [ -t 1 ] && [ -z "${SHELL_STARTUP_BENCHMARK:-}" ]; then
 	# Decoration via cache: display previously-cached pick instantly, then
 	# bg-fork a regenerator so the NEXT shell has a fresh pick ready. The
 	# regenerator uses expect to allocate a PTY (preserves ANSI), times out
