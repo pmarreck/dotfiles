@@ -324,3 +324,7 @@ Completed PLAN.md items retired by plan-retire, oldest retirement first.
 - [x] [Current] Unify the existing ./test entry point around cached Nix suite evidence plus isolated supplemental host checks, preserving complete coverage and making push verification read-only; no Home Manager migration was included (context: docs/repository-awareness.md; done 2026-10-31 12:08 EDT; commit 9bfb0ea).
 - [x] [Current] Make `.pathconfig` place each `~/Code/*/bin/$PF` platform directory before every generic `~/Code/*/bin` directory in the final PATH, with classifier-style regression coverage (done 2026-10-31 11:59 EDT; commit d3fa0b6).
 - [x] [Recent completions] Should the push gate rerun tests on each outgoing commit? Answer: No; the approved cached-evidence design verifies each published tip without creating worktrees or running tests inside the hook (context: docs/repository-awareness.md; done 2026-10-31 10:05 EDT).
+
+## Retired 2026-11-26
+
+- [x] [Completed: preserve local work and reconcile GitHub (2026-11-25)] Require a complete ordered conflict block in one staged file, with opening, separator, and closing markers; test standalone separators, partial fragments, diff3, marker sizes, and staged-content behavior before implementation. Completed 2026-11-25 EST: the old gate failed 12 new expectations; the updated gate passes 64 checks and the complete 228-file suite. The added upstream tmux runner needed symbolic signal-name handling on macOS; its TERM and KILL integration checks now pass. Publication remains tracked above.
