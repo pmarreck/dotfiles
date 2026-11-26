@@ -709,6 +709,10 @@ local function decode_json(content, label)
 	if not json_runtime then
 		local loaded, module = pcall(require, "cjson.safe")
 		if not loaded then die("lua-cjson is required to inspect " .. label) end
+		if not module.decode_array_with_array_mt or not module.array_mt then
+			die("lua-cjson array type metadata is required to inspect " .. label)
+		end
+		module.decode_array_with_array_mt(true)
 		json_runtime = module
 	end
 	local value, problem = json_runtime.decode(content)
@@ -725,17 +729,37 @@ local function lock_references(content)
 	end
 	for _, node in pairs(lock.nodes) do
 		if type(node) == "table" then
-			for _, source_name in ipairs({ "locked", "original" }) do
-				local source = node[source_name]
-				if type(source) == "table" then
-					local source_type = source.type
-					if source_type == "path" then
-						references[#references + 1] = {
-							line = 1,
-							value = source.path or source.url or source_type,
-							problem = "flake.lock contains a local " .. source_type .. " source",
-						}
-					end
+			local locked = type(node.locked) == "table" and node.locked or {}
+			local original = type(node.original) == "table" and node.original or {}
+			local has_path_source = locked.type == "path" or original.type == "path"
+			if has_path_source then
+				local path_problem
+				if locked.type ~= "path" or original.type ~= "path" then
+					path_problem = "flake.lock path node must repeat the type in locked and original"
+				elseif type(locked.path) ~= "string" or type(original.path) ~= "string" then
+					path_problem = "flake.lock path node must repeat a static path"
+				elseif locked.path ~= original.path then
+					path_problem = "flake.lock path node has mismatched locked and original paths"
+				elseif locked.url ~= nil or original.url ~= nil then
+					path_problem = "flake.lock path node cannot also declare a URL"
+				elseif type(node.parent) ~= "table" or
+					getmetatable(node.parent) ~= json_runtime.array_mt or
+					next(node.parent) ~= nil then
+					path_problem = "flake.lock path node must use an empty root-parent array"
+				end
+				if path_problem then
+					references[#references + 1] = {
+						line = 1,
+						value = locked.path or original.path or "path",
+						problem = path_problem,
+					}
+				else
+					references[#references + 1] = {
+						line = 1, value = locked.path, type = "path",
+					}
+				end
+			else
+				for _, source in ipairs({ locked, original }) do
 					if type(source.url) == "string" then
 						references[#references + 1] = {
 							line = 1, value = source.url, type = "source",
@@ -916,6 +940,12 @@ local function local_source_reason(value)
 		lower:match("^path%+file:") then
 		return "local file source"
 	end
+end
+
+local function relative_path_url(value)
+	if not value:lower():match("^path:") then return nil end
+	local path = value:sub(6)
+	if path ~= "" then return path end
 end
 
 local findings = {}
@@ -1149,7 +1179,19 @@ for _, path in ipairs(paths) do
 	for _, reference in ipairs(references) do
 		local reason = reference.problem
 		if not reason and reference.type == "source" then
-			reason = local_source_reason(reference.value)
+			local relative_path = kind == "nix" and relative_path_url(reference.value)
+			if relative_path then
+				local normalized
+				normalized, reason = normalize_from_base(
+					dependency_path_base(path, kind), relative_path
+				)
+				if not reason then normalized, reason = resolve_index_symlinks(normalized) end
+				if not reason and not is_tracked(normalized) then
+					reason = "dependency path is not tracked in the staged repository"
+				end
+			else
+				reason = local_source_reason(reference.value)
+			end
 		elseif not reason and reference.type == "path" then
 			local normalized
 			normalized, reason = normalize_from_base(

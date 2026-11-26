@@ -424,6 +424,49 @@ stage_manifest flake.lock $'{\n  "version": 7,\n  "root": "root",\n  "nodes": {\
 run_gate
 check test "$rc" -eq 0
 
+# A path input is portable when both staged declarations identify the same
+# tracked, repository-contained tree and the lock node anchors it to the root.
+# Prove the composed hook accepts a real commit, not only a direct gate call.
+mkdir -p nix/provenance-default
+printf '{"schema":"fixture/v1"}\n' > nix/provenance-default/record.json
+git add nix/provenance-default/record.json
+stage_manifest flake.nix $'{\n  inputs.build-provenance = {\n    url = "path:./nix/provenance-default";\n    flake = false;\n  };\n  outputs = { self, build-provenance }: { };\n}\n'
+stage_manifest flake.lock $'{\n  "version": 7,\n  "root": "root",\n  "nodes": {\n    "root": { "inputs": { "build-provenance": "build-provenance" } },\n    "build-provenance": {\n      "flake": false,\n      "locked": { "type": "path", "path": "./nix/provenance-default" },\n      "original": { "type": "path", "path": "./nix/provenance-default" },\n      "parent": []\n    }\n  }\n}\n'
+run_gate
+check test "$rc" -eq 0
+output=$(git commit -qm safe-contained-nix-path 2>&1); rc=$?
+check test "$rc" -eq 0
+
+# The positive rule is narrow in both manifests. A root escape, untracked
+# destination or staged symlink escape remains nonportable.
+for bad_path in 'path:../outside' 'path:./nix/not-tracked'; do
+	stage_manifest flake.nix "{\n  inputs.bad.url = \"$bad_path\";\n  outputs = { self, bad }: { };\n}\n"
+	run_gate
+	check test "$rc" -eq 1
+done
+ln -s /home/example/private nix/escape
+git add nix/escape
+stage_manifest flake.nix $'{\n  inputs.bad.url = "path:./nix/escape";\n  outputs = { self, bad }: { };\n}\n'
+run_gate
+check test "$rc" -eq 1
+git reset -q HEAD -- nix/escape
+command rm -f nix/escape
+git reset -q HEAD -- flake.nix
+
+# The lock node must repeat one contained path and explicitly use the empty
+# root-parent array. External/non-empty, malformed-object and mismatched forms
+# cannot inherit the manifest allowance.
+for bad_node in \
+	$'"locked": { "type": "path", "path": "./nix/provenance-default" },\n      "original": { "type": "path", "path": "./nix/provenance-default" },\n      "parent": ["external"]' \
+	$'"locked": { "type": "path", "path": "./nix/provenance-default" },\n      "original": { "type": "path", "path": "./nix/provenance-default" },\n      "parent": {}' \
+	$'"locked": { "type": "path", "path": "./nix/provenance-default" },\n      "original": { "type": "path", "path": "./nix/other" },\n      "parent": []' \
+	$'"locked": { "type": "path", "path": "../outside" },\n      "original": { "type": "path", "path": "../outside" },\n      "parent": []'
+do
+	stage_manifest flake.lock "{\n  \"version\": 7,\n  \"root\": \"root\",\n  \"nodes\": {\n    \"root\": { \"inputs\": { \"bad\": \"bad\" } },\n    \"bad\": {\n      $bad_node\n    }\n  }\n}\n"
+	run_gate
+	check test "$rc" -eq 1
+done
+
 # Exact Nix staging mapping permits only an untracked in-root destination.
 stage_manifest build.zig.zon $'.{\n  .name = .fixture,\n  .version = "0.0.0",\n  .dependencies = .{\n    .staged = .{ .path = ".deps/safe" },\n  },\n}\n'
 stage_manifest flake.nix $'{\n  inputs.safe = {\n    url = "github:example/safe/0123456789abcdef0123456789abcdef01234567";\n    flake = false;\n  };\n  outputs = { self, safe }: { };\n}\n'

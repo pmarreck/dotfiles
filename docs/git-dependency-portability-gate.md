@@ -28,12 +28,17 @@ changes can invalidate an unchanged declaration.
 - `build.zig.zon`: static `.path` and `.url` values inside the
   `.dependencies` object. Dynamic dependency expressions fail closed.
 - `flake.nix`: static Nix path literals and source-like `url`, `src` and
-  `source` assignments. Comments, ordinary strings and indented strings are
-  tokenized separately. Indented-string escapes and nested interpolation
-  quoting keep runtime paths inside the string token. Dynamic flake input URLs
-  fail closed.
-- `flake.lock`: structural JSON inspection rejects path sources and local
-  URLs. Remote file fetchers remain valid.
+  `source` assignments. A `path:` URL is admitted only when its relative
+  target remains inside the repository, is represented in the staged tree and
+  crosses no staged escaping symlink. Comments, ordinary strings and indented
+  strings are tokenized separately. Indented-string escapes and nested
+  interpolation quoting keep runtime paths inside the string token. Dynamic
+  flake input URLs fail closed.
+- `flake.lock`: structural JSON inspection admits only path nodes whose
+  locked and original paths match, resolve to staged in-repository content,
+  and carry Nix's empty root-parent array. Absolute, traversal,
+  external-parent, mismatched, malformed and symlink-escaping path nodes remain
+  rejected. Local URLs remain rejected; remote file fetchers remain valid.
 
 Relative paths resolve from the declaring source boundary and must remain
 inside the repository. Their destinations must be represented in the index.

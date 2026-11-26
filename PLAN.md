@@ -38,6 +38,8 @@ Open work is listed in priority order. Completed history is in `docs/PLAN_LOG.md
 
 ## Current
 
+- [ ] Admit only contained tracked relative Nix `path:` inputs and matching root-parent lock nodes in the staged dependency gate, preserving absolute, traversal, untracked, malformed-parent, and symlink-escape rejection.
+- [ ] Audit existing macOS ARM64 and Windows native-runner job controls for Difz and report verified runtime, memory, descendant-termination, write-confinement, and host/architecture capabilities without launching jobs or changing live state.
 - [x] Profile real interactive terminal startup to first usable prompt, attribute dominant phases, make only evidence-backed reversible improvements, and verify the actual route plus login/non-login and SSH semantics (done 2026-11-25 18:24 EST; commit 588b234).
 - [x] Unify the existing ./test entry point around cached Nix suite evidence plus isolated supplemental host checks, preserving complete coverage and making push verification read-only; no Home Manager migration was included (context: docs/repository-awareness.md; done 2026-10-31 12:08 EDT; commit 9bfb0ea).
 - [x] Make `.pathconfig` place each `~/Code/*/bin/$PF` platform directory before every generic `~/Code/*/bin` directory in the final PATH, with classifier-style regression coverage (done 2026-10-31 11:59 EDT; commit d3fa0b6).
