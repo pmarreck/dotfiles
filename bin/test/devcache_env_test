@@ -20,9 +20,12 @@ trap cleanup EXIT
 cache_root="$fixture_root/cache"
 project_a="$fixture_root/project-a"
 project_b="$fixture_root/project-b"
-mkdir -p "$cache_root" "$project_a/subdir" "$project_b"
-git -C "$project_a" init -q
-git -C "$project_b" init -q
+project_plain="$fixture_root/project-plain"
+mkdir -p "$cache_root" "$project_a/subdir" "$project_b" "$project_plain"
+for p in "$project_a" "$project_b" "$project_plain"; do git -C "$p" init -q; done
+touch "$project_a/build.zig" "$project_b/build.zig"
+# Projects commonly ignore only the directory form.
+printf '.zig-cache/\n' > "$project_a/.gitignore"
 
 fail() {
 	printf 'FAIL: %s\n' "$1" >&2
@@ -34,6 +37,8 @@ assert_equal() {
 	[ "$expected" = "$actual" ] || fail "$description (expected '$expected', got '$actual')"
 }
 
+link_of() { readlink -- "$1/.zig-cache" 2>/dev/null || printf 'none'; }
+
 # shellcheck source=/dev/null # HOME is the checkout root in the test environment.
 . "$HOME/dotfiles/bin/src/devcache_env.bash"
 
@@ -44,22 +49,48 @@ configure_devcache_env "$cache_root" "$project_a"
 assert_equal keep-cargo "$CARGO_TARGET_DIR" "absent sentinel preserves Cargo override"
 assert_equal keep-zig-global "$ZIG_GLOBAL_CACHE_DIR" "absent sentinel preserves Zig global override"
 assert_equal keep-zig-local "$ZIG_LOCAL_CACHE_DIR" "absent sentinel preserves Zig local override"
+assert_equal none "$(link_of "$project_a")" "absent sentinel creates no Zig cache link"
 
 touch "$cache_root/.devcache-ready"
 configure_devcache_env "$cache_root" "$project_a"
+assert_equal keep-zig-local "$ZIG_LOCAL_CACHE_DIR" "ready cache preserves a caller-owned Zig local cache"
+unset ZIG_LOCAL_CACHE_DIR
+configure_devcache_env "$cache_root" "$project_a"
 project_a_cargo="$CARGO_TARGET_DIR"
-project_a_zig_local="$ZIG_LOCAL_CACHE_DIR"
+project_a_zig_local=$(link_of "$project_a")
 assert_equal "$cache_root" "$DEVCACHE_ROOT" "ready cache exports its root"
 assert_equal "$cache_root/zig/global" "$ZIG_GLOBAL_CACHE_DIR" "Zig global cache is shared"
+assert_equal unset "${ZIG_LOCAL_CACHE_DIR-unset}" "the Zig local cache is never exported"
+case "$project_a_zig_local" in
+	"$cache_root"/projects/project-a-*/zig-local) ;;
+	*) fail "a Zig checkout's .zig-cache links to its NVMe directory (got '$project_a_zig_local')" ;;
+esac
+[ -d "$project_a_zig_local" ] || fail "the linked Zig cache directory exists"
+assert_equal "" "$(git -C "$project_a" status --porcelain -- .zig-cache)" "the Zig cache link is not reported by git status"
+configure_devcache_env "$cache_root" "$project_a"
+assert_equal 1 "$(grep -cxF '/.zig-cache' "$project_a/.git/info/exclude")" "the git exclude entry is added once"
+assert_equal none "$(link_of "$project_plain")" "a checkout without build.zig gets no Zig cache link"
+configure_devcache_env "$cache_root" "$project_plain"
+assert_equal none "$(link_of "$project_plain")" "configuring a non-Zig checkout creates no link"
+
+# The defect this policy prevents: a managed path inherited from another
+# checkout would make Zig reuse that checkout's outputs.
+ZIG_LOCAL_CACHE_DIR="$project_a_zig_local"
+configure_devcache_env "$cache_root" "$project_b"
+assert_equal unset "${ZIG_LOCAL_CACHE_DIR-unset}" "an inherited managed Zig local cache is dropped"
 
 mv "$cache_root/.devcache-ready" "$cache_root/.devcache-ready.disabled"
+ZIG_LOCAL_CACHE_DIR="$project_a_zig_local"
 configure_devcache_env "$cache_root" "$project_a"
 assert_equal unset "${DEVCACHE_ROOT-unset}" "lost readiness revokes the exported cache root"
 assert_equal unset "${CARGO_TARGET_DIR-unset}" "lost readiness revokes the managed Cargo target"
 assert_equal unset "${ZIG_GLOBAL_CACHE_DIR-unset}" "lost readiness revokes the managed Zig global cache"
-assert_equal unset "${ZIG_LOCAL_CACHE_DIR-unset}" "lost readiness revokes the managed Zig local cache"
+assert_equal unset "${ZIG_LOCAL_CACHE_DIR-unset}" "lost readiness revokes a managed Zig local cache"
+assert_equal none "$(link_of "$project_a")" "lost readiness removes the managed Zig cache link"
+[ -d "$project_a_zig_local" ] || fail "lost readiness never removes the cache directory itself"
 mv "$cache_root/.devcache-ready.disabled" "$cache_root/.devcache-ready"
 configure_devcache_env "$cache_root" "$project_a"
+assert_equal "$project_a_zig_local" "$(link_of "$project_a")" "restored readiness relinks the same Zig cache"
 
 CARGO_TARGET_DIR=caller-cargo
 ZIG_LOCAL_CACHE_DIR=caller-zig-local
@@ -68,22 +99,51 @@ configure_devcache_env "$cache_root" "$project_a"
 assert_equal caller-cargo "$CARGO_TARGET_DIR" "lost readiness preserves a caller-owned Cargo target"
 assert_equal unset "${ZIG_GLOBAL_CACHE_DIR-unset}" "lost readiness still revokes a mixed-set managed cache"
 assert_equal caller-zig-local "$ZIG_LOCAL_CACHE_DIR" "lost readiness preserves a caller-owned Zig local cache"
+unset ZIG_LOCAL_CACHE_DIR
 mv "$cache_root/.devcache-ready.disabled" "$cache_root/.devcache-ready"
 configure_devcache_env "$cache_root" "$project_a"
 
 configure_devcache_env "$cache_root" "$project_a/subdir"
 assert_equal "$project_a_cargo" "$CARGO_TARGET_DIR" "Cargo target is stable across repository subdirectories"
-assert_equal "$project_a_zig_local" "$ZIG_LOCAL_CACHE_DIR" "Zig local cache is stable across repository subdirectories"
+assert_equal "$project_a_zig_local" "$(link_of "$project_a")" "Zig local cache is stable across repository subdirectories"
+assert_equal none "$(link_of "$project_a/subdir")" "subdirectories get no link of their own"
 
 configure_devcache_env "$cache_root" "$project_b"
 [ "$project_a_cargo" != "$CARGO_TARGET_DIR" ] || fail "different repositories get different Cargo targets"
-[ "$project_a_zig_local" != "$ZIG_LOCAL_CACHE_DIR" ] || fail "different repositories get different Zig local caches"
+project_b_zig_local=$(link_of "$project_b")
+[ "$project_a_zig_local" != "$project_b_zig_local" ] || fail "different repositories get different Zig local caches"
 assert_equal "$cache_root/zig/global" "$ZIG_GLOBAL_CACHE_DIR" "different repositories retain shared Zig global cache"
+
+# A copied checkout carries the link; it must be repointed, not shared.
+project_copy="$fixture_root/project-copy"
+cp -a "$project_a" "$project_copy"
+configure_devcache_env "$cache_root" "$project_copy"
+project_copy_zig_local=$(link_of "$project_copy")
+[ "$project_copy_zig_local" != "$project_a_zig_local" ] || fail "a copied checkout's link is repointed to its own cache"
+case "$project_copy_zig_local" in
+	"$cache_root"/projects/project-copy-*/zig-local) ;;
+	*) fail "a copied checkout links to its own key (got '$project_copy_zig_local')" ;;
+esac
+
+# Caches this policy did not create stay as they are.
+project_private="$fixture_root/project-private"
+mkdir -p "$project_private/.zig-cache/o"
+git -C "$project_private" init -q
+touch "$project_private/build.zig"
+configure_devcache_env "$cache_root" "$project_private"
+[ -d "$project_private/.zig-cache/o" ] && [ ! -L "$project_private/.zig-cache" ] || fail "an existing private Zig cache directory is kept"
+project_foreign="$fixture_root/project-foreign"
+mkdir -p "$project_foreign" "$fixture_root/elsewhere"
+git -C "$project_foreign" init -q
+touch "$project_foreign/build.zig"
+ln -s "$fixture_root/elsewhere" "$project_foreign/.zig-cache"
+configure_devcache_env "$cache_root" "$project_foreign"
+assert_equal "$fixture_root/elsewhere" "$(link_of "$project_foreign")" "a link this policy did not make is kept"
 
 cd "$project_a" || exit 1
 configure_devcache_env "$cache_root"
 assert_equal "$project_a_cargo" "$CARGO_TARGET_DIR" "prompt refresh follows an interactive cd"
-assert_equal "$project_a_zig_local" "$ZIG_LOCAL_CACHE_DIR" "prompt refresh updates Zig local cache after cd"
+assert_equal "$project_a_zig_local" "$(link_of "$project_a")" "prompt refresh keeps the Zig cache link after cd"
 
 rg -qF '. "$HOME/dotfiles/bin/src/devcache_env.bash"' "$HOME/dotfiles/.envconfig" || fail ".envconfig sources devcache policy"
 rg -qF 'configure_devcache_env' "$HOME/dotfiles/.envconfig" || fail ".envconfig invokes devcache policy"
