@@ -12,6 +12,7 @@ Open work is listed in priority order. Completed history is in `docs/PLAN_LOG.md
 
 ## Current
 
+- [ ] Make the staged 500-line source-file gate a strong nonblocking advisory only for the owner-approved `pmarreck/validate` repository, retaining hard enforcement everywhere else and proving the exception against spoofed repository identities in an isolated real-index/commit test.
 - [x] Admit only contained tracked relative Nix `path:` inputs and matching root-parent lock nodes in the staged dependency gate, preserving absolute, traversal, untracked, malformed-parent, and symlink-escape rejection (done 2026-11-25 23:37 EST; commit 60a3867).
 - [x] Audit existing macOS ARM64 and Windows native-runner job controls for Difz and report verified runtime, memory, descendant-termination, write-confinement, and host/architecture capabilities without launching jobs or changing live state; Linux is proven bounded, while macOS ARM64 and Windows AMD64 lack verified per-job envelopes and no Windows ARM64 runner was found (done 2026-11-25 23:37 EST; commit 60a3867).
 - [x] Profile real interactive terminal startup to first usable prompt, attribute dominant phases, make only evidence-backed reversible improvements, and verify the actual route plus login/non-login and SSH semantics (done 2026-11-25 18:24 EST; commit 588b234).

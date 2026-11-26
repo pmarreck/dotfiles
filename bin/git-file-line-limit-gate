@@ -1,0 +1,230 @@
+#!/usr/bin/env luajit
+
+local PROGRAM = "git-file-line-limit-gate"
+local LIMIT = 500
+local BYPASS = "I_SWEAR_TO_AMODEI_ALTMAN_AND_MARRECK_THAT_THESE_NEED_TO_BE_ONE_FILE"
+-- Entries require explicit owner approval in dotfiles. A project-local file or
+-- environment variable cannot add another repository to this table.
+local ADVISORY_GITHUB_REPOSITORIES = {
+	["pmarreck/validate"] = true,
+}
+
+local function help()
+	io.write([[Usage: git-file-line-limit-gate [--help | --about]
+
+Refuse commits that add or change a staged text source file longer than 500
+lines. Unchanged files are not inspected. Documents and configuration files
+are exempt. Repositories in the owner-approved dotfiles advisory table receive
+the same strong recommendation without a hard block. For an intentional
+single-file exception elsewhere, set the explicit bypass:
+
+  I_SWEAR_TO_AMODEI_ALTMAN_AND_MARRECK_THAT_THESE_NEED_TO_BE_ONE_FILE=1 git commit
+  I_SWEAR_TO_AMODEI_ALTMAN_AND_MARRECK_THAT_THESE_NEED_TO_BE_ONE_FILE=yes git commit
+]])
+end
+
+local function fail(message, status)
+	io.stderr:write(PROGRAM .. ": ERROR: " .. message .. "\n")
+	os.exit(status or 2)
+end
+
+if #arg > 0 then
+	if #arg == 1 and (arg[1] == "-h" or arg[1] == "--help") then
+		help()
+		os.exit(0)
+	elseif #arg == 1 and arg[1] == "--about" then
+		io.write(PROGRAM .. " 0.2.0 - Enforce owner-scoped 500-line staged source-file limits\n")
+		os.exit(0)
+	end
+	fail("unknown option; use --help", 2)
+end
+
+local bypass = os.getenv(BYPASS)
+if bypass ~= nil then
+	local normalized = bypass:lower()
+	if normalized == "1" or normalized == "yes" then
+		io.stderr:write(string.format("WARNING: %s bypassed the 500-line source-file gate.\n", BYPASS))
+		os.exit(0)
+	end
+	fail(BYPASS .. " must be unset, 1, or yes; commit refused", 2)
+end
+
+local function shell_quote(value)
+	return "'" .. value:gsub("'", "'\\''") .. "'"
+end
+
+local function command_output(command)
+	local framed_command = "(" .. command .. ") 2>&1; status=$?; printf '\\0%s' \"$status\""
+	local pipe = io.popen(framed_command, "r")
+	if not pipe then return nil, "could not start: " .. command end
+	local framed_output = pipe:read("*a") or ""
+	pipe:close()
+	local output, status = framed_output:match("^(.*)%z([0-9]+)$")
+	if not status then return nil, "missing command status: " .. command end
+	if tonumber(status) == 0 then return output end
+	return nil, string.format("command exited %s: %s", status, command)
+end
+
+local function github_repository(remote)
+	if type(remote) ~= "string" then return nil end
+	remote = remote:gsub("[\r\n]+$", ""):lower()
+	local path = remote:match("^git@github%.com:([^%s]+)$") or
+		remote:match("^https://github%.com/([^%s]+)$") or
+		remote:match("^ssh://git@github%.com/([^%s]+)$")
+	if not path then return nil end
+	path = path:gsub("%.git$", "")
+	if not path:match("^[^/]+/[^/]+$") then return nil end
+	return path
+end
+
+local function advisory_repository()
+	local remote = command_output("git config --get remote.origin.url")
+	local repository = github_repository(remote)
+	if repository and ADVISORY_GITHUB_REPOSITORIES[repository] then return repository end
+end
+
+local function nul_list(data)
+	local values = {}
+	local start = 1
+	while true do
+		local finish = data:find("\0", start, true)
+		if not finish then break end
+		values[#values + 1] = data:sub(start, finish - 1)
+		start = finish + 1
+	end
+	return values
+end
+
+local changed_data, changed_error = command_output(
+	"git diff --cached --name-only --diff-filter=ACMR -z --"
+)
+if not changed_data then fail("cannot enumerate staged changes: " .. changed_error) end
+local changed_paths = nul_list(changed_data)
+if #changed_paths == 0 then os.exit(0) end
+
+local documentation_extensions = {
+	md = true, markdown = true, mdx = true, txt = true, rst = true,
+	adoc = true, asciidoc = true, org = true, tex = true,
+}
+local configuration_extensions = {
+	nix = true, toml = true, ini = true, yaml = true, yml = true,
+	json = true, jsonc = true, json5 = true, xml = true, conf = true,
+	cfg = true, properties = true, env = true, lock = true,
+}
+local known_documents = {
+	readme = true, license = true, copying = true, notice = true,
+	changelog = true, contributing = true, authors = true, credits = true,
+}
+local known_configuration = {
+	[".gitignore"] = true, [".gitattributes"] = true, [".gitmodules"] = true,
+	[".editorconfig"] = true, [".dockerignore"] = true, [".npmrc"] = true,
+	[".envrc"] = true, makefile = true, gnumakefile = true, justfile = true,
+	dockerfile = true, containerfile = true,
+}
+
+local function is_exempt(path)
+	local lower = path:lower()
+	local basename = lower:match("[^/\\]+$") or lower
+	if known_documents[basename] or known_configuration[basename] then return true end
+	if basename:match("^%.env%.") then return true end
+	local extension = basename:match("%.([^.]*)$")
+	return extension ~= nil and
+		(documentation_extensions[extension] == true or configuration_extensions[extension] == true)
+end
+
+local function index_entry(path)
+	local output, err = command_output(
+		"git --literal-pathspecs ls-files --stage -z -- " .. shell_quote(path)
+	)
+	if not output then return nil, err end
+	for _, entry in ipairs(nul_list(output)) do
+		local mode, object_id, stage = entry:match("^(%d+) ([0-9a-fA-F]+) (%d+)\t")
+		if mode and stage == "0" then return mode, object_id end
+	end
+	return nil
+end
+
+local function count_text_lines(object_id)
+	local size_output, size_error = command_output(
+		"git cat-file -s " .. shell_quote(object_id)
+	)
+	if not size_output then return nil, size_error end
+	size_output = size_output:gsub("[\r\n]+$", "")
+	local expected_bytes = tonumber(size_output)
+	if not expected_bytes or expected_bytes < 0 or expected_bytes % 1 ~= 0 then
+		return nil, "invalid staged blob size for " .. object_id
+	end
+	local pipe = io.popen("git cat-file blob " .. shell_quote(object_id), "r")
+	if not pipe then return nil, "could not read staged blob " .. object_id end
+	local newline_count = 0
+	local byte_count = 0
+	local contains_nul = false
+	local last_byte
+	while byte_count < expected_bytes do
+		local chunk = pipe:read(math.min(8192, expected_bytes - byte_count))
+		if not chunk or #chunk == 0 then
+			pipe:close()
+			return nil, "staged blob ended early: " .. object_id
+		end
+		byte_count = byte_count + #chunk
+		local _, count = chunk:gsub("\n", "")
+		newline_count = newline_count + count
+		if chunk:find("\0", 1, true) then contains_nul = true end
+		last_byte = chunk:byte(#chunk)
+	end
+	local extra = pipe:read(1)
+	pipe:close()
+	if extra then
+		return nil, "staged blob exceeded its reported size: " .. object_id
+	end
+	if contains_nul then return nil, "binary" end
+	if byte_count == 0 then return 0 end
+	return newline_count + (last_byte == 10 and 0 or 1)
+end
+
+local violations = {}
+for _, path in ipairs(changed_paths) do
+	if not is_exempt(path) then
+		local mode, object_id = index_entry(path)
+		if mode == "100644" or mode == "100755" then
+			local lines, err = count_text_lines(object_id)
+			if lines == nil and err ~= "binary" then fail("cannot inspect " .. string.format("%q", path) .. ": " .. err) end
+			if lines and lines > LIMIT then
+				violations[#violations + 1] = { path = path, lines = lines }
+			end
+		end
+	end
+end
+
+if #violations > 0 then
+	table.sort(violations, function(a, b) return a.path < b.path end)
+	for _, violation in ipairs(violations) do
+		io.stderr:write(string.format("  %q: %d lines (limit %d)\n", violation.path, violation.lines, LIMIT))
+	end
+	local advisory = advisory_repository()
+	if advisory then
+		io.stderr:write("\nADVISORY: changed source files exceed 500 lines.\n")
+	else
+		io.stderr:write("\nERROR: commit blocked because changed source files exceed 500 lines.\n")
+	end
+	io.stderr:write([[
+Break each source file into coherent, independently testable, self-contained
+modules where the language and project structure make that practical. This
+usually reduces maintenance cost and makes omissions easier to catch.
+
+Documents and configuration files are exempt. ]])
+	if advisory then
+		io.stderr:write(string.format([[
+The owner-approved exception for %s strongly recommends splitting these files,
+but this commit is allowed. Future repositories remain hard-blocking unless the
+owner approves another explicit entry in dotfiles.
+]], advisory))
+		os.exit(0)
+	end
+	io.stderr:write([[A genuinely intentional
+single-file design, a language without a useful include/module mechanism, or a
+split that would impose prohibitive maintenance cost may use the explicit
+per-commit bypass printed by --help. Keep the reason in the commit or review.
+]])
+	os.exit(1)
+end

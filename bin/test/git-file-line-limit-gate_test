@@ -1,0 +1,190 @@
+#!/usr/bin/env bash
+# Real-index and real-commit contract for the staged source-file line limit.
+set -u
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+gate="${GIT_FILE_LINE_LIMIT_GATE_UNDER_TEST:-$root/bin/git-file-line-limit-gate}"
+bash_path="$(command -v bash)"
+work="$(mktemp -d "${TMPDIR:-/tmp}/file-line-limit-gate-test.XXXXXXXX")" || exit 1
+trap 'command rm -rf -- "$work"' EXIT
+hooks="$work/composed-hooks"
+mkdir -p "$hooks"
+# shellcheck disable=SC2016 # The generated fixture expands these at hook runtime.
+printf '#!%s\nroot=%q\n"$root/bin/git-staged-gates" || exit "$?"\ntarget="$(git rev-parse --git-common-dir)/hooks/pre-commit"\n[ ! -x "$target" ] || exec "$target" "$@"\n' \
+	"$bash_path" "$root" > "$hooks/pre-commit"
+chmod +x "$hooks/pre-commit"
+
+export GIT_CONFIG_GLOBAL="$work/global-config" GIT_CONFIG_NOSYSTEM=1
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
+unset I_SWEAR_TO_AMODEI_ALTMAN_AND_MARRECK_THAT_THESE_NEED_TO_BE_ONE_FILE
+
+tests=0
+failures=0
+check() {
+	tests=$((tests + 1))
+	if "$@"; then return; fi
+	printf 'FAIL: %s\n' "$*" >&2
+	failures=$((failures + 1))
+}
+
+repo="$work/validate"
+git init -q "$repo" || exit 1
+cd "$repo" || exit 1
+git config user.name 'Line limit gate test'
+git config user.email 'line-limit-gate@example.invalid'
+git config commit.gpgsign false
+git config core.hooksPath "$hooks"
+printf 'local initial = 1\n' > sample.lua
+git add sample.lua
+git -c core.hooksPath=/dev/null commit -qm initial || exit 1
+
+stage_lines() {
+	local count=$1 path=${2:-sample.lua}
+	awk -v count="$count" 'BEGIN { for (i = 1; i <= count; i++) print "local value_" i " = " i }' > "$path"
+	git add -- "$path"
+}
+
+restore_sample() {
+	printf 'local initial = 1\n' > sample.lua
+	git add sample.lua
+}
+
+run_gate() {
+	output=$("$gate" 2>&1)
+	rc=$?
+}
+
+output=$("$gate" --help 2>&1); rc=$?
+check test "$rc" -eq 0
+check test "${output#*'Usage: git-file-line-limit-gate'}" != "$output"
+output=$("$gate" --about 2>&1); rc=$?
+check test "$rc" -eq 0
+check test "${output#*'500-line'}" != "$output"
+output=$("$gate" --unknown 2>&1); rc=$?
+check test "$rc" -eq 2
+
+# The limit is inclusive and the staged blob, not the working copy, is authoritative.
+stage_lines 500
+run_gate
+check test "$rc" -eq 0
+stage_lines 501
+run_gate
+check test "$rc" -eq 1
+check test "${output#*'sample.lua'}" != "$output"
+check test "${output#*'501 lines (limit 500)'}" != "$output"
+check test "${output#*'ERROR: commit blocked'}" != "$output"
+printf 'local working_copy_is_short = true\n' > sample.lua
+run_gate
+check test "$rc" -eq 1
+printf 'local staged_blob_is_short = true\n' > sample.lua
+git add sample.lua
+awk 'BEGIN { for (i = 1; i <= 501; i++) print "local worktree_" i " = " i }' > sample.lua
+run_gate
+check test "$rc" -eq 0
+restore_sample
+
+# Documents, configuration, binary blobs and symlinks are not source-file violations.
+stage_lines 501 notes.md
+stage_lines 501 settings.toml
+awk 'BEGIN { printf "binary%cdata\n", 0 }' > payload.bin
+ln -s sample.lua source-link
+git add payload.bin source-link
+run_gate
+check test "$rc" -eq 0
+git -c core.hooksPath=/dev/null commit -qm exempt-fixtures || exit 1
+
+# Existing over-limit source is tolerated until changed. Odd Git pathnames are
+# still classified from the index without shell splitting or option parsing.
+stage_lines 501 legacy.lua
+git -c core.hooksPath=/dev/null commit -qm legacy-over-limit || exit 1
+printf 'local short_addition = true\n' > short.lua
+git add short.lua
+run_gate
+check test "$rc" -eq 0
+git -c core.hooksPath=/dev/null commit -qm unrelated-short-change || exit 1
+for odd_path in 'with space.lua' '-leading.lua' $'line\nbreak.lua'; do
+	stage_lines 501 "$odd_path"
+	run_gate
+	check test "$rc" -eq 1
+	git --literal-pathspecs rm -q -f --cached -- "$odd_path"
+	command rm -f -- "$odd_path"
+done
+
+# The owner-controlled dotfiles allowlist recognizes only the canonical validate
+# GitHub repository, across the normal SSH and HTTPS origin spellings.
+git remote add origin git@github.com:pmarreck/validate.git
+stage_lines 501
+for allowed_origin in \
+	git@github.com:pmarreck/validate.git \
+	https://github.com/pmarreck/validate.git \
+	ssh://git@github.com/pmarreck/validate.git
+do
+	git remote set-url origin "$allowed_origin"
+	run_gate
+	check test "$rc" -eq 0
+	check test "${output#*'sample.lua'}" != "$output"
+	check test "${output#*'501 lines (limit 500)'}" != "$output"
+	check test "${output#*'ADVISORY:'}" != "$output"
+	check test "${output#*'strongly recommends'}" != "$output"
+	check test "${output#*'commit is allowed'}" != "$output"
+	check test "${output#*'ERROR: commit blocked'}" = "$output"
+done
+
+# A matching directory name, similar repository, different owner, local remote,
+# absent origin, or repository-local marker cannot widen the exception.
+for rejected_origin in \
+	git@github.com:someone/validate.git \
+	git@github.com:pmarreck/validate-other.git \
+	https://example.invalid/pmarreck/validate.git \
+	file:///tmp/pmarreck/validate
+do
+	git remote set-url origin "$rejected_origin"
+	run_gate
+	check test "$rc" -eq 1
+	check test "${output#*'ERROR: commit blocked'}" != "$output"
+done
+printf 'advisory = true\n' > .file-line-limit-gate
+git add .file-line-limit-gate
+run_gate
+check test "$rc" -eq 1
+git reset -q HEAD -- .file-line-limit-gate
+command rm -f -- .file-line-limit-gate
+git remote remove origin
+run_gate
+check test "$rc" -eq 1
+
+# The old explicit per-commit bypass remains exact and conspicuous.
+output=$(I_SWEAR_TO_AMODEI_ALTMAN_AND_MARRECK_THAT_THESE_NEED_TO_BE_ONE_FILE=0 "$gate" 2>&1); rc=$?
+check test "$rc" -eq 2
+output=$(I_SWEAR_TO_AMODEI_ALTMAN_AND_MARRECK_THAT_THESE_NEED_TO_BE_ONE_FILE=yes "$gate" 2>&1); rc=$?
+check test "$rc" -eq 0
+check test -n "$output"
+
+# Real commits prove dispatcher composition and repository-hook ordering.
+git remote add origin git@github.com:pmarreck/validate.git
+printf '#!%s\nprintf "ran\\n" >> local-hook-log\n' "$bash_path" > .git/hooks/pre-commit
+chmod +x .git/hooks/pre-commit
+output=$(git commit -qm advisory-allowed 2>&1); rc=$?
+check test "$rc" -eq 0
+hook_runs=0
+if [[ -f local-hook-log ]]; then hook_runs=$(wc -l < local-hook-log); fi
+check test "$hook_runs" -eq 1
+git remote set-url origin git@github.com:someone/validate.git
+stage_lines 502
+output=$(git commit -qm hard-blocked 2>&1); rc=$?
+check test "$rc" -ne 0
+hook_runs=0
+if [[ -f local-hook-log ]]; then hook_runs=$(wc -l < local-hook-log); fi
+check test "$hook_runs" -eq 1
+
+# Inspection failures cannot become advisory passes.
+printf 'not a git index\n' > "$work/broken-index"
+output=$(GIT_INDEX_FILE="$work/broken-index" "$gate" 2>&1); rc=$?
+check test "$rc" -eq 2
+cd "$work" || exit 1
+run_gate
+check test "$rc" -gt 1
+cd "$root" || exit 1
+
+printf '%s checks, %s failures\n' "$tests" "$failures"
+test "$failures" -eq 0
