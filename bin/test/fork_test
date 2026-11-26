@@ -122,15 +122,16 @@ ln -s "$fork_command" "$scratch/bin/fork" || fail "could not link fork into the 
 PATH="$scratch/bin:$PATH" check_layout $'^0:0:[0-9]+:([0-9]+)\n[1-9][0-9]*:0:[0-9]+:([0-9]+)$' top \
 	"${fork_command%/*}/supertop"
 
-# An attached fork must deliver terminal input to a child and return the same
-# aggregate to its caller once the tmux client exits.
-TERM=xterm-256color FORK_TEST_COMMAND="$fork_command" expect <<'TCL' || fail "interactive title, input, or exit status check failed"
+# An attached fork must accept mouse drags at the pane border, deliver keyboard
+# input to a child and return the aggregate once the client exits.
+TERM=xterm-256color FORK_TEST_COMMAND="$fork_command" expect <<'TCL' || fail "interactive title, input, resize, or exit status check failed"
 set timeout 5
+set stty_init {rows 36 columns 100}
 log_user 0
 set title {Monitor #{session_name} #S %Y;}
 set title_sequence "\033\]0;$title\007"
-spawn -noecho $env(FORK_TEST_COMMAND) --title=$title \
-    {printf 'fork-test-input>'; read -r line; tmux wait-for -S tty-release; [[ $line == go ]] || exit 87; exit 6} \
+spawn -noecho $env(FORK_TEST_COMMAND) -h --title=$title \
+    {printf '%s\n' "${TMUX%%,*}" > "$FORK_TEST_ROOT/mouse-socket"; printf 'fork-test-input>'; read -r line; tmux wait-for -S tty-release; [[ $line == go ]] || exit 87; exit 6} \
     {tmux wait-for tty-release; exit 7}
 set saw_title 0
 set saw_prompt 0
@@ -142,6 +143,30 @@ while {!$saw_title || !$saw_prompt} {
         eof {exit 1}
     }
 }
+
+set file [open [file join $env(FORK_TEST_ROOT) mouse-socket] r]
+set socket [gets $file]
+close $file
+proc right_pane_left {socket} {
+    set positions [exec tmux -S $socket list-panes -F {#{pane_left}}]
+    return [lindex [lsort -integer [split $positions \n]] end]
+}
+set border [right_pane_left $socket]
+if {$border <= 0} {exit 1}
+# SGR mouse coordinates are one-based. The zero-based right pane's first
+# column is the one-based column of the border immediately to its left.
+send -- [format "\033\[<0;%d;4M" $border]
+foreach offset {1 2 6} {
+    send -- [format "\033\[<32;%d;4M" [expr {$border + $offset}]]
+}
+send -- [format "\033\[<0;%d;4m" [expr {$border + 6}]]
+set moved 0
+for {set attempt 0} {$attempt < 50} {incr attempt} {
+    if {[right_pane_left $socket] > $border} {set moved 1; break}
+    after 20
+}
+if {!$moved} {puts stderr {mouse drag did not move the pane border}; exit 1}
+
 send -- "go\r"
 expect {
     eof {}

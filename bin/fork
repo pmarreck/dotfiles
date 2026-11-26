@@ -4,9 +4,9 @@ usage() {
 	cat <<'EOF'
 Usage: fork [OPTIONS] [--] 'command' ['command' ...]
 
-Run each command with Bash in a separate tmux pane. Attach when invoked
-from a terminal. Close each pane when its command finishes, then return
-the sum of all exit statuses.
+Run each command with Bash in a separate tmux pane. When invoked from a
+terminal, attach with mouse resizing enabled. Close each pane when its
+command finishes, then return the sum of all exit statuses.
 
   --stack DIRECTION         vertical, vertically, horizontal, or horizontally
   -v, --stack-vertical[ly]   Stack panes top to bottom (default)
@@ -176,6 +176,7 @@ for task in "${tasks[@]}"; do
 	if (( ${#panes[@]} == 0 )); then
 		pane=$(mux start-server \; \
 			set-option -g remain-on-exit on \; \
+			set-option -g mouse on \; \
 			"${title_options[@]}" \
 			new-session -dPs fork -F '#{pane_id}' -x "$width" -y "$height" "${launch[@]}") || exit 1
 	else
