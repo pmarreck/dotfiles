@@ -10,10 +10,17 @@ runner. Dependency scope and its separate override are documented in
 The gate checks the **complete staged contents** of added, copied, modified,
 renamed and type-changed text files. Unstaged edits do not affect the result.
 Deleted paths, binary blobs, symlink targets and submodule contents are not
-scanned. It recognizes start-of-line conflict marker runs of at least seven
-characters: `<`, `=`, `>`, and diff3's `|`. Labels require whitespace after
-the run; separator lines permit trailing whitespace. Custom marker sizes
-below seven characters are outside this check.
+scanned. A rejection requires opening (`<`), separator (`=`), and closing (`>`)
+marker lines in that order in the same staged file. Each marker run must have
+at least seven characters. Diff3's optional base (`|`) marker is supported
+between the opening and separator. Labels require whitespace after the run;
+separator lines permit trailing whitespace. Custom marker sizes below seven
+characters are outside this check.
+
+Standalone separators, such as underlined license headings, and incomplete
+marker fragments pass. Markers in different files cannot form a block. This
+gate detects complete unresolved blocks; it does not diagnose leftover
+fragments after a partially resolved conflict.
 
 Failures report filenames and line numbers. Operational inspection errors
 also refuse the commit. Deliberate conflict-marker fixtures and documentation
@@ -56,6 +63,6 @@ Do not describe it as a security boundary or remote enforcement.
 
 `bin/test/git-conflict-marker-gate_test` uses isolated real repositories and
 is automatically included in `./test`. It covers marker/non-marker sets,
-partial staging, awkward filenames, full-blob inspection, binary and symlink
+partial fragments, cross-file isolation, partial staging, awkward filenames, full-blob inspection, binary and symlink
 exclusions, initial commits, explicit bypass, custom and legacy hook
 delegation, stdin/argv preservation, linked worktrees and recursion rejection.

@@ -7,19 +7,44 @@ if [[ ${ALLOW_GIT_CONFLICT_MARKERS:-} == 1 ]]; then
 fi
 root=$(git rev-parse --show-toplevel) || exit 2
 cd "$root" || exit 2
-paths=$(mktemp "${TMPDIR:-/tmp}/git-conflict-marker-gate.XXXXXXXX") || exit 2
-trap 'command rm -f -- "$paths"' EXIT
+work=$(mktemp -d "${TMPDIR:-/tmp}/git-conflict-marker-gate.XXXXXXXX") || exit 2
+paths="$work/paths"
+matches="$work/matches"
+trap 'command rm -rf -- "$work"' EXIT
 git diff --cached --name-only --diff-filter=ACMRT -z -- > "$paths" || exit 2
 pattern='^((<{7,}|>{7,}|\|{7,})([[:space:]].*)?|={7,}[[:space:]]*)$'
 found=0
 scan() {
-	# Literal pathspecs handle leading colons; -I excludes binary blobs.
-	git --literal-pathspecs -c color.grep=false grep --cached -I -n -E -e "$pattern" -- "$@" >&2
+	# Git supplies NUL-framed paths and line numbers; newlines in paths stay safe.
+	git --literal-pathspecs -c color.grep=false grep --cached -I -n -z -E -e "$pattern" -- "$@" > "$matches"
 	case $? in
-		0) found=1 ;;
+		0) ;;
 		1) ;;
 		*) printf 'ERROR: could not inspect staged files; commit refused.\n' >&2; exit 2 ;;
 	esac
+	# Classify ordered marker triples per file, so headings and fragments pass.
+	local path line marker previous='' state=0
+	local opening_line='' opening_text='' separator_line='' separator_text=''
+	local opening='^<{7,}([[:space:]].*)?$'
+	local separator='^={7,}[[:space:]]*$'
+	local closing='^>{7,}([[:space:]].*)?$'
+	while IFS= read -r -d '' path && IFS= read -r -d '' line && IFS= read -r marker; do
+		if [[ "$path" != "$previous" ]]; then state=0; previous=$path; fi
+		if [[ "$marker" =~ $opening ]]; then
+			state=1; opening_line=$line; opening_text=$marker
+		elif [[ "$marker" =~ $separator ]]; then
+			if (( state == 1 )); then
+				state=2; separator_line=$line; separator_text=$marker
+			fi
+		elif [[ "$marker" =~ $closing ]]; then
+			if (( state == 2 )); then
+				printf '%s:%s:%s\n' "$path" "$opening_line" "$opening_text" \
+					"$path" "$separator_line" "$separator_text" "$path" "$line" "$marker" >&2
+				found=1
+			fi
+			state=0
+		fi
+	done < "$matches"
 }
 batch=()
 while IFS= read -r -d '' path; do
@@ -28,6 +53,6 @@ while IFS= read -r -d '' path; do
 done < "$paths"
 if (( ${#batch[@]} )); then scan "${batch[@]}"; fi
 if (( found )); then
-	printf '\nERROR: staged text contains Git merge-conflict markers (file:line above).\nResolve them and stage the fix. For intentional fixtures only, explicitly use:\n  ALLOW_GIT_CONFLICT_MARKERS=1 git commit ...\n' >&2
+	printf '\nERROR: staged text contains complete Git merge-conflict blocks (file:line above).\nResolve them and stage the fix. For intentional fixtures only, explicitly use:\n  ALLOW_GIT_CONFLICT_MARKERS=1 git commit ...\n' >&2
 	exit 1
 fi

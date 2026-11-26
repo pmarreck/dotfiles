@@ -26,38 +26,68 @@ git config core.hooksPath "$hooks"
 run_gate() { output=$("$gate" 2>&1); rc=$?; }
 stage() { printf '%s\n' "$1" > sample; git add -- sample; }
 
-# Classifier sets include each marker separately, diff3, long markers, and CRLF.
-for value in '<<<<<<< HEAD' '=======' '>>>>>>> topic' '||||||| base' '<<<<<<<<<< HEAD' $'=======\r'; do
+conflict=$'<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> topic'
+# Reject complete ordered blocks, including empty sides, diff3, and CRLF.
+for value in "$conflict" \
+	$'<<<<<<<\n=======\n>>>>>>>' \
+	$'<<<<<<< HEAD\nours\n||||||| base\noriginal\n=======\ntheirs\n>>>>>>> topic' \
+	$'<<<<<<<<<< HEAD\nours\n==========\ntheirs\n>>>>>>>>>> topic' \
+	$'<<<<<<< HEAD\r\nours\r\n=======\r\ntheirs\r\n>>>>>>> topic\r' \
+	$'Copyright\n=========\n'"$conflict"; do
 	stage "$value"
 	run_gate
 	check test "$rc" -eq 1
 done
-for value in 'ordinary text' 'x <<<<<<< HEAD' '====== comparison' '======='"not-a-marker" '<<<<<<<<operator' '>>>>>> six' ''; do
+for value in 'ordinary text' 'x <<<<<<< HEAD' '====== comparison' '======='"not-a-marker" '<<<<<<<<operator' '>>>>>> six' '' \
+	'<<<<<<< HEAD' '=======' '>>>>>>> topic' '||||||| base' '<<<<<<<<<< HEAD' $'=======\r' \
+	$'Copyright\n=========\n\nLicensed upstream content' \
+	$'<<<<<<< HEAD\nours\n=======' \
+	$'=======\ntheirs\n>>>>>>> topic' \
+	$'<<<<<<< HEAD\nours\n>>>>>>> topic' \
+	$'>>>>>>> topic\n=======\n<<<<<<< HEAD'; do
 	stage "$value"
 	run_gate
 	check test "$rc" -eq 0
 done
 
+# A final closing marker without an EOF newline still completes the block.
+printf '%s' "$conflict" > sample
+git add sample
+run_gate
+check test "$rc" -eq 1
+check test "${output#*sample:1:}" != "$output"
+check test "${output#*sample:3:}" != "$output"
+check test "${output#*sample:5:}" != "$output"
+stage 'clean'
+
+# Marker fragments in separate files cannot form a block together.
+printf '<<<<<<< HEAD\n=======\n' > fragment-start
+printf '>>>>>>> topic\n' > fragment-end
+git add fragment-start fragment-end
+run_gate
+check test "$rc" -eq 0
+git rm -q -f --cached fragment-start fragment-end
+
 # All changed paths, including whitespace, colon, leading dash and newline.
 for name in 'with space' ':literal' '-option' $'line\nbreak'; do
-	printf '<<<<<<< HEAD\n' > "$name"
+	printf '%s\n' "$conflict" > "$name"
 	git --literal-pathspecs add -- "$name"
 	run_gate
 	check test "$rc" -eq 1
 	git --literal-pathspecs rm -q -f --cached -- "$name"
 done
 
-stage '<<<<<<< HEAD'
+stage "$conflict"
 printf 'clean working copy\n' > sample
 run_gate
 check test "$rc" -eq 1
 stage 'clean index'
-printf '<<<<<<< unstaged\n' > sample
+printf '%s\n' "$conflict" > sample
 run_gate
 check test "$rc" -eq 0
 
 # Bypass is narrow, exact and loud.
-stage '>>>>>>> topic'
+stage "$conflict"
 output=$(ALLOW_GIT_CONFLICT_MARKERS=0 "$gate" 2>&1); rc=$?
 check test "$rc" -eq 1
 output=$(ALLOW_GIT_CONFLICT_MARKERS=1 "$gate" 2>&1); rc=$?
@@ -76,7 +106,7 @@ check test "$rc" -eq 0
 check test "$(wc -l 2>/dev/null < <(cat local-hook-log 2>/dev/null))" -eq 1
 
 # Existing marker elsewhere in the changed blob must not evade a diff-only check.
-stage '<<<<<<< fixture'
+stage "$conflict"
 output=$(ALLOW_GIT_CONFLICT_MARKERS=1 git commit -qm fixture 2>&1); rc=$?
 check test "$rc" -eq 0
 printf '\nanother line\n' >> sample
@@ -86,8 +116,8 @@ check test "$rc" -eq 1
 
 # Binary blobs and symlink targets are not scanned as text.
 git rm -q -f sample
-printf '\000\n<<<<<<< HEAD\n' > binary
-ln -s '<<<<<<< HEAD' link
+printf '\000\n%s\n' "$conflict" > binary
+ln -s "$conflict" link
 git add binary link
 run_gate
 check test "$rc" -eq 0
@@ -127,7 +157,7 @@ git config --unset conflictMarkerGate.delegateHooksPath
 output=$(git -c core.hooksPath=/dev/null worktree add -qb linked "$work/linked" 2>&1); rc=$?
 check test "$rc" -eq 0
 cd "$work/linked" || exit 1
-stage '<<<<<<< linked'
+stage "$conflict"
 output=$(git commit -qm blocked-linked 2>&1); rc=$?
 check test "$rc" -ne 0
 stage 'clean linked'

@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+
+# PATH construction must stay in-process as the project corpus grows. The old
+# implementation called prepend_path once per discovered directory; each call
+# forked awk and rescanned the entire growing PATH, making startup effectively
+# quadratic. Count the external oracle (actual awk executions) instead of using
+# a timing threshold that load could make flaky.
+
+set -u
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+bash_bin="${BASH:-$(command -v bash)}"
+real_awk="$(command -v awk)"
+work=$(mktemp -d --tmpdir pathconfig_process_budget_test.XXXXXX) || exit 1
+trap 'rm -rf -- "$work"' EXIT
+fixture_home="$work/home"
+stub_bin="$work/stub-bin"
+operation_log="$work/external-operations"
+tests=0
+fails=0
+
+pass() { printf 'PASS: %s\n' "$1"; }
+fail() { printf 'FAIL: %s\n' "$1" >&2; ((fails++)) || :; }
+
+mkdir -p "$fixture_home/Code" "$stub_bin"
+ln -s "$repo_root" "$fixture_home/dotfiles"
+ln -s "$repo_root/.pathconfig" "$fixture_home/.pathconfig"
+: >"$operation_log"
+
+{
+	printf '#!%s\n' "$bash_bin"
+	printf 'printf "awk\\n" >> %q\n' "$operation_log"
+	printf 'exec %q "$@"\n' "$real_awk"
+} >"$stub_bin/awk"
+chmod +x "$stub_bin/awk"
+
+# Enough entries to make a per-directory subprocess implementation obvious,
+# while remaining a cheap deterministic fixture.
+for number in {01..48}; do
+	mkdir -p "$fixture_home/Code/project-$number/bin/linux-amd64"
+done
+
+base_path="$stub_bin:/run/current-system/sw/bin:/usr/bin:/bin"
+[ -d /run/current-system/sw/bin ] || base_path="$stub_bin:$PATH"
+
+result=$(
+	# shellcheck disable=SC2016 # The quoted argument is the child shell program under test.
+	env -i HOME="$fixture_home" PATH="$base_path" NIX_PATH=fixture \
+		TEST_UNAME_OS=Linux TEST_UNAME_ARCH=x86_64 TEST_UNAME_KERNEL=fixture \
+		"$bash_bin" --noprofile --norc -c '
+			uname() {
+				case "${1:-}" in
+					-s) printf "%s\n" "$TEST_UNAME_OS" ;;
+					-m) printf "%s\n" "$TEST_UNAME_ARCH" ;;
+					-r) printf "%s\n" "$TEST_UNAME_KERNEL" ;;
+					*) return 2 ;;
+				esac
+			}
+			. "$HOME/.pathconfig" >/dev/null || exit
+			printf "%s" "$PATH"
+		'
+)
+status=$?
+
+((tests++))
+if ((status == 0)) && [[ ":$result:" == *":$fixture_home/Code/project-01/bin/linux-amd64:"* ]] && \
+	[[ ":$result:" == *":$fixture_home/Code/project-48/bin:"* ]]; then
+	pass 'the large disposable project corpus reaches PATH construction'
+else
+	fail 'the large disposable project corpus did not produce a complete PATH'
+fi
+
+((tests++))
+ordering_ok=true
+seen_generic=false
+generic_count=0
+pf_count=0
+IFS=: read -ra entries <<<"$result"
+for entry in "${entries[@]}"; do
+	case "$entry" in
+		"$fixture_home"/Code/project-*/bin/linux-amd64)
+			((pf_count++)) || :
+			$seen_generic && ordering_ok=false
+			;;
+		"$fixture_home"/Code/project-*/bin)
+			seen_generic=true
+			((generic_count++)) || :
+			;;
+	esac
+done
+if $ordering_ok && ((pf_count == 48)) && ((generic_count == 48)); then
+	pass 'all native PF directories precede every generic project bin exactly once'
+else
+	fail "PATH ordering/counts were wrong (PF=$pf_count generic=$generic_count ordered=$ordering_ok)"
+fi
+
+((tests++))
+awk_calls=$(grep -c '^awk$' "$operation_log" || :)
+if ((awk_calls <= 2)); then
+	pass 'PATH construction uses a constant external-process budget'
+else
+	fail "PATH construction invoked awk $awk_calls times for 96 project directories"
+fi
+
+if ((fails == 0)); then
+	printf 'All %s pathconfig process-budget checks passed.\n' "$tests"
+else
+	printf '%s of %s pathconfig process-budget checks failed.\n' "$fails" "$tests" >&2
+fi
+exit "$fails"

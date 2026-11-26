@@ -1,0 +1,203 @@
+#!/usr/bin/env bash
+
+usage() {
+	cat <<'EOF'
+Usage: fork [OPTIONS] [--] 'command' ['command' ...]
+
+Run each command with Bash in a separate tmux pane. Attach when invoked
+from a terminal. Close each pane when its command finishes, then return
+the sum of all exit statuses.
+
+  --stack DIRECTION         vertical, vertically, horizontal, or horizontally
+  -v, --stack-vertical[ly]   Stack panes top to bottom (default)
+  -h, --stack-horizontal[ly] Arrange panes side by side
+  --title TEXT              Set the terminal title for the combined panes
+  --shell                   Load ~/.bashrc in each pane for aliases and functions
+  --help                    Show this help
+  --about                   Describe the command
+
+Signal deaths count as 128 plus the signal number. Sums above 255 are
+printed on stderr and returned as 255.
+EOF
+}
+
+stack=vertical
+shell_mode=-c
+unset title
+tasks=()
+while (( $# > 0 )); do
+	case "$1" in
+		--help) usage; exit 0 ;;
+		--about)
+			printf 'fork%s: Run commands concurrently in stacked tmux panes.\n' "${PF:+ ($PF)}"
+			exit 0
+			;;
+		--stack)
+			if (( $# < 2 )); then
+				printf 'fork: --stack requires a direction.\n' >&2
+				exit 2
+			fi
+			stack=$2
+			shift
+			;;
+		--stack=*) stack=${1#*=} ;;
+		--title)
+			if (( $# < 2 )); then
+				printf 'fork: --title requires text.\n' >&2
+				exit 2
+			fi
+			title=$2
+			shift
+			;;
+		--title=*) title=${1#*=} ;;
+		--shell) shell_mode=-ic ;;
+		-v|--stack-vertical|--stack-vertically) stack=vertical ;;
+		-h|--stack-horizontal|--stack-horizontally) stack=horizontal ;;
+		--) shift; tasks+=("$@"); break ;;
+		-*) printf 'fork: unknown option %s. See --help.\n' "$1" >&2; exit 2 ;;
+		*) tasks+=("$1") ;;
+	esac
+	shift
+done
+if (( ${#tasks[@]} == 0 )); then
+	usage >&2
+	exit 2
+fi
+
+title_options=()
+if [[ ${title+x} ]]; then
+	if [[ "$title" == *[[:cntrl:]]* ]]; then
+		printf 'fork: --title cannot contain control characters.\n' >&2
+		exit 2
+	fi
+	# Pass the text as data so tmux cannot interpret it as commands or formats.
+	export FORK_TMUX_TITLE="$title"
+	title_options=(set-option -g set-titles on ';' set-option -g set-titles-string '#{FORK_TMUX_TITLE}' ';')
+fi
+
+# Give every split a border and at least one cell, even on a small terminal.
+span=$((2 * ${#tasks[@]} + 1))
+width=80
+height=24
+case "$stack" in
+	vertical|vertically)
+		split=-dfvP
+		layout=even-vertical
+		(( height >= span )) || height=$span
+		;;
+	horizontal|horizontally)
+		split=-dfhP
+		layout=even-horizontal
+		(( width >= span )) || width=$span
+		;;
+	*)
+		printf 'fork: unknown stack direction %s. See --help.\n' "$stack" >&2
+		exit 2
+		;;
+esac
+if ! command -v tmux >/dev/null; then
+	printf 'fork: tmux is required.\n' >&2
+	exit 1
+fi
+
+socket_dir=$(mktemp -d "${TMPDIR:-/tmp}/fork.XXXXXXXX") || exit 1
+socket="$socket_dir/s"
+unset TMUX TMUX_PANE
+
+mux() { tmux -S "$socket" -f /dev/null "$@"; }
+
+cleanup() {
+	if [[ -S "$socket" ]] && mux list-sessions >/dev/null 2>&1; then
+		printf 'fork: tmux is still running. Reattach with tmux -S %q attach.\n' "$socket" >&2
+		return
+	fi
+	# Only a stale socket from this invocation can remain after tmux exits.
+	[[ ! -S "$socket" ]] || unlink "$socket"
+	rmdir -- "$socket_dir"
+}
+trap cleanup EXIT
+
+collect_exit_codes() {
+	local -a pending=("$@")
+	local remaining=$# sum=0 index pane dead status signal snapshot observed expected
+	while (( remaining > 0 )); do
+		snapshot=$(mux list-panes -aF '#{pane_id}:#{pane_dead}:#{pane_dead_status}:#{pane_dead_signal}') || return 1
+		expected=$remaining
+		observed=0
+		while IFS=: read -r pane dead status signal; do
+			for index in "${!pending[@]}"; do
+				[[ "${pending[index]}" == "$pane" ]] || continue
+				observed=$((observed + 1))
+				[[ "$dead" == 1 ]] || break
+
+				# tmux may report a symbolic name (for example "term") on macOS.
+				if [[ -n "$signal" && ! "$signal" =~ ^[0-9]+$ ]]; then
+					signal=$(builtin kill -l "${signal^^}" 2>/dev/null) || return 1
+				fi
+				if [[ "$signal" =~ ^[0-9]+$ ]]; then
+					status=$((128 + signal))
+				elif [[ ! "$status" =~ ^[0-9]+$ ]]; then
+					# The terminal can close just before tmux reaps the child.
+					break
+				fi
+				sum=$((sum + status))
+				remaining=$((remaining - 1))
+				unset 'pending[index]'
+				mux kill-pane -t "$pane" || return 1
+				break
+			done
+		done <<<"$snapshot"
+		if (( observed != expected )); then
+			printf 'fork: a command pane closed before its exit status could be collected.\n' >&2
+			return 1
+		fi
+		if (( remaining > 0 )); then
+			# Read durable pane state. Two tmux wait-for signals can cancel
+			# each other when both arrive before the waiter registers.
+			sleep 0.05
+		fi
+	done
+	if (( sum > 255 )); then
+		printf 'fork: exit statuses sum to %d (returning 255).\n' "$sum" >&2
+		return 255
+	fi
+	return "$sum"
+}
+
+# Keep exited panes until their statuses are read, even for commands that
+# finish before the other panes are created.
+workdir=$PWD
+panes=()
+for task in "${tasks[@]}"; do
+	# Use tmux's direct argv execution. Suffix the data arguments so a final
+	# semicolon cannot be interpreted as a tmux command separator.
+	# shellcheck disable=SC2016
+	launch=("$BASH" -c 'cd -- "${1%/}" && exec "$BASH" "$2" "${3%X}" fork' fork "$workdir/" "$shell_mode" "${task}X")
+	if (( ${#panes[@]} == 0 )); then
+		pane=$(mux start-server \; \
+			set-option -g remain-on-exit on \; \
+			"${title_options[@]}" \
+			new-session -dPs fork -F '#{pane_id}' -x "$width" -y "$height" "${launch[@]}") || exit 1
+	else
+		pane=$(mux split-window "$split" -t "$pane" -F '#{pane_id}' -l 1 "${launch[@]}") || exit 1
+	fi
+	panes+=("$pane")
+done
+mux select-layout -t "${panes[0]}" "$layout" >/dev/null || exit 1
+mux select-pane -t "${panes[0]}" || exit 1
+
+if [[ -t 0 && -t 1 && -n "${TERM:-}" && "$TERM" != dumb ]]; then
+	(
+		collect_exit_codes "${panes[@]}"
+		status=$?
+		mux detach-client -s '=fork' 2>/dev/null || :
+		exit "$status"
+	) &
+	collector=$!
+	if ! mux attach-session -t '=fork' 2>/dev/null && mux has-session -t '=fork' 2>/dev/null; then
+		printf 'fork: could not attach to the terminal. Waiting for the commands to finish.\n' >&2
+	fi
+	wait "$collector"
+else
+	collect_exit_codes "${panes[@]}"
+fi

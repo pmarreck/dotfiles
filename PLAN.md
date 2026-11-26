@@ -19,7 +19,10 @@ Open work is listed in priority order. Completed history is in `docs/PLAN_LOG.md
   Curiosity poke: confirm the final remote commit and retain recovery copies.
   Merged macOS Nix verification exposed seven upstream portability failures. Platform assertions now use the host platform; fixtures inject their tools; cache reuse compares cold and warm GC-root requests; the Yue launcher uses a binary env interpreter. Real signal-delivery assertions remain required in a separate supplemental host test, with permission checks retained in Nix.
   The dependency gate and spelling gate pass after exact spelling exceptions for quotations, encoded audio, and an external application name. The unchanged upstream license heading is a strict conflict-marker false positive; the owner approved the documented one-time exception.
-- [ ] Integrate four additional upstream commits through `47cef309` and verify their startup and command-runner changes with the preserved local work.
+- [x] Integrate four additional upstream commits through `47cef309` and verify their startup and command-runner changes with the preserved local work.
+  Completed 2026-11-25 EST: all 228 tests passed, with 222 in Nix and six supplemental host checks.
+- [x] Require a complete ordered conflict block in one staged file, with opening, separator, and closing markers; test standalone separators, partial fragments, diff3, marker sizes, and staged-content behavior before implementation.
+  Completed 2026-11-25 EST: the old gate failed 12 new expectations; the updated gate passes 64 checks and the complete 228-file suite. The added upstream tmux runner needed symbolic signal-name handling on macOS; its TERM and KILL integration checks now pass. Publication remains tracked above.
 
 ## Active: no system Python; NFC file names (2026-11-09)
 
@@ -34,6 +37,7 @@ Open work is listed in priority order. Completed history is in `docs/PLAN_LOG.md
 
 ## Current
 
+- [x] Profile real interactive terminal startup to first usable prompt, attribute dominant phases, make only evidence-backed reversible improvements, and verify the actual route plus login/non-login and SSH semantics (done 2026-11-25 18:24 EST; commit 588b234).
 - [x] Unify the existing ./test entry point around cached Nix suite evidence plus isolated supplemental host checks, preserving complete coverage and making push verification read-only; no Home Manager migration was included (context: docs/repository-awareness.md; done 2026-10-31 12:08 EDT; commit 9bfb0ea).
 - [x] Make `.pathconfig` place each `~/Code/*/bin/$PF` platform directory before every generic `~/Code/*/bin` directory in the final PATH, with classifier-style regression coverage (done 2026-10-31 11:59 EDT; commit d3fa0b6).
 - [ ] Await Mechatron Prime's owned `capture`/`strace -f` child-pipe deadlock regression and placement decision; do not rerun or modify the shared helper without delegation.
