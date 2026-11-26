@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 csv() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	needs column
 	if [ -e "$1" ]; then
 		column -s, -t < "$1" | less -#2 -N -S --header 1

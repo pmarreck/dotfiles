@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 ram-size() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	local proc_meminfo="/proc/meminfo"
 	local total_mem_gb=0
 	# Check if /proc/meminfo exists (Linux)

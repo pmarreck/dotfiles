@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 exclude_path() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	local AWK=$(which awk || echo -n "/run/current-system/sw/bin/awk") # in case you accidentally exclude the path that has awk...
 	function docs() {
 		echo "Usage: exclude_path [-o|-h|--help] <path_to_exclude> [name_of_path_var, defaults to PATH]" >&2

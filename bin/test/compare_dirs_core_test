@@ -1,0 +1,80 @@
+#!/usr/bin/env luajit
+
+local script_source = debug.getinfo(1, "S").source:sub(2)
+local test_dir = script_source:match("^(.*)/[^/]+$")
+local repo_dir = test_dir:match("^(.*)/bin/test$") or "."
+package.path = repo_dir .. "/bin/src/?.lua;" .. package.path
+
+local core = require("compare_dirs_core")
+
+local checks = 0
+local failures = 0
+
+local function check(condition, message)
+	checks = checks + 1
+	if condition then
+		io.write("ok - ", message, "\n")
+	else
+		failures = failures + 1
+		io.stderr:write("not ok - ", message, "\n")
+	end
+end
+
+local function copy_record(source)
+	local result = {}
+	for key, value in pairs(source) do
+		result[key] = value
+	end
+	return result
+end
+
+local base = {
+	content_sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	size = 6,
+	mode = 420,
+	owner = "owner-a",
+	group = "group-a",
+	mtime = 100,
+	ctime = 200,
+	symlink_target = nil,
+}
+
+local function diff_fields(left, right)
+	local fields = {}
+	for _, difference in ipairs(core.compare_entries("file.txt", left, right)) do
+		fields[difference.field] = true
+	end
+	return fields
+end
+
+local identical_fields = diff_fields(base, copy_record(base))
+check(next(identical_fields) == nil, "identical records have no differences")
+
+local mutations = {
+	content_sha256 = { value = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", field = "content" },
+	size = { value = 7, field = "size" },
+	mode = { value = 384, field = "mode" },
+	owner = { value = "owner-b", field = "owner" },
+	group = { value = "group-b", field = "group" },
+	mtime = { value = 101, field = "mtime" },
+	symlink_target = { value = "other-target", field = "symlink_target" },
+}
+
+for record_field, mutation in pairs(mutations) do
+	local changed = copy_record(base)
+	changed[record_field] = mutation.value
+	local fields = diff_fields(base, changed)
+	check(fields[mutation.field] == true, record_field .. " changes are detected")
+	fields[mutation.field] = nil
+	check(next(fields) == nil, record_field .. " changes report no unrelated fields")
+end
+
+for _, ctime in ipairs({ 0, 1, 199, 201, 2147483647, 4102444800 }) do
+	local changed = copy_record(base)
+	changed.ctime = ctime
+	check(next(diff_fields(base, changed)) == nil,
+		"ctime " .. ctime .. " is excluded from copy-equivalence")
+end
+
+io.write(string.format("%d checks, %d failures\n", checks, failures))
+os.exit(failures == 0 and 0 or 1)

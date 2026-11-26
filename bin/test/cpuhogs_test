@@ -77,8 +77,8 @@ run_cpuhogs() {
 
 ((tests++))
 echo "Testing: cpuhogs --help shows usage..."
-if run_cpuhogs --help >/tmp/cpuhogs_help 2>&1; then
-	if grep -q "Usage: cpuhogs" /tmp/cpuhogs_help; then
+if run_cpuhogs --help >"$fixtures_dir/help" 2>&1; then
+	if grep -q "Usage: cpuhogs" "$fixtures_dir/help"; then
 		echo "✓ Test passed: help text present"
 	else
 		echo "✗ Test failed: help text missing" >&2

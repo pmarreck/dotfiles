@@ -4,13 +4,29 @@ local bit = require("bit")
 local bor, band, bxor, bnot = bit.bor, bit.band, bit.bxor, bit.bnot
 local rshift, lshift, ror = bit.rshift, bit.lshift, bit.ror
 
+local fixture_root = os.getenv("FINGERPRINT_HW_OS_ROOT")
+local platform_override = os.getenv("FINGERPRINT_HW_OS_PLATFORM")
+local arch_override = os.getenv("FINGERPRINT_HW_OS_ARCH")
+local kernel_release_override = os.getenv("FINGERPRINT_HW_OS_KERNEL_RELEASE")
+
+local function rooted_path(path)
+	if fixture_root and fixture_root ~= "" then return fixture_root .. path end
+	return path
+end
+
+local function current_os_family()
+	local os_family = (platform_override or jit.os or ""):lower()
+	if os_family == "osx" then os_family = "macos" end
+	return os_family
+end
+
 local function trim(s)
 	if not s then return nil end
 	return (s:gsub("^%s+", ""):gsub("%s+$", ""))
 end
 
 local function read_file(path)
-	local fh = io.open(path, "rb")
+	local fh = io.open(rooted_path(path), "rb")
 	if not fh then return nil end
 	local data = fh:read("*a")
 	fh:close()
@@ -189,7 +205,7 @@ local function collect_linux()
 	facts.cpu_model = tonumber(cpuinfo:match("model%s*:%s*(%d+)"))
 	facts.cpu_stepping = tonumber(cpuinfo:match("stepping%s*:%s*(%d+)"))
 	facts.flags = normalize_flags(cpuinfo:match("flags%s*:%s*([^\n]+)") or "")
-	facts.arch = normalize_arch(jit.arch or run_cmd("uname -m"))
+	facts.arch = normalize_arch(arch_override or jit.arch or run_cmd("uname -m"))
 	local cores = tonumber(cpuinfo:match("cpu cores%s*:%s*(%d+)"))
 	local siblings = tonumber(cpuinfo:match("siblings%s*:%s*(%d+)"))
 	if cores and siblings then
@@ -250,7 +266,7 @@ local function collect_macos()
 	local function sysctl(key)
 		return run_cmd("sysctl -n " .. key)
 	end
-	facts.arch = normalize_arch(jit.arch or run_cmd("uname -m"))
+	facts.arch = normalize_arch(arch_override or jit.arch or run_cmd("uname -m"))
 	facts.cpu_brand = sysctl("machdep.cpu.brand_string")
 	facts.vendor_id = sysctl("machdep.cpu.vendor")
 	facts.cpu_family = tonumber(sysctl("machdep.cpu.family"))
@@ -290,7 +306,7 @@ end
 
 local function collect_windows()
 	local facts = {}
-	facts.arch = normalize_arch(jit.arch or os.getenv("PROCESSOR_ARCHITECTURE") or "")
+	facts.arch = normalize_arch(arch_override or jit.arch or os.getenv("PROCESSOR_ARCHITECTURE") or "")
 	facts.cpu_brand = os.getenv("PROCESSOR_IDENTIFIER")
 	facts.vendor_id = os.getenv("PROCESSOR_IDENTIFIER")
 	facts.cores = tonumber(os.getenv("NUMBER_OF_PROCESSORS"))
@@ -307,9 +323,8 @@ local function collect_windows()
 end
 
 local function collect_os_info()
-	local os_family = (jit.os or ""):lower()
-	if os_family == "osx" then os_family = "macos" end
-	local kernel = run_cmd("uname -r") or ""
+	local os_family = current_os_family()
+	local kernel = kernel_release_override or run_cmd("uname -r") or ""
 	local os_version = ""
 	local distro = nil
 	local wsl = false
@@ -497,7 +512,7 @@ for _, arg in ipairs(args) do
 	end
 end
 
-local os_family = (jit.os or ""):lower()
+local os_family = current_os_family()
 local hardware
 if os_family == "linux" then
 	hardware = collect_linux()
@@ -509,7 +524,7 @@ else
 	hardware = collect_linux()
 end
 
-hardware.arch = hardware.arch or normalize_arch(jit.arch)
+hardware.arch = hardware.arch or normalize_arch(arch_override or jit.arch)
 if hardware.cpu_brand then
 	hardware.cpu_brand = hardware.cpu_brand:gsub("%s+", "_")
 end

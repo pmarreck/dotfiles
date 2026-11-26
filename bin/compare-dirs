@@ -10,6 +10,14 @@
 -- Benchmark with `hyperfine -N --warmup 3` before/after if you do this.
 local ABOUT = "Compare two directory trees and report all differences"
 
+local script_source = debug.getinfo(1, "S").source
+if script_source:sub(1, 1) == "@" then
+	script_source = script_source:sub(2)
+end
+local script_dir = script_source:match("^(.*)/[^/]+$") or "."
+package.path = script_dir .. "/src/?.lua;" .. package.path
+local compare_core = require("compare_dirs_core")
+
 local function print_help()
 	io.write([[Usage: compare-dirs [OPTIONS] <dir1> <dir2>
 
@@ -21,6 +29,9 @@ Options:
   --about              One-line description
   --test               Run associated tests
   --follow-symlinks    Follow symbolic links (default: don't follow)
+
+Metadata:
+  ctime is not compared because copies cannot preserve or set it.
 
 Exit codes:
   0  No differences found
@@ -231,11 +242,6 @@ local function get_stat_mtime(st)
 	else return tonumber(st.st_mtim.tv_sec) end
 end
 
-local function get_stat_ctime(st)
-	if IS_MAC then return tonumber(st.st_ctimespec.tv_sec)
-	else return tonumber(st.st_ctim.tv_sec) end
-end
-
 local function uid_to_name(uid)
 	local pw = ffi.C.getpwuid(uid)
 	if pw ~= nil then return ffi.string(pw.pw_name) end
@@ -436,7 +442,6 @@ local function walk_dir(base_path)
 						group = gid_to_name(st.st_gid),
 						mode = bit.band(mode, tonumber(0x1FF)),
 						mtime = get_stat_mtime(st),
-						ctime = get_stat_ctime(st),
 						content_sha256 = nil,
 						xattr_keys = {},
 						xattr_content_hash = nil,
@@ -500,34 +505,8 @@ for p in pairs(all_paths) do
 	local e1 = entries1[p]
 	local e2 = entries2[p]
 	if e1 and e2 then
-		-- Compare content
-		if e1.content_sha256 and e2.content_sha256 and e1.content_sha256 ~= e2.content_sha256 then
-			diffs[#diffs + 1] = {path = p, field = "content", val1 = e1.content_sha256:sub(1, 16), val2 = e2.content_sha256:sub(1, 16)}
-		end
-		-- Compare metadata
-		if e1.size ~= e2.size then
-			diffs[#diffs + 1] = {path = p, field = "size", val1 = tostring(e1.size), val2 = tostring(e2.size)}
-		end
-		if e1.mode ~= e2.mode then
-			diffs[#diffs + 1] = {path = p, field = "mode", val1 = string.format("%04o", e1.mode), val2 = string.format("%04o", e2.mode)}
-		end
-		if e1.owner ~= e2.owner then
-			diffs[#diffs + 1] = {path = p, field = "owner", val1 = e1.owner, val2 = e2.owner}
-		end
-		if e1.group ~= e2.group then
-			diffs[#diffs + 1] = {path = p, field = "group", val1 = e1.group, val2 = e2.group}
-		end
-		if e1.mtime ~= e2.mtime then
-			diffs[#diffs + 1] = {path = p, field = "mtime", val1 = os.date("%Y-%m-%d %H:%M:%S", e1.mtime), val2 = os.date("%Y-%m-%d %H:%M:%S", e2.mtime)}
-		end
-		if e1.ctime ~= e2.ctime then
-			diffs[#diffs + 1] = {path = p, field = "ctime", val1 = os.date("%Y-%m-%d %H:%M:%S", e1.ctime), val2 = os.date("%Y-%m-%d %H:%M:%S", e2.ctime)}
-		end
-		-- Symlink target
-		if e1.symlink_target ~= e2.symlink_target then
-			if e1.symlink_target or e2.symlink_target then
-				diffs[#diffs + 1] = {path = p, field = "symlink_target", val1 = e1.symlink_target or "(none)", val2 = e2.symlink_target or "(none)"}
-			end
+		for _, difference in ipairs(compare_core.compare_entries(p, e1, e2)) do
+			diffs[#diffs + 1] = difference
 		end
 		-- xattr differences
 		local keys1_set, keys2_set = {}, {}
@@ -631,7 +610,7 @@ table.sort(only2, function(a, b) return a.path < b.path end)
 table.sort(renames, function(a, b) return a.path1 < b.path1 end)
 table.sort(diffs, function(a, b)
 	if a.path ~= b.path then return a.path < b.path end
-	local order = {content=1, size=2, mode=3, owner=4, group=5, mtime=6, ctime=7, symlink_target=8, xattr_hash=100}
+	local order = {content=1, size=2, mode=3, owner=4, group=5, mtime=6, symlink_target=7, xattr_hash=100}
 	local oa = order[a.field] or (a.field:match("^xattr:") and 50 or 99)
 	local ob = order[b.field] or (b.field:match("^xattr:") and 50 or 99)
 	if oa ~= ob then return oa < ob end

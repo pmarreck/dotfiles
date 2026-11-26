@@ -2,28 +2,34 @@
 
 # Test the executables script
 
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+cmd="$script_dir/../executables"
+bash_bin=$(type -P bash)
+test_root=$(mktemp -d "${TMPDIR:-/tmp}/executables_test.XXXXXX")
+trap 'rm -rf "$test_root"' EXIT
+mkdir -p "$test_root/home"
+export HOME="$test_root/home"
+unset -f fd find 2>/dev/null || :
+
 test_executables() {
   echo "Testing executables..."
   
   # Create a test directory with some test files
   local test_dir
-  test_dir="/tmp/executables_test_$$_$(date +%s)"
+  test_dir="$test_root/fixture"
   mkdir -p "$test_dir/bin1" "$test_dir/bin2"
   
   # Create test files
-  echo '#!/bin/bash
-echo "test1"' > "$test_dir/bin1/test1"
+  printf '#!%s\necho "test1"\n' "$bash_bin" > "$test_dir/bin1/test1"
   chmod +x "$test_dir/bin1/test1"
   
-  echo '#!/bin/bash
-echo "test2"' > "$test_dir/bin1/test2.sh"
+  printf '#!%s\necho "test2"\n' "$bash_bin" > "$test_dir/bin1/test2.sh"
   chmod +x "$test_dir/bin1/test2.sh"
   
   # Create a symlink
   ln -s "$test_dir/bin1/test1" "$test_dir/bin2/test1_symlink"
 
-  echo '#!/bin/bash
-echo "bin2"' > "$test_dir/bin2/bin2_only"
+  printf '#!%s\necho "bin2"\n' "$bash_bin" > "$test_dir/bin2/bin2_only"
   chmod +x "$test_dir/bin2/bin2_only"
   
   # Test with our test PATH
@@ -32,7 +38,7 @@ echo "bin2"' > "$test_dir/bin2/bin2_only"
   
   # Test basic functionality (just verify the script works)
   echo "Testing basic functionality..."
-  if ! output=$("$HOME/dotfiles/bin/executables" --help 2>/dev/null); then
+  if ! output=$("$cmd" --help 2>/dev/null); then
     echo "FAIL: Command failed"
     return 1
   fi
@@ -45,7 +51,7 @@ echo "bin2"' > "$test_dir/bin2/bin2_only"
   
   # Test -h/--help alias
   echo "Testing -h alias..."
-  if ! help_alias_output=$("$HOME/dotfiles/bin/executables" -h 2>/dev/null); then
+  if ! help_alias_output=$("$cmd" -h 2>/dev/null); then
     echo "FAIL: -h alias failed"
     return 1
   fi
@@ -56,7 +62,7 @@ echo "bin2"' > "$test_dir/bin2/bin2_only"
   fi
 
   echo "Testing -a/--about output..."
-  if ! about_output=$("$HOME/dotfiles/bin/executables" -a 2>/dev/null); then
+  if ! about_output=$("$cmd" -a 2>/dev/null); then
     echo "FAIL: -a option failed"
     return 1
   fi
@@ -72,15 +78,22 @@ echo "bin2"' > "$test_dir/bin2/bin2_only"
   # Build limited PATH with test dirs plus directories containing essential utilities
   local limited_path="$test_dir/bin1:$test_dir/bin2"
   local tool tool_path tool_dir
-  for tool in bash fd sort awk readlink file xargs grep; do
-    tool_path="$(type -P "$tool")"
-    tool_dir="$(dirname "$tool_path")"
-    case ":$limited_path:" in
-      *":$tool_dir:"*) ;;
-      *) limited_path="$limited_path:$tool_dir" ;;
-    esac
+  for tool in bash fd find sort awk readlink file xargs grep; do
+    while IFS= read -r tool_path; do
+      case "$tool" in
+        fd|find)
+          [[ "$tool_path" -ef "$script_dir/../rg" ]] && continue
+          ;;
+      esac
+      tool_dir="$(dirname "$tool_path")"
+      case ":$limited_path:" in
+        *":$tool_dir:"*) ;;
+        *) limited_path="$limited_path:$tool_dir" ;;
+      esac
+      break
+    done < <(type -a -p "$tool")
   done
-  if ! search_output=$(PATH="$limited_path" "$HOME/dotfiles/bin/executables" 2>&1); then
+  if ! search_output=$(PATH="$limited_path" "$cmd" 2>&1); then
     echo "FAIL: Search command failed"
     echo "Debug: Error was: $search_output"
     return 1
@@ -97,21 +110,21 @@ echo "bin2"' > "$test_dir/bin2/bin2_only"
     return 1
   fi
 
-  if ! echo "$search_output" | grep -Fx 'test1_symlink (symlinked)'; then
+  if ! echo "$search_output" | grep -Fqx 'test1_symlink (symlinked)'; then
     echo "FAIL: Did not find symlinked executable annotation"
     return 1
   fi
   
   # Test --scripts flag
   echo "Testing --scripts flag..."
-  if ! PATH="$limited_path" "$HOME/dotfiles/bin/executables" --scripts >/dev/null 2>&1; then
+  if ! PATH="$limited_path" "$cmd" --scripts >/dev/null 2>&1; then
     echo "FAIL: --scripts flag failed"
     return 1
   fi
 
   # Test path-constrained output using an absolute path
   echo "Testing path-constrained filtering with absolute path..."
-  if ! filtered_output=$(PATH="$limited_path" "$HOME/dotfiles/bin/executables" "$test_dir/bin1" 2>/dev/null); then
+  if ! filtered_output=$(PATH="$limited_path" "$cmd" "$test_dir/bin1" 2>/dev/null); then
     echo "FAIL: Path-constrained command failed"
     return 1
   fi
@@ -133,7 +146,7 @@ echo "bin2"' > "$test_dir/bin2/bin2_only"
 
   # Test relative path handling (".")
   echo "Testing path-constrained filtering with relative path..."
-  if ! relative_output=$(cd "$test_dir" && PATH="$limited_path" "$HOME/dotfiles/bin/executables" ./bin2 2>/dev/null); then
+  if ! relative_output=$(cd "$test_dir" && PATH="$limited_path" "$cmd" ./bin2 2>/dev/null); then
     echo "FAIL: Relative path-constrained command failed"
     return 1
   fi
@@ -143,7 +156,7 @@ echo "bin2"' > "$test_dir/bin2/bin2_only"
     return 1
   fi
 
-  if ! echo "$relative_output" | grep -Fx 'test1_symlink (symlinked)'; then
+  if ! echo "$relative_output" | grep -Fqx 'test1_symlink (symlinked)'; then
     echo "FAIL: Relative path filter did not show symlink as expected"
     return 1
   fi
@@ -155,7 +168,7 @@ echo "bin2"' > "$test_dir/bin2/bin2_only"
   
   # Test --ambiguate flag: no "(symlinked)" annotations, deduplicated by name
   echo "Testing --ambiguate flag..."
-  if ! ambig_output=$(PATH="$limited_path" "$HOME/dotfiles/bin/executables" --ambiguate 2>/dev/null); then
+  if ! ambig_output=$(PATH="$limited_path" "$cmd" --ambiguate 2>/dev/null); then
     echo "FAIL: --ambiguate command failed"
     return 1
   fi
@@ -189,7 +202,7 @@ echo "bin2"' > "$test_dir/bin2/bin2_only"
 
   # Test --path flag: shows paths in a second column
   echo "Testing --path flag..."
-  if ! path_output=$(PATH="$limited_path" "$HOME/dotfiles/bin/executables" --path "$test_dir/bin1" 2>/dev/null); then
+  if ! path_output=$(PATH="$limited_path" "$cmd" --path "$test_dir/bin1" 2>/dev/null); then
     echo "FAIL: --path command failed"
     return 1
   fi
@@ -209,7 +222,7 @@ echo "bin2"' > "$test_dir/bin2/bin2_only"
 
   # Test --path with symlinks: should show source -> target
   echo "Testing --path flag with symlinks..."
-  if ! path_sym_output=$(PATH="$limited_path" "$HOME/dotfiles/bin/executables" --path "$test_dir/bin2" 2>/dev/null); then
+  if ! path_sym_output=$(PATH="$limited_path" "$cmd" --path "$test_dir/bin2" 2>/dev/null); then
     echo "FAIL: --path with symlinks command failed"
     return 1
   fi
@@ -228,9 +241,8 @@ echo "bin2"' > "$test_dir/bin2/bin2_only"
     return 1
   fi
 
-  # Clean up
+  # Restore the caller's PATH. The EXIT trap owns the fixture cleanup.
   PATH="$old_path"
-  rm -rf "$test_dir"
 
   echo "All tests passed!"
   return 0

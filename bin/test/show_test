@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC1090,SC1091  # Test paths are resolved from this checkout.
+# shellcheck disable=SC2016  # Stub expressions expand in generated scripts.
 
 tests=0
 fails=0
@@ -133,7 +135,7 @@ echo "Testing: show uses lisp highlighting for WAT files via bat..."
 wat_tmp_dir="$(mktemp --tmpdir -d show_wat.XXXXXX)"
 bat_log="$wat_tmp_dir/bat_args"
 cat >"$wat_tmp_dir/bat" <<EOF
-#!/usr/bin/env bash
+#!$BASH
 echo "\$@" >"$bat_log"
 cat "\${@: -1}"
 EOF
@@ -181,7 +183,7 @@ fi
 echo "Testing: show uses JavaScript highlighting for node scripts..."
 node_bat_log="$node_tmp_dir/bat_args"
 cat >"$node_tmp_dir/bat" <<EOF
-#!/usr/bin/env bash
+#!$BASH
 echo "\$@" >"$node_bat_log"
 cat "\${@: -1}"
 EOF

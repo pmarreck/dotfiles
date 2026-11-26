@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC1091  # DOTFILES_DIR selects the checkout under test.
 
 # Test for the capture script
 
@@ -101,21 +102,25 @@ test_4_null_byte_no_p() {
 }
 
 test_5_null_byte_with_p() {
-    local out err rc
-    local test_fail=0
-    local processed_nul
-    processed_nul=$(printf '\0' | printable-binary)
+	local out err rc
+	local test_fail=0
+	local processed_nul diagnostics temp_dir
+	temp_dir=$(mktemp -d --tmpdir capture_test_printable.XXXXXX)
+	processed_nul=$(printf '\0' | PRINTABLE_BINARY_MUTE_STATS=1 printable-binary)
 
-    capture -p printf "a\0b"
-    assert "$out" "==" "a${processed_nul}b" "Test 5.1: out was '$out'" || test_fail=1
-    assert "$err" "==" "" "Test 5.2: err was '$err'" || test_fail=1
-    if [[ "$rc" -eq 0 ]]; then
-        : # pass
-    else
-        echo "Assertion failed: Test 5.3: rc was '$rc', expected 0" >&2
-        test_fail=1
-    fi
-    return "$test_fail"
+	capture -p printf "a\0b" 2>"$temp_dir/diagnostics"
+	diagnostics=$(<"$temp_dir/diagnostics")
+	assert "$out" "==" "a${processed_nul}b" "Test 5.1: out was '$out'" || test_fail=1
+	assert "$err" "==" "" "Test 5.2: err was '$err'" || test_fail=1
+	assert "$diagnostics" "==" "" "Test 5.3: filter diagnostics leaked: '$diagnostics'" || test_fail=1
+	if [[ "$rc" -eq 0 ]]; then
+		: # pass
+	else
+		echo "Assertion failed: Test 5.4: rc was '$rc', expected 0" >&2
+		test_fail=1
+	fi
+	rm -rf "$temp_dir"
+	return "$test_fail"
 }
 
 test_6_command_flags() {
@@ -141,8 +146,8 @@ test_7_separator() {
     temp_dir=$(mktemp --tmpdir -d capture_test.XXXXXX)
     trap 'rm -rf "$temp_dir"' RETURN
 
-    cat > "$temp_dir/-p" <<'EOF'
-#!/usr/bin/env bash
+    cat > "$temp_dir/-p" <<EOF
+#!$(type -P bash)
 echo "this is the -p script"
 EOF
     chmod +x "$temp_dir/-p"

@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Inspect complete staged text blobs, not the possibly different working tree.
+set -u
+if [[ ${ALLOW_GIT_CONFLICT_MARKERS:-} == 1 ]]; then
+	printf 'WARNING: conflict-marker gate bypassed by ALLOW_GIT_CONFLICT_MARKERS=1.\n' >&2
+	exit 0
+fi
+root=$(git rev-parse --show-toplevel) || exit 2
+cd "$root" || exit 2
+paths=$(mktemp "${TMPDIR:-/tmp}/git-conflict-marker-gate.XXXXXXXX") || exit 2
+trap 'command rm -f -- "$paths"' EXIT
+git diff --cached --name-only --diff-filter=ACMRT -z -- > "$paths" || exit 2
+pattern='^((<{7,}|>{7,}|\|{7,})([[:space:]].*)?|={7,}[[:space:]]*)$'
+found=0
+scan() {
+	# Literal pathspecs handle leading colons; -I excludes binary blobs.
+	git --literal-pathspecs -c color.grep=false grep --cached -I -n -E -e "$pattern" -- "$@" >&2
+	case $? in
+		0) found=1 ;;
+		1) ;;
+		*) printf 'ERROR: could not inspect staged files; commit refused.\n' >&2; exit 2 ;;
+	esac
+}
+batch=()
+while IFS= read -r -d '' path; do
+	batch+=("$path")
+	if (( ${#batch[@]} == 100 )); then scan "${batch[@]}"; batch=(); fi
+done < "$paths"
+if (( ${#batch[@]} )); then scan "${batch[@]}"; fi
+if (( found )); then
+	printf '\nERROR: staged text contains Git merge-conflict markers (file:line above).\nResolve them and stage the fix. For intentional fixtures only, explicitly use:\n  ALLOW_GIT_CONFLICT_MARKERS=1 git commit ...\n' >&2
+	exit 1
+fi

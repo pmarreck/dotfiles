@@ -4,6 +4,19 @@ set -u
 
 fails=0
 fixture_root=$(mktemp -d --tmpdir devcache_env_test.XXXXXX)
+test_rm=$(type -P rm)
+test_tmp_root=${TMPDIR:-/tmp}
+test_tmp_root=${test_tmp_root%/}
+case "$fixture_root" in
+	"$test_tmp_root"/devcache_env_test.*) ;;
+	*) printf 'Refusing to clean unexpected fixture path: %s\n' "$fixture_root" >&2; exit 1 ;;
+esac
+# shellcheck disable=SC2329 # The EXIT trap invokes this function indirectly.
+cleanup() {
+	cd /
+	"$test_rm" -rf -- "$fixture_root"
+}
+trap cleanup EXIT
 cache_root="$fixture_root/cache"
 project_a="$fixture_root/project-a"
 project_b="$fixture_root/project-b"
@@ -21,6 +34,7 @@ assert_equal() {
 	[ "$expected" = "$actual" ] || fail "$description (expected '$expected', got '$actual')"
 }
 
+# shellcheck source=/dev/null # HOME is the checkout root in the test environment.
 . "$HOME/dotfiles/bin/src/devcache_env.bash"
 
 CARGO_TARGET_DIR=keep-cargo
@@ -38,6 +52,25 @@ project_a_zig_local="$ZIG_LOCAL_CACHE_DIR"
 assert_equal "$cache_root" "$DEVCACHE_ROOT" "ready cache exports its root"
 assert_equal "$cache_root/zig/global" "$ZIG_GLOBAL_CACHE_DIR" "Zig global cache is shared"
 
+mv "$cache_root/.devcache-ready" "$cache_root/.devcache-ready.disabled"
+configure_devcache_env "$cache_root" "$project_a"
+assert_equal unset "${DEVCACHE_ROOT-unset}" "lost readiness revokes the exported cache root"
+assert_equal unset "${CARGO_TARGET_DIR-unset}" "lost readiness revokes the managed Cargo target"
+assert_equal unset "${ZIG_GLOBAL_CACHE_DIR-unset}" "lost readiness revokes the managed Zig global cache"
+assert_equal unset "${ZIG_LOCAL_CACHE_DIR-unset}" "lost readiness revokes the managed Zig local cache"
+mv "$cache_root/.devcache-ready.disabled" "$cache_root/.devcache-ready"
+configure_devcache_env "$cache_root" "$project_a"
+
+CARGO_TARGET_DIR=caller-cargo
+ZIG_LOCAL_CACHE_DIR=caller-zig-local
+mv "$cache_root/.devcache-ready" "$cache_root/.devcache-ready.disabled"
+configure_devcache_env "$cache_root" "$project_a"
+assert_equal caller-cargo "$CARGO_TARGET_DIR" "lost readiness preserves a caller-owned Cargo target"
+assert_equal unset "${ZIG_GLOBAL_CACHE_DIR-unset}" "lost readiness still revokes a mixed-set managed cache"
+assert_equal caller-zig-local "$ZIG_LOCAL_CACHE_DIR" "lost readiness preserves a caller-owned Zig local cache"
+mv "$cache_root/.devcache-ready.disabled" "$cache_root/.devcache-ready"
+configure_devcache_env "$cache_root" "$project_a"
+
 configure_devcache_env "$cache_root" "$project_a/subdir"
 assert_equal "$project_a_cargo" "$CARGO_TARGET_DIR" "Cargo target is stable across repository subdirectories"
 assert_equal "$project_a_zig_local" "$ZIG_LOCAL_CACHE_DIR" "Zig local cache is stable across repository subdirectories"
@@ -47,7 +80,7 @@ configure_devcache_env "$cache_root" "$project_b"
 [ "$project_a_zig_local" != "$ZIG_LOCAL_CACHE_DIR" ] || fail "different repositories get different Zig local caches"
 assert_equal "$cache_root/zig/global" "$ZIG_GLOBAL_CACHE_DIR" "different repositories retain shared Zig global cache"
 
-cd "$project_a"
+cd "$project_a" || exit 1
 configure_devcache_env "$cache_root"
 assert_equal "$project_a_cargo" "$CARGO_TARGET_DIR" "prompt refresh follows an interactive cd"
 assert_equal "$project_a_zig_local" "$ZIG_LOCAL_CACHE_DIR" "prompt refresh updates Zig local cache after cd"
@@ -56,5 +89,4 @@ rg -qF '. "$HOME/dotfiles/bin/src/devcache_env.bash"' "$HOME/dotfiles/.envconfig
 rg -qF 'configure_devcache_env' "$HOME/dotfiles/.envconfig" || fail ".envconfig invokes devcache policy"
 rg -qF 'precmd_functions+=(configure_devcache_env)' "$HOME/dotfiles/bin/apply-hooks" || fail "interactive prompt refreshes devcache paths after cd"
 
-rm-safe -r "$fixture_root"
 exit "$fails"

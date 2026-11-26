@@ -3,9 +3,11 @@
 test_webping_curl() {
 	local fails=0
 	local tests=0
-	local script="$HOME/dotfiles/bin/webping-curl"
+	local script_dir script
+	script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+	script="$script_dir/../webping-curl"
 	local work_root
-	work_root=$(mktemp --tmpdir -d webping_curl_test.XXXXXX)
+	work_root=$(mktemp -d "${TMPDIR:-/tmp}/webping_curl_test.XXXXXX")
 	local original_path="$PATH"
 
 	trap 'PATH="$original_path"; rm -rf "$work_root"' RETURN
@@ -24,6 +26,9 @@ test_webping_curl() {
 } > "$WEBPING_CURL_TEST_LOG"
 exit 0
 EOF
+	local stub_body
+	stub_body=$(<"$fake_bin/curl")
+	printf '#!%s\n%s\n' "$(type -P bash)" "${stub_body#*$'\n'}" >"$fake_bin/curl"
 	chmod +x "$fake_bin/curl"
 
 	PATH="$fake_bin:$PATH"

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 note() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	# Color codes
 	ANSI=${ANSI:-"\e["}
 	TXTYLW=${TXTYLW:-"0;33m"}

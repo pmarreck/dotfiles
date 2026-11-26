@@ -2,10 +2,14 @@
 
 codex() {
 	# if there are any arguments, just use them
-	local codex_path=$(which codex)
+	local codex_path
+	if ! codex_path=$(type -P codex); then
+		printf 'codex not found\n' >&2
+		return 127
+	fi
 	if [ $# -gt 0 ]; then
-		puts --yellow --stderr $codex_path "$@"
-		$codex_path "$@"
+		puts --yellow --stderr "$codex_path" "$@"
+		"$codex_path" "$@"
 	else
 		warn "Running codex with unlimited privileges!"
 		# if there is not a .git directory, output an additional warning about setting up git
@@ -13,6 +17,6 @@ codex() {
 			warn "No .git directory found. Please initialize a git repository before running codex with unlimited privileges to capture all changes automatically."
 		fi
 		warn "$codex_path resume --dangerously-bypass-approvals-and-sandbox"
-		$codex_path resume --dangerously-bypass-approvals-and-sandbox
+		"$codex_path" resume --dangerously-bypass-approvals-and-sandbox
 	fi
 }

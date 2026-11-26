@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+set -u
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)
+work=$(mktemp -d "${TMPDIR:-/tmp}/repo-awareness.XXXXXXXX") || exit 1
+trap 'command rm -rf -- "$work"' EXIT
+export HOME="$work/home" XDG_STATE_HOME="$work/state" GIT_CONFIG_NOSYSTEM=1
+mkdir -p "$HOME" "$work/repo"
+git -C "$work/repo" init -q
+git -C "$work/repo" config user.name Test
+git -C "$work/repo" config user.email test@example.invalid
+git -C "$work/repo" config core.hooksPath /dev/null
+printf 'original\n' > "$work/repo/a.lua"
+git -C "$work/repo" add a.lua
+git -C "$work/repo" commit -qm initial > "$work/commit.log" 2>&1 || { cat "$work/commit.log" >&2; exit 1; }
+git -C "$work/repo" update-ref refs/remotes/origin/main HEAD
+git -C "$work/repo" config branch.master.remote origin
+git -C "$work/repo" config branch.master.merge refs/heads/main
+git -C "$work/repo" config remote.origin.url "$work/remote"
+git -C "$work/repo" config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
+branch=$(git -C "$work/repo" branch --show-current)
+git -C "$work/repo" config "branch.$branch.remote" origin
+git -C "$work/repo" config "branch.$branch.merge" refs/heads/main
+failures=0 tests=0
+check() { tests=$((tests+1)); if "$@"; then return; fi; printf 'FAIL %s\n' "$*" >&2; failures=$((failures+1)); }
+hook() { printf '%s' "{\"cwd\":\"$work/repo\",\"session_id\":\"one\",\"hook_event_name\":\"$2\",\"source\":\"${3:-}\"}" | REPO_AWARENESS_NOW="$1" "$root/bin/repo-awareness" --harness codex; }
+snapshot() { "$root/bin/repo-awareness" --json --repo "$work/repo"; }
+data=$(snapshot)
+check test "$(jq -r '.changed_lines' <<< "$data")" = 0
+check test "$(jq -r '.ahead' <<< "$data")" = 0
+seq 1 500 > "$work/repo/new.lua"
+seq 1 2000 > "$work/repo/notes.md"
+printf 'binary\0data' > "$work/repo/picture.dat"
+data=$(snapshot)
+check test "$(jq -r '.changed_lines' <<< "$data")" = 500
+check test "$(jq -r '.binary_files' <<< "$data")" = 1
+first=$(hook 1000 PostToolUse)
+check test "$(jq -r '.hookSpecificOutput.additionalContext | contains("500")' <<< "$first")" = true
+check test "$(jq -r '.hookSpecificOutput.additionalContext | contains("Do not remove")' <<< "$first")" = true
+check test "$(hook 4599 PostToolUse)" = ''
+check test -n "$(hook 4600 PostToolUse)"
+check test -n "$(hook 4601 SessionStart compact)"
+check test "$(hook 4602 PostToolUse)" = ''
+git -C "$work/repo" add new.lua
+data=$(snapshot)
+check test "$(jq -r '.changed_lines' <<< "$data")" = 500
+printf 'changed\n' > "$work/repo/a.lua"
+data=$(snapshot)
+check test "$(jq -r '.changed_lines' <<< "$data")" = 502
+git -C "$work/repo" add a.lua
+git -C "$work/repo" commit -qm changes > "$work/commit.log" 2>&1 || { cat "$work/commit.log" >&2; exit 1; }
+git -C "$work/repo" commit -qm another --allow-empty > "$work/commit.log" 2>&1 || { cat "$work/commit.log" >&2; exit 1; }
+data=$(snapshot)
+check test "$(jq -r '.ahead' <<< "$data")" = 2
+output=$("$root/bin/repo-awareness" --commit --repo "$work/repo")
+check test "${output#*consider a push}" != "$output"
+git -C "$work/repo" update-ref refs/remotes/origin/main HEAD~1
+git -C "$work/repo" checkout -q --detach HEAD~2
+data=$(snapshot)
+check test "$(jq -r '.upstream' <<< "$data")" = null
+check test "$(jq -r '.detached' <<< "$data")" = true
+# Compaction events that cannot carry context defer delivery to a supported event.
+adapter_hook() { printf '%s' "{\"cwd\":\"$work/repo\",\"session_id\":\"$1\",\"hook_event_name\":\"$2\"}" | REPO_AWARENESS_NOW=9000 "$root/bin/repo-awareness" --harness "$1"; }
+check test "$(adapter_hook grok PostCompact)" = ''
+check test "$(adapter_hook grok UserPromptSubmit)" = ''
+check test -n "$(adapter_hook grok PostToolUse)"
+check test "$(adapter_hook grok PostToolUse)" = ''
+check test "$(adapter_hook gemini PreCompress)" = ''
+check test -n "$(adapter_hook gemini AfterTool)"
+# A tracked edit staged then undone in the working tree must remain visible.
+git -C "$work/repo" checkout -q "$branch"
+printf 'staged-only\n' > "$work/repo/a.lua"
+git -C "$work/repo" add a.lua
+printf 'changed\n' > "$work/repo/a.lua"
+data=$(snapshot)
+check test "$(jq -r '.staged_lines' <<< "$data")" = 2
+# Never read outside the fixture via a symlink; unknown is not zero.
+ln -s "$work/repo/new.lua" "$work/repo/link.lua"
+data=$(snapshot)
+check test "$(jq -r '.untracked_unmeasured' <<< "$data")" = 1
+# Configured thresholds apply, and resetting the clock cannot suppress forever.
+check test -n "$(REPO_DIRTY_LINES=1 hook 100 PostToolUse)"
+check test -n "$(REPO_DIRTY_LINES=1 hook 90 PostToolUse)"
+# An unborn repository also counts edits made after a file was first staged.
+mkdir "$work/unborn"
+git -C "$work/unborn" init -q
+printf 'one\n' > "$work/unborn/a.lua"
+git -C "$work/unborn" add a.lua
+printf 'one\ntwo\n' > "$work/unborn/a.lua"
+data=$("$root/bin/repo-awareness" --json --repo "$work/unborn")
+check test "$(jq -r '.changed_lines' <<< "$data")" = 2
+# The global Git adapter keeps a repository's own post-commit hook intact.
+git -C "$work/repo" config core.hooksPath "$root/.global-githooks"
+printf '#!%s\nprintf delegated > .git/awareness-delegated\n' "$BASH" > "$work/repo/.git/hooks/post-commit"
+chmod +x "$work/repo/.git/hooks/post-commit"
+output=$(cd "$work/repo" && "$root/.global-githooks/post-commit" 2>&1); status=$?
+check test "$status" = 0
+check test "${output#*Git checkpoint:}" != "$output"
+check test "$(cat "$work/repo/.git/awareness-delegated")" = delegated
+printf '%s checks, %s failures\n' "$tests" "$failures"
+test "$failures" -eq 0

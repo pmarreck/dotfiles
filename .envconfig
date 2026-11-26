@@ -1,7 +1,18 @@
 #!/usr/bin/env bash
 
-[ -n "${DEBUG_SHELLCONFIG}" ] && echo "Entering $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")" || $INTERACTIVE_SHELL && $LOGIN_SHELL && append_dotfile_progress "env"
-[ -n "${DEBUG_PATHCONFIG}" ] && echo $PATH
+# shellcheck source=/dev/null # HOME is replaced by isolated startup fixtures.
+. "$HOME/dotfiles/bin/src/platform_env.bash"
+if ! configure_platform_env; then
+	# shellcheck disable=SC2317 # exit is the executed-file fallback after return fails.
+	return 1 2>/dev/null || exit 1
+fi
+
+if [ -n "${DEBUG_SHELLCONFIG:-}" ]; then
+	echo "Entering $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")"
+elif ${INTERACTIVE_SHELL:-false} && ${LOGIN_SHELL:-false} && command -v append_dotfile_progress >/dev/null 2>&1; then
+	append_dotfile_progress "env"
+fi
+[ -n "${DEBUG_PATHCONFIG:-}" ] && echo "$PATH"
 
 # Moved from .envrc to avoid direnv
 . "${HOME}/dotfiles/bin/src/truthy.sh"
@@ -14,6 +25,13 @@ configure_macos_ssh_agent_env
 # Keep agent subprocesses behind the /nix/store and whole-home traversal guard
 # even when an agent runtime prepends its own rg/find/fd binaries before ~/bin.
 . "$HOME/dotfiles/bin/src/rg_guard_env.bash"
+
+# Host-side copying must not smuggle undeclared Nix-store dependencies into builds.
+. "$HOME/dotfiles/bin/src/nix_store_copy_env.bash"
+
+# A PATH command cannot shadow the Bash kill builtin. Export the audited
+# function to the same child shells that inherit the other guards.
+. "$HOME/dotfiles/bin/kill"
 
 # XDG vars per spec: https://specifications.freedesktop.org/basedir-spec/basedir-spec-latest.html
 export XDG_STATE_HOME="$HOME/.local/state"
@@ -63,7 +81,9 @@ if [ -n "$SSL_CERT_FILE" ]; then
 fi
 
 # note that with ssl support on mac you may need to add "--with-ssl=$(brew --prefix openssl)" to the following:
-export KERL_CONFIGURE_OPTIONS="--disable-parallel-configure --disable-debug --disable-silent-rules --without-javac --enable-shared-zlib --enable-dynamic-ssl-lib --enable-sctp --enable-threads --enable-kernel-poll --enable-wx --enable-darwin-64bit"
+KERL_CONFIGURE_OPTIONS="--disable-parallel-configure --disable-debug --disable-silent-rules --without-javac --enable-shared-zlib --enable-dynamic-ssl-lib --enable-sctp --enable-threads --enable-kernel-poll --enable-wx"
+[ "$OS" = macos ] && KERL_CONFIGURE_OPTIONS="$KERL_CONFIGURE_OPTIONS --enable-darwin-64bit"
+export KERL_CONFIGURE_OPTIONS
 
 # Postgres stuff
 export PGDATA="$XDG_STATE_HOME/pgdata"
@@ -203,7 +223,10 @@ export COLORTERM=${COLORTERM:-truecolor}
 export MICRO_TRUECOLOR=1
 
 # GPG configuration to set up in-terminal challenge-response
-export GPG_TTY=`tty`
+if [ -t 0 ]; then
+	GPG_TTY="$(tty)"
+	export GPG_TTY
+fi
 
 # Ruby environment tweaking
 # export RUBY_GC_HEAP_INIT_SLOTS=1000000
@@ -234,12 +257,12 @@ export PS4='$0:$LINENO+ '
 # shut up, macos, zsh isn't significantly better enough than bash to warrant switching
 # (and you only did it because of the licensing difference, anyway)
 # (If this is unset on macos, it will keep reminding you to switch to zsh)
-if [ "$PLATFORM" = "mac" ]; then
+if [ "$OS" = "macos" ]; then
 	export BASH_SILENCE_DEPRECATION_WARNING=1
 fi
 
 # steam custom proton stuff, but only on linux
-if [ "$PLATFORM" = "linux" ]; then
+if [ "$OS" = "linux" ]; then
 	export STEAM_COMPAT_DATA_PATH="$HOME/.steam/steam/steamapps/compatdata"
 	export STEAM_COMPAT_CLIENT_INSTALL_PATH="$HOME/.steam/root"
 	export STEAM_EXTRA_COMPAT_TOOLS_PATHS="$HOME/.steam/root/compatibilitytools.d"
@@ -299,8 +322,8 @@ export TMPDIR
 # 	printf '%s' $((n*2 - 1))
 # }
 # make it feel like an env var:
-declare -irx BASH_INT_MAX=9223372036854775807
-declare -irx BASH_INT_MIN=$(( -BASH_INT_MAX - 1 ))
+[[ -v BASH_INT_MAX ]] || declare -irx BASH_INT_MAX=9223372036854775807
+[[ -v BASH_INT_MIN ]] || declare -irx BASH_INT_MIN=$(( -BASH_INT_MAX - 1 ))
 unset _bash_int_max_helper
 
 # take any $HOME/.secrets and export them
@@ -311,5 +334,5 @@ if [ -f "$HOME/.secrets" ]; then
 	set +a
 fi
 
-[ -n "${DEBUG_SHELLCONFIG}" ] && echo "Exiting $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")"
-[ -n "${DEBUG_PATHCONFIG}" ] && echo $PATH || :
+[ -n "${DEBUG_SHELLCONFIG:-}" ] && echo "Exiting $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")"
+[ -n "${DEBUG_PATHCONFIG:-}" ] && echo "$PATH" || :

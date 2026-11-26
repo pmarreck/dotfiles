@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 div() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	local sd=${3:-2}
 	case $1 in
 	-h | --help | "")

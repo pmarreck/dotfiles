@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+
+set -u
+
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+module="$script_dir/../src/diskhogs_macos_snapshot.lua"
+
+actual=$(luajit - "$module" <<'LUA'
+local module_path = arg[1]
+local snapshot = dofile(module_path)
+
+local seen_uid
+local fake_api = {
+	list_pids = function(uid)
+		seen_uid = uid
+		return { 22, 11, 33 }
+	end,
+	rusage = function(pid)
+		local values = {
+			[11] = { start = 111, read = 10, write = 100 },
+			[22] = { start = 222, read = 20, write = 200 },
+		}
+		return values[pid]
+	end,
+	name = function(pid)
+		return ({ [11] = "alpha", [22] = "beta\tname" })[pid]
+	end,
+}
+
+local rows = snapshot.collect(fake_api, 501)
+assert(seen_uid == 501, "collector did not restrict process enumeration to the requested uid")
+io.write(rows)
+LUA
+)
+status=$?
+
+expected=$'22\t222\t20\t200\tbeta name\n11\t111\t10\t100\talpha'
+if (( status != 0 )); then
+	echo "diskhogs macOS snapshot module failed" >&2
+	exit 1
+fi
+
+if [[ "$actual" != "$expected" ]]; then
+	echo "diskhogs macOS snapshot module returned unexpected rows" >&2
+	printf 'expected:\n%s\nactual:\n%s\n' "$expected" "$actual" >&2
+	exit 1
+fi
+
+echo "diskhogs macOS snapshot module tests passed"

@@ -4,6 +4,8 @@ set -uo pipefail
 
 fails=0
 tests=0
+tmp_dir=$(mktemp -d --tmpdir hr_test.XXXXXX)
+trap 'rm -rf "$tmp_dir"' EXIT
 
 # Count codepoints without depending on the caller's locale. `wc -m` and awk's
 # length() both count BYTES under LC_ALL=C, so hr's five box-drawing glyphs
@@ -25,8 +27,8 @@ fi
 
 ((tests++))
 echo "Testing: hr --help shows usage..."
-if "$hr_cmd" --help >/tmp/hr_help 2>&1; then
-	if grep -q "Usage: hr" /tmp/hr_help; then
+if "$hr_cmd" --help >"$tmp_dir/help" 2>&1; then
+	if grep -q "Usage: hr" "$tmp_dir/help"; then
 		echo "✓ Test passed: help text present"
 	else
 		echo "✗ Test failed: help text missing" >&2
@@ -55,27 +57,33 @@ else
 fi
 
 ((tests++))
-echo "Testing: hr matches terminal width when TTY is available..."
-tty_width=""
-if [[ -r /dev/tty ]]; then
-	if size=$(stty size 2>/dev/null </dev/tty); then
-		tty_width=${size##* }
-	fi
-	if [[ -z "$tty_width" ]]; then
-		tty_width=$(tput cols 2>/dev/null </dev/tty || true)
-	fi
-fi
-if [[ -n "$tty_width" && "$tty_width" =~ ^[0-9]+$ && "$tty_width" -gt 0 ]]; then
-	tty_line=$("$hr_cmd")
-	tty_count=$(utf8_len "$tty_line")
-	if [[ "$tty_count" == "$tty_width" ]]; then
-		echo "✓ Test passed: terminal width respected"
-	else
-		echo "✗ Test failed: expected width $tty_width, got $tty_count" >&2
-		((fails++))
-	fi
+echo "Testing: hr detects a deterministic PTY width..."
+pty_line=$(
+	HR_CMD="$hr_cmd" expect <<'EXPECT'
+set timeout 5
+log_user 0
+spawn -noecho sh -c {unset HR_WIDTH COLUMNS; stty cols 37; exec "$HR_CMD"}
+expect {
+	eof {}
+	timeout {
+		puts stderr "hr_test: timed out waiting for PTY output"
+		exit 124
+	}
+}
+set child_status [wait]
+puts -nonewline $expect_out(buffer)
+exit [lindex $child_status 3]
+EXPECT
+)
+pty_status=$?
+pty_strip=$(printf '%s' "$pty_line" | tr -d '\r\n')
+pty_count=$(utf8_len "$pty_strip")
+pty_non_rule=${pty_strip//─/}
+if [[ "$pty_status" -eq 0 && "$pty_count" == "37" && -z "$pty_non_rule" ]]; then
+	echo "✓ Test passed: terminal width respected"
 else
-	echo "⚠ Skipping: no TTY width available for validation"
+	echo "✗ Test failed: expected 37 rule glyphs, got status $pty_status and width $pty_count" >&2
+	((fails++))
 fi
 
 echo "All $tests tests completed"

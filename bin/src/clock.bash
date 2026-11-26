@@ -3,7 +3,7 @@
 # digital clock
 # not sure why it updates so slowly; all the subshells and evals?
 clock() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   _read_clock_font_data() {
     # reads everything in this file below __DATA__
     $SED '0,/^__DATA__$/d' "$BASH_SOURCE"

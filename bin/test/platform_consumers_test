@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+
+# PLATFORM now means the full OS-ARCH pair. Runtime branches that need only an
+# operating system must read OS, so classify the complete known consumer set.
+
+set -u
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+tests=0
+fails=0
+
+pass() {
+	printf 'PASS: %s\n' "$1"
+}
+
+fail() {
+	printf 'FAIL: %s\n' "$1" >&2
+	((fails++))
+}
+
+reads_platform() {
+	local source_line=$1
+	local trimmed=${source_line#"${source_line%%[![:space:]]*}"}
+	[[ "$trimmed" != \#* && "$source_line" =~ \$\{?PLATFORM\}? ]]
+}
+
+# These are literal source-code classifier fixtures, not expressions to expand.
+# shellcheck disable=SC2016
+positive_cases=(
+	'if [ "$PLATFORM" = mac ]; then'
+	'case ${PLATFORM} in'
+	'[ "${PLATFORM}-${DISTRO}" = linux-NixOS ]'
+)
+# shellcheck disable=SC2016
+negative_cases=(
+	'if [ "$OS" = macos ]; then'
+	'case $OS in'
+	'PLATFORM=$PF'
+	'# if [ "$PLATFORM" = mac ]; then'
+)
+
+((tests++))
+positive_misses=0
+for source_line in "${positive_cases[@]}"; do
+	reads_platform "$source_line" || ((positive_misses++))
+done
+if (( positive_misses == 0 )); then
+	pass 'classifier recognizes legacy PLATFORM reads in multiple shell forms'
+else
+	fail "classifier missed $positive_misses legacy PLATFORM read(s)"
+fi
+
+((tests++))
+negative_matches=0
+for source_line in "${negative_cases[@]}"; do
+	reads_platform "$source_line" && ((negative_matches++))
+done
+if (( negative_matches == 0 )); then
+	pass 'classifier ignores OS branches, assignment, and commented history'
+else
+	fail "classifier rejected $negative_matches canonical or inert line(s)"
+fi
+
+consumer_files=(
+	.aliases
+	.envconfig
+	.shellenv
+	.bashrc
+	bin/portopen
+	bin/fileopen
+	bin/src/pman_nice_man_pages.sh
+	bin/src/portopen_fileopen.sh
+	bin/src/nvidia.bash
+)
+
+cd "$repo_root" || exit 2
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+	hits=$(git grep -n -E '\$\{?PLATFORM\}?' -- "${consumer_files[@]}")
+	scan_status=$?
+else
+	hits=$(rg -n '\$\{?PLATFORM\}?' "${consumer_files[@]}")
+	scan_status=$?
+fi
+if (( scan_status > 1 )); then
+	printf 'FAIL: platform consumer scan failed with status %s\n' "$scan_status" >&2
+	exit 2
+fi
+
+violations=()
+while IFS= read -r hit; do
+	[ -n "$hit" ] || continue
+	source_line=${hit#*:*:}
+	reads_platform "$source_line" && violations+=("$hit")
+done <<< "$hits"
+
+((tests++))
+if (( ${#violations[@]} == 0 )); then
+	pass 'all known runtime OS consumers have retired the old PLATFORM meaning'
+else
+	fail "${#violations[@]} runtime consumer(s) still read PLATFORM as an OS"
+	printf '  %s\n' "${violations[@]}" >&2
+fi
+
+if (( fails == 0 )); then
+	printf 'All %s platform consumer checks passed.\n' "$tests"
+else
+	printf '%s of %s platform consumer checks failed.\n' "$fails" "$tests" >&2
+fi
+exit "$fails"

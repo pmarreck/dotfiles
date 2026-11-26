@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+
+# This host-only control proves that a package realized by Nix immediately
+# before an interactive shell starts remains discoverable after .pathconfig
+# rebuilds PATH. The pure PATH classifier stays in pathconfig_foreign_path_test.
+
+set -u
+
+if ! command -v nix >/dev/null 2>&1; then
+	printf 'FAIL: nix is required for the foreign-PATH end-to-end test\n' >&2
+	exit 1
+fi
+
+marker="dotfiles-pathprobe-$$-${RANDOM}"
+expression="with import <nixpkgs> {}; writeShellScriptBin \"dotfiles-pathprobe\" \"echo $marker\""
+got=$(nix shell --offline --impure --expr "$expression" \
+	--command bash -ic 'dotfiles-pathprobe 2>/dev/null || echo NOT-FOUND' 2>/dev/null | tail -1)
+
+# The expression is unique, so the matching marker proves that the newly
+# realized package ran rather than a cached program with the same name.
+if [[ "$got" != "$marker" ]]; then
+	printf 'FAIL: freshly realized Nix package was not visible in the interactive shell\n' >&2
+	printf 'expected marker: %s\ngot: %s\n' "$marker" "$got" >&2
+	exit 1
+fi
+
+# The derivation name is run-unique, so this output belongs to this test. Its
+# cleanup is best-effort and never changes the assertion above.
+probe_output=$(nix build --offline --impure --no-link --print-out-paths \
+	--expr "$expression" 2>/dev/null)
+[[ -z "$probe_output" ]] || nix store delete "$probe_output" >/dev/null 2>&1 || :
+
+printf 'PASS: freshly realized Nix package survives the interactive PATH rebuild\n'

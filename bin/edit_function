@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 edit_function() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	needs rg "please install ripgrep!"
 	local function_name="$1"
 	# escape any question marks in the function name, some of mine end in one

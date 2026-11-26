@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# Real process identity and signal delivery require the host process table.
+set -u
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+source "$root/bin/src/capture.bash"
+scratch="$(mktemp -d "${TMPDIR:-/tmp}/destructive-signal-audit.XXXXXX")" || exit 1
+export TMPDIR="$scratch"
+mkdir "$scratch/blocked" "$scratch/bad-tmp" || exit 1
+ln -s "$scratch/blocked" "$scratch/bad-tmp/dotfiles-audit-$EUID"
+failures=0
+check() {
+	if [[ "$2" != "$3" ]]; then
+		printf 'FAIL %s: expected [%s], got [%s]\n' "$1" "$3" "$2" >&2
+		failures=$((failures+1))
+	fi
+}
+out='' err='' rc=0
+coproc AUDIT_CHILD { printf '%s\n' "$BASHPID"; IFS= read -r release; }
+fixture_job="$AUDIT_CHILD_PID"
+read -r fixture_pid <&"${AUDIT_CHILD[0]}"
+capture "$root/bin/kill" -0 "$fixture_pid"
+check 'explicit PID logged' "$rc" 0
+source "$root/bin/kill"
+mkdir "$scratch/private-home"
+capture env HOME="$scratch/private-home" bash --noprofile --norc -c '
+	[[ "$(type -t kill)" == function ]] || exit 99
+	cd "$HOME" && kill -0 "$1"
+' audited-child "$fixture_pid"
+check 'child Bash imports audited kill with a private HOME' "$rc" 0
+capture "$root/bin/kill" --log
+[[ "$out" == *"target pid=$fixture_pid "* && "$out" == *"result pid=$fixture_pid status=sent"* ]] ||
+	{ printf 'FAIL missing process identity or signal outcome\n'; failures=$((failures+1)); }
+capture env TMPDIR="$scratch/bad-tmp" "$root/bin/kill" -TERM "$fixture_pid"
+check 'unavailable logging refuses real signal' "$rc" 1
+builtin kill -0 "$fixture_pid" || { printf 'FAIL owned fixture was signaled without a log\n'; exit 1; }
+printf 'release\n' >&"${AUDIT_CHILD[1]}"
+wait "$fixture_job"
+
+# Constrain the selector twice. The marker alone is unique even if the PID
+# file constraint regresses, and the PID file names the single owned child.
+signal_marker="dotfiles-audit-fixture-${BASHPID}-$RANDOM"
+coproc SIGNAL_CHILD {
+	exec bash --noprofile --norc -c '
+		child_pid="$$"
+		on_term() {
+			if "$1/bin/kill" --log | grep -q "target pid=$child_pid "; then exit 23; else exit 24; fi
+		}
+		trap '\''on_term "$1"'\'' TERM
+		printf "%s\n" "$child_pid"
+		IFS= read -r release
+	' "$signal_marker" "$root"
+}
+signal_job="$SIGNAL_CHILD_PID"
+read -r signal_pid <&"${SIGNAL_CHILD[0]}"
+printf '%s\n' "$signal_pid" > "$scratch/fixture.pid"
+capture "$root/bin/pkill" -TERM -f -F "$scratch/fixture.pid" "$signal_marker"
+check 'logged pkill sends TERM to owned fixture' "$rc" 0
+if [[ "$rc" != 0 ]]; then
+	printf '%s\n' "$err" >&2
+	printf 'release\n' >&"${SIGNAL_CHILD[1]}"
+fi
+signal_status=0
+wait "$signal_job" || signal_status=$?
+check 'target observes journal before TERM delivery' "$signal_status" 23
+
+printf 'destructive signal audit: %s failures\n' "$failures"
+exit "$failures"

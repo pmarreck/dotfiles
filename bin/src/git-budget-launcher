@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# PATH entrypoint: retain native Git and apply shared-repository capacity limits.
+set -u
+here=$(cd -P -- "$(dirname "${BASH_SOURCE[0]}")" && pwd) || exit 2
+# During development this launcher lives in bin/src; bin/git is the published copy.
+if [[ ${here##*/} == src ]]; then here=${here%/src}; fi
+real=''
+IFS=: read -r -a directories <<< "$PATH"
+for directory in "${directories[@]}"; do
+	candidate="${directory:-.}/git"
+	if [[ -f $candidate && -x $candidate && ! $candidate -ef ${BASH_SOURCE[0]} && ! $candidate -ef $here/git ]]; then
+		real=$candidate; break
+	fi
+done
+if [[ -z $real ]]; then printf 'Repository budget: underlying Git executable not found.\n' >&2; exit 127; fi
+exec "$here/git-repository-budget" --run "$real" "$@"

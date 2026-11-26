@@ -34,7 +34,8 @@ case "$file" in
 		;;
 esac
 file="${file%%\?*}"
-cp "$GETFILE_FIXTURE_DIR/$file" "${out:-./$file}"'
+# Serve fixture bytes like a downloader, without inheriting host copy wrappers.
+cat "$GETFILE_FIXTURE_DIR/$file" > "${out:-./$file}"'
 # Trash adapter: records what was trashed and moves it aside, never into the real Trash.
 mock_trash='for f in "$@"; do
 	printf "%s\n" "$f" >> "${TRASH_LOG:?}"
@@ -82,7 +83,7 @@ plain_rm=$(command -p -v rm)
 [[ -x "$plain_rm" ]] || plain_rm=$(type -P rm)
 for bin in "$wget_bin" "$curl_bin" "$notrash_bin" "$macos_bin"; do
 	mkdir -p "$bin"
-	for tool in bash cp mv unzip gzip; do
+	for tool in bash cat mv unzip gzip; do
 		link_tool "$bin" "$tool"
 	done
 	link_tool "$bin" rm "$plain_rm"

@@ -1,21 +1,33 @@
 #!/usr/bin/env bash
 
+set -u
+
 test_epub() {
 	local fails=0
 	local tests=0
-	local script="$HOME/dotfiles/bin/epub"
+	local test_dir repo_root script bash_path
+	test_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+	repo_root=$(cd -- "$test_dir/../.." && pwd)
+	script="$repo_root/bin/epub"
+	bash_path=$(command -v bash)
 	local work_root
 	work_root=$(mktemp --tmpdir -d epub_test.XXXXXX)
 	local original_path=$PATH
 
-	trap 'PATH="$original_path"; rm -rf "$work_root"' RETURN
+	export HOME="$work_root/home"
+	export XDG_CACHE_HOME="$work_root/xdg-cache"
+	export XDG_CONFIG_HOME="$work_root/xdg-config"
+	export XDG_DATA_HOME="$work_root/xdg-data"
+	mkdir -p "$HOME" "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME"
+
+	trap 'PATH="$original_path"; rm -rf -- "$work_root"' RETURN
 
 	local fake_bin="$work_root/fake_bin"
 	mkdir -p "$fake_bin"
 
-	cat <<'EOF' >"$fake_bin/ebook-convert"
-#!/usr/bin/env bash
-set -euo pipefail
+	printf '#!%s\n' "$bash_path" >"$fake_bin/ebook-convert"
+	cat <<'EOF' >>"$fake_bin/ebook-convert"
+set -u
 input="$1"
 output="$2"
 cp "$input" "$output"

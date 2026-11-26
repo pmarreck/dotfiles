@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P) || exit 2
+exec "$root/bin/git-staged-gates" "$@"

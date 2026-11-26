@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 
 record_console_settings() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	__oldhistcontrol="$HISTCONTROL"
 	__oldstate=$(set +o | sed 's/^/ /g')
 }
 
 restore_console_settings() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	# For some reason, this eval dumped all these set commands into HISTFILE/command history
 	# so I used HISTCONTROL plus sed prefixing them with spaces (above) to prevent that
 	eval "$__oldstate"
@@ -29,7 +29,7 @@ file_extension() {
 }
 
 function determine_language_from_source() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	local file="$1"
 	if [ -f "$file" ]; then
 		local file_ext
@@ -167,7 +167,7 @@ function determine_language_from_source() {
 }
 
 function a_or_an() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	local word="$1"
 	shift
 	if [ -z "$word" ]; then
@@ -379,7 +379,7 @@ EOF
 # needs pygmentize "see pygments.org" # for syntax highlighting
 # export PYGMENTIZE_STYLE=monokai
 show() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	
 	# Parse arguments for browser selection
 	local browser="${TUI_BROWSER:-clx-reader}"  # Default to clx-reader, can be overridden by env var

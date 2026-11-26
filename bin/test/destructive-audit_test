@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+set -u
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+source "$root/bin/src/capture.bash"
+scratch="$(mktemp -d "${TMPDIR:-/tmp}/destructive-audit-test.XXXXXX")" || exit 1
+export TMPDIR="$scratch"
+tree="$scratch/tree"
+odd="$tree/"$'file\nwith [] and spaces'
+chmod_guard="$root/bin/chmod"
+audit="$scratch/dotfiles-audit-$EUID"
+mkdir "$tree" || exit 1
+printf 'fixture\n' > "$odd"
+printf 'referent\n' > "$scratch/outside"
+ln -s "$scratch/outside" "$tree/outside-link"
+
+failures=0
+check() {
+	if [[ "$2" != "$3" ]]; then
+		printf 'FAIL %s: expected [%s], got [%s]\n' "$1" "$3" "$2" >&2
+		failures=$((failures+1))
+	fi
+}
+modes() {
+	if [[ "$OSTYPE" == darwin* ]]; then /usr/bin/stat -f '%OLp' "$@"; else stat -c '%a' "$@"; fi
+}
+out='' err='' rc=0
+"$chmod_guard" 0750 "$tree" || exit 1
+"$chmod_guard" 0640 "$odd" "$scratch/outside" || exit 1
+capture "$chmod_guard" -R 0700 "$tree"
+check 'recursive success' "$rc" 0
+check 'recursive target modes' "$(modes "$tree" "$odd" "$scratch/outside")" $'700\n700\n640'
+capture "$chmod_guard" --log
+[[ "$out" == *'target path='* && "$out" == *'recursive=true'* && "$out" == *'identity='* ]] ||
+	{ printf '%s\n' 'FAIL recursive pre-change log absent'; failures=$((failures+1)); }
+capture "$chmod_guard" --undo
+check 'recursive undo success' "$rc" 0
+check 'original target modes' "$(modes "$tree" "$odd" "$scratch/outside")" $'750\n640\n640'
+
+# Preflight logging is checked independently at the actual mutation boundary.
+real="$(type -P chmod)"
+if [[ "$real" -ef "$chmod_guard" ]]; then
+	while IFS= read -r candidate; do
+		if [[ ! "$candidate" -ef "$chmod_guard" ]]; then real="$candidate"; break; fi
+	done < <(type -a -p chmod)
+fi
+native_help=$("$real" --help 2>/dev/null) || native_help=''
+if [[ "$native_help" == *--dereference* ]]; then
+	capture "$chmod_guard" --recursive -H --dereference 0700 "$tree"
+	check 'GNU explicit dereference' "$rc" 0
+	check 'explicit link referent mode' "$(modes "$scratch/outside")" 700
+	capture "$chmod_guard" --undo
+	check 'undo explicit dereference' "$rc" 0
+	check 'restored link referent mode' "$(modes "$scratch/outside")" 640
+	capture "$chmod_guard" --recursive -P --dereference 0700 "$tree"
+	check 'GNU incompatible traversal refused' "$rc" 2
+fi
+mkdir "$scratch/tools"
+printf '#!%s\n' "$(command -v bash)" > "$scratch/tools/chmod"
+cat >> "$scratch/tools/chmod" <<'EOF'
+if [[ "$1" != --version && "$1" != --help ]]; then
+	logged=false
+	for file in "$TMPDIR"/dotfiles-audit-*/chmod-*/log; do
+		if grep -q 'target path=.*boundary mode=640' "$file"; then logged=true; break; fi
+	done
+	"$logged" || exit 99
+fi
+exec "$AUDIT_NATIVE_CHMOD" "$@"
+EOF
+"$real" +x "$scratch/tools/chmod" || exit 1
+printf 'boundary\n' > "$tree/boundary"
+"$real" 0640 "$tree/boundary" || exit 1
+capture env PATH="$scratch/tools:$PATH" AUDIT_NATIVE_CHMOD="$real" "$chmod_guard" 0600 "$tree/boundary"
+check 'logged before native chmod executes' "$rc" 0
+check 'boundary mode' "$(modes "$tree/boundary")" 600
+"$real" 0660 "$tree/boundary" || exit 1
+capture "$chmod_guard" --undo
+check 'undo refuses divergent mode' "$rc" 1
+check 'divergent mode is preserved' "$(modes "$tree/boundary")" 660
+
+mkdir "$scratch/blocked"
+mkdir "$scratch/bad-tmp"
+ln -s "$scratch/blocked" "$scratch/bad-tmp/dotfiles-audit-$EUID"
+capture env TMPDIR="$scratch/bad-tmp" "$chmod_guard" 0700 "$tree/boundary"
+check 'unavailable logging refuses chmod' "$rc" 1
+check 'logging failure leaves mode unchanged' "$(modes "$tree/boundary")" 660
+check 'private audit directory' "$(modes "$audit")" 700
+
+printf 'destructive permission audit: %s failures\n' "$failures"
+exit "$failures"

@@ -72,7 +72,7 @@ make_comm_pid_fixture
 ps_stub="$fixtures_dir/ps_stub"
 cat <<'EOF' >"$ps_stub"
 #!/usr/bin/env bash
-set -euo pipefail
+set -u
 
 case "$*" in
 	"axo rss=,comm=")
@@ -99,6 +99,8 @@ case "$*" in
 		;;
 esac
 EOF
+ps_stub_body=$(<"$ps_stub")
+printf '#!%s\n%s\n' "$(type -P bash)" "${ps_stub_body#*$'\n'}" >"$ps_stub"
 chmod +x "$ps_stub"
 
 run_memhogs() {
@@ -118,8 +120,8 @@ run_memhogs() {
 
 ((tests++))
 echo "Testing: memhogs --help shows usage..."
-if run_memhogs --help >/tmp/memhogs_help 2>&1; then
-	if grep -q "Usage: memhogs" /tmp/memhogs_help; then
+if run_memhogs --help >"$fixtures_dir/help" 2>&1; then
+	if grep -q "Usage: memhogs" "$fixtures_dir/help"; then
 		echo "✓ Test passed: help text present"
 	else
 		echo "✗ Test failed: help text missing" >&2

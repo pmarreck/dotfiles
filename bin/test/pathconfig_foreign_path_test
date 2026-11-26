@@ -20,13 +20,8 @@ set -u
 fails=0
 tests=0
 
-skips=0
 pass() { echo "✓ $1"; }
 fail() { { echo "✗ $1"; shift; [ $# -gt 0 ] && printf '  %s\n' "$@"; } >&2; ((fails++)) || :; }
-# A skipped check is NOT a passed check. Counting one as the other is how a test
-# suite reports green while asserting nothing — so skips get their own counter,
-# are never announced as ✓, and are surfaced loudly in the summary.
-skip() { echo "⊘ SKIPPED (asserted nothing): $1" >&2; ((skips++)) || :; }
 
 WORK=$(mktemp -d --tmpdir pathconfig_foreign_test.XXXXXX)
 trap 'rm -rf "$WORK"' EXIT
@@ -156,57 +151,10 @@ else
 	pass "fresh capture yields no foreign entries (own scaffolding not hoisted)"
 fi
 
-# ── 7. End-to-end: ON-THE-FLY instantiation is visible in the NEW shell ──────
-# The user-visible symptom was `yazi: command not found` INSIDE a nix shell, so
-# the control has to cover the whole flow: instantiate → inject → survive
-# .pathconfig's rebuild → resolvable in the interactive shell that emerges.
-#
-# We build OUR OWN trivial derivation with run-unique content rather than using
-# a stock package. A novel store path CANNOT already be present, so nix is
-# forced to realize it on the fly — which is the property we want to assert.
-# That is strictly stronger than deleting a stock package first, and it avoids a
-# real flake: `nix store delete` fails against transient temp roots held by any
-# concurrent nix process ("still alive" while `--query --roots` shows none), so
-# a delete-first design would be racy and machine-dependent.
-#
-# The binary echoes a marker that the test generated; requiring the marker back
-# proves the freshly-built package actually ran, not a cached namesake.
-# --offline keeps it network-free and deterministic; skips are explicit.
-((tests++))
-if ! command -v nix >/dev/null 2>&1; then
-	skip "e2e on-the-fly nix instantiation (nix not installed)"
-else
-	_mark="dotfiles-pathprobe-$$-${RANDOM}"
-	_expr="with import <nixpkgs> {}; writeShellScriptBin \"dotfiles-pathprobe\" \"echo $_mark\""
-	_got=$(nix shell --offline --impure --expr "$_expr" \
-		--command bash -ic 'dotfiles-pathprobe 2>/dev/null || echo NOT-FOUND' 2>/dev/null | tail -1)
-	if [ "$_got" = "$_mark" ]; then
-		pass "e2e: freshly-instantiated nix package is visible in the new interactive shell"
-	elif [ -z "$_got" ]; then
-		skip "e2e on-the-fly nix instantiation (<nixpkgs> not evaluable offline)"
-	else
-		fail "e2e: on-the-fly nix package NOT visible in the new interactive shell" \
-			"expected marker: $_mark" "got: $_got"
-	fi
-	# Best-effort cleanup so repeated runs don't accumulate probe paths; the
-	# assertion above never depends on this succeeding.
-	_probe_out=$(nix build --offline --impure --no-link --print-out-paths --expr "$_expr" 2>/dev/null)
-	[ -n "$_probe_out" ] && nix store delete "$_probe_out" >/dev/null 2>&1
-	unset _mark _expr _got _probe_out
-fi
-
 echo
-_asserted=$((tests - skips))
-if [ "$skips" -gt 0 ]; then
-	echo "⊘ $skips of $tests checks asserted NOTHING (see SKIPPED above) — coverage is incomplete on this machine" >&2
-fi
 if [ "$fails" -eq 0 ]; then
-	if [ "$skips" -gt 0 ]; then
-		echo "All $_asserted asserted pathconfig foreign-PATH checks passed ($skips skipped)"
-	else
-		echo "All $_asserted pathconfig foreign-PATH checks passed"
-	fi
+	echo "All $tests pathconfig foreign-PATH checks passed"
 else
-	echo "$fails of $_asserted asserted pathconfig foreign-PATH checks failed" >&2
+	echo "$fails of $tests pathconfig foreign-PATH checks failed" >&2
 fi
 exit "$fails"

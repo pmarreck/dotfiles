@@ -86,7 +86,8 @@ fi
 ((tests++))
 echo "Testing: wrapper warns to stderr when fallback is non-GNU..."
 FALLBACK_DIR=$(mktemp -d --tmpdir date_test_fallback.XXXXXX)
-printf '#!/usr/bin/env bash\nif [[ "$1" == --version ]]; then exit 1; fi\nexec %q "$@"\n' "$REAL_DATE" >"$FALLBACK_DIR/date"
+# shellcheck disable=SC2016  # $1 and $@ belong to the generated adapter.
+printf '#!%s\nif [[ "$1" == --version ]]; then exit 1; fi\nexec %q "$@"\n' "$BASH_BIN" "$REAL_DATE" >"$FALLBACK_DIR/date"
 chmod +x "$FALLBACK_DIR/date"
 FALLBACK_PATH="$WRAPPER_DIR:$FALLBACK_DIR:$SUPPORT_DIR:/bin:/usr/bin"
 err_output=$(PATH="$FALLBACK_PATH" "$TIMEOUT_BIN" 3 "$BASH_BIN" "$WRAPPER" '+%Y' 2>&1 >/dev/null)

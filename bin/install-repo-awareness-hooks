@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# Preserve unrelated settings and original JSON array/object distinctions.
+set -u
+if [[ $# != 0 ]]; then printf 'Usage: install-repo-awareness-hooks (uses HOME)\n' >&2; exit 2; fi
+umask 077
+work=$(mktemp -d "${TMPDIR:-/tmp}/repo-awareness-install.XXXXXXXX") || exit 1
+trap 'command rm -rf -- "$work"' EXIT
+paths=(.codex/hooks.json .claude/settings.json .grok/hooks/repo-awareness.json .gemini/settings.json)
+harnesses=(codex claude grok gemini)
+# Prepare every change before touching any settings. Invalid JSON is a refusal.
+for i in 0 1 2 3; do
+	path="$HOME/${paths[$i]}"
+	if [[ -e $path ]]; then cat -- "$path" > "$work/$i.old" || exit 1; else printf '{}\n' > "$work/$i.old"; fi
+	jq -S --arg harness "${harnesses[$i]}" '
+		def owned: (.command // "") | test("(^|/)(repo-awareness|git-remote-drift-hook|git-status-awareness\\.sh)([\\\" ]|$)");
+		def group($event; $matcher):
+			{hooks: [{type:"command", command:("\"$HOME/dotfiles/bin/repo-awareness\" --harness " + $harness), timeout:(if $harness == "gemini" then 5000 else 5 end)}]}
+			+ (if $matcher == null then {} else {matcher:$matcher} end);
+		.hooks = ((.hooks // {}) | with_entries(.value |= (map(.hooks |= map(select(owned | not))) | map(select(.hooks | length > 0))))) |
+		(if $harness == "grok" then [["PostToolUse",null],["PreToolUse",null],["PostCompact",null]]
+		 elif $harness == "gemini" then [["AfterTool",null],["BeforeAgent",null],["PreCompress",null]]
+		 else [["PostToolUse",null],["UserPromptSubmit",null],["SessionStart","compact"]] end) as $events |
+		reduce $events[] as $e (. ; .hooks[$e[0]] = ((.hooks[$e[0]] // []) + [group($e[0];$e[1])]))
+	' "$work/$i.old" > "$work/$i.new" || exit 1
+	jq -S . "$work/$i.old" > "$work/$i.normalized" || exit 1
+done
+changed=0
+for i in 0 1 2 3; do
+	if cmp -s "$work/$i.normalized" "$work/$i.new"; then continue; fi
+	path="$HOME/${paths[$i]}"
+	mkdir -p -- "$(dirname "$path")" || exit 1
+	# Resolve symlinks rather than replacing an existing managed settings link.
+	if [[ -L $path ]]; then path=$(realpath -- "$path") || exit 1; fi
+	if [[ -e $path ]]; then
+		backup=$(mktemp "$path.repo-awareness-backup.XXXXXXXX") || exit 1
+		cat -- "$path" > "$backup" || exit 1
+	fi
+	temp=$(mktemp "$path.new.XXXXXXXX") || exit 1
+	cat "$work/$i.new" > "$temp" || exit 1
+	mv -- "$temp" "$path" || exit 1
+	printf 'Updated %s repository-awareness hooks.\n' "${harnesses[$i]}"
+	changed=1
+done
+if [[ $changed == 0 ]]; then printf 'Repository awareness hooks already current.\n'; fi

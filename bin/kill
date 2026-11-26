@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+
+# Capture this once so Bash children can import the function even after
+# changing directory or setting a different HOME.
+DOTFILES_KILL_BIN_DIR=$(CDPATH='' cd -- "${BASH_SOURCE[0]%/*}" && pwd -P) || return 1 2>/dev/null || exit 1
+
+kill() {
+	local signal=TERM target group pid pgid status=0 table
+	local -a pids=()
+	case "${1:-}" in
+		--log)
+			[[ $# == 1 ]] || return 2
+			. "$DOTFILES_KILL_BIN_DIR/src/destructive-audit.bash"
+			audit_read signals; return ;;
+		--help|-h)
+			printf '%s\n' 'Usage: kill [-s SIGNAL | -SIGNAL] PID... | kill --log' \
+				'Logs exact targets before signaling. Use -- before negative group IDs.' \
+				'Bash jobspecs are available when loaded as a shell function.'
+			return 0 ;;
+		-l|-L|--list|--table)
+			case "$1" in --list) shift; set -- -l "$@";; --table) shift; set -- -L "$@";; esac
+			builtin kill "$@"; return ;;
+		-s|--signal|-n) [[ $# -ge 2 ]] || return 2; signal="$2"; shift 2 ;;
+		--signal=*) signal="${1#*=}"; shift ;;
+		-?*) [[ "$1" == -- ]] || { signal="${1#-}"; shift; } ;;
+	esac
+	[[ "${1:-}" != -- ]] || shift
+	[[ $# -gt 0 ]] || { printf '%s\n' 'kill: a PID or jobspec is required' >&2; return 2; }
+	. "$DOTFILES_KILL_BIN_DIR/src/signal-audit.bash"
+	for target in "$@"; do
+		case "$target" in
+			%*)
+				group=$(jobs -p "$target") || return 1
+				if [[ "$-" != *m* ]]; then pids+=("$group"); continue; fi ;;
+			0) group=$(ps -p "${BASHPID:-$$}" -o pgid=) || return 1; group=${group//[[:space:]]/} ;;
+			-1) audit_error kill 'broadcast -1 cannot be audited as a fixed target set'; return 2 ;;
+			-*) group="${target#-}" ;;
+			*) pids+=("$target"); continue ;;
+		esac
+		[[ "$group" =~ ^[1-9][0-9]*$ ]] || { audit_error kill "invalid process group: $target"; return 2; }
+		table=$(LC_ALL=C ps -A -o pid= -o pgid=) || return 1
+		local previous_count=${#pids[@]}
+		while read -r pid pgid; do
+			[[ "$pgid" != "$group" ]] || pids+=("$pid")
+		done <<< "$table"
+		if [[ ${#pids[@]} -eq "$previous_count" ]]; then
+			audit_error kill "no processes in group $group"
+			status=1
+		fi
+	done
+	signal_logged kill "$signal" false '' "${pids[@]}" || return "$?"
+	return "$status"
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+	kill "$@"
+else
+	export DOTFILES_KILL_BIN_DIR
+	export -f kill
+fi

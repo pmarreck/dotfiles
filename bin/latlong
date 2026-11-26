@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 latlong() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 
 	# Allow tests or callers to bypass network requests
 	if [ -n "${LATLONG_OVERRIDE:-}" ]; then

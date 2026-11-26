@@ -1,0 +1,1191 @@
+#!/usr/bin/env luajit
+
+local PROGRAM = "git-dependency-portability-gate"
+local VERSION = "0.1.0"
+
+local function help()
+	io.write([[Usage: git-dependency-portability-gate [--help | --about]
+
+Inspect staged dependency manifests and refuse machine-local or repository-
+escaping sources. Normal hook operation takes no arguments.
+
+Options:
+  -h, --help  Show this help.
+  --about     Show version, purpose, runtime, and canonical platform.
+]])
+end
+
+local function platform()
+	local operating_system = ({ Linux = "linux", OSX = "macos", Windows = "mswin" })[jit.os]
+	local architecture = ({ x64 = "amd64", arm64 = "arm64" })[jit.arch]
+	return (operating_system or jit.os:lower()) .. "-" .. (architecture or jit.arch:lower())
+end
+
+if #arg > 0 then
+	if #arg == 1 and (arg[1] == "-h" or arg[1] == "--help") then
+		help()
+		os.exit(0)
+	elseif #arg == 1 and arg[1] == "--about" then
+		io.write(string.format(
+			"%s %s - Block nonportable staged dependencies; LuaJIT %s; PF=%s\n",
+			PROGRAM, VERSION, jit.version, platform()
+		))
+		os.exit(0)
+	end
+	io.stderr:write(PROGRAM .. ": unknown option; use --help\n")
+	os.exit(2)
+end
+
+local function shell_quote(value)
+	return "'" .. value:gsub("'", "'\\''") .. "'"
+end
+
+local function command_output(command)
+	local pipe = io.popen(command .. " 2>/dev/null", "r")
+	if not pipe then return nil, 2 end
+	local output = pipe:read("*a") or ""
+	local ok, why, code = pipe:close()
+	if ok then return output, 0 end
+	if why == "exit" then return output, code or 2 end
+	return output, 2
+end
+
+local function git(args)
+	return command_output("git " .. args)
+end
+
+local function die(message)
+	io.stderr:write(PROGRAM .. ": ERROR: " .. message .. "\n")
+	os.exit(2)
+end
+
+local override = os.getenv("ALLOW_NONPORTABLE_DEPENDENCIES")
+if override then
+	local reason = override:match("^%s*(.-)%s*$")
+	if #reason < 12 or not reason:find("%s") then
+		io.stderr:write(
+			PROGRAM .. ": ERROR: ALLOW_NONPORTABLE_DEPENDENCIES requires a specific human-readable reason.\n"
+		)
+		os.exit(1)
+	end
+	io.stderr:write(
+		PROGRAM .. ": WARNING: dependency portability gate bypassed; reason: " .. reason .. "\n"
+	)
+	os.exit(0)
+end
+
+local root, root_status = git("rev-parse --show-toplevel")
+if root_status ~= 0 then die("cannot locate the Git worktree") end
+root = root:gsub("[\r\n]+$", "")
+
+local function staged_blob(path)
+	local blob, status = git("cat-file blob " .. shell_quote(":" .. path))
+	if status ~= 0 then return nil end
+	return blob
+end
+
+local function strip_comment(line)
+	local output = {}
+	local quote = nil
+	local escaped = false
+	for index = 1, #line do
+		local character = line:sub(index, index)
+		if quote == '"' then
+			output[#output + 1] = character
+			if escaped then
+				escaped = false
+			elseif character == "\\" then
+				escaped = true
+			elseif character == '"' then
+				quote = nil
+			end
+		elseif quote == "'" then
+			output[#output + 1] = character
+			if character == "'" then quote = nil end
+		elseif character == '"' or character == "'" then
+			quote = character
+			output[#output + 1] = character
+		elseif character == "#" then
+			break
+		else
+			output[#output + 1] = character
+		end
+	end
+	return table.concat(output)
+end
+
+local simple_escapes = {
+	b = "\b",
+	t = "\t",
+	n = "\n",
+	f = "\f",
+	r = "\r",
+	['"'] = '"',
+	['\\'] = '\\',
+}
+
+local function utf8_character(codepoint)
+	if codepoint <= 0x7f then return string.char(codepoint) end
+	if codepoint <= 0x7ff then
+		return string.char(
+			0xc0 + math.floor(codepoint / 0x40),
+			0x80 + codepoint % 0x40
+		)
+	end
+	if codepoint <= 0xffff then
+		return string.char(
+			0xe0 + math.floor(codepoint / 0x1000),
+			0x80 + math.floor(codepoint / 0x40) % 0x40,
+			0x80 + codepoint % 0x40
+		)
+	end
+	if codepoint <= 0x10ffff then
+		return string.char(
+			0xf0 + math.floor(codepoint / 0x40000),
+			0x80 + math.floor(codepoint / 0x1000) % 0x40,
+			0x80 + math.floor(codepoint / 0x40) % 0x40,
+			0x80 + codepoint % 0x40
+		)
+	end
+	return nil
+end
+
+local function toml_string_at(fragment, start)
+	start = fragment:find("%S", start or 1)
+	if not start then return nil, nil, "missing string value" end
+	local quote = fragment:sub(start, start)
+	if quote ~= '"' and quote ~= "'" then
+		return nil, nil, "dependency path/source must be a static TOML string"
+	end
+	if fragment:sub(start, start + 2) == quote .. quote .. quote then
+		return nil, nil, "multiline dependency values are unsupported; use a static TOML string"
+	end
+	local value = {}
+	local index = start + 1
+	while index <= #fragment do
+		local character = fragment:sub(index, index)
+		if character == quote then return table.concat(value), index + 1 end
+		if quote == '"' and character == "\\" then
+			local escape = fragment:sub(index + 1, index + 1)
+			if simple_escapes[escape] then
+				value[#value + 1] = simple_escapes[escape]
+				index = index + 2
+			elseif escape == "u" or escape == "U" then
+				local digits = escape == "u" and 4 or 8
+				local hexadecimal = fragment:sub(index + 2, index + 1 + digits)
+				if #hexadecimal ~= digits or not hexadecimal:match("^[0-9A-Fa-f]+$") then
+					return nil, nil, "invalid TOML Unicode escape in dependency path"
+				end
+				local encoded = utf8_character(tonumber(hexadecimal, 16))
+				if not encoded then return nil, nil, "invalid TOML Unicode codepoint" end
+				value[#value + 1] = encoded
+				index = index + 2 + digits
+			else
+				return nil, nil, "unsupported TOML escape in dependency path"
+			end
+		else
+			value[#value + 1] = character
+			index = index + 1
+		end
+	end
+	return nil, nil, "unterminated TOML string in dependency declaration"
+end
+
+local function toml_key_segments(text)
+	local segments = {}
+	local index = 1
+	while true do
+		index = text:find("%S", index)
+		if not index then break end
+		local character = text:sub(index, index)
+		local value
+		if character == '"' or character == "'" then
+			local next_index, problem
+			value, next_index, problem = toml_string_at(text, index)
+			if problem then return nil, problem end
+			index = next_index
+		else
+			local finish = text:find("[^A-Za-z0-9_-]", index)
+			if finish then finish = finish - 1 else finish = #text end
+			if finish < index then return nil, "unsupported TOML key syntax" end
+			value = text:sub(index, finish)
+			index = finish + 1
+		end
+		segments[#segments + 1] = value
+		index = text:find("%S", index)
+		if not index then break end
+		if text:sub(index, index) ~= "." then return nil, "unsupported TOML key syntax" end
+		index = index + 1
+	end
+	return segments
+end
+
+local dependency_keys = {
+	["dependencies"] = true,
+	["dev-dependencies"] = true,
+	["build-dependencies"] = true,
+}
+
+local function dependency_context(segments)
+	if #segments == 0 then return false end
+	if dependency_keys[segments[1]] then return true end
+	if segments[1] == "workspace" and dependency_keys[segments[2]] then return true end
+	if segments[1] == "target" then
+		for index = 3, #segments do
+			if dependency_keys[segments[index]] then return true end
+		end
+	end
+	return segments[1] == "patch"
+end
+
+local function unquoted_equal(line)
+	local quote = nil
+	local escaped = false
+	for index = 1, #line do
+		local character = line:sub(index, index)
+		if quote == '"' then
+			if escaped then escaped = false
+			elseif character == "\\" then escaped = true
+			elseif character == '"' then quote = nil end
+		elseif quote == "'" then
+			if character == "'" then quote = nil end
+		elseif character == '"' or character == "'" then quote = character
+		elseif character == "=" then return index end
+	end
+end
+
+local function assigned_strings(fragment, wanted_key)
+	local values = {}
+	local index = 1
+	while index <= #fragment do
+		local character = fragment:sub(index, index)
+		if character == '"' or character == "'" then
+			local key, next_index = toml_string_at(fragment, index)
+			if not next_index then return values end
+			local equals = fragment:find("%S", next_index)
+			if key == wanted_key and equals and fragment:sub(equals, equals) == "=" then
+				local value, value_end, problem = toml_string_at(fragment, equals + 1)
+				values[#values + 1] = { value = value, problem = problem }
+				index = value_end or equals + 1
+			else
+				index = next_index
+			end
+		elseif character:match("[A-Za-z0-9_-]") then
+			local first, last = fragment:find("[A-Za-z0-9_-]+", index)
+			local key = fragment:sub(first, last)
+			local equals = fragment:find("%S", last + 1)
+			if key == wanted_key and equals and fragment:sub(equals, equals) == "=" then
+				local value, next_index, problem = toml_string_at(fragment, equals + 1)
+				values[#values + 1] = { value = value, problem = problem }
+				index = next_index or equals + 1
+			else
+				index = last + 1
+			end
+		else
+			index = index + 1
+		end
+	end
+	return values
+end
+
+local function all_toml_strings(fragment)
+	local values = {}
+	local index = 1
+	while index <= #fragment do
+		local next_quote = fragment:find("[\"']", index)
+		if not next_quote then break end
+		local value, next_index, problem = toml_string_at(fragment, next_quote)
+		values[#values + 1] = { value = value, problem = problem }
+		index = next_index or next_quote + 1
+	end
+	return values
+end
+
+local function cargo_references(content, kind)
+	local references = {}
+	local section = {}
+	local in_package = false
+	local line_number = 0
+	for raw_line in (content .. "\n"):gmatch("(.-)\n") do
+		line_number = line_number + 1
+		local line = strip_comment(raw_line)
+		local array_header = line:match("^%s*%[%[([^%]]+)%]%]%s*$")
+		local header = line:match("^%s*%[([^%[%]]+)%]%s*$")
+		if array_header or header then
+			local problem
+			section, problem = toml_key_segments(array_header or header)
+			if problem then
+				references[#references + 1] = { line = line_number, problem = problem }
+				section = {}
+			end
+			in_package = array_header ~= nil and #section == 1 and section[1] == "package"
+		else
+			local equals = unquoted_equal(line)
+			if equals then
+				local left = line:sub(1, equals - 1)
+				local right = line:sub(equals + 1)
+				local keys, key_problem = toml_key_segments(left)
+				if key_problem then
+					references[#references + 1] = { line = line_number, problem = key_problem }
+				elseif kind == "cargo" then
+					local context = dependency_context(section)
+					if #section == 0 and dependency_context(keys) then context = true end
+					if context then
+						if keys[#keys] == "path" or keys[#keys] == "git" then
+							local value, _, problem = toml_string_at(right)
+							references[#references + 1] = {
+								line = line_number, value = value, problem = problem,
+								type = keys[#keys] == "path" and "path" or "source",
+							}
+						else
+							for _, source_key in ipairs({ "path", "git" }) do
+								for _, item in ipairs(assigned_strings(right, source_key)) do
+									references[#references + 1] = {
+										line = line_number, value = item.value,
+										problem = item.problem,
+										type = source_key == "path" and "path" or "source",
+									}
+								end
+							end
+						end
+					end
+				elseif kind == "cargo-lock" and in_package and
+					#keys == 1 and keys[1] == "source" then
+					local value, _, problem = toml_string_at(right)
+					references[#references + 1] = {
+						line = line_number, value = value, problem = problem, type = "source",
+					}
+				elseif kind == "cargo-config" then
+					local source_section = section[1] == "source"
+					if source_section and (keys[#keys] == "directory" or
+						keys[#keys] == "local-registry") then
+						local value, _, problem = toml_string_at(right)
+						references[#references + 1] = {
+							line = line_number, value = value, problem = problem, type = "path",
+						}
+					elseif source_section and keys[#keys] == "registry" then
+						local value, _, problem = toml_string_at(right)
+						references[#references + 1] = {
+							line = line_number, value = value, problem = problem, type = "source",
+						}
+					elseif #section == 0 and #keys == 1 and keys[1] == "paths" then
+						for _, item in ipairs(all_toml_strings(right)) do
+							references[#references + 1] = {
+								line = line_number, value = item.value,
+								problem = item.problem, type = "path",
+							}
+						end
+					end
+				end
+			end
+		end
+	end
+	return references
+end
+
+local function zig_tokens(content)
+	local tokens = {}
+	local index = 1
+	local line = 1
+	while index <= #content do
+		local character = content:sub(index, index)
+		local pair = content:sub(index, index + 1)
+		if character == "\n" then
+			line = line + 1
+			index = index + 1
+		elseif character:match("%s") then
+			index = index + 1
+		elseif pair == "//" then
+			local finish = content:find("\n", index + 2, true)
+			index = finish or (#content + 1)
+		elseif pair == "/*" then
+			local finish = content:find("*/", index + 2, true)
+			if not finish then return nil, "unterminated ZON block comment" end
+			local block = content:sub(index, finish + 1)
+			local _, count = block:gsub("\n", "\n")
+			line = line + count
+			index = finish + 2
+		elseif character == '"' then
+			local value = {}
+			local token_line = line
+			index = index + 1
+			local closed = false
+			while index <= #content do
+				character = content:sub(index, index)
+				if character == '"' then
+					index = index + 1
+					closed = true
+					break
+				elseif character == "\\" then
+					local escape = content:sub(index + 1, index + 1)
+					if simple_escapes[escape] then
+						value[#value + 1] = simple_escapes[escape]
+						index = index + 2
+					elseif escape == "x" then
+						local hexadecimal = content:sub(index + 2, index + 3)
+						if not hexadecimal:match("^[0-9A-Fa-f][0-9A-Fa-f]$") then
+							return nil, "invalid ZON hexadecimal escape"
+						end
+						value[#value + 1] = string.char(tonumber(hexadecimal, 16))
+						index = index + 4
+					else
+						return nil, "unsupported ZON string escape"
+					end
+				else
+					if character == "\n" then line = line + 1 end
+					value[#value + 1] = character
+					index = index + 1
+				end
+			end
+			if not closed then return nil, "unterminated ZON string" end
+			tokens[#tokens + 1] = { kind = "string", value = table.concat(value), line = token_line }
+		elseif character == "." and content:sub(index + 1, index + 1):match("[A-Za-z_]") then
+			local finish = content:find("[^A-Za-z0-9_%-]", index + 1)
+			if finish then finish = finish - 1 else finish = #content end
+			tokens[#tokens + 1] = {
+				kind = "field", value = content:sub(index + 1, finish), line = line,
+			}
+			index = finish + 1
+		elseif character == "{" or character == "}" or character == "=" or character == "," then
+			tokens[#tokens + 1] = { kind = character, value = character, line = line }
+			index = index + 1
+		else
+			local finish = content:find("[%s{},=]", index)
+			if finish then finish = finish - 1 else finish = #content end
+			tokens[#tokens + 1] = {
+				kind = "other", value = content:sub(index, finish), line = line,
+			}
+			index = finish + 1
+		end
+	end
+	return tokens
+end
+
+local function zon_references(content)
+	local references = {}
+	local tokens, problem = zig_tokens(content)
+	if problem then
+		return { { line = 1, problem = problem } }
+	end
+	local index = 1
+	while index <= #tokens do
+		local token = tokens[index]
+		if token.kind == "field" and token.value == "dependencies" and
+			tokens[index + 1] and tokens[index + 1].kind == "=" then
+			local opening = index + 2
+			while tokens[opening] and tokens[opening].kind ~= "{" do opening = opening + 1 end
+			if not tokens[opening] then
+				references[#references + 1] = {
+					line = token.line, problem = "unsupported ZON dependencies expression",
+				}
+				break
+			end
+			local depth = 1
+			index = opening + 1
+			while index <= #tokens and depth > 0 do
+				token = tokens[index]
+				if token.kind == "{" then depth = depth + 1
+				elseif token.kind == "}" then depth = depth - 1
+				elseif depth > 0 and token.kind == "field" and
+					(token.value == "path" or token.value == "url") and
+					tokens[index + 1] and tokens[index + 1].kind == "=" then
+					local value = tokens[index + 2]
+					if not value or value.kind ~= "string" then
+						references[#references + 1] = {
+							line = token.line,
+							problem = "ZON dependency ." .. token.value .. " must be a static string",
+						}
+					else
+						references[#references + 1] = {
+							line = token.line,
+							value = value.value,
+							type = token.value == "path" and "path" or "source",
+						}
+					end
+				end
+				index = index + 1
+			end
+		else
+			index = index + 1
+		end
+	end
+	return references
+end
+
+local function nix_indented_string_close(content, opening)
+	local stack = { { kind = "indented", braces = 0 } }
+	local index = opening + 2
+	while index <= #content do
+		local state = stack[#stack]
+		local character = content:sub(index, index)
+		local pair = content:sub(index, index + 1)
+		if state.kind == "indented" and pair == "''" then
+			local escaped = content:sub(index + 2, index + 2)
+			if escaped == "$" or escaped == "'" then
+				index = index + 3
+			elseif escaped == "\\" then
+				index = index + 4
+			elseif #stack == 1 then
+				return index
+			else
+				stack[#stack] = nil
+				index = index + 2
+			end
+		elseif state.kind == "indented" and pair == "$$" then
+			index = index + 2
+		elseif state.kind == "indented" and pair == "${" then
+			stack[#stack + 1] = { kind = "expression", braces = 1 }
+			index = index + 2
+		elseif state.kind == "indented" then
+			index = index + 1
+		elseif state.kind == "string" and character == "\\" then
+			index = index + 2
+		elseif state.kind == "string" and pair == "$$" then
+			index = index + 2
+		elseif state.kind == "string" and pair == "${" then
+			stack[#stack + 1] = { kind = "expression", braces = 1 }
+			index = index + 2
+		elseif state.kind == "string" and character == '"' then
+			stack[#stack] = nil
+			index = index + 1
+		elseif state.kind == "string" then
+			index = index + 1
+		elseif state.kind == "expression" and character == "#" then
+			index = content:find("\n", index + 1, true) or (#content + 1)
+		elseif state.kind == "expression" and pair == "/*" then
+			local finish = content:find("*/", index + 2, true)
+			if not finish then return nil end
+			index = finish + 2
+		elseif state.kind == "expression" and pair == "''" then
+			stack[#stack + 1] = { kind = "indented", braces = 0 }
+			index = index + 2
+		elseif state.kind == "expression" and character == '"' then
+			stack[#stack + 1] = { kind = "string", braces = 0 }
+			index = index + 1
+		elseif state.kind == "expression" and character == "{" then
+			state.braces = state.braces + 1
+			index = index + 1
+		elseif state.kind == "expression" and character == "}" then
+			state.braces = state.braces - 1
+			index = index + 1
+			if state.braces == 0 then stack[#stack] = nil end
+		else
+			index = index + 1
+		end
+	end
+	return nil
+end
+
+local function nix_tokens(content)
+	local tokens = {}
+	local index = 1
+	local line = 1
+	while index <= #content do
+		local character = content:sub(index, index)
+		local pair = content:sub(index, index + 1)
+		if character == "\n" then
+			line = line + 1
+			index = index + 1
+		elseif character:match("%s") then
+			index = index + 1
+		elseif character == "#" then
+			local finish = content:find("\n", index + 1, true)
+			index = finish or (#content + 1)
+		elseif pair == "/*" then
+			local finish = content:find("*/", index + 2, true)
+			if not finish then return nil, "unterminated Nix block comment" end
+			local block = content:sub(index, finish + 1)
+			local _, count = block:gsub("\n", "\n")
+			line = line + count
+			index = finish + 2
+		elseif pair == "''" then
+			local finish = nix_indented_string_close(content, index)
+			if not finish then return nil, "unterminated Nix indented string" end
+			local block = content:sub(index, finish + 1)
+			local _, count = block:gsub("\n", "\n")
+			line = line + count
+			tokens[#tokens + 1] = {
+				kind = "string", value = block:sub(3, -3), dynamic = false, line = line - count,
+			}
+			index = finish + 2
+		elseif character == '"' then
+			local token_line = line
+			local value = {}
+			local dynamic = false
+			index = index + 1
+			local closed = false
+			while index <= #content do
+				character = content:sub(index, index)
+				if character == '"' then
+					index = index + 1
+					closed = true
+					break
+				elseif character == "\\" then
+					local escape = content:sub(index + 1, index + 1)
+					value[#value + 1] = simple_escapes[escape] or escape
+					index = index + 2
+				elseif character == "$" and content:sub(index + 1, index + 1) == "{" then
+					dynamic = true
+					value[#value + 1] = "$"
+					index = index + 1
+				else
+					if character == "\n" then line = line + 1 end
+					value[#value + 1] = character
+					index = index + 1
+				end
+			end
+			if not closed then return nil, "unterminated Nix string" end
+			tokens[#tokens + 1] = {
+				kind = "string", value = table.concat(value), dynamic = dynamic, line = token_line,
+			}
+		elseif pair == "//" then
+			index = index + 2
+		elseif pair == "./" or content:sub(index, index + 2) == "../" or
+			(character == "/" and content:sub(index + 1, index + 1):match("[^%s/]") ~= nil) then
+			local finish = content:find("[%s;,%)%}%]]", index)
+			if finish then finish = finish - 1 else finish = #content end
+			tokens[#tokens + 1] = {
+				kind = "path", value = content:sub(index, finish), line = line,
+			}
+			index = finish + 1
+		elseif character:match("[A-Za-z_]") then
+			local finish = content:find("[^A-Za-z0-9_.'%-]", index)
+			if finish then finish = finish - 1 else finish = #content end
+			tokens[#tokens + 1] = {
+				kind = "word", value = content:sub(index, finish), line = line,
+			}
+			index = finish + 1
+		elseif character == "=" or character == ";" or character == "{" or character == "}" then
+			tokens[#tokens + 1] = { kind = character, value = character, line = line }
+			index = index + 1
+		else
+			index = index + 1
+		end
+	end
+	return tokens
+end
+
+local function nix_references(content)
+	local references = {}
+	local tokens, problem = nix_tokens(content)
+	if problem then return { { line = 1, problem = problem } } end
+	for index, token in ipairs(tokens) do
+		if token.kind == "path" then
+			references[#references + 1] = {
+				line = token.line, value = token.value, type = "path",
+			}
+		elseif token.kind == "word" and tokens[index + 1] and
+			tokens[index + 1].kind == "=" then
+			local key = token.value:match("([^.]+)$")
+			local value = tokens[index + 2]
+			if key == "url" or key == "src" or key == "source" then
+				if value and value.kind == "path" then
+					-- The path token is handled independently.
+				elseif value and value.kind == "string" then
+					if value.dynamic and key == "url" and token.value:match("^inputs%.") then
+						references[#references + 1] = {
+							line = token.line,
+							problem = "dynamic flake input URL requires explicit review",
+						}
+					else
+						references[#references + 1] = {
+							line = token.line, value = value.value, type = "source",
+						}
+					end
+				elseif key == "url" and token.value:match("^inputs%.") then
+					references[#references + 1] = {
+						line = token.line,
+						problem = "flake input URL must be statically inspectable",
+					}
+				end
+			end
+		end
+	end
+	return references
+end
+
+local json_runtime
+local function decode_json(content, label)
+	if not json_runtime then
+		local loaded, module = pcall(require, "cjson.safe")
+		if not loaded then die("lua-cjson is required to inspect " .. label) end
+		json_runtime = module
+	end
+	local value, problem = json_runtime.decode(content)
+	if not value then return nil, label .. " is not valid JSON: " .. tostring(problem) end
+	return value
+end
+
+local function lock_references(content)
+	local references = {}
+	local lock, problem = decode_json(content, "flake.lock")
+	if problem then return { { line = 1, problem = problem } }, nil end
+	if type(lock) ~= "table" or type(lock.nodes) ~= "table" then
+		return { { line = 1, problem = "flake.lock must contain a nodes object" } }, nil
+	end
+	for _, node in pairs(lock.nodes) do
+		if type(node) == "table" then
+			for _, source_name in ipairs({ "locked", "original" }) do
+				local source = node[source_name]
+				if type(source) == "table" then
+					local source_type = source.type
+					if source_type == "path" then
+						references[#references + 1] = {
+							line = 1,
+							value = source.path or source.url or source_type,
+							problem = "flake.lock contains a local " .. source_type .. " source",
+						}
+					end
+					if type(source.url) == "string" then
+						references[#references + 1] = {
+							line = 1, value = source.url, type = "source",
+						}
+					end
+				end
+			end
+		end
+	end
+	return references, lock
+end
+
+local function is_absolute_or_expanded(value)
+	return value:match("^/") or value:match("^\\") or
+		value:match("^[A-Za-z]:[\\/]") or value:match("^~[/\\]") or
+		value:match("^%$[%w_{]") or value:match("^%%[%w_]+%%")
+end
+
+local function normalize_from_base(base, value)
+	if is_absolute_or_expanded(value) then
+		return nil, "host-local or expanded path"
+	end
+	local combined = base and base ~= "" and base .. "/" .. value or value
+	local components = {}
+	for component in combined:gmatch("[^/\\]+") do
+		if component == ".." then
+			if #components == 0 then return nil, "path escapes repository root" end
+			components[#components] = nil
+		elseif component ~= "." and component ~= "" then
+			components[#components + 1] = component
+		end
+	end
+	if #components == 0 then return ".", nil end
+	return table.concat(components, "/"), nil
+end
+
+local function normalize_from_manifest(manifest, value)
+	local directory = manifest:match("^(.*)/[^/]+$")
+	return normalize_from_base(directory, value)
+end
+
+local function nul_records(data)
+	local records = {}
+	local offset = 1
+	while offset <= #data do
+		local delimiter = data:find("\0", offset, true)
+		if not delimiter then die("malformed NUL-delimited response from Git") end
+		records[#records + 1] = data:sub(offset, delimiter - 1)
+		offset = delimiter + 1
+	end
+	return records
+end
+
+local function index_entry(path)
+	local output, status = git(
+		"--literal-pathspecs ls-files -s -z -- " .. shell_quote(path)
+	)
+	if status ~= 0 then die("cannot inspect staged path " .. path) end
+	for _, record in ipairs(nul_records(output)) do
+		local mode, object, stage, name =
+			record:match("^(%d+) ([0-9a-f]+) (%d+)\t(.*)$")
+		if name == path then
+			return { mode = mode, object = object, stage = stage }
+		end
+	end
+end
+
+local function head_entry(path)
+	local output, status = git(
+		"--literal-pathspecs ls-tree -z HEAD -- " .. shell_quote(path)
+	)
+	if status ~= 0 then return nil end
+	for _, record in ipairs(nul_records(output)) do
+		local mode, object_type, object, name =
+			record:match("^(%d+) ([^ ]+) ([0-9a-f]+)\t(.*)$")
+		if name == path then
+			return { mode = mode, object_type = object_type, object = object }
+		end
+	end
+end
+
+local function is_tracked(path)
+	local output, status = git(
+		"--literal-pathspecs ls-files --cached -z -- " .. shell_quote(path)
+	)
+	return status == 0 and output ~= ""
+end
+
+local function resolve_index_symlinks(path)
+	local current = path
+	local visited = {}
+	for _ = 1, 40 do
+		if visited[current] then return nil, "tracked symlink cycle" end
+		visited[current] = true
+		local components = {}
+		for component in current:gmatch("[^/]+") do
+			components[#components + 1] = component
+		end
+		local prefix = ""
+		local followed = false
+		for index, component in ipairs(components) do
+			prefix = prefix == "" and component or prefix .. "/" .. component
+			local entry = index_entry(prefix)
+			if entry and entry.mode == "120000" then
+				local target = staged_blob(prefix)
+				if not target then return nil, "cannot read tracked symlink target" end
+				target = target:gsub("[\r\n]+$", "")
+				if is_absolute_or_expanded(target) then
+					return nil, "tracked symlink escapes to a host path"
+				end
+				local remainder = table.concat(components, "/", index + 1)
+				if remainder ~= "" then target = target .. "/" .. remainder end
+				local base = prefix:match("^(.*)/[^/]+$")
+				local normalized, problem = normalize_from_base(base, target)
+				if problem then return nil, "tracked symlink " .. problem end
+				current = normalized
+				followed = true
+				break
+			end
+		end
+		if not followed then return current end
+	end
+	return nil, "tracked symlink chain exceeds 40 links"
+end
+
+local function relevant_kind(path)
+	if path == "Cargo.toml" or path:match("/Cargo%.toml$") then return "cargo" end
+	if path == "Cargo.lock" or path:match("/Cargo%.lock$") then return "cargo-lock" end
+	if path == "build.zig.zon" or path:match("/build%.zig%.zon$") then return "zon" end
+	if path == "flake.nix" or path:match("/flake%.nix$") then return "nix" end
+	if path == "flake.lock" or path:match("/flake%.lock$") then return "nix-lock" end
+	if path == ".cargo/config" or path == ".cargo/config.toml" or
+		path:match("/%.cargo/config$") or path:match("/%.cargo/config%.toml$") then
+		return "cargo-config"
+	end
+end
+
+local changed_all, changed_all_status = git("diff --cached --name-only -z --")
+if changed_all_status ~= 0 then die("cannot enumerate all staged paths") end
+local changed, changed_status = git("diff --cached --name-only --diff-filter=ACMRT -z --")
+if changed_status ~= 0 then die("cannot enumerate staged dependency files") end
+local all_changed_paths = nul_records(changed_all)
+local changed_paths = nul_records(changed)
+local invalidate_all = false
+for _, path in ipairs(all_changed_paths) do
+	local entry = index_entry(path)
+	local old_entry = head_entry(path)
+	if (entry and entry.mode == "120000") or
+		(old_entry and old_entry.mode == "120000") or
+		path == ".dependency-portability.json" or
+		path == "flake.lock" or path:match("/flake%.lock$") then
+		invalidate_all = true
+	end
+end
+
+local paths = {}
+local seen = {}
+local function include(path)
+	if relevant_kind(path) and not seen[path] then
+		seen[path] = true
+		paths[#paths + 1] = path
+	end
+end
+for _, path in ipairs(changed_paths) do include(path) end
+if invalidate_all then
+	local tracked, tracked_status = git("ls-files -z --")
+	if tracked_status ~= 0 then die("cannot enumerate tracked dependency manifests") end
+	for _, path in ipairs(nul_records(tracked)) do include(path) end
+end
+local policy_changed = false
+for _, path in ipairs(all_changed_paths) do
+	if path == ".dependency-portability.json" then policy_changed = true end
+end
+
+local function local_source_reason(value)
+	local lower = value:lower()
+	if lower:match("^path:") or lower:match("^file:") or lower:match("^git%+file:") or
+		lower:match("^path%+file:") then
+		return "local file source"
+	end
+end
+
+local findings = {}
+
+local lock_object
+local lock_entry = index_entry("flake.lock")
+if lock_entry and lock_entry.mode ~= "120000" then
+	local lock_content = staged_blob("flake.lock")
+	if lock_content then
+		local _, parsed_lock = lock_references(lock_content)
+		lock_object = parsed_lock
+	end
+end
+
+local function regular_tracked_file(path)
+	local normalized, problem = normalize_from_base(nil, path)
+	if problem or normalized ~= path then return false, problem or "path is not normalized" end
+	local resolved
+	resolved, problem = resolve_index_symlinks(path)
+	if problem or resolved ~= path then return false, problem or "path traverses a symlink" end
+	local entry = index_entry(path)
+	if not entry or (entry.mode ~= "100644" and entry.mode ~= "100755") then
+		return false, "path is not a tracked regular file"
+	end
+	return true
+end
+
+local function resolve_lock_input(lock, input_name)
+	if type(lock) ~= "table" or type(lock.nodes) ~= "table" then
+		return nil, "staged flake.lock is missing or malformed"
+	end
+	local root_name = lock.root or "root"
+	local root_node = lock.nodes[root_name]
+	if type(root_node) ~= "table" or type(root_node.inputs) ~= "table" then
+		return nil, "flake.lock root input map is missing"
+	end
+	local target = root_node.inputs[input_name]
+	if type(target) == "string" then return target end
+	if type(target) ~= "table" or #target == 0 then
+		return nil, "named flake input is absent or has an unsupported follows target"
+	end
+	local current = root_name
+	local visited = {}
+	for _, segment in ipairs(target) do
+		local marker = current .. "\0" .. tostring(segment)
+		if visited[marker] then return nil, "flake input follows cycle" end
+		visited[marker] = true
+		local node = lock.nodes[current]
+		if type(node) ~= "table" or type(node.inputs) ~= "table" then
+			return nil, "flake input follows path cannot be resolved"
+		end
+		local next_target = node.inputs[segment]
+		if type(next_target) ~= "string" then
+			return nil, "nested or malformed flake input follows target"
+		end
+		current = next_target
+	end
+	return current
+end
+
+local known_locked_types = {
+	github = true,
+	gitlab = true,
+	sourcehut = true,
+	git = true,
+	tarball = true,
+	file = true,
+}
+local git_locked_types = {
+	github = true,
+	gitlab = true,
+	sourcehut = true,
+	git = true,
+}
+
+local function pinned_input_problem(lock, input_name)
+	local node_name, problem = resolve_lock_input(lock, input_name)
+	if problem then return problem end
+	local node = lock.nodes[node_name]
+	local locked = type(node) == "table" and node.locked or nil
+	if type(locked) ~= "table" then return "flake input has no locked source" end
+	if not known_locked_types[locked.type] then
+		return "flake input uses an unknown or local locked source type"
+	end
+	if type(locked.url) == "string" and local_source_reason(locked.url) then
+		return "flake input resolves to a local URL"
+	end
+	local content_hash = locked.narHash or locked.hash
+	if type(content_hash) ~= "string" or not content_hash:match("^[A-Za-z0-9]+%-[%w+/=]+$") then
+		return "flake input lacks a valid locked content hash"
+	end
+	if git_locked_types[locked.type] then
+		if type(locked.rev) ~= "string" or
+			(not locked.rev:match("^[0-9A-Fa-f]+$") or
+			(#locked.rev ~= 40 and #locked.rev ~= 64)) then
+			return "Git-like flake input lacks a concrete full revision"
+		end
+	end
+end
+
+local policy = {}
+local policy_entry = index_entry(".dependency-portability.json")
+if policy_entry then
+	if policy_entry.mode ~= "100644" and policy_entry.mode ~= "100755" then
+		findings[#findings + 1] = {
+			path = ".dependency-portability.json", line = 1,
+			value = "<policy>", reason = "exception policy must be a tracked regular file",
+		}
+	else
+		local decoded, problem = decode_json(
+			staged_blob(".dependency-portability.json") or "",
+			".dependency-portability.json"
+		)
+		if problem then
+			findings[#findings + 1] = {
+				path = ".dependency-portability.json", line = 1,
+				value = "<policy>", reason = problem,
+			}
+		elseif decoded.schema ~= "dependency-portability/v1" or
+			type(decoded.nixStaging) ~= "table" then
+			findings[#findings + 1] = {
+				path = ".dependency-portability.json", line = 1,
+				value = "<policy>", reason = "unsupported dependency portability policy schema",
+			}
+		else
+			for key in pairs(decoded) do
+				if key ~= "schema" and key ~= "nixStaging" then
+					findings[#findings + 1] = {
+						path = ".dependency-portability.json", line = 1,
+						value = tostring(key), reason = "unknown policy field",
+					}
+				end
+			end
+			for index, record in ipairs(decoded.nixStaging) do
+				local record_problem
+				if type(record) ~= "table" then
+					record_problem = "Nix staging record must be an object"
+				else
+					for key in pairs(record) do
+						if key ~= "manifest" and key ~= "path" and
+							key ~= "input" and key ~= "staging" then
+							record_problem = "unknown Nix staging record field " .. tostring(key)
+						end
+					end
+					for _, key in ipairs({ "manifest", "path", "input", "staging" }) do
+						if type(record[key]) ~= "string" or record[key] == "" then
+							record_problem = "Nix staging record requires string field " .. key
+						end
+					end
+				end
+				local normalized
+				if not record_problem then
+					normalized, record_problem =
+						normalize_from_manifest(record.manifest, record.path)
+				end
+				if not record_problem and is_tracked(normalized) then
+					record_problem = "Nix staging exception is only for absent staged destinations"
+				end
+				if not record_problem then
+					local ok
+					ok, record_problem = regular_tracked_file(record.manifest)
+					if not ok and not record_problem then
+						record_problem = "manifest is not a tracked regular file"
+					end
+				end
+				if not record_problem then
+					local kind = relevant_kind(record.manifest)
+					if kind ~= "cargo" and kind ~= "zon" then
+						record_problem = "Nix staging manifest must be Cargo.toml or build.zig.zon"
+					end
+				end
+				if not record_problem then
+					local ok
+					ok, record_problem = regular_tracked_file(record.staging)
+					if not ok and not record_problem then
+						record_problem = "staging producer is not a tracked regular file"
+					end
+				end
+				if not record_problem then
+					record_problem = pinned_input_problem(lock_object, record.input)
+				end
+				local policy_key
+				if not record_problem then
+					policy_key = record.manifest .. "\0" .. record.path
+					if policy[policy_key] then
+						record_problem = "duplicate exact Nix staging mapping"
+					else
+						policy[policy_key] = true
+					end
+				end
+				if record_problem then
+					findings[#findings + 1] = {
+						path = ".dependency-portability.json", line = index,
+						value = type(record) == "table" and
+							tostring(record.manifest or "<record>") or "<record>",
+						reason = record_problem,
+					}
+				end
+			end
+		end
+	end
+end
+
+local function policy_allows(manifest, literal_path)
+	return policy[manifest .. "\0" .. literal_path] == true
+end
+
+local function dependency_path_base(manifest, kind)
+	if kind == "cargo-config" then
+		return manifest:match("^(.*)/%.cargo/config%.?[^/]*$")
+	end
+	return manifest:match("^(.*)/[^/]+$")
+end
+
+for _, path in ipairs(paths) do
+	local content = staged_blob(path)
+	if not content then die("cannot read staged blob " .. path) end
+	local kind = relevant_kind(path)
+	local references
+	if kind == "cargo" or kind == "cargo-lock" or kind == "cargo-config" then
+		references = cargo_references(content, kind)
+	elseif kind == "zon" then
+		references = zon_references(content)
+	elseif kind == "nix" then
+		references = nix_references(content)
+	elseif kind == "nix-lock" then
+		references = lock_references(content)
+	else
+		references = {}
+	end
+	for _, reference in ipairs(references) do
+		local reason = reference.problem
+		if not reason and reference.type == "source" then
+			reason = local_source_reason(reference.value)
+		elseif not reason and reference.type == "path" then
+			local normalized
+			normalized, reason = normalize_from_base(
+				dependency_path_base(path, kind), reference.value
+			)
+			if not reason then normalized, reason = resolve_index_symlinks(normalized) end
+			if not reason and not is_tracked(normalized) then
+				reason = "dependency path is not tracked in the staged repository"
+			end
+			if reason == "dependency path is not tracked in the staged repository" and
+				policy_allows(path, reference.value) then
+				reason = nil
+			end
+		end
+		if reason then
+			findings[#findings + 1] = {
+				path = path,
+				line = reference.line,
+				value = reference.value or "<unsupported syntax>",
+				reason = reason,
+			}
+		end
+	end
+end
+
+if #findings > 0 then
+	for _, finding in ipairs(findings) do
+		io.stderr:write(string.format(
+			"%s:%d: nonportable dependency %q (%s)\n",
+			finding.path, finding.line, finding.value, finding.reason
+		))
+	end
+	io.stderr:write(
+		"\nERROR: staged dependency declarations are not portable to a clean checkout.\n" ..
+		"Repair and stage the manifest. For a reviewed temporary exception only, set\n" ..
+		"ALLOW_NONPORTABLE_DEPENDENCIES to a specific human-readable reason.\n"
+	)
+	os.exit(1)
+end

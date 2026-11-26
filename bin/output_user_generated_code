@@ -5,7 +5,7 @@
 # as a single unified output.
 
 output_user_generated_code() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 
 	# Define exclusion patterns directly for ripgrep
 	# Note: Ripgrep's -g option is used for globbing, which can include or exclude files.

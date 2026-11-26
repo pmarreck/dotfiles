@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 _generate_curl_api_request_for_please() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	needs jq
 	local request args timeout model curl
 	curl=${CURL:-curl}

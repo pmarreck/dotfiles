@@ -5,7 +5,7 @@ source_relative_once truthy.bash
 # only redefines it here if it's not already defined
 >/dev/null declare -F needs || \
 needs() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   local bin=$1
   shift
   command -v "$bin" >/dev/null 2>&1 || { echo >&2 "I require $bin but it's not installed or in PATH; $*"; return 1; }
@@ -15,14 +15,14 @@ needs() {
 [ -z "${AWK}" ] && export AWK=$(command -v frawk || command -v gawk || command -v awk)
 
 save_shellenv() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   export OLDHISTIGNORE=$HISTIGNORE
   export HISTIGNORE="shopt:set:eval"
   _prev_shell_opts=$(set +o; shopt -p;)
 }
 
 restore_shellenv() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   eval "$_prev_shell_opts"
   # clean up after ourselves, don't want to pollute the ENV
   unset _prev_shell_opts
@@ -31,7 +31,7 @@ restore_shellenv() {
 }
 
 uniquify_array() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   # ${AWK:-awk} '!seen[$0]++'
   # declare -n arr=$1  # indirect reference to the array name passed in as arg1
   # edit: forcing compatibility with bash < 4.2 (which doesn't support declare -n)
@@ -52,7 +52,7 @@ uniquify_array() {
 }
 
 array_contains_element() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   # declare -n array=$1
   # We can't use nameref, so use eval to indirectly reference the array
   eval 'array=("${'"$1"'[@]}")'
@@ -71,7 +71,7 @@ array_contains_element() {
 }
 
 move_PROMPT_COMMAND_to_precmd_functions() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   # Replace newlines with semicolons
   PROMPT_COMMAND=${PROMPT_COMMAND//$'\n'/;}
 
@@ -95,7 +95,7 @@ move_PROMPT_COMMAND_to_precmd_functions() {
 
 # Minimalist rehash function for shell refreshing
 function rehash() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   
   # Skip all tests and hooks during rehash
   export SKIP_DOTFILE_TESTS=true
@@ -136,7 +136,7 @@ function rehash() {
 # command provided by wezterm if wezterm is installed, but falls
 # back to a simple printf command otherwise.
 __wezterm_osc7() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   local default_directory=${1:-$PWD}
   if hash wezterm 2>/dev/null ; then
     wezterm set-working-directory $default_directory 2>/dev/null && return 0
@@ -147,7 +147,7 @@ __wezterm_osc7() {
 }
 
 __wezterm_osc7_home() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   __wezterm_osc7 "$HOME"
 }
 
@@ -196,12 +196,12 @@ if truthy RUN_DOTFILE_TESTS; then
 fi
 
 elixir_js_loc() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   git ls-files | grep -E '\.erl|\.exs?|\.js$' | xargs cat | $SED -e '/^$/d' -e '/^ *#/d' -e '/^ *\/\//d' | wc -l
 }
 
 open_gem() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   choose_editor "$(bundle show "$1")"
 }
 
@@ -235,7 +235,7 @@ fi
 
 
 datetime-human() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   date +"%A, %B %d, %Y %I:%M %p"
 }
 
@@ -245,7 +245,7 @@ datetime-human() {
 # requires btop and htop to be installed
 
 puts() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   local print_fmt end_fmt print_spec fd newline
   print_fmt=''
   end_fmt=''

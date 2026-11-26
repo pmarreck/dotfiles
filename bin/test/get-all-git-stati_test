@@ -25,6 +25,10 @@ DIRTY=$(mktemp -d "${TMPDIR:-/tmp}/getallgitstati_dirty.XXXXXX")
 EMPTY=$(mktemp -d "${TMPDIR:-/tmp}/getallgitstati_empty.XXXXXX")
 DEFAULT_HOME=$(mktemp -d "${TMPDIR:-/tmp}/getallgitstati_home.XXXXXX")
 SECOND_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/get all git stati second.XXXXXX")
+# These private fixture remotes test status reporting, not push authorization.
+mkdir "$DEFAULT_HOME/native-tools"
+ln -s "$(git --exec-path)/git" "$DEFAULT_HOME/native-tools/git"
+PATH="$DEFAULT_HOME/native-tools:$PATH"
 trap 'rm -rf "$FIXT" "$REMOTES" "$DIRTY" "$EMPTY" "$DEFAULT_HOME" "$SECOND_ROOT"' EXIT
 
 make_repo_with_remote "$FIXT/alpha" "$REMOTES/alpha.git" >/dev/null 2>&1

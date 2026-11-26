@@ -1,15 +1,23 @@
 #!/usr/bin/env bash
 
+# Fixture functions are invoked after export into the overview subprocess.
+# shellcheck disable=SC2329
+
 # Test for bin/overview
 # Verifies static analysis safety checks
 
 fails=0
 
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+cmd="$script_dir/../overview"
+
 # Mock binaries and functions
-# Use mktemp with --tmpdir as requested (verified working on this system)
-TEST_DIR="$(mktemp -d --tmpdir test_overview.XXXXXX)"
-# cleanup handled at end of script
-mkdir -p "$TEST_DIR/bin"
+# Keep every mutable fixture under one trap-owned root.
+TEST_DIR="$(mktemp -d "${TMPDIR:-/tmp}/overview_test.XXXXXX")"
+trap 'rm -rf "$TEST_DIR"' EXIT
+mkdir -p "$TEST_DIR/bin" "$TEST_DIR/home"
+export HOME="$TEST_DIR/home"
+unset -f rg 2>/dev/null || :
 PATH="$TEST_DIR/bin:$PATH"
 
 # Setup mocks
@@ -79,8 +87,18 @@ chmod +x "$TEST_DIR/bin/binary_unsafe_cmd"
 # 7. Mock overview (if called as command)
 # In real life, overview calls itself. Here we mock it to behave like the real one (or just copy it?)
 # Copying real one is best integration test.
-cp bin/overview "$TEST_DIR/bin/overview"
+cp "$cmd" "$TEST_DIR/bin/overview"
 chmod +x "$TEST_DIR/bin/overview"
+
+set_test_shebang() {
+    local stub="$1" stub_body
+    stub_body=$(<"$stub")
+    printf '#!%s\n%s\n' "$(type -P bash)" "${stub_body#*$'\n'}" >"$stub"
+}
+
+for stub in executables functions safe_cmd unsafe_cmd binary_safe_cmd binary_unsafe_cmd overview; do
+    set_test_shebang "$TEST_DIR/bin/$stub"
+done
 
 # 8. Define functions in the current internal environment?
 # 'overview' uses 'declare -f' to inspect functions.
@@ -108,7 +126,7 @@ unsafe_func() {
 export -f unsafe_func
 
 # Now run overview
-output=$(bin/overview)
+output=$("$cmd")
 
 echo "--- Test Output ---"
 echo "$output"
@@ -167,9 +185,6 @@ else
     # So 'overview' won't be in the list unless we add it to the mock 'executables' script.
     echo "SKIP: overview self-test (mock exec list doesn't include it)"
 fi
-
-# Cleanup
-rm -rf "$TEST_DIR"
 
 if ((fails > 0)); then
     echo "Tests failed: $fails"

@@ -1,6 +1,6 @@
 # function to find necessary binaries in common locations in case PATH is borked
 find_binary() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   if [ -f "/run/current-system/sw/bin/$1" ]; then
     echo -n "/run/current-system/sw/bin/$1"
   elif [ -f "/usr/local/bin/$1" ]; then
@@ -40,7 +40,7 @@ _export_gnu_tool TIMEOUT timeout gtimeout
 
 # function to prepend paths in an idempotent way
 prepend_path() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   function docs() {
     echo "Usage: prepend_path [-o|-h|--help] <path_to_prepend> [name_of_path_var, defaults to PATH]" >&2
     echo "Setting -o will print the new path to stdout instead of exporting it" >&2
@@ -100,7 +100,7 @@ prepend_path() {
 ppp() { set +H; local plv="${2:-PATH}"; echo -n "${1%/}:${!plv}" | awk -v RS=: -v ORS=: '!($0 in a) {a[$0]; print}' | $SED 's/:$//'; }
 
 exclude_path() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+  [ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
   local AWK=$(which awk || echo -n "/run/current-system/sw/bin/awk") # in case you accidentally exclude the path that has awk...
   function docs() {
     echo "Usage: exclude_path [-o|-h|--help] <path_to_exclude> [name_of_path_var, defaults to PATH]" >&2

@@ -6,27 +6,69 @@
 fails=0
 tests=0
 
-tmpdir=$(mktemp -d --tmpdir)
-trap 'tmux kill-server 2>/dev/null || true; rm -rf "$tmpdir"' EXIT
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+tmpdir=$(mktemp -d --tmpdir kill-session_test.XXXXXX)
+trap 'rm -rf -- "$tmpdir"' EXIT
 
 unset TMUX
 
 mkdir -p "$tmpdir/bin"
-PATH="$HOME/dotfiles/bin:$tmpdir/bin:$PATH"
+PATH="$tmpdir/bin:$repo_root/bin:$PATH"
 
-tmux_bin=$(command -v tmux)
-export REAL_TMUX_BIN="$tmux_bin"
-export TMUX_SOCKET_NAME="kill-session-test-$$"
+export FAKE_TMUX_STATE="$tmpdir/tmux-sessions"
+export FAKE_TMUX_LOG="$tmpdir/tmux-requests"
+: > "$FAKE_TMUX_STATE"
+: > "$FAKE_TMUX_LOG"
 
-cat <<'TMUX_EOF' > "$tmpdir/bin/tmux"
-#!/usr/bin/env bash
-exec "$REAL_TMUX_BIN" -L "$TMUX_SOCKET_NAME" "$@"
+printf '#!%s\n' "$BASH" > "$tmpdir/bin/tmux"
+cat <<'TMUX_EOF' >> "$tmpdir/bin/tmux"
+set -u
+
+printf '%q ' "$@" >> "$FAKE_TMUX_LOG"
+printf '\n' >> "$FAKE_TMUX_LOG"
+
+command_name="${1:-}"
+if (( $# > 0 )); then
+	shift
+fi
+
+case "$command_name" in
+	list-sessions)
+		cat "$FAKE_TMUX_STATE"
+		;;
+	has-session)
+		[[ ${1:-} == -t && $# == 2 ]] || exit 2
+		while IFS= read -r session_name; do
+			[[ "$session_name" == "$2" ]] && exit 0
+		done < "$FAKE_TMUX_STATE"
+		exit 1
+		;;
+	kill-session)
+		[[ ${1:-} == -t && $# == 2 ]] || exit 2
+		next_state="$FAKE_TMUX_STATE.next.$$"
+		found=false
+		: > "$next_state"
+		while IFS= read -r session_name; do
+			if [[ "$session_name" == "$2" ]]; then
+				found=true
+			else
+				printf '%s\n' "$session_name" >> "$next_state"
+			fi
+		done < "$FAKE_TMUX_STATE"
+		mv "$next_state" "$FAKE_TMUX_STATE"
+		"$found"
+		;;
+	*)
+		printf 'unexpected tmux command: %s\n' "$command_name" >&2
+		exit 2
+		;;
+esac
 TMUX_EOF
 chmod +x "$tmpdir/bin/tmux"
 export TMUX_BIN="$tmpdir/bin/tmux"
 
-cat <<'GUM_EOF' > "$tmpdir/bin/gum"
-#!/usr/bin/env bash
+printf '#!%s\n' "$BASH" > "$tmpdir/bin/gum"
+cat <<'GUM_EOF' >> "$tmpdir/bin/gum"
 if [[ ${1:-} != "choose" ]]; then
 	echo "gum stub only supports choose" >&2
 	exit 2
@@ -67,6 +109,20 @@ exit 1
 GUM_EOF
 chmod +x "$tmpdir/bin/gum"
 
+set_sessions() {
+	: > "$FAKE_TMUX_STATE"
+	printf '%s\n' "$@" > "$FAKE_TMUX_STATE"
+}
+
+session_exists() {
+	local wanted=$1
+	local session_name
+	while IFS= read -r session_name; do
+		[[ "$session_name" == "$wanted" ]] && return 0
+	done < "$FAKE_TMUX_STATE"
+	return 1
+}
+
 # Test 1: help output
 ((tests++))
 echo "Testing: help output..."
@@ -81,9 +137,9 @@ fi
 # Test 2: kill a session by name
 ((tests++))
 echo "Testing: kill session by name..."
-tmux new-session -d -s alpha
+set_sessions alpha
 kill-session alpha >/dev/null 2>&1
-if tmux has-session -t alpha 2>/dev/null; then
+if session_exists alpha; then
 	echo "FAIL: alpha session still exists" >&2
 	((fails++))
 else
@@ -93,17 +149,16 @@ fi
 # Test 3: kill a session using gum choose
 ((tests++))
 echo "Testing: gum choose selection..."
-tmux new-session -d -s beta
-tmux new-session -d -s gamma
+set_sessions beta gamma
 export GUM_CHOICE="beta"
 kill-session >/dev/null 2>&1
-if tmux has-session -t beta 2>/dev/null; then
+if session_exists beta; then
 	echo "FAIL: beta session still exists" >&2
 	((fails++))
 else
 	echo "PASS: beta session killed via gum choose"
 fi
-if tmux has-session -t gamma 2>/dev/null; then
+if session_exists gamma; then
 	echo "PASS: gamma session preserved"
 else
 	echo "FAIL: gamma session missing" >&2
@@ -128,7 +183,7 @@ fi
 # Test 5: gum cancel only reports once
 ((tests++))
 echo "Testing: gum cancel output..."
-tmux new-session -d -s delta
+set_sessions delta
 export GUM_MODE="cancel"
 error_output=$(kill-session 2>&1 >/dev/null)
 exit_code=$?
@@ -147,8 +202,7 @@ kill-session delta >/dev/null 2>&1
 # Test 6: missing name lists active sessions
 ((tests++))
 echo "Testing: missing session name error list..."
-tmux new-session -d -s alpha
-tmux new-session -d -s beta
+set_sessions alpha beta
 error_output=$(kill-session missing 2>&1 >/dev/null)
 exit_code=$?
 if [[ $exit_code -ne 0 && "$error_output" == *"tmux session name not found; active sessions: alpha, beta"* ]]; then

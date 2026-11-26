@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 die() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	red_text "${1}" >&2
 	echo >&2
 	exit ${2:-1}

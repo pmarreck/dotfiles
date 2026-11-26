@@ -1,0 +1,22 @@
+#!/usr/bin/env luajit
+
+local source_path = debug.getinfo(1, "S").source:sub(2)
+local source_dir = source_path:match("^(.*)/[^/]+$") or "."
+package.path = source_dir .. "/?.lua;" .. package.path
+
+local snapshot = require("diskhogs_macos_snapshot")
+local uid = tonumber(arg[2])
+if not uid then
+	io.stderr:write("diskhogs_macos_snapshot: expected PHASE UID\n")
+	os.exit(2)
+end
+
+local ok, result = pcall(function()
+	return snapshot.collect(snapshot.libproc_api(), uid)
+end)
+if not ok then
+	io.stderr:write("diskhogs_macos_snapshot: " .. tostring(result) .. "\n")
+	os.exit(1)
+end
+
+io.write(result)

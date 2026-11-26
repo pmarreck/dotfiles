@@ -2,7 +2,7 @@
 
 # Repeat argv commands directly; after --, isolate one Bash command string per iteration.
 repeat() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	case "${1:-}" in
 		-h|--help)
 			printf '%s\n' \

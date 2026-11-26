@@ -6,7 +6,7 @@ debug() {
 }
 
 sequentialize() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 
 	function _seq_usage {
 		echo "Usage: sequentialize \"<command with {} placeholder>\" <args...>"

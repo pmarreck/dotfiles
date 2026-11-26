@@ -74,6 +74,17 @@ printf '1000100\n' >"$NETHOGS_TEST_NETDIR/enp0s25/statistics/rx_bytes"
 printf '500200\n' >"$NETHOGS_TEST_NETDIR/enp0s25/statistics/tx_bytes"
 touch "$NETHOGS_TEST_UPDATED"
 SLEEP
+
+set_test_shebang() {
+	local stub="$1" stub_body
+	stub_body=$(<"$stub")
+	printf '#!%s\n%s\n' "$(type -P bash)" "${stub_body#*$'\n'}" >"$stub"
+}
+
+for stub in "$ip_stub" "$ss_stub" "$netstat_stub" "$route_stub" "$lsof_stub" "$sleep_stub"; do
+	set_test_shebang "$stub"
+done
+
 chmod +x "$ip_stub" "$ss_stub" "$netstat_stub" "$route_stub" "$lsof_stub" "$sleep_stub"
 
 run_nethogs() {

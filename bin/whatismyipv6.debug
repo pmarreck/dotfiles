@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 whatismyipv6() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	
 	# Debug: Show the raw output
 	echo "=== DEBUG: Raw IPv6 info ===" >&2

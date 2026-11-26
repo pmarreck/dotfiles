@@ -99,7 +99,7 @@ defmodule FormatTabular do
 
 		# Test 6: Bash exported function names (keep first line only)
 		test_input = """
-		BASH_FUNC_whatismyip%%=() {  [ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return;
+		BASH_FUNC_whatismyip%%=() {  [ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return;
 		 needs awk "Please install awk";
 		 if command -v ifconfig > /dev/null 2>&1; then
 		 if [[ "$(uname)" == "Darwin" ]]; then
@@ -126,7 +126,7 @@ defmodule FormatTabular do
 		"""
 		result = name_value_pairs_to_keyword_list(test_input)
 		expected = [
-			{"BASH_FUNC_whatismyip%%", "() {  [ -n \"${EDIT}\" ] && unset EDIT && edit_function \"${FUNCNAME[0]}\" \"$BASH_SOURCE\" && return;"},
+			{"BASH_FUNC_whatismyip%%", "() {  [ -n \"${EDIT:-}\" ] && unset EDIT && edit_function \"${FUNCNAME[0]}\" \"$BASH_SOURCE\" && return;"},
 			{"FOO", "bar"}
 		]
 		assert_equal(result, expected, "Bash exported function names")

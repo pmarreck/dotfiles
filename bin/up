@@ -3,7 +3,7 @@
 up() {
 	local nounset_was_set=$(set -o | rg -q 'nounset *on'; echo $?)
 	set -u
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	uptime | $AWK '{split($0,a,"  up ");split(a[2],b,", ");print"["b[1]", "b[2]"]"}'
 	if [ "$nounset_was_set" -eq 0 ]; then set -u; else set +u; fi
 }

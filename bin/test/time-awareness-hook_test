@@ -11,7 +11,8 @@
 # NEVER use set -e here (error paths are under test); set -u only.
 set -u
 
-HOOK="$HOME/dotfiles/bin/time-awareness-hook"
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+HOOK="$repo_root/bin/time-awareness-hook"
 tests=0
 fails=0
 
@@ -100,7 +101,7 @@ sstate() { "$HOOK" --sleep-decide "$@" | cut -d' ' -f2; }
 # Tested as a classifier over the WHOLE hour domain, not a couple of examples:
 # every hour must land in exactly the right bucket.
 day_noise=""
-for h in 5 6 7 9 12 15 18 20 21; do
+for h in 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21; do
 	r="$(sadv 1000000000 "$h" 0)"
 	[ "$r" = none ] || day_noise="$day_noise $h:$r"
 done
@@ -131,8 +132,8 @@ expect_eq "$(sstate 1000000000 12 999999520)" "999999520"  "daytime never stamps
 # The timestamp core rate-limits to 5 min. A sleep nudge that could only ride along
 # with a timestamp would be silently swallowed, so the adapter must emit on either.
 TMP2="$(mktemp -d --tmpdir time-awareness-hook.XXXXXX)"
-runh() { # now session hour_override
-	printf '{"hook_event_name":"UserPromptSubmit","session_id":"%s"}' "$2" \
+runh() { # now session hour_override [event]
+	printf '{"hook_event_name":"%s","session_id":"%s"}' "${4:-UserPromptSubmit}" "$2" \
 		| TIMESTAMP_HOOK_NOW="$1" TIMESTAMP_HOOK_STATE_DIR="$TMP2" \
 		  TIMESTAMP_HOOK_HOUR="$3" "$HOOK"
 }
@@ -155,6 +156,30 @@ for hour in 22 23 0 1 2 3 4; do
 	expect_contains "$text" "explicit stop requests, approval requirements, scope, and budget limits" "hour $hour retains authorization boundaries"
 	expect_not_contains "$text" "decline to start new tasks" "hour $hour has no blanket task refusal"
 	expect_not_contains "$text" "Do not begin anything long-running" "hour $hour has no blanket duration cutoff"
+done
+
+# Both client-facing events must carry the same continuation rule across the entire
+# sleep window. Parse emitted JSON, not source strings: this also catches broken
+# escaping and makes assertions about the actual context delivered to an agent.
+for event in UserPromptSubmit PostToolUse; do
+	for hour in 22 23 0 1 2 3 4; do
+		output="$(runh 1000000000 "overnight-$event-$hour" "$hour" "$event")"
+		context="$(printf '%s' "$output" | jq -er '.hookSpecificOutput.additionalContext' 2>/dev/null)"
+		expect_eq "$?" "0" "$event hour $hour emits valid context JSON"
+		expect_eq "$(printf '%s' "$output" | jq -r '.hookSpecificOutput.hookEventName')" "$event" "$event hour $hour preserves the event"
+		expect_contains "$context" "next authorized, unblocked PLAN item" "$event hour $hour directs continued plan work"
+		expect_contains "$context" "Do not request fresh overnight approval" "$event hour $hour avoids bedtime approval resets"
+		expect_contains "$context" "Time notices are informational; agents have no implied sleep/wake schedule" "$event hour $hour distinguishes human time from agent work"
+		expect_contains "$context" "Before voluntarily ending the turn, review PLAN.md" "$event hour $hour requires a continuation checkpoint"
+		expect_contains "$context" "continue independent items" "$event hour $hour scopes blockers to affected work"
+		expect_contains "$context" "When a choice is easily reversible" "$event hour $hour permits reversible judgment"
+		expect_contains "$context" "record the assumption, and proceed without waiting" "$event hour $hour does not block on reversible choices"
+		expect_contains "$context" "Do not revive shelved work" "$event hour $hour preserves holds"
+		expect_contains "$context" "no actionable authorized work remains" "$event hour $hour permits an honest completion stop"
+		expect_contains "$context" "new agents, schedules, or larger budgets" "$event hour $hour cannot grant itself expanded authority"
+		expect_not_contains "$context" "milestone and token/time budget for Peter's approval" "$event hour $hour removes the prior approval gate"
+		expect_contains "$context" "Continue already-authorized work" "$event hour $hour keeps authorized work moving"
+	done
 done
 
 # ---- summary ----

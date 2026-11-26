@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+set -u
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)
+gate="$root/bin/american-english-check"
+work=$(mktemp -d "${TMPDIR:-/tmp}/american-english-test.XXXXXXXX") || exit 1
+trap 'command rm -rf -- "$work"' EXIT
+export HOME="$work/home" GIT_CONFIG_GLOBAL="$work/gitconfig" GIT_CONFIG_NOSYSTEM=1
+mkdir -p "$HOME"
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE ALLOW_BRITISH_ENGLISH
+tests=0 failures=0
+check() { tests=$((tests+1)); if "$@"; then return; fi; printf 'FAIL: %s\n' "$*" >&2; failures=$((failures+1)); }
+scan() { output=$("$gate" --file "$work/input" 2>&1); rc=$?; }
+# Independently selected classifier sets, including inflections and identifier boundaries.
+for word in colour COLOURS coloured colouring neighbour neighbours neighbouring neighbourhoods organise organised organising organisation behaviours honours summarise analysed centres; do
+	printf '%s\n' "$word" > "$work/input"; scan; check test "$rc" -eq 1
+done
+for word in color colors neighbor neighbors organization behavior honor analysis practice license cancellation advertise merchandise disguise; do
+	printf '%s\n' "$word" > "$work/input"; scan; check test "$rc" -eq 0
+done
+for word in background_colour setColour ColourValue NEIGHBOUR_COUNT; do
+	printf '%s\n' "$word" > "$work/input"; scan; check test "$rc" -eq 1
+done
+printf "colour's neighbours’\n" > "$work/input"; scan; check test "$rc" -eq 1
+printf 'colourfulx xcolour xneighboury\n' > "$work/input"; scan; check test "$rc" -eq 0
+printf 'écolour colouré αcolour colourα\n' > "$work/input"; scan; check test "$rc" -eq 0
+mkdir -p "$work/failing-tools"
+printf '#!%s\nexit 2\n' "$(command -v bash)" > "$work/failing-tools/rg"; chmod +x "$work/failing-tools/rg"
+output=$(PATH="$work/failing-tools:$PATH" "$gate" --file "$work/input" 2>&1); rc=$?; check test "$rc" -eq 2
+printf 'colour\n' > "$work/input"
+output=$(ALLOW_BRITISH_ENGLISH=1 "$gate" --file "$work/input" 2>&1); rc=$?; check test "$rc" -ne 0
+output=$(ALLOW_BRITISH_ENGLISH='Preserving a verbatim quotation' "$gate" --file "$work/input" 2>&1); rc=$?; check test "$rc" -eq 0
+check test "${output#*WARNING}" != "$output"
+
+git init -q "$work/repo" || exit 1
+cd "$work/repo" || exit 1
+git config user.name 'Gate test'; git config user.email gate@example.invalid
+git config commit.gpgsign false
+git config core.hooksPath "$root/.global-githooks"
+printf 'colour\n' > example; git add example
+printf 'color\n' > example
+output=$("$gate" --staged 2>&1); rc=$?; check test "$rc" -eq 1
+output=$(git commit -qm rejected 2>&1); rc=$?; check test "$rc" -ne 0
+mkdir -p subdir
+output=$(cd subdir && "$gate" --staged 2>&1); rc=$?; check test "$rc" -eq 1
+git add example
+printf 'colour\n' > example
+output=$("$gate" --staged 2>&1); rc=$?; check test "$rc" -eq 0
+# All source-derived inflections are checked together, without one process per word.
+cut -f1 "$root/share/american-english/british-to-american.tsv" > "$work/input"
+scan; check test "$rc" -eq 1
+hits=$(printf '%s\n' "$output" | command grep -c ' -> ')
+check test "$hits" -eq "$(wc -l < "$root/share/american-english/british-to-american.tsv")"
+cut -f2 "$root/share/american-english/british-to-american.tsv" | tr / '\n' > "$work/input"
+scan; check test "$rc" -eq 0
+output=$(git commit -qm accepted 2>&1); rc=$?; check test "$rc" -eq 0
+# Literal path handling and binary/symlink exclusions.
+printf '\000colour\n' > binary; ln -s colour link; git add binary link
+output=$("$gate" --staged 2>&1); rc=$?; check test "$rc" -eq 0
+for name in 'with space' ':literal' '-option' $'line\nbreak'; do
+	printf 'Neighbour\n' > "$name"; git --literal-pathspecs add -- "$name"
+	output=$("$gate" --staged 2>&1); rc=$?; check test "$rc" -eq 1
+	git --literal-pathspecs rm -q -f --cached -- "$name"
+done
+# Exceptions must come from the staged policy, not an unstaged escape hatch.
+printf 'colour\n' > example; git add example
+printf 'example\tcolour\tExternal API identifier must remain unchanged\n' > .american-english-allowlist
+output=$("$gate" --staged 2>&1); rc=$?; check test "$rc" -eq 1
+git add .american-english-allowlist
+output=$("$gate" --staged 2>&1); rc=$?; check test "$rc" -eq 0
+printf 'colour neighbour\n' > example; git add example
+output=$("$gate" --staged 2>&1); rc=$?; check test "$rc" -eq 1
+printf 'example\t*\tLicensed third-party fixture retained verbatim\n' > .american-english-allowlist; git add .american-english-allowlist
+output=$("$gate" --staged 2>&1); rc=$?; check test "$rc" -eq 0
+# The override does not bypass local hooks or other gates.
+printf '#!%s\nexit 23\n' "$(command -v bash)" > .git/hooks/pre-commit; chmod +x .git/hooks/pre-commit
+output=$(ALLOW_BRITISH_ENGLISH='Preserving a verbatim quotation' git commit -qm rejected-local 2>&1); rc=$?; check test "$rc" -ne 0
+printf '%s checks, %s failures\n' "$tests" "$failures"
+test "$failures" -eq 0

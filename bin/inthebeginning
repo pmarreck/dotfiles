@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 inthebeginning() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	# Get the directory where this script is located
 	local SCRIPT_PATH=$(dirname "$(readlink -f "$BASH_SOURCE")")
 	needs magick please install imagemagick && display_image -g 600x360 "$SCRIPT_PATH/data/inthebeginning.jpg"

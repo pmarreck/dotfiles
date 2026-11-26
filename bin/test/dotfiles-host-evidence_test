@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+set -u
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)
+work=$(mktemp -d "${TMPDIR:-/tmp}/host-evidence.XXXXXXXX") || exit 1
+trap 'command rm -rf -- "$work"' EXIT
+export HOME="$work/home" XDG_STATE_HOME="$work/state" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+mkdir -p "$HOME" "$work/repo" "$work/bin"
+git -C "$work/repo" init -q
+git -C "$work/repo" config core.hooksPath /dev/null
+git -C "$work/repo" config user.name Test
+git -C "$work/repo" config user.email test@example.invalid
+printf 'source\n' > "$work/repo/flake.nix"
+git -C "$work/repo" add .
+git -C "$work/repo" commit -qm initial > "$work/commit.log" 2>&1 || exit 1
+first=$(git -C "$work/repo" rev-parse HEAD)
+# shellcheck disable=SC2016 # Generated adapter expands these at runtime.
+printf '#!%s\nif [[ $1 == eval ]]; then printf "%%s" "${FAKE_SHELL_DRV:-/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-shell.drv}"; exit; fi\nif [[ $1 == --version ]]; then printf "%%s\\n" "${FAKE_NIX_VERSION:-nix fixture 1}"; exit; fi\nexit 99\n' "$BASH" > "$work/bin/nix"
+chmod +x "$work/bin/nix"
+PATH="$work/bin:$PATH"
+gate="$root/bin/dotfiles-host-evidence"
+checks=0 failures=0
+check() { checks=$((checks+1)); if "$@"; then return; fi; printf 'FAIL %s\n' "$*" >&2; failures=$((failures+1)); }
+key=$("$gate" --key "$work/repo" "$first" 2> "$work/error"); rc=$?
+check test "$rc" = 0
+check test "${#key}" = 40
+"$gate" --verify "$work/repo" "$first" >"$work/output" 2>&1; rc=$?
+check test "$rc" != 0
+"$gate" --invalidate "$work/repo" "$first" >"$work/output" 2>&1; rc=$?
+check test "$rc" = 0
+check test "$(cat "$XDG_STATE_HOME/dotfiles-host-evidence/$key")" = pending
+"$gate" --verify "$work/repo" "$first" >"$work/output" 2>&1; rc=$?
+check test "$rc" != 0
+"$gate" --record "$work/repo" "$first" wrong-key >"$work/output" 2>&1; rc=$?
+check test "$rc" != 0
+"$gate" --record "$work/repo" "$first" "$key" >"$work/output" 2>&1; rc=$?
+check test "$rc" = 0
+"$gate" --verify "$work/repo" "$first" >"$work/output" 2>&1; rc=$?
+check test "$rc" = 0
+mkdir -p "$work/empty-path-prefix"
+PATH="$work/empty-path-prefix:$PATH" \
+	"$gate" --verify "$work/repo" "$first" >"$work/output" 2>&1; rc=$?
+check test "$rc" = 0
+native_git=''
+while IFS= read -r candidate; do
+	[[ "$candidate" -ef "$root/bin/git" ]] && continue
+	native_git=$candidate
+	break
+done < <(type -a -p git)
+mkdir -p "$work/alternate-git"
+printf '#!%s\nexec %q "$@"\n' "$BASH" "$native_git" >"$work/alternate-git/git"
+chmod +x "$work/alternate-git/git"
+PATH="$work/alternate-git:$PATH" \
+	"$gate" --verify "$work/repo" "$first" >"$work/output" 2>&1; rc=$?
+check test "$rc" = 0
+resolved_bash=$(command -v bash)
+mkdir -p "$work/alternate-bash"
+printf '#!%s\nexec %q "$@"\n' "$BASH" "$resolved_bash" >"$work/alternate-bash/bash"
+chmod +x "$work/alternate-bash/bash"
+PATH="$work/alternate-bash:$PATH" \
+	"$gate" --verify "$work/repo" "$first" >"$work/output" 2>&1; rc=$?
+check test "$rc" = 0
+FAKE_NIX_VERSION='nix fixture 2' \
+	"$gate" --verify "$work/repo" "$first" >"$work/output" 2>&1; rc=$?
+check test "$rc" != 0
+git -C "$work/repo" commit -qm second --allow-empty > "$work/commit.log" 2>&1 || exit 1
+"$gate" --verify "$work/repo" HEAD >"$work/output" 2>&1; rc=$?
+check test "$rc" != 0
+printf 'failed\n' > "$XDG_STATE_HOME/dotfiles-host-evidence/$key"
+"$gate" --verify "$work/repo" "$first" >"$work/output" 2>&1; rc=$?
+check test "$rc" != 0
+printf 'dirty\n' >"$work/repo/untracked"
+"$gate" --invalidate "$work/repo" "$first" >"$work/dirty-output" 2>&1; rc=$?
+check test "$rc" != 0
+command rm -- "$work/repo/untracked"
+printf '%s checks, %s failures\n' "$checks" "$failures"
+test "$failures" = 0

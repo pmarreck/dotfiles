@@ -3,7 +3,7 @@
 NULL=${NULL:-/dev/null}
 
 err() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	# Color codes
 	ANSI=${ANSI:-"\e["}
 	TXTRED=${TXTRED:-"0;31m"}

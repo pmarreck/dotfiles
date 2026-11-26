@@ -68,11 +68,16 @@ shopt -q login_shell && LOGIN_SHELL=true || LOGIN_SHELL=false
 [[ $- == *i* ]] && INTERACTIVE_SHELL=true || INTERACTIVE_SHELL=false
 
 # Detect if being run by Claude CLI or other LLM assistants and skip complex setup
-if [[ "${PPID:-}" ]] && ps -p "${PPID}" -o comm= 2>/dev/null | "${GREP_QUIET_ARRAY[@]}" "claude\|llm\|assistant"; then
+_llm_parent_command=''
+if [[ -n "${PPID:-}" ]]; then
+	_llm_parent_command=$(ps -p "${PPID}" -o comm= 2>/dev/null)
+fi
+if [[ "$_llm_parent_command" =~ (claude|llm|assistant) ]]; then
 		export SKIP_COMPLEX_SHELL_SETUP=true
 elif [[ "$0" == *"claude"* ]] || [[ "${_:-}" == *"claude"* ]]; then
 		export SKIP_COMPLEX_SHELL_SETUP=true
 fi
+unset _llm_parent_command
 
 # most things should be sourced via source_relative... except source_relative itself
 # if the function is not already defined, define it. use posix syntax for portability
@@ -173,11 +178,11 @@ unset VISUAL EDITOR
 		unset -f _zed_is_editor
 	fi
 
-# Compilation flags
-# export ARCHFLAGS="-arch arm64"
-ARCHFLAGS="-arch $(uname -a | rev | cut -d ' ' -f 2 | rev)"
-export ARCHFLAGS
-# note: "aarch64" may need to be mutated to "arm64" in some cases
+# Compilation flags used by macOS native-extension builds.
+if [ "$OS" = macos ]; then
+	ARCHFLAGS="-arch $(uname -m)"
+	export ARCHFLAGS
+fi
 
 # ssh
 export SSH_KEY_PATH="$HOME/.ssh/id_ed25519"
@@ -185,11 +190,10 @@ export SSH_KEY_PATH="$HOME/.ssh/id_ed25519"
 # Guix integration
 [[ -s "$HOME/.guix-profile/etc/profile" ]] && source $HOME/.guix-profile/etc/profile
 
-# platform info
-export PLATFORM
-case $OSTYPE in
-	darwin*)
-		export PLATFORM="mac"
+# Distribution information. Canonical OS/ARCH/PLATFORM/PF/WSL are exported by
+# .pathconfig before this point and must retain their execution-platform meaning.
+case $OS in
+	macos)
 		export DISTRO="macOS"
 		if command -v mac_os_version_number_to_name >/dev/null 2>&1 && command -v sw_vers >/dev/null 2>&1; then
 			MACOS_VERSION="$(sw_vers -productVersion 2>/dev/null)"
@@ -211,21 +215,15 @@ case $OSTYPE in
 		#   "$HOME/dotfiles/bin/src/macos_ramdisk_tmp.sh"
 		# fi
 		;;
-	linux*)
-		export PLATFORM="linux"
+	linux)
 		export DISTRO="$(distro)"
 		export DISTRO_PRETTY="$(distro_pretty)"
 		export DISTRO_VERSION="$(distro_version)"
 		;;
-	msys*|cygwin*|mingw*)
-		export PLATFORM="windows"
+	mswin)
 		export DISTRO="Windows"
 		export DISTRO_PRETTY="$(distro_pretty)"
 		export DISTRO_VERSION="$(distro_version)"
-		;;
-	*)
-		# this downcase requires bash 4+; you can pipe to tr '[:upper:]' '[:lower:]' instead
-		export PLATFORM="$OSTYPE"
 		;;
 esac
 
@@ -235,9 +233,9 @@ fi
 # echo "AWK in .bashrc:258 is: $AWK"
 # using the right awk is a PITA on macOS vs. Linux so let's ensure GNU Awk everywhere
 is_gnu_awk=$($AWK --version | "${GREP_QUIET_ARRAY[@]}" -m 1 'GNU Awk' && echo true || echo false)
-[ "${PLATFORM}$(basename $AWK)" == "macawk" ] && \
-	$is_gnu_awk && \
+if [ "$OS" = macos ] && [ "$(basename "$AWK")" = awk ] && [ "$is_gnu_awk" = false ]; then
 	echo "WARNING: The awk on PATH is not GNU Awk on macOS, which may cause problems" >&2
+fi
 
 # # asdf config
 # [[ -s "$HOME/.asdf/asdf.sh" ]] && source "$HOME/.asdf/asdf.sh"
@@ -257,7 +255,7 @@ fi
 
 # who am I? (should work even when sourced from elsewhere, but only in Bash)
 me() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	basename -- "${BASH_SOURCE[0]}"
 }
 

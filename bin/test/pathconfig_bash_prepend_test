@@ -14,6 +14,22 @@ tests=0
 BOOTSTRAP_BASH="/run/current-system/sw/bin/bash"
 [ -x "$BOOTSTRAP_BASH" ] || BOOTSTRAP_BASH="$BASH"
 DARWIN_OSTYPE="darwin"
+darwin_fixture=$(mktemp -d "${TMPDIR:-/tmp}/pathconfig-darwin.XXXXXX") || exit 1
+trap 'rm -rf -- "$darwin_fixture"' EXIT
+mkdir -p "$darwin_fixture/bin"
+{
+	printf '#!%s\n' "$BOOTSTRAP_BASH"
+	cat <<'UNAME_FIXTURE'
+case "${1:-}" in
+	-s) printf 'Darwin\n' ;;
+	-m) printf 'arm64\n' ;;
+	-r) printf '23.5.0\n' ;;
+	*) exit 2 ;;
+esac
+UNAME_FIXTURE
+} >"$darwin_fixture/bin/uname"
+chmod +x "$darwin_fixture/bin/uname"
+DARWIN_PATH="$darwin_fixture/bin:/usr/bin:/bin"
 
 # Test 1: The macOS branch sources .pathconfig from a stripped PATH without
 # bash-3.x errors.
@@ -21,13 +37,16 @@ DARWIN_OSTYPE="darwin"
 # globstar shopt doesn't exist, compgen may not be a builtin.
 ((tests++))
 echo "Testing: macOS .pathconfig source produces no bash-3.x error output..."
-stderr_output=$(env -i HOME="$HOME" OSTYPE="$DARWIN_OSTYPE" PATH="/usr/bin:/bin" "$BOOTSTRAP_BASH" --noprofile --norc -c '
+# shellcheck disable=SC2016 # The single-quoted text is the child shell program.
+stderr_output=$(env -i HOME="$HOME" OSTYPE="$DARWIN_OSTYPE" PATH="$DARWIN_PATH" "$BOOTSTRAP_BASH" --noprofile --norc -c '
 	. "$HOME/.pathconfig"
 ' 2>&1 >/dev/null)
+source_status=$?
 
-if echo "$stderr_output" | grep -qE "mapfile: command not found|globstar: invalid shell option|compgen: command not found"; then
-	echo "✗ Test failed: bash-3.x errors detected during .pathconfig source" >&2
+if (( source_status != 0 )) || echo "$stderr_output" | grep -qE "mapfile: command not found|globstar: invalid shell option|compgen: command not found"; then
+	echo "✗ Test failed: macOS .pathconfig source exited $source_status or emitted bash-3.x errors" >&2
 	echo "  stderr was:" >&2
+	# shellcheck disable=SC2001 # Prefix every line, not one string substitution.
 	echo "$stderr_output" | sed 's/^/    /' >&2
 	((fails++))
 else
@@ -38,8 +57,9 @@ fi
 # #!/usr/bin/env bash resolves to bash >= 4.
 ((tests++))
 echo "Testing: macOS subprocess #!/usr/bin/env bash gets modern bash after .pathconfig..."
-subprocess_version=$(env -i HOME="$HOME" OSTYPE="$DARWIN_OSTYPE" PATH="/usr/bin:/bin" "$BOOTSTRAP_BASH" --noprofile --norc -c '
-	. "$HOME/.pathconfig" 2>/dev/null
+# shellcheck disable=SC2016 # The single-quoted text is the child shell program.
+subprocess_version=$(env -i HOME="$HOME" OSTYPE="$DARWIN_OSTYPE" PATH="$DARWIN_PATH" "$BOOTSTRAP_BASH" --noprofile --norc -c '
+	. "$HOME/.pathconfig" 2>/dev/null || exit
 	/usr/bin/env bash -c "echo \$BASH_VERSION"
 ' 2>/dev/null)
 
@@ -54,14 +74,15 @@ fi
 # entries for the modern-Bash directory.
 ((tests++))
 echo "Testing: macOS re-sourcing .pathconfig keeps PATH free of duplicates..."
-dup_count=$(env -i HOME="$HOME" OSTYPE="$DARWIN_OSTYPE" PATH="/usr/bin:/bin" "$BOOTSTRAP_BASH" --noprofile --norc -c '
-	. "$HOME/.pathconfig" 2>/dev/null
-	. "$HOME/.pathconfig" 2>/dev/null
-	. "$HOME/.pathconfig" 2>/dev/null
+# shellcheck disable=SC2016 # The single-quoted text is the child shell program.
+dup_count=$(env -i HOME="$HOME" OSTYPE="$DARWIN_OSTYPE" PATH="$DARWIN_PATH" "$BOOTSTRAP_BASH" --noprofile --norc -c '
+	. "$HOME/.pathconfig" 2>/dev/null || exit
+	. "$HOME/.pathconfig" 2>/dev/null || exit
+	. "$HOME/.pathconfig" 2>/dev/null || exit
 	echo "$PATH" | tr ":" "\n" | grep -c "/run/current-system/sw/bin\$"
 ' 2>/dev/null)
 
-if [[ "$dup_count" -le 1 ]]; then
+if [[ "$dup_count" =~ ^[0-9]+$ ]] && (( dup_count <= 1 )); then
 	echo "✓ Test passed: no duplicates after triple-source (count=$dup_count)"
 else
 	echo "✗ Test failed: duplicate entries found (count=$dup_count)" >&2
@@ -98,6 +119,7 @@ rm -rf "$sudo_fixture"
 # supply the raw profile, .pathconfig must not inject it ahead of its wrappers.
 ((tests++))
 echo "Testing: .pathconfig does not inject NixOS's raw system profile..."
+# shellcheck disable=SC2016 # The single-quoted text is the child shell program.
 nixos_path=$(env -i HOME="$HOME" OSTYPE="linux-gnu" PATH="/run/wrappers/bin:/usr/bin:/bin" \
 	"$BOOTSTRAP_BASH" --noprofile --norc -c '
 		. "$HOME/.pathconfig" 2>/dev/null

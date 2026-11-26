@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 contains() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	[[ "$2" == "" ]] && return 0 # Empty string is contained in every string (including empty string)
 	local word
 	for word in $1; do

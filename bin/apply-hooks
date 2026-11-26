@@ -90,7 +90,7 @@ BASH_PREEXEC_LOCATION="$HOME/dotfiles/lib/bash-preexec.sh"
 # Pull down our file from GitHub and write it to your home directory as a hidden file.
 
 update_bash_preexec() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	mkdir -p ~/dotfiles/lib
 	curl https://raw.githubusercontent.com/rcaloras/bash-preexec/master/bash-preexec.sh -o "$BASH_PREEXEC_LOCATION"
 }

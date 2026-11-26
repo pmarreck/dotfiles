@@ -1,0 +1,195 @@
+#!/usr/bin/env bash
+# Mode changes are journaled individually, including recursive operations.
+. "${BASH_SOURCE[0]%/*}/src/destructive-audit.bash"
+
+chmod_stat() {
+	if [[ "$OSTYPE" == darwin* ]]; then
+		/usr/bin/stat "$@" -f '%d %i %OLp' "$path"
+	else
+		stat "$@" -c '%d %i %a' -- "$path"
+	fi
+}
+
+chmod_undo() (
+	local root journal path follow identity old new row current index failed=0 restored_mode
+	local -a paths=() follows=() identities=() olds=() news=()
+	root=$(audit_root) || { audit_error chmod 'private audit directory is unavailable'; exit 1; }
+	if [[ $# == 1 ]]; then
+		[[ "$1" =~ ^chmod-[0-9TZ.]+\.[A-Za-z0-9]+$ ]] || { audit_error chmod 'invalid journal ID'; exit 2; }
+		journal="$root/$1"
+	else
+		set +f
+		shopt -s nullglob
+		for path in "$root"/chmod-*/complete; do
+			path="${path%/complete}"
+			[[ -s "$path/changes" && ! -e "$path/undone" ]] && journal="$path"
+		done
+	fi
+	[[ -n "${journal:-}" && ! -L "$journal" && -f "$journal/complete" && -s "$journal/changes" && ! -e "$journal/undone" ]] ||
+		{ audit_error chmod 'no completed change batch to undo'; exit 1; }
+	while IFS= read -r -d '' path &&
+	      IFS= read -r -d '' follow &&
+	      IFS= read -r -d '' identity &&
+	      IFS= read -r -d '' old &&
+	      IFS= read -r -d '' new; do
+		paths+=("$path"); follows+=("$follow"); identities+=("$identity"); olds+=("$old"); news+=("$new")
+	done < "$journal/changes"
+	for (( index=${#paths[@]}-1; index>=0; index-- )); do
+		[[ ! -e "$journal/reverted-$index" ]] || continue
+		path="${paths[index]}"; follow="${follows[index]}"
+		local -a stat_flags=() mode_flags=()
+		if [[ "$follow" == yes ]]; then stat_flags=(-L); else mode_flags=(-h); fi
+		row=$(chmod_stat "${stat_flags[@]}" 2>/dev/null) || row=''
+		current="${row##* }"
+		if [[ "${row% *}" != "${identities[index]}" || ( "$current" != "${news[index]}" && "$current" != "${olds[index]}" ) ]]; then
+			printf 'chmod: skipped changed or replaced target %q\n' "$path" >&2
+			failed=1
+			continue
+		fi
+		# Five digits force GNU chmod to clear directory set-ID bits when
+		# they were absent in the original mode.
+		printf -v restored_mode '%05o' "$((8#${olds[index]}))"
+		printf 'undo path=%q from=%s to=%s identity=%s\n' "$path" "$current" "${olds[index]}" "${identities[index]}" >> "$journal/log" || exit 1
+		if [[ "$current" != "${olds[index]}" ]]; then
+			if ! "$native" "${mode_flags[@]}" -- "$restored_mode" "$path"; then failed=1; continue; fi
+			row=$(chmod_stat "${stat_flags[@]}" 2>/dev/null) || row=''
+			if [[ "$row" != "${identities[index]} ${olds[index]}" ]]; then
+				printf 'chmod: could not verify restored mode for %q\n' "$path" >&2
+				failed=1
+				continue
+			fi
+		fi
+		: > "$journal/reverted-$index" || exit 1
+	done
+	if [[ "$failed" == 0 ]]; then : > "$journal/undone" || exit 1; fi
+	exit "$failed"
+)
+
+chmod_one() {
+	local path="$1" follow="$2" before after identity old new native_status=0
+	local -a stat_flags=()
+	[[ "$follow" != yes ]] || stat_flags=(-L)
+	before=$(chmod_stat "${stat_flags[@]}") || return 1
+	identity="${before% *}"; old="${before##* }"
+	[[ "$old" =~ ^[0-7]{1,4}$ ]] || return 1
+	printf 'target path=%q mode=%s identity=%s follow=%s\n' "$path" "$old" "$identity" "$follow" >> "$journal/log" || return 1
+	"$native" "${native_flags[@]}" -- "$mode" "$path" || native_status=$?
+	after=$(chmod_stat "${stat_flags[@]}") || return 1
+	[[ "${after% *}" == "$identity" ]] || { audit_error chmod "target changed identity: $path"; return 1; }
+	new="${after##* }"
+	[[ "$new" =~ ^[0-7]{1,4}$ ]] || return 1
+	printf 'result path=%q mode=%s status=%s\n' "$path" "$new" "$native_status" >> "$journal/log" || return 1
+	if [[ "$new" != "$old" ]]; then
+		printf '%s\0' "$path" "$follow" "$identity" "$old" "$new" >> "$journal/changes" || return 1
+	fi
+	return "$native_status"
+}
+
+chmod_guard() {
+	local native='' candidate arg traversal=P recursive=false follow=yes preserve=false dereference=false
+	local mode='' reference='' journal path operand node native_help='' status=0 gnu=false
+	local -a native_flags=() operands=()
+	case "${1:-}" in
+		--log) [[ $# == 1 ]] || return 2; audit_read chmod; return ;;
+		--help)
+			printf '%s\n' 'Usage: chmod [OPTIONS] MODE FILE... | chmod --log | chmod --undo [JOURNAL-ID]' \
+				'Logs file modes before changing them. -R changes each logged entry individually.' \
+				'Undo restores modes only while the logged file identity and mode still match.' \
+				'Use a separate ACL-aware backup for macOS ACL edits.'
+			return 0 ;;
+	esac
+	while IFS= read -r candidate; do
+		[[ -x "$candidate" && ! "$candidate" -ef "${BASH_SOURCE[0]}" ]] || continue
+		native="$candidate"; break
+	done < <(type -a -p chmod)
+	[[ -n "$native" ]] || { audit_error chmod 'native chmod not found'; return 127; }
+	case "${1:-}" in
+		--version) "$native" "$@"; return ;;
+		--undo)
+			shift
+			[[ $# -le 1 ]] || return 2
+			chmod_undo "$@"; return ;;
+	esac
+	if "$native" --version >/dev/null 2>&1; then
+		gnu=true
+		native_help=$("$native" --help 2>/dev/null) || native_help=''
+		# Older GNU releases implicitly used physical traversal.
+		[[ "$native_help" != *--dereference* ]] || traversal=H
+	fi
+	while [[ $# -gt 0 ]]; do
+		arg="$1"; shift
+		case "$arg" in
+			--) if [[ -z "$mode" && -z "$reference" && $# -gt 0 ]]; then mode="$1"; shift; fi; operands+=("$@"); break ;;
+			--recursive) recursive=true ;;
+			--preserve-root) preserve=true ;;
+			--no-preserve-root) preserve=false ;;
+			--dereference) follow=yes; dereference=true ;;
+			--no-dereference) follow=no; dereference=false ;;
+			--reference=*) reference="${arg#*=}" ;;
+			--reference) [[ $# -gt 0 ]] || return 2; reference="$1"; shift ;;
+			--quiet|--silent|--changes|--verbose) native_flags+=("$arg") ;;
+			-a|+a|=a|-a#|+a#|=a#|-E|-C|-N|-i|-I)
+				audit_error chmod 'ACL edits need an ACL-aware backup and are unsupported here'; return 2 ;;
+			-*)
+				if [[ "$arg" =~ ^-[RfHvLPch]+$ ]]; then
+					local flags="${arg#-}" flag
+					while [[ -n "$flags" ]]; do
+						flag="${flags:0:1}"; flags="${flags:1}"
+						case "$flag" in
+							R) recursive=true ;;
+							H|L|P) traversal="$flag" ;;
+							h) follow=no; dereference=false ;;
+							*) native_flags+=("-$flag") ;;
+						esac
+					done
+					continue
+				fi
+				if [[ -z "$mode" && -z "$reference" && "$arg" =~ ^-([rwxXstugo]+|[0-7]+)(,.*)?$ ]]; then mode="$arg"; continue; fi
+				audit_error chmod "unsupported option: $arg"; return 2 ;;
+			*)
+				if [[ -z "$mode" && -z "$reference" ]]; then mode="$arg"; else operands+=("$arg"); fi ;;
+		esac
+	done
+	if [[ -n "$reference" ]]; then
+		"$gnu" || { audit_error chmod '--reference requires GNU chmod'; return 2; }
+		path="$reference"; [[ "$path" == /* ]] || path="$PWD/$path"
+		mode=$(chmod_stat -L) || return 1
+		mode="${mode##* }"
+		printf -v mode '%05o' "$((8#$mode))"
+	fi
+	if [[ "$follow" == no ]]; then
+		"$recursive" && { audit_error chmod 'recursive link-mode edits are unsupported'; return 2; }
+		native_flags+=(-h)
+	fi
+	if "$dereference" && [[ "$native_help" != *--dereference* ]]; then
+		audit_error chmod 'the native chmod does not support --dereference'; return 2
+	fi
+	if "$recursive" && "$dereference" && [[ "$traversal" == P ]]; then
+		audit_error chmod '-R --dereference requires -H or -L'; return 2
+	fi
+	[[ -n "$mode" && ${#operands[@]} -gt 0 ]] || { audit_error chmod 'a mode and at least one path are required'; return 2; }
+	journal=$(audit_batch chmod) || return 1
+	printf 'command=chmod mode=%q recursive=%s traversal=%s\n' "$mode" "$recursive" "$traversal" > "$journal/log" || return 1
+	for operand in "${operands[@]}"; do
+		[[ -n "$operand" ]] || { audit_error chmod 'empty path'; status=1; continue; }
+		path="$operand"; [[ "$path" == /* ]] || path="$PWD/$path"
+		if ! "$recursive"; then
+			chmod_one "$path" "$follow" || status=1
+			continue
+		fi
+		if "$preserve" && [[ "$path" -ef / ]]; then
+			audit_error chmod 'refusing recursive mode changes to / with --preserve-root'; status=1; continue
+		fi
+		# Snapshot the tree first. Children come before parents so removing
+		# search permission on a directory cannot strand its descendants.
+		if ! find "-$traversal" "$path" -depth -print0 > "$journal/tree"; then status=1; continue; fi
+		while IFS= read -r -d '' node; do
+			if ! "$dereference" && [[ -L "$node" && "$traversal" != L && ( "$traversal" != H || "$node" != "$path" ) ]]; then continue; fi
+			chmod_one "$node" yes || status=1
+		done < "$journal/tree"
+	done
+	: > "$journal/complete" || return 1
+	return "$status"
+}
+
+chmod_guard "$@"

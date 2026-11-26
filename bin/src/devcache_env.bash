@@ -7,7 +7,17 @@ configure_devcache_env() {
 	local working_dir="${2:-$PWD}"
 	local project_root project_name project_digest project_key
 
-	[ -f "$cache_root/.devcache-ready" ] || return 0
+	if [ ! -f "$cache_root/.devcache-ready" ]; then
+		[ "${DEVCACHE_ROOT:-}" = "$cache_root" ] && unset DEVCACHE_ROOT
+		case "${CARGO_TARGET_DIR:-}" in
+			"$cache_root"/projects/*/cargo-target) unset CARGO_TARGET_DIR ;;
+		esac
+		[ "${ZIG_GLOBAL_CACHE_DIR:-}" = "$cache_root/zig/global" ] && unset ZIG_GLOBAL_CACHE_DIR
+		case "${ZIG_LOCAL_CACHE_DIR:-}" in
+			"$cache_root"/projects/*/zig-local) unset ZIG_LOCAL_CACHE_DIR ;;
+		esac
+		return 0
+	fi
 
 	project_root="$working_dir"
 	if command -v git >/dev/null 2>&1; then

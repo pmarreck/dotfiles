@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 puts() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	local print_fmt end_fmt print_spec fd newline
 	print_fmt=''
 	end_fmt=''

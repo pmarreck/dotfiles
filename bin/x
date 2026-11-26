@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 x() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	usage() {
 		echo "Usage: x [+n] <count:integer >= 1> <string-to-repeat>" >&2
 		echo "Parameters can be provided in any order" >&2

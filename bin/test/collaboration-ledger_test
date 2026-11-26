@@ -14,6 +14,11 @@ remote_dir="$scratch/remote.git"
 filename="Evidence of agent-human collaboration superior to either alone.frontmatter.md"
 
 mkdir -p "$(dirname "$source_file")" "$gist_dir"
+# All remotes here are private fixtures. Exercise ledger behavior independently
+# of the shared push policy, which has real-push regression tests of its own.
+mkdir "$scratch/native-tools"
+ln -s "$(git --exec-path)/git" "$scratch/native-tools/git"
+PATH="$scratch/native-tools:$PATH"
 git init --quiet --bare "$remote_dir"
 git -C "$gist_dir" init --quiet --initial-branch=yolo
 git -C "$gist_dir" config user.name 'Ledger Test'

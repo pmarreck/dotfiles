@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 bin2hex() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	if [ -z "$1" ]; then # if no arguments
 		if [ ! -t 0 ]; then
 			xxd -pu  # receive piped input from stdin

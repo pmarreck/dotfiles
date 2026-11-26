@@ -8,12 +8,44 @@
       url = "github:pmarreck/glob";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    jumpscript.url = "github:pmarreck/jumpscript/88486ae0278fa8a702314bf11d6826a21d081bac";
+    roc_luajit.url = "github:pmarreck/roc_luajit/fbc131fe353ccbad9ca2f77ab652b6f75d5180fe";
+    # Locale-free ordering for the test inventory, so the Nix check and a host run list it alike.
+    romantic_collation.url = "github:pmarreck/romantic_collation/a1eab7e17248ceb8b62052b5d5017c7da2870e46";
+    printable_binary_src = {
+      url = "github:pmarreck/printable-binary/cdefa95e4590fa016967e0e6ccb3b96c19c44c7e";
+      flake = false;
+    };
+    zig_overlay = {
+      url = "github:mitchellh/zig-overlay/71c0e07037115906981da3ce2bbfa55584332ac5";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs, flake-utils, glob }:
+  outputs = { self, nixpkgs, flake-utils, glob, jumpscript, roc_luajit, romantic_collation, printable_binary_src, zig_overlay }:
     flake-utils.lib.eachSystem [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" ] (system:
       let
         pkgs = import nixpkgs { inherit system; };
+        zig = zig_overlay.packages.${system}."0.16.0";
+
+        printableBinary = pkgs.stdenv.mkDerivation {
+          pname = "printable-binary";
+          version = "1.0.0";
+          src = printable_binary_src;
+          strictDeps = true;
+          nativeBuildInputs = [ zig ];
+
+          buildPhase = ''
+            export HOME="$TMPDIR"
+            zig build -Doptimize=ReleaseFast
+          '';
+
+          installPhase = ''
+            mkdir -p "$out/bin"
+            cp zig-out/bin/printable-binary "$out/bin/"
+            cp character_map.txt "$out/bin/"
+          '';
+        };
 
         # Tools the suite shells out to. This is deliberately explicit rather than
         # inheriting the builder's environment: the point of the check is to prove
@@ -21,18 +53,26 @@
         # to be installed on the machine running it.
         suiteTools = (with pkgs; [
           bash coreutils gnused gnugrep gawk findutils diffutils
-          jq ripgrep fd tmux expect git openssh b3sum
+          jq ripgrep fd tmux expect git openssh b3sum zsh
           nodejs_24  # erect-agent-stack native context discovery uses node:sqlite
           gzip gnutar zip unzip xz bc file which
+          gnupg rage rsync
           (luajit.withPackages (luaPackages: [ luaPackages.lua-cjson ]))
           perl
           util-linux   # hexdump
           xxd
           imagemagick  # magick
+          libjxl       # cjxl, djxl
           ffmpeg       # ffmpeg, ffprobe
           tokei        # fleet-status local primary-language fallback
         ]) ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.procps ]
-          ++ [ glob.packages.${system}.default ];
+          ++ [
+            glob.packages.${system}.default
+            jumpscript.packages.${system}.default
+            roc_luajit.packages.${system}.roc
+            romantic_collation.packages.${system}.default
+            printableBinary
+          ];
       in {
         checks = {
           test = pkgs.stdenv.mkDerivation {
@@ -51,7 +91,10 @@
             # and Darwin sandboxes DO have /usr/bin/env, so a green macOS check
             # would prove nothing about Linux.
             postPatch = ''
-              patchShebangs bin
+              patchShebangs test bin .githooks .global-githooks .repository-budget-hooks
+              substituteInPlace bin/warhammer_quote \
+                --replace-fail '#!/usr/bin/env yuerun' '#!${pkgs.coreutils}/bin/env yuerun'
+              touch -r bin/warhammer_quote.lua bin/warhammer_quote
             '';
 
             checkPhase = ''
@@ -63,7 +106,9 @@
               # and so nothing can reach a developer's live configuration.
               export HOME="$NIX_BUILD_TOP/home"
               mkdir -p "$HOME"
-              cp -r "$PWD" "$HOME/dotfiles"
+              # Preserve mtimes so checked-in generated artifacts remain paired
+              # with their sources instead of spuriously invoking compilers.
+              cp -a "$PWD" "$HOME/dotfiles"
               chmod -R u+w "$HOME/dotfiles"
               ln -s "$HOME/dotfiles/bin" "$HOME/bin"
 
@@ -76,33 +121,19 @@
               # unicode_nfc_test's oracle (NormalizationTest.txt); outside the
               # sandbox the test finds the same pinned package through nix.
               export UNICODE_UCD_DIR="${pkgs.unicode-character-database}/share/unicode"
+              # Jumpscript's Roc plugin normally realizes its pinned compiler
+              # lazily. The check already carries that compiler as a declared
+              # input, so supply its exact executable and avoid nested Nix.
+              export JUMPSCRIPT_ROC="${roc_luajit.packages.${system}.roc}/bin/roc"
               export TMPDIR="$NIX_BUILD_TOP/tmp"
               mkdir -p "$TMPDIR"
 
               cd "$HOME/dotfiles"
 
-              # Remove the tests that cannot run in a sandbox, and say so out loud.
-              # A gate that quietly runs fewer tests than it appears to is the exact
-              # failure this whole exercise is guarding against, so the excluded set
-              # is committed (bin/test/NOT_HERMETIC), printed here in full, and
-              # counted. Shrinking coverage is then a visible diff, not a silent one.
-              excluded=0
-              echo "── excluded from the hermetic check (see bin/test/NOT_HERMETIC) ──"
-              while IFS= read -r entry; do
-                entry="''${entry%%#*}"
-                entry="$(echo "$entry" | tr -d '[:space:]')"
-                [ -z "$entry" ] && continue
-                if [ -e "bin/test/$entry" ]; then
-                  rm -f "bin/test/$entry"
-                  excluded=$((excluded + 1))
-                  echo "  excluded: $entry"
-                else
-                  echo "  STALE ENTRY (no such test): $entry" >&2
-                fi
-              done < bin/test/NOT_HERMETIC
-              echo "── $excluded tests excluded; the rest must pass ──"
-
-              bin/run_test_suite
+              # The unified entry point owns report validation and uses the same
+              # strict manifest parser as the later host phase. This internal mode
+              # runs the manifest complement directly and never invokes Nix again.
+              ./test --nix-phase "$NIX_BUILD_TOP/dotfiles-test-evidence"
 
               runHook postCheck
             '';
@@ -110,7 +141,7 @@
 
             installPhase = ''
               mkdir -p "$out"
-              echo "dotfiles suite passed" > "$out/result"
+              cp "$NIX_BUILD_TOP/dotfiles-test-evidence" "$out/result"
             '';
           };
         };

@@ -1,17 +1,43 @@
 #!/usr/bin/env bash
 
+set -u
+
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+repo_root=$(cd -- "$script_dir/../.." && pwd)
+bash_path=$(command -v bash)
+work_root=$(mktemp --tmpdir -d jpegxl_test_root.XXXXXX)
+
+export HOME="$work_root/home"
+export XDG_CACHE_HOME="$work_root/xdg-cache"
+export XDG_CONFIG_HOME="$work_root/xdg-config"
+export XDG_DATA_HOME="$work_root/xdg-data"
+export TMPDIR="$work_root/tmp"
+mkdir -p "$HOME" "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$TMPDIR"
+
+export DEBUG='' PRESERVE_TIMESTAMPS=''
+
+# shellcheck disable=SC1091 # Resolved from the test file's repository root.
+source "$repo_root/bin/jpegxl"
+
+# shellcheck disable=SC2329 # Invoked indirectly by EXIT trap.
+cleanup_test() {
+	rm -rf -- "$work_root"
+}
+trap cleanup_test EXIT
+
 # Test the jpegxl function
 test_jpegxl() {
     local fails=0
     local tests=0
 
 	# Create a test directory
-	local test_dir=$(mktemp -d --tmpdir jpegxl_test.XXXXXX)
+	local test_dir
+	test_dir=$(mktemp -d --tmpdir jpegxl_test.XXXXXX)
 	echo "Running jpegxl tests in temporary directory: $test_dir"
 
     # Create test images in the test directory
     (
-        cd "$test_dir"
+        cd "$test_dir" || exit
 
         # Create a test JPEG image
         magick -size 100x100 gradient:green-yellow "$test_dir/test_jpg.jpg"
@@ -98,9 +124,10 @@ test_jpegxl() {
     fi
 
     # Helper to fetch mtime using available stat implementation
-    local stat_mtime
     if command -v gstat >/dev/null 2>&1; then
         stat_mtime() { gstat -c %Y "$1"; }
+    elif stat --version >/dev/null 2>&1; then
+        stat_mtime() { stat -c %Y "$1"; }
     else
         stat_mtime() { stat -f %m "$1"; }
     fi
@@ -335,7 +362,7 @@ test_jpegxl() {
             (( fails++ ))
         fi
     else
-        echo "⊘ DNG tests skipped (cannot synthesize raw sensor data for test DNG)" >&2
+        echo "⊘ DNG tests skipped (cannot synthesize raw sensor data for test DNG)"
     fi
 
     # Test 21: DNG extension routes through magick-piped path
@@ -358,8 +385,8 @@ test_jpegxl() {
 	# smaller output. Use a controlled cjxl so the boundary is deterministic.
 	local abort_mock_bin="$test_dir/abort-mock-bin"
 	mkdir -p "$abort_mock_bin"
-	cat <<'EOF' > "$abort_mock_bin/cjxl"
-#!/usr/bin/env bash
+	printf '#!%s\n' "$bash_path" > "$abort_mock_bin/cjxl"
+	cat <<'EOF' >> "$abort_mock_bin/cjxl"
 previous_arg=""
 for arg in "$@"; do
 	input="$previous_arg"
@@ -432,15 +459,15 @@ EOF
 	local mock_trash_dir="$test_dir/mock-trash"
 	mkdir -p "$trash_mock_bin" "$isolated_data_home" "$mock_trash_dir"
 	if [[ "$OSTYPE" == "darwin"* ]]; then
-		cat <<'EOF' > "$trash_mock_bin/trash"
-#!/usr/bin/env bash
+		printf '#!%s\n' "$bash_path" > "$trash_mock_bin/trash"
+		cat <<'EOF' >> "$trash_mock_bin/trash"
 mkdir -p "$JPEGXL_TEST_TRASH_DIR"
 mv "$1" "$JPEGXL_TEST_TRASH_DIR/"
 EOF
 		chmod +x "$trash_mock_bin/trash"
 	else
-		cat <<'EOF' > "$trash_mock_bin/gio"
-#!/usr/bin/env bash
+		printf '#!%s\n' "$bash_path" > "$trash_mock_bin/gio"
+		cat <<'EOF' >> "$trash_mock_bin/gio"
 exit 1
 EOF
 		chmod +x "$trash_mock_bin/gio"
@@ -487,7 +514,7 @@ EOF
     if [ $fails -gt 0 ]; then
         echo "$fails of $tests jpegxl tests failed!" >&2
     else
-        echo "All $tests jpegxl tests passed!" >&2
+        echo "All $tests jpegxl tests passed!"
     fi
 
     return $fails

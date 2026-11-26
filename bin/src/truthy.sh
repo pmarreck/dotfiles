@@ -2,7 +2,7 @@
 
 # Define the falsey function; keep it POSIX-compatible
 falsey() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "$0" "$0" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "$0" "$0" && return
 
 	# Our normal env "debug" function actually depends on truthy/falsey so we define one specific to here
 	_truthy_free_debug() {
@@ -109,7 +109,7 @@ EOF
 
 # Define the truthy function in terms of the falsey function
 truthy() {
-  [ -n "${EDIT}" ] && unset EDIT && edit_function "$0" "$0" && return
+  [ -n "${EDIT:-}" ] && unset EDIT && edit_function "$0" "$0" && return
 
   case "$1" in
     --help|--test)

@@ -12,10 +12,14 @@ export BC_LINE_LENGTH=0
 
 func_defined truthy || . "$HOME/dotfiles/bin/src/truthy.sh"
 func_defined append_dotfile_progress || . "$HOME/dotfiles/bin/src/append_dotfile_progress.sh"
-truthy DEBUG_SHELLCONFIG && echo "Entering $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")" || $INTERACTIVE_SHELL && $LOGIN_SHELL && append_dotfile_progress "prof"
-truthy DEBUG_PATHCONFIG && echo $PATH
+if truthy DEBUG_SHELLCONFIG; then
+	echo "Entering $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")"
+elif ${INTERACTIVE_SHELL:-false} && ${LOGIN_SHELL:-false}; then
+	append_dotfile_progress "prof"
+fi
+truthy DEBUG_PATHCONFIG && echo "$PATH"
 
-$INTERACTIVE_SHELL && $LOGIN_SHELL && echo "$DISTRO_PRETTY"
+${INTERACTIVE_SHELL:-false} && ${LOGIN_SHELL:-false} && echo "$DISTRO_PRETTY"
 
 # most things should be sourced via source_relative... except source_relative itself
 # if the function is not already defined, define it. use posix syntax for portability

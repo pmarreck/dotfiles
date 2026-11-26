@@ -3,16 +3,17 @@
 fails=0
 tests=0
 
-PATH="$HOME/bin:$PATH"
-script="$HOME/dotfiles/bin/distro_pretty"
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+script="$script_dir/../distro_pretty"
 
 if [ ! -x "$script" ]; then
 	echo "FAIL: $script is not executable" >&2
 	exit 1
 fi
 
-tmpdir=$(mktemp -d --tmpdir)
+tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/distro_pretty_test.XXXXXX")
 trap 'rm -rf "$tmpdir"' EXIT
+mkdir -p "$tmpdir/home"
 
 cat >"$tmpdir/uname" <<'EOF'
 #!/usr/bin/env bash
@@ -35,11 +36,21 @@ else
 fi
 EOF
 
+set_test_shebang() {
+	local stub="$1" stub_body
+	stub_body=$(<"$stub")
+	printf '#!%s\n%s\n' "$(type -P bash)" "${stub_body#*$'\n'}" >"$stub"
+}
+
+for stub in "$tmpdir/uname" "$tmpdir/sw_vers" "$tmpdir/mac_os_version_number_to_name"; do
+	set_test_shebang "$stub"
+done
+
 chmod +x "$tmpdir/uname" "$tmpdir/sw_vers" "$tmpdir/mac_os_version_number_to_name"
 
 ((tests++))
 echo "Testing: macOS pretty name uses version argument..."
-output="$(PATH="$tmpdir:$PATH" "$script")"
+output="$(HOME="$tmpdir/home" PATH="$tmpdir:$PATH" "$script")"
 if [ "$output" = "macOS MockOS" ]; then
 	echo "PASS: macOS pretty name uses version argument"
 else

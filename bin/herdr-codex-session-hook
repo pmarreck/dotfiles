@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# Shared app-server environments do not identify a conversation's terminal.
+# Only publish identity when an exact live resume command independently agrees.
+herdr_codex_session_matches() {
+	jq -en --argjson event "$1" --argjson observation "$2" '
+		$observation.result.process_info as $p |
+		$event.hook_event_name == "SessionStart" and
+		($event.session_id | type == "string" and test("^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$")) and
+		($p.pane_id | type == "string" and length > 0) and
+		($p.foreground_processes | length == 1) and
+		($p.foreground_processes[0] | .name == "codex" and .cwd == $event.cwd and
+			(.argv | index("resume") as $r | $r != null and index("--last") == null and
+				([.[$r+1:][] | select(test("^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$"))][0] == $event.session_id)))
+	' >/dev/null 2>&1
+}
+herdr_codex_session_hook() {
+	local payload info pane session cwd seq
+	[ "${HERDR_ENV:-}" = 1 ] && [ -n "${HERDR_PANE_ID:-}" ] || return 0
+	payload="$(cat)" || return 0
+	info="$(herdr pane process-info --pane "$HERDR_PANE_ID" 2>/dev/null)" || return 0
+	herdr_codex_session_matches "$payload" "$info" || return 0
+	pane="$(jq -r '.result.process_info.pane_id' <<< "$info")" || return 0
+	session="$(jq -r '.session_id' <<< "$payload")" || return 0
+	cwd="$(jq -r '.cwd' <<< "$payload")" || return 0
+	# Herdr orders session reports by nanosecond sequence. Portable seconds with
+	# an end-of-second suffix dominate a previous report without a GNU-date need.
+	seq="$(date +%s)999999999"
+	herdr pane report-agent-session "$pane" --source herdr:codex --agent codex \
+		--session-start-source resume --seq "$seq" --agent-session-id "$session" -- \
+		codex resume "$session" --dangerously-bypass-approvals-and-sandbox -C "$cwd" >/dev/null 2>&1
+}
+if ! (return 0 2>/dev/null); then
+	case "${1:-}" in
+		--help|-h) printf '%s\n' 'Usage: herdr-codex-session-hook < SessionStart.json' 'Reports only exact live Codex resume identities; ambiguous reports are ignored.' ;;
+		--about) printf '%s\n' 'herdr-codex-session-hook 1.0.0: guard Herdr session identity (portable Bash)' ;;
+		*) herdr_codex_session_hook ;;
+	esac
+fi

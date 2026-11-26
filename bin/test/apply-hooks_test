@@ -16,15 +16,19 @@ fails=0
 pass() { echo "[PASS] $1"; }
 fail() { echo "[FAIL] $1" >&2; ((fails++)) || :; }
 
-WORK=$(mktemp -d --tmpdir apply_hooks_test.XXXXXX)
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+repo_root=$(cd "$script_dir/../.." && pwd)
+bash_bin=$(type -P bash)
+WORK=$(mktemp -d "${TMPDIR:-/tmp}/apply_hooks_test.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
-mkdir -p "$WORK/bin"
+mkdir -p "$WORK/bin" "$WORK/home"
+ln -s "$repo_root" "$WORK/home/dotfiles"
 
 # Fake mcfly: mimics the REAL once-guard — its init registers mcfly_prompt_command
 # only when __MCFLY_LOADED != loaded, and sets the guard (this is exactly the
 # behavior that made the clean-slate strategy drop it on re-source).
-cat >"$WORK/bin/mcfly" <<'EOF'
-#!/usr/bin/env bash
+printf '#!%s\n' "$bash_bin" >"$WORK/bin/mcfly"
+cat >>"$WORK/bin/mcfly" <<'EOF'
 [ "$1" = init ] || exit 0
 cat <<'INIT'
 if [[ "${__MCFLY_LOADED:-}" != "loaded" ]]; then
@@ -37,8 +41,8 @@ EOF
 chmod +x "$WORK/bin/mcfly"
 
 # Fake starship: init registers starship_precmd; `time` prints a number.
-cat >"$WORK/bin/starship" <<'EOF'
-#!/usr/bin/env bash
+printf '#!%s\n' "$bash_bin" >"$WORK/bin/starship"
+cat >>"$WORK/bin/starship" <<'EOF'
 case "$1" in
 	init) echo 'starship_precmd() { :; }; PROMPT_COMMAND="starship_precmd${PROMPT_COMMAND:+;$PROMPT_COMMAND}"' ;;
 	time) echo 0 ;;
@@ -50,7 +54,9 @@ chmod +x "$WORK/bin/starship"
 # after the SECOND source. Helpers apply-hooks expects from the interactive env
 # are stubbed; unrelated integrations are neutralized so branch selection is
 # deterministic. Real mcfly/starship are shadowed by our fakes via PATH.
-probe=$(PATH="$WORK/bin:$PATH" TERM_PROGRAM=xterm HOME="$HOME" bash --norc -c '
+# The single-quoted program expands only inside that isolated shell.
+# shellcheck disable=SC2016
+probe=$(PATH="$WORK/bin:$PATH" TERM_PROGRAM=xterm HOME="$WORK/home" "$bash_bin" --norc -c '
 	needs() { :; }
 	err() { :; }
 	report_prompt_commands() { :; }

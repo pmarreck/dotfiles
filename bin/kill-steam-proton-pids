@@ -30,7 +30,7 @@ Terminates Steam, Proton, and Wine processes newest-pid-first: SIGTERM, a short
 grace period, then SIGKILL for whatever is still there.
 
 Options:
-  -n, --dry-run   List what would be killed and exit without signalling anything
+  -n, --dry-run   List what would be killed and exit without signaling anything
   -h, --help      This help
       --about     One-line description
 
@@ -68,7 +68,7 @@ _ksp_signal() {
 
 kill-steam-proton-pids() {
 	# Peter's self-edit hook: `EDIT=1 kill-steam-proton-pids` opens this file.
-	# ${EDIT:-} rather than ${EDIT}, which is an unbound-variable error under
+	# ${EDIT:-} rather than ${EDIT:-}, which is an unbound-variable error under
 	# `set -u` and made this function unusable in a strict shell.
 	if [ -n "${EDIT:-}" ]; then
 		unset EDIT
@@ -107,7 +107,7 @@ kill-steam-proton-pids() {
 
 	if [ "$dry_run" -eq 1 ]; then
 		printf '%s\n' "$pids"
-		echo "--dry-run: nothing was signalled." >&2
+		echo "--dry-run: nothing was signaled." >&2
 		return 0
 	fi
 

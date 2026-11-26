@@ -1,78 +1,107 @@
 #!/usr/bin/env bash
-# Protect the invoking shell/agent by default. Native pkill does the matching.
+# Resolve matching processes once, then audit and signal those exact PIDs.
 
 pkill_guard() {
-	local allow=false ended=false value_next=false unsafe_bsd=false
-	local arg cluster flag candidate real='' native_signal=''
-	local -a args=()
+	. "${BASH_SOURCE[0]%/*}/src/signal-audit.bash"
+	local allow=false count=false echo_targets=false unsafe_bsd=false requires_signal=false
+	local arg cluster flag value signal=TERM queue='' selector matches pid status
+	local -a args=() pids=()
 	case "${1:-}" in
 		-h|--help)
-			printf '%s\n' 'Usage: pkill [--allow-ancestors] [native pkill arguments...]' \
-				'Excludes all ancestor processes by default (Linux -A; macOS native default).' \
-				'--allow-ancestors disables that protection and prints a warning.' \
-				'Arguments after -- are literal; native options, signals and exit codes are preserved.' \
-				'On macOS, native -a/-v require --allow-ancestors. See man pkill for native options.'
+			printf '%s\n' 'Usage: pkill [--allow-ancestors] [native selectors...] PATTERN | pkill --log' \
+				'Excludes ancestors by default and logs a fixed PID snapshot before signaling.' \
+				'--allow-ancestors disables ancestor protection and prints a warning.' \
+				'On macOS, -a/-v require --allow-ancestors. Native -I is unsupported.'
 			return 0 ;;
-		--about) printf 'pkill guard 1.0: default ancestor protection (%s, %s).\n' "$OSTYPE" "$MACHTYPE"; return 0 ;;
+		--log) [[ $# == 1 ]] || return 2; audit_read signals; return ;;
+		--about) printf 'Audited pkill with default ancestor protection (%s, %s).\n' "$OSTYPE" "$MACHTYPE"; return 0 ;;
 	esac
 	case "$OSTYPE" in
 		linux*|darwin*) ;;
-		*) printf 'pkill-guard: unsupported platform %s; refusing unprotected execution.\n' "$OSTYPE" >&2; return 78 ;;
+		*) audit_error pkill "unsupported platform $OSTYPE"; return 78 ;;
 	esac
-	for arg in "$@"; do
-		if "$ended"; then args+=("$arg"); continue; fi
-		if "$value_next"; then args+=("$arg"); value_next=false; continue; fi
+	while [[ $# -gt 0 ]]; do
+		arg="$1"; shift
 		case "$arg" in
-			--allow-ancestors) allow=true; continue ;;
-			--) ended=true ;;
-			--queue|--pgroup|--group|--pid|--parent|--session|--terminal|--euid|--uid|--pidfile|--runstates|--older|--signal|--ns|--nslist|--cgroup|--env)
-				value_next=true ;;
-			--*) ;; # Unknown native options remain the real tool's responsibility.
+			--) args+=("$arg" "$@"); break ;;
+			--allow-ancestors) allow=true ;;
+			--signal|--queue)
+				[[ $# -gt 0 ]] || { audit_error pkill "$arg requires a value"; return 2; }
+				if [[ "$arg" == --signal ]]; then signal="$1"; else queue="$1"; fi
+				shift ;;
+			--signal=*) signal="${arg#*=}" ;;
+			--queue=*) queue="${arg#*=}" ;;
+			--count) count=true ;;
+			--echo) echo_targets=true ;;
+			--require-handler) requires_signal=true; args+=("$arg") ;;
+			--pgroup|--group|--pid|--parent|--session|--terminal|--euid|--uid|--pidfile|--runstates|--older|--ns|--nslist|--cgroup|--env)
+				[[ $# -gt 0 ]] || { audit_error pkill "$arg requires a value"; return 2; }
+				args+=("$arg" "$1"); shift ;;
+			--pgroup=*|--group=*|--pid=*|--parent=*|--session=*|--terminal=*|--euid=*|--uid=*|--pidfile=*|--runstates=*|--older=*|--ns=*|--nslist=*|--cgroup=*|--env=*|--full|--ignore-case|--newest|--oldest|--exact|--logpidfile|--ignore-ancestors)
+				args+=("$arg") ;;
+			--*) audit_error pkill "unsupported option: $arg"; return 2 ;;
 			-?*)
-				# A native signal is not an option cluster (e.g. -USR1 versus -U).
-				if ! kill -l "${arg#-}" >/dev/null 2>&1; then
-					cluster="${arg#-}"
-					while [[ -n "$cluster" ]]; do
-						flag="${cluster:0:1}"; cluster="${cluster:1}"
-						case "$flag" in
-							a|v) unsafe_bsd=true ;;
-							q|g|G|p|P|s|t|u|U|F|r|O)
-								[[ -n "$cluster" ]] || value_next=true
-								break ;;
-						esac
-					done
-				fi ;;
+				if builtin kill -l "${arg#-}" >/dev/null 2>&1 || [[ "$arg" == -0 ]]; then
+					signal="${arg#-}"
+					continue
+				fi
+				cluster="${arg#-}"
+				while [[ -n "$cluster" ]]; do
+					flag="${cluster:0:1}"; cluster="${cluster:1}"
+					case "$flag" in
+						c) count=true ;;
+						e) echo_targets=true ;;
+						a|v)
+							[[ "$OSTYPE" == darwin* ]] || { audit_error pkill "-$flag is unavailable for Linux pkill"; return 2; }
+							unsafe_bsd=true; args+=("-$flag") ;;
+						l)
+							[[ "$OSTYPE" == darwin* ]] || { audit_error pkill '-l is a pgrep output option on Linux'; return 2; }
+							echo_targets=true ;;
+						I|d|w|Q) audit_error pkill "unsupported option: -$flag"; return 2 ;;
+						q|g|G|p|P|s|t|u|U|F|r|O)
+							value="$cluster"
+							if [[ -z "$value" ]]; then
+								[[ $# -gt 0 ]] || { audit_error pkill "-$flag requires a value"; return 2; }
+								value="$1"; shift
+							fi
+							if [[ "$flag" == q ]]; then queue="$value"; else args+=("-$flag" "$value"); fi
+							break ;;
+						*) args+=("-$flag") ;;
+					esac
+				done ;;
+			*) args+=("$arg") ;;
 		esac
-		args+=("$arg")
 	done
 	if [[ "$OSTYPE" == darwin* ]] && "$unsafe_bsd" && ! "$allow"; then
-		printf 'pkill-guard: native -a/-v can include ancestors; explicitly use --allow-ancestors to proceed.\n' >&2
+		audit_error pkill 'native -a/-v can include ancestors; use --allow-ancestors explicitly'
 		return 77
 	fi
-	# PATH may expose this same wrapper through several links. Skip all of them.
-	while IFS= read -r candidate; do
-		[[ -x "$candidate" && ! "$candidate" -ef "${BASH_SOURCE[0]}" ]] || continue
-		real="$candidate"; break
-	done <<< "$(type -a -p pkill 2>/dev/null)"
-	if [[ -z "$real" ]]; then
-		printf 'pkill-guard: no native pkill found after excluding this wrapper.\n' >&2
-		return 127
+	if [[ -n "$queue" && ( "$OSTYPE" != linux* || ! "$queue" =~ ^-?[0-9]+$ ) ]]; then
+		audit_error pkill 'queued signals require Linux and an integer payload'
+		return 2
 	fi
+	builtin kill -l "$signal" >/dev/null 2>&1 || [[ "$signal" == 0 ]] ||
+		{ audit_error pkill "invalid signal: $signal"; return 2; }
+	selector=$(type -P pgrep) || { audit_error pkill 'pgrep is required'; return 127; }
 	if "$allow"; then
-		printf 'pkill-guard: WARNING: ancestor protection disabled by --allow-ancestors.\n' >&2
-		if [[ "$OSTYPE" == darwin* ]]; then
-			# BSD requires a signal to remain the first native argument.
-			if [[ "${args[0]:-}" == -?* ]] && kill -l "${args[0]#-}" >/dev/null 2>&1; then
-				native_signal="${args[0]}"
-				args=("${args[@]:1}")
-				exec "$real" "$native_signal" -a "${args[@]}"
-			fi
-			exec "$real" -a "${args[@]}"
-		fi
+		printf '%s\n' 'pkill: WARNING: ancestor protection disabled by --allow-ancestors.' >&2
+		[[ "$OSTYPE" != darwin* ]] || args=(-a "${args[@]}")
 	elif [[ "$OSTYPE" == linux* ]]; then
-		exec "$real" --ignore-ancestors "${args[@]}"
+		args=(--ignore-ancestors "${args[@]}")
 	fi
-	exec "$real" "${args[@]}"
+	! "$requires_signal" || args=(--signal "$signal" "${args[@]}")
+	if matches=$(exec "$selector" "${args[@]}"); then
+		while IFS= read -r pid; do
+			[[ "$pid" =~ ^[1-9][0-9]*$ ]] || continue
+			[[ "$pid" == "${BASHPID:-$$}" ]] || pids+=("$pid")
+		done <<< "$matches"
+	else
+		status=$?
+		if [[ $status == 1 ]] && "$count"; then printf '0\n'; fi
+		return "$status"
+	fi
+	if "$count"; then printf '%s\n' "${#pids[@]}"; echo_targets=false; fi
+	signal_logged pkill "$signal" "$echo_targets" "$queue" "${pids[@]}"
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

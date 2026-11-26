@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 array_contains_element() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	# declare -n array=$1
 	# We can't use nameref, so use eval to indirectly reference the array
 	eval 'array=("${'"$1"'[@]}")'

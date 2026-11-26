@@ -5,7 +5,7 @@ read -ra GREP_QUIET_ARRAY <<< "${GREP_QUIET:-grep -q}" # rehydrate exported stri
 # Resolve the first argument as a path/function/script, while forwarding path
 # arguments to the editor without changing their count, contents, or order.
 edit() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	# Persistent Linux terminals can outlive desktop login. Recover the current
 	# display only for a local GUI request; never replace an explicit/SSH display.
 	if [[ -n "${VISUAL:-}" && -z "${SSH_CONNECTION:-}" &&

@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+unset SED
+
 test_strip_ansi() {
   # Test with printf-generated ANSI sequences
   assert "$(printf '\e[31mRed text\e[0m' | strip_ansi)" == "Red text"

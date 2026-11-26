@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 green_text() {
-	[ -n "${EDIT}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
 	puts --green -en "$*"
 }
 
