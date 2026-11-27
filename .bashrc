@@ -77,8 +77,12 @@ shopt -q login_shell && LOGIN_SHELL=true || LOGIN_SHELL=false
 [[ $- == *i* ]] && INTERACTIVE_SHELL=true || INTERACTIVE_SHELL=false
 
 # Detect if being run by Claude CLI or other LLM assistants and skip complex setup
+# The startup engine (.pathconfig) already named the parent process; ps is
+# only the fallback for a shell that reached this file without it.
 _llm_parent_command=''
-if [[ -n "${PPID:-}" ]]; then
+if [[ -n "${SHELL_STARTUP_PARENT_COMMAND+set}" ]]; then
+	_llm_parent_command=$SHELL_STARTUP_PARENT_COMMAND
+elif [[ -n "${PPID:-}" ]]; then
 	_llm_parent_command=$(ps -p "${PPID}" -o comm= 2>/dev/null)
 fi
 if [[ "$_llm_parent_command" =~ (claude|llm|assistant) ]]; then

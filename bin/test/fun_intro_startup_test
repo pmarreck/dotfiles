@@ -20,8 +20,6 @@ marker="INTRO-MARKER:$work/home/dotfiles/bin/fun_intro"
 probe='
     case $- in *i*) INTERACTIVE_SHELL=true ;; *) INTERACTIVE_SHELL=false ;; esac
     if shopt -q login_shell; then LOGIN_SHELL=true; else LOGIN_SHELL=false; fi
-    check_sixel_support() { return 1; }
-    check_kitty_support() { return 1; }
     tabs() { :; }
     _SHELL_STARTUP_LUAJIT="$INTRO_STUB_LUAJIT"
     . "$HOME/dotfiles/.profile"

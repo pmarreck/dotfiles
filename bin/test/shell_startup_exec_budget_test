@@ -28,6 +28,9 @@ functions=(needs array_contains_element)
 # branches of .bashrc still read distribution facts through the helpers, and
 # macOS also reads `uname -m` for ARCHFLAGS, so those budgets are Linux-only.
 declare -A budget=([needs]=0 [array_contains_element]=0 [is_nix_darwin]=0 [distro]=0)
+# Terminal graphics facts come from the startup engine, so the Bash probes and
+# the tools they ran (infocmp, and ps for one terminal) stay idle.
+budget+=([check_sixel_support]=0 [check_kitty_support]=0 [infocmp]=0 [ps]=0)
 if [[ "$("$real_uname" -s)" == Linux ]]; then
 	budget[distro_pretty]=0
 	budget[distro_version]=0
@@ -48,6 +51,8 @@ for name in "${!budget[@]}"; do
 		stub uname "$real_uname"
 	elif [[ -x "$repo_root/bin/$name" ]]; then
 		stub "$name" "$repo_root/bin/$name"
+	elif system_tool=$(command -v "$name"); then
+		stub "$name" "$system_tool"
 	else
 		printf 'FAIL: helper %s is missing from %s/bin\n' "$name" "$repo_root" >&2
 		exit 1
@@ -119,6 +124,30 @@ run_quadrant() {
 
 run_quadrant 'non-login interactive' -i
 run_quadrant 'login interactive' -l -i
+
+# The LLM-assistant check in .bashrc reads the parent's name from the engine.
+# A parent named claude must turn complex setup off; any other must not.
+# shellcheck disable=SC2016 # Expanded by the parent shell.
+parent_script='"$1" -i -c "$2"; :'
+# shellcheck disable=SC2016 # Expanded by the started shell.
+llm_probe='printf "skip=%s\n" "${SKIP_COMPLEX_SHELL_SETUP:-unset}"'
+for parent in claude parentshell; do
+	ln -sf "$bash_bin" "$work/$parent"
+	: >"$log"
+	out=$(timeout --foreground --kill-after=5 20 env -i \
+		HOME="$HOME" USER="$me" LOGNAME="$me" TERM=xterm SHELL="$bash_bin" \
+		PATH="$stub_dir:$base_path" ORIG_PATH="$base_path" \
+		__NIXOS_SET_ENVIRONMENT_DONE=1 __NIX_DARWIN_SET_ENVIRONMENT_DONE=1 SHELL_STARTUP_BENCHMARK=1 \
+		BUDGET_LOG="$log" "$work/$parent" -c "$parent_script" "$parent" "$bash_bin" "$llm_probe" 2>/dev/null)
+	want='unset'
+	[[ $parent == claude ]] && want=true
+	((tests++))
+	if [[ "$out" == *"skip=$want"* ]] && ! grep -q '^ps ' "$log"; then
+		pass "a parent named $parent leaves SKIP_COMPLEX_SHELL_SETUP $want, without running ps"
+	else
+		fail "a parent named $parent: wanted skip=$want with no ps; got: ${out:-nothing}; log: $(tr '\n' ';' <"$log")"
+	fi
+done
 
 if ((fails == 0)); then
 	printf 'All %s startup exec-budget checks passed.\n' "$tests"

@@ -192,8 +192,16 @@ Verification findings:
   capabilities, so the terminfo reader searches only the names and standard
   strings. No entry in ncurses 6.6 mentions sixel, so the test also compiles
   synthetic entries with `tic`.
-- Image capability is still computed by the forked Bash probes in `.profile`;
-  moving it into the startup engine is a separate item.
+- Image capability moved into the startup engine the same day
+  (`lib/shell_startup/graphics_env.lua`): `.profile` only exports what the
+  engine computed, and `.bashrc` reads the engine's
+  `SHELL_STARTUP_PARENT_COMMAND` for its LLM-assistant check instead of
+  running `ps`. That removes check_sixel_support, check_kitty_support,
+  infocmp, and ps from every interactive startup (exec-budget test: 0 each;
+  1 each with the previous files). Interleaved A/B, 14 samples, load 4 to 10:
+  non-login 366.8 → 319.6 ms, login 467.0 → 428.7 ms. SIXEL_ENV now holds
+  the probe's verdict only; it used to include infocmp's own error text when
+  TERM had no terminfo entry.
 
 G. Headless Ghostty runner (requested 2026-11-27). Current PTY tests use
 `expect` and see only the byte stream. nixpkgs ships `libghostty-vt`

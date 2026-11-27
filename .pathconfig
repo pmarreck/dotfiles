@@ -91,7 +91,7 @@ _pc_luajit=$_SHELL_STARTUP_LUAJIT
 # Pass the shell's own state explicitly: ORIG_PATH, OS, PF, and OSTYPE may be
 # unexported, and the locale variables decide the collation Bash would use for glob order.
 if ! _pc_assignments=$(ORIG_PATH="$ORIG_PATH" OS="$OS" PF="$PF" OSTYPE="$OSTYPE" \
-	LANG="${LANG-}" LC_COLLATE="${LC_COLLATE-}" LC_ALL="${LC_ALL-}" \
+	LANG="${LANG-}" LC_COLLATE="${LC_COLLATE-}" LC_ALL="${LC_ALL-}" SHELL_STARTUP_PPID="$PPID" \
 	"$_pc_luajit" "$HOME/dotfiles/lib/shell_startup/shell_env.lua"); then
 	echo ".pathconfig: PATH construction failed; PATH was left unchanged." >&2
 	unset _pc_luajit _pc_assignments

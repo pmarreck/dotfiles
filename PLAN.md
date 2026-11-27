@@ -4,7 +4,6 @@ Open work is listed in priority order. Completed history is in `docs/PLAN_LOG.md
 
 ## NAS mount failure reporting (2026-10-26)
 
-- [x] Fix `nas` returning success after a failed NFS mount: every OS branch (macOS, Linux, NixOS) keeps the mount's failure status and never treats the later optional file-manager open as success; six assertions failed before the fix and pass afterward (done 2026-10-26 EDT in another checkout; re-applied onto the startup rewrite 2026-11-27).
 - [x] Restore a green repository-wide gate before committing the NAS fix, without excluding tests: the earlier 6 isolated failures (executable-names, fun_intro, launchd-keep-disabled, lsregister-prune-dead, mandelroc, terminal_config) are gone and the full ./test passes with the fix on top of the startup rewrite (done 2026-11-27 15:20 EST).
 
 ## Completed: no system Python; NFC file names (2026-11-09)
@@ -19,16 +18,16 @@ Open work is listed in priority order. Completed history is in `docs/PLAN_LOG.md
 - [x] Remove Arch Linux remnants (PAC_USE_AUR, pacman hint) per owner (done 2026-11-27 14:12 EST; commit 481b61c).
 - [x] Stop git launcher copies on PATH from exec'ing each other forever, with a two-copy regression test (done 2026-11-27 14:30 EST; commit 7ccab8f).
 - [ ] Verify the startup commits on the macOS and WSL hosts in fixture homes from a clean environment, then report before syncing their live checkouts.
-- [ ] Re-apply the WSL checkout's two unpublished commits (drop macOS-only absolute bin symlinks; propagate NAS mount failures) onto the rewrite with credit, then move that checkout to the result as the owner approved.
+- [x] Re-apply the WSL checkout's two unpublished commits (drop macOS-only absolute bin symlinks; propagate NAS mount failures) onto the rewrite with credit, then move that checkout to the result as the owner approved; its old head and stash are kept as local refs (done 2026-11-27 15:17 EST; commits 760809c, 2e17edc).
 - [ ] Port the remaining startup helpers: GNU tool detection, the GNU awk check, and other rg or version probes (context: docs/plan_context/luajit-shell-startup.md).
-- [ ] Compute SIXEL_ENV, SIXEL_CAPABLE, KITTY_CAPABLE, and IMAGE_CAPABLE in the startup engine with lib/fun_intro/terminal.lua and the terminfo reader instead of forking the Bash probes (context: docs/plan_context/luajit-shell-startup.md).
+- [ ] Owner decision: shell_startup_test requires node through mise shims, but the WSL host has neither mise nor node, so its host phase fails there; install them on that host or make node optional per host?
+- [x] Compute SIXEL_ENV, SIXEL_CAPABLE, KITTY_CAPABLE, IMAGE_CAPABLE, and the parent process name in the startup engine instead of forking check_sixel_support, check_kitty_support, infocmp, and ps; interleaved A/B non-login 367 → 320 ms, login 467 → 429 ms (context: docs/plan_context/luajit-shell-startup.md; done 2026-11-27 15:40 EST).
 - [ ] Add a headless Ghostty runner: drive the real shell on a PTY through libghostty-vt from LuaJIT and assert on the rendered screen (intro before a usable prompt, command output, image placement, no stray escapes) (context: docs/plan_context/luajit-shell-startup.md).
 - [x] Find the devcache project root in-process, matching git rev-parse --show-toplevel by oracle test, and memoize its digest; each prompt fell from about 28 ms and 8 processes to 1.8 ms and none after the first (context: docs/plan_context/luajit-shell-startup.md; done 2026-11-27 13:18 EST; commit bdfdff4).
 - [ ] Cache starship, direnv, and mcfly init output by resolved binary path (context: docs/plan_context/luajit-shell-startup.md).
-- [x] Rebuild the terminal intro as one LuaJIT process: every pick but fortune and mandelbash in Lua, pre-rendered Kitty and Sixel images (no ImageMagick at startup), memoized mandelbash, no replay cache or background regenerator; each pick differential-tested against its Bash original; live picks 4.7 to 15.6 ms (context: docs/plan_context/luajit-shell-startup.md; done 2026-11-27 15:10 EST).
+- [x] Rebuild the terminal intro as one LuaJIT process: every pick but fortune and mandelbash in Lua, pre-rendered Kitty and Sixel images (no ImageMagick at startup), memoized mandelbash, no replay cache or background regenerator; each pick differential-tested against its Bash original; live picks 4.7 to 15.6 ms (context: docs/plan_context/luajit-shell-startup.md; done 2026-11-27 15:10 EST; commit 204fbfa).
 - [ ] Verify fresh Ghostty and WezTerm tabs, SSH commands, and scripts on each supported host, including luajit availability before PATH exists, before calling the rewrite shipped.
 
 ## Current
 
-- [x] Make the staged 500-line source-file gate a strong nonblocking advisory only for the owner-approved `pmarreck/validate` repository, retaining hard enforcement everywhere else and proving the exception against spoofed repository identities in an isolated real-index/commit test; future entries require separate explicit owner approval in dotfiles (done 2026-11-26 10:41 EST; commit 66204dd).
 - [ ] Await Mechatron Prime's owned `capture`/`strace -f` child-pipe deadlock regression and placement decision; do not rerun or modify the shared helper without delegation.

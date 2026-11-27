@@ -156,24 +156,10 @@ in_bash && . "$HOME/dotfiles/bin/src/shadows.bash"
 # resolve function for expanding aliases and resolved paths recursively
 . $HOME/dotfiles/bin/src/resolve.bash
 
-SIXEL_ENV=$(DEBUG_SHELLCONFIG=1 check_sixel_support 2>&1)
-SIXEL_CAPABLE=$?
-# if retcode is 0 then set SIXEL_CAPABLE to "true" else "false"
-if [ "$SIXEL_CAPABLE" -eq 0 ]; then
-  SIXEL_CAPABLE="true"
-else
-  SIXEL_CAPABLE="false"
-fi
-
-# Also detect kitty graphics protocol (Ghostty, kitty, WezTerm). display_image
-# prefers kitty when available, falls back to sixel — so IMAGE_CAPABLE is the
-# real "can we render images" gate, broader than SIXEL_CAPABLE alone.
-check_kitty_support >/dev/null 2>&1 && KITTY_CAPABLE="true" || KITTY_CAPABLE="false"
-if [ "$SIXEL_CAPABLE" = "true" ] || [ "$KITTY_CAPABLE" = "true" ]; then
-  IMAGE_CAPABLE="true"
-else
-  IMAGE_CAPABLE="false"
-fi
+# The startup engine (.pathconfig) computed the terminal graphics facts:
+# SIXEL_ENV (the Sixel verdict), SIXEL_CAPABLE, KITTY_CAPABLE, and
+# IMAGE_CAPABLE, the "can this terminal show images" gate. Export them for
+# the intro and other tools.
 export SIXEL_ENV SIXEL_CAPABLE KITTY_CAPABLE IMAGE_CAPABLE
 
 # Terminal tabs can start interactive Bash without making it a login shell.

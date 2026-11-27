@@ -1,0 +1,137 @@
+#!/usr/bin/env bash
+# The startup engine's terminal graphics facts against the .profile block they
+# replaced: the frozen Bash probes with real infocmp, over a synthetic terminfo
+# database and an environment matrix. Also checks that the engine names the
+# shell's parent process the way `ps -o comm=` does.
+set -u
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+work=$(mktemp -d "${TMPDIR:-/tmp}/graphics_env_test.XXXXXX") || exit 1
+background_pid=''
+# shellcheck disable=SC2329 # Run by the EXIT trap.
+cleanup() {
+	[[ -n "$background_pid" ]] && kill "$background_pid" 2>/dev/null
+	command rm -rf -- "$work"
+}
+trap cleanup EXIT
+luajit_bin=$(command -v luajit) || { printf 'FAIL: luajit is not on PATH\n' >&2; exit 1; }
+fixtures="$root/bin/test/fixtures/fun_intro"
+
+tests=0
+fails=0
+pass() { ((tests++)) || :; printf 'PASS: %s\n' "$1"; }
+fail() { ((tests++)) || :; ((fails++)) || :; printf 'FAIL: %s\n' "$1" >&2; }
+
+for tool in infocmp tic; do
+	command -v "$tool" >/dev/null 2>&1 || { printf 'FAIL: %s is required as the oracle\n' "$tool" >&2; exit 1; }
+done
+cat >"$work/entries.ti" <<'TERMINFO'
+sixdesc|terminal with sixel graphics,
+	am, cols#80,
+plainterm|no graphics here,
+	am, cols#80,
+xterm-256color|stand-in without sixel,
+	am, cols#80, colors#256,
+xterm-kitty|stand-in kitty entry,
+	am, cols#80,
+TERMINFO
+tic -x -o "$work/terminfo" "$work/entries.ti" 2>"$work/tic.err" || { cat "$work/tic.err" >&2; exit 1; }
+
+# The .profile block before the engine took over, around the frozen probes.
+# ps is the probe's only other command; this stand-in names the parent "bash".
+mkdir -p "$work/bin"
+printf '#!/bin/sh\nprintf "bash\\n"\n' >"$work/bin/ps"
+chmod +x "$work/bin/ps"
+# shellcheck disable=SC2016 # Expanded by the child shell.
+old_block='
+	. "$FIXTURES/check_kitty_support.bash"
+	. "$FIXTURES/check_sixel_support.bash"
+	SIXEL_ENV=$(DEBUG_SHELLCONFIG=1 check_sixel_support 2>&1)
+	SIXEL_CAPABLE=$?
+	if [ "$SIXEL_CAPABLE" -eq 0 ]; then SIXEL_CAPABLE="true"; else SIXEL_CAPABLE="false"; fi
+	check_kitty_support >/dev/null 2>&1 && KITTY_CAPABLE="true" || KITTY_CAPABLE="false"
+	if [ "$SIXEL_CAPABLE" = "true" ] || [ "$KITTY_CAPABLE" = "true" ]; then IMAGE_CAPABLE="true"; else IMAGE_CAPABLE="false"; fi
+	printf "SIXEL_ENV=%s|SIXEL_CAPABLE=%s|KITTY_CAPABLE=%s|IMAGE_CAPABLE=%s\n" "$SIXEL_ENV" "$SIXEL_CAPABLE" "$KITTY_CAPABLE" "$IMAGE_CAPABLE"'
+# shellcheck disable=SC2016 # Expanded by the child shell.
+engine='eval "$("$LUAJIT" "$ROOT/lib/shell_startup/shell_env.lua")"
+	printf "SIXEL_ENV=%s|SIXEL_CAPABLE=%s|KITTY_CAPABLE=%s|IMAGE_CAPABLE=%s\n" "$SIXEL_ENV" "$SIXEL_CAPABLE" "$KITTY_CAPABLE" "$IMAGE_CAPABLE"'
+
+: >"$work/expected"
+: >"$work/actual"
+rows=0
+for term in sixdesc plainterm xterm-256color xterm-kitty dumb; do
+	for program in ghostty WezTerm Apple_Terminal Hyper ''; do
+		for kitty_window in '' 7; do
+			for wsl in '' WT_SESSION; do
+				common=(HOME="$work" TERM="$term" TERM_PROGRAM="$program" KITTY_WINDOW_ID="$kitty_window"
+					WSLENV="$wsl" TERMINFO="$work/terminfo" TERMINFO_DIRS="$work/terminfo")
+				env -i "${common[@]}" PATH="$work/bin:$PATH" GREP_QUIET='grep -q' FIXTURES="$fixtures" \
+					bash -c "$old_block" >>"$work/expected" 2>&1
+				# The engine reads its parent from SHELL_STARTUP_PPID; this shell's
+				# own PID names a process whose command is bash, as the stand-in says.
+				env -i "${common[@]}" PATH=/nonexistent ORIG_PATH=/nonexistent OS=linux PF=linux-amd64 \
+					OSTYPE=linux-gnu LUAJIT="$luajit_bin" ROOT="$root" \
+					"$(command -v bash)" -c 'SHELL_STARTUP_PPID=$$ '"$engine" >>"$work/actual" 2>&1
+				((rows++))
+			done
+		done
+	done
+done
+if cmp -s "$work/expected" "$work/actual"; then
+	pass "engine graphics facts match the old .profile probes on $rows environments"
+else
+	fail 'engine graphics facts differ from the old .profile probes'
+	diff "$work/expected" "$work/actual" | head -8 >&2
+fi
+if grep -q 'SIXEL_ENV=Sixel support detected via terminfo.|SIXEL_CAPABLE=true' "$work/expected" &&
+	grep -q 'SIXEL_CAPABLE=false|KITTY_CAPABLE=false|IMAGE_CAPABLE=false' "$work/expected"; then
+	pass 'the matrix reaches terminfo-detected Sixel and no-graphics verdicts'
+else
+	fail 'the matrix no longer covers terminfo-detected Sixel or no-graphics verdicts'
+fi
+
+# --- Parent process names without ps ---
+comm_of() { LUA_PATH="$root/lib/?.lua;$root/lib/shell_startup/?.lua;;" "$luajit_bin" -e \
+	'io.write(require("graphics_env").process_command(os.getenv("P")))' /dev/null; }
+# A renamed bash blocked in a builtin read: one process, no children to orphan.
+ln -s "$(command -v bash)" "$work/bin/cool-retro-term"
+# It announces itself on a FIFO, which it can only do after its exec, so the
+# check below never races the process image.
+mkfifo "$work/never" "$work/ready"
+# shellcheck disable=SC2016 # Expanded by the renamed shell.
+"$work/bin/cool-retro-term" -c 'printf "up\n" >"$2"; read -r -t 30 _ <>"$1"' cool-retro-term \
+	"$work/never" "$work/ready" &
+background_pid=$!
+read -r _ <"$work/ready"
+named=$(P=$background_pid comm_of)
+kill "$background_pid" 2>/dev/null
+wait "$background_pid" 2>/dev/null
+background_pid=''
+if [[ "$named" == cool-retro-term* ]]; then
+	pass 'process_command names a process by the file it executed, as ps -o comm= does'
+else
+	fail "process_command named a cool-retro-term process '$named'"
+fi
+# The macOS sandbox refuses setuid /bin/ps, and the Linux sandbox has no ps;
+# where ps cannot run, say so rather than count a comparison that never ran.
+real_ps=$(PATH=/usr/bin:/bin:/run/current-system/sw/bin command -v ps) || real_ps=''
+if [[ -n "$real_ps" ]] && want=$("$real_ps" -o comm= -p $$ 2>/dev/null) && [[ -n "$want" ]]; then
+	want=${want%"${want##*[![:space:]]}"}
+	got=$(P=$$ comm_of)
+	if [[ "$want" == "$got" || "$want" == */"$got" ]]; then
+		pass "process_command agrees with ps on this shell ($got)"
+	else
+		fail "process_command says '$got' where ps says '$want'"
+	fi
+else
+	printf 'NOTE: ps cannot run here; process_command was compared with the renamed process only\n' >&2
+fi
+got=$(P=0 comm_of)
+if [[ -z "$got" ]]; then pass 'process_command returns empty for an invalid process'; else fail "process_command 0 gave '$got'"; fi
+
+if ((fails == 0)); then
+	printf 'All %s graphics environment checks passed.\n' "$tests"
+else
+	printf '%s of %s graphics environment checks failed.\n' "$fails" "$tests" >&2
+fi
+exit "$fails"
