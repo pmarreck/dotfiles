@@ -32,9 +32,25 @@ _platform_env_normalize_arch() {
 configure_platform_env() {
 	local raw_os raw_arch kernel_identity canonical_os canonical_arch canonical_pf canonical_wsl
 	if (( $# == 0 )); then
-		raw_os=$(uname -s) || return
-		raw_arch=$(uname -m) || return
-		kernel_identity=$(uname -r) || return
+		# The kernel cannot change under a running process, so read it once per
+		# shell; startup classifies twice (.pathconfig, .envconfig). The memo is
+		# never exported and is keyed to $$, so every child process reads its own
+		# kernel and inherited values cannot go stale.
+		if [ "${_PLATFORM_ENV_KERNEL_PID-}" = "$$" ]; then
+			raw_os=$_PLATFORM_ENV_KERNEL_OS
+			raw_arch=$_PLATFORM_ENV_KERNEL_ARCH
+			kernel_identity=$_PLATFORM_ENV_KERNEL_IDENTITY
+		else
+			raw_os=$(uname -s) || return
+			raw_arch=$(uname -m) || return
+			kernel_identity=$(uname -r) || return
+			export -n _PLATFORM_ENV_KERNEL_PID _PLATFORM_ENV_KERNEL_OS \
+				_PLATFORM_ENV_KERNEL_ARCH _PLATFORM_ENV_KERNEL_IDENTITY 2>/dev/null
+			_PLATFORM_ENV_KERNEL_OS=$raw_os
+			_PLATFORM_ENV_KERNEL_ARCH=$raw_arch
+			_PLATFORM_ENV_KERNEL_IDENTITY=$kernel_identity
+			_PLATFORM_ENV_KERNEL_PID=$$
+		fi
 	elif (( $# == 3 )); then
 		raw_os=$1
 		raw_arch=$2

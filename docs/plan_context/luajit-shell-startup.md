@@ -91,9 +91,32 @@ so the engine sorts full candidate paths. Intentional difference: the old
 loops glob-expanded PATH entries containing `*`, `?`, or `[` whenever noglob
 was off; the engine never does.
 
-C. Platform and distribution facts in the same Lua run: `uname` through FFI,
-`/etc/os-release` parsed directly, macOS version from SystemVersion.plist, and
-`is_nix_darwin`, removing about 15 processes.
+C. Done, re-scoped: platform and distribution forks.
+- On Linux the engine run also prints DISTRO, DISTRO_PRETTY, and
+  DISTRO_VERSION, parsed by `os_release.lua` exactly as the `distro*`
+  commands' awk programs read `/etc/os-release` ($2 ends at the next `=`;
+  every match prints; command substitution drops NULs and trailing newlines).
+  `os_release_facts_test` compares 222 real, adversarial, and fuzzed files
+  against the commands themselves; mutants that strip every quote or skip the
+  second `=` are caught. A missing file yields empty facts silently (the
+  commands' "Unknown" stderr notice is not reproduced; the Nix sandbox has no
+  os-release).
+- `configure_platform_env` reads `uname` once per shell process (a
+  non-exported memo keyed to `$$`), so `.envconfig`'s second call stops
+  forking and children still read their own kernel. `uname` itself stays in
+  Bash: a dozen tests inject the platform by shadowing it there.
+- `.aliases` answers "nix-darwin?" from the classified `OS` instead of forking
+  `is_nix_darwin` twice, and `.bash_profile` runs `check-system-mutations`
+  only on macOS.
+- The exec-budget test now holds `is_nix_darwin` and `distro` at zero
+  everywhere, and on Linux the other distro helpers and
+  `check-system-mutations` at zero and `uname` at one triple. Run against the
+  previous tree it fails 11 of 18 checks.
+- Interleaved A/B against increment B: non-login 772 → 656 ms, login
+  865 → 758 ms, under load average 12–19, which inflates fork costs; the
+  isolated estimate was about 70 ms.
+- Still open: macOS distribution facts (`sw_vers`, `distro_version`,
+  `mac_os_version_number_to_name`) need a Mac to verify.
 
 D. Tool capability facts: GNU tool detection cached by resolved binary path
 (Nix store paths are immutable), terminal image capability without

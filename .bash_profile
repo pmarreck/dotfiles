@@ -94,7 +94,8 @@ fi
 # Warn (cheaply, warn-only) if root-owned system mutations declared in the
 # nix-darwin flake (~/.config/nix) have drifted or been wiped by a macOS
 # update. Fix is always: sudo darwin-rebuild switch --flake ~/.config/nix
-command -v check-system-mutations >/dev/null 2>&1 && check-system-mutations || :
+# The check is a no-op elsewhere, so skip forking it off macOS.
+[ "$OS" = macos ] && command -v check-system-mutations >/dev/null 2>&1 && check-system-mutations || :
 
 truthy DEBUG_SHELLCONFIG && echo "Exiting $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")"
 truthy DEBUG_PATHCONFIG && echo "$PATH" || :

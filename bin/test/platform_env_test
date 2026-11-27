@@ -122,6 +122,37 @@ case "$actual_os|$actual_arch|$actual_platform|$actual_pf|$actual_wsl" in
 		;;
 esac
 
+((tests++))
+# Startup classifies twice per shell (.pathconfig, .envconfig). The kernel
+# cannot change under a running process, so only the first call may read it;
+# a child process must read its own. Count reads with a uname that logs.
+uname_log=$(mktemp "${TMPDIR:-/tmp}/platform_env_test.XXXXXX") || exit 1
+# shellcheck disable=SC2016 # The child shells expand these programs.
+memo_result=$(
+	export UNAME_LOG="$uname_log" HELPER="$helper"
+	"${BASH:-bash}" --noprofile --norc -c '
+		uname() {
+			printf "%s\n" "$1" >> "$UNAME_LOG"
+			case "$1" in -s) echo Linux ;; -m) echo x86_64 ;; -r) echo 6.8.0-memo ;; esac
+		}
+		export -f uname
+		. "$HELPER"
+		configure_platform_env || exit
+		first="$OS|$PF|$WSL"
+		configure_platform_env || exit
+		[ "$first" = "$OS|$PF|$WSL" ] || { echo "changed"; exit; }
+		echo "parent=$(wc -l < "$UNAME_LOG" | tr -d " ")"
+		"${BASH:-bash}" --noprofile --norc -c ". \"\$HELPER\"; configure_platform_env" || exit
+		echo "child=$(wc -l < "$UNAME_LOG" | tr -d " ") facts=$first"
+	'
+)
+command rm -f -- "$uname_log"
+if [[ "$memo_result" == $'parent=3\nchild=6 facts=linux|linux-amd64|0' ]]; then
+	pass 'a shell reads its kernel once, and a child process reads its own'
+else
+	fail "kernel reads were not once per process: ${memo_result:-<failure>}"
+fi
+
 if (( fails == 0 )); then
 	printf 'All %s platform environment checks passed.\n' "$tests"
 else

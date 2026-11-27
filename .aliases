@@ -52,11 +52,16 @@ else # linux
 fi
 
 # NixOS-specific stuff
-if [ "${OS}-${DISTRO}" = "linux-NixOS" ] || is_nix_darwin; then
+# Same test as bin/is_nix_darwin, answered from the OS this shell classified at
+# startup instead of forking that helper and uname for it.
+_aliases_nix_darwin=false
+[ "$OS" = macos ] && [ -f /etc/nix/nix.conf ] && _aliases_nix_darwin=true
+if [ "${OS}-${DISTRO}" = "linux-NixOS" ] || $_aliases_nix_darwin; then
   alias nix-list-gens='sudo nix-env -p /nix/var/nix/profiles/system --list-generations'
   alias nix-gen-num='readlink /nix/var/nix/profiles/system | cut -d- -f2'
-  is_nix_darwin || alias nixos="choose_editor /etc/nixos &"
+  $_aliases_nix_darwin || alias nixos="choose_editor /etc/nixos &"
 fi
+unset _aliases_nix_darwin
 
 alias scr='screen -r'
 alias p='ping www.yahoo.com'

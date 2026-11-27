@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Interactive startup must not fork helper scripts whose work is a lookup the
-# current shell can answer itself. Each forked dual-mode helper costs roughly
-# 10 ms: an `env bash` PATH walk, a Bash startup, a `basename` exec, and a
-# second PATH walk inside the helper.
+# Interactive startup must not fork helper scripts whose work the current shell
+# or its one LuaJIT engine run can answer. Each forked dual-mode helper costs
+# roughly 10 ms: an `env bash` PATH walk, a Bash startup, a `basename` exec,
+# and a second PATH walk inside the helper.
 #
 # Oracle: logging stubs placed in a foreign PATH entry. .pathconfig keeps
 # foreign entries ahead of its own additions, so any startup code that executes
@@ -15,27 +15,43 @@ set -u
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 bash_bin="${BASH:-$(command -v bash)}"
+real_uname="$(command -v uname)"
 work=$(mktemp -d "${TMPDIR:-/tmp}/shell_startup_exec_budget_test.XXXXXX") || exit 1
 trap 'command rm -rf -- "$work"' EXIT
 stub_dir="$work/stub-bin"
 log="$work/exec.log"
 mkdir -p "$stub_dir" || exit 1
 
-# Names that startup must resolve in-process. Each must be a dotfiles helper.
-in_process=(needs array_contains_element)
+# Helpers startup must define in-process as shell functions.
+functions=(needs array_contains_element)
+# Executions allowed per interactive startup, by name. The macOS and Windows
+# branches of .bashrc still read distribution facts through the helpers, and
+# macOS also reads `uname -m` for ARCHFLAGS, so those budgets are Linux-only.
+declare -A budget=([needs]=0 [array_contains_element]=0 [is_nix_darwin]=0 [distro]=0)
+if [[ "$("$real_uname" -s)" == Linux ]]; then
+	budget[distro_pretty]=0
+	budget[distro_version]=0
+	budget[check-system-mutations]=0 # a nix-darwin drift check
+	budget[uname]=3 # one kernel classification: uname -s, -m, -r
+fi
 
-for name in "${in_process[@]}"; do
-	real="$repo_root/bin/$name"
-	if [[ ! -x "$real" ]]; then
-		printf 'FAIL: helper %s is missing at %s\n' "$name" "$real" >&2
-		exit 1
-	fi
+stub() { # <name> <real executable>
 	{
 		printf '#!/bin/sh\n'
-		printf 'printf "%%s\\n" "%s $*" >> %q\n' "$name" "$log"
-		printf 'exec %q "$@"\n' "$real"
-	} >"$stub_dir/$name"
-	chmod +x "$stub_dir/$name"
+		printf 'printf "%%s\\n" "%s $*" >> %q\n' "$1" "$log"
+		printf 'exec %q "$@"\n' "$2"
+	} >"$stub_dir/$1"
+	chmod +x "$stub_dir/$1"
+}
+for name in "${!budget[@]}"; do
+	if [[ "$name" == uname ]]; then
+		stub uname "$real_uname"
+	elif [[ -x "$repo_root/bin/$name" ]]; then
+		stub "$name" "$repo_root/bin/$name"
+	else
+		printf 'FAIL: helper %s is missing from %s/bin\n' "$name" "$repo_root" >&2
+		exit 1
+	fi
 done
 
 # An SSH-like pristine base. ORIG_PATH is pinned to the base so the stub
@@ -44,12 +60,17 @@ base_path="/run/current-system/sw/bin:/usr/bin:/bin"
 [[ -d /run/current-system/sw/bin ]] || base_path="/usr/bin:/bin:/usr/sbin:/sbin"
 me="$(id -un)"
 
+# The probe runs after startup. It first marks the log, so startup executions
+# can be told apart from its own (the distro helpers run uname themselves),
+# reports function kinds, then executes each stub once through `command` as
+# the positive control.
+probe_marker='--- probe ---'
 # shellcheck disable=SC2016 # The child shell expands the probe.
-probe='
-	command needs bash >/dev/null 2>&1
-	command array_contains_element probe_array probe_value >/dev/null 2>&1
-	printf "kinds=%s,%s\n" "$(type -t needs)" "$(type -t array_contains_element)"
-'
+probe='printf "%s\n" "$BUDGET_PROBE_MARKER" >> "$BUDGET_LOG"
+printf "kinds=%s,%s\n" "$(type -t needs)" "$(type -t array_contains_element)"'
+for name in "${!budget[@]}"; do
+	probe+="; command $name probe-control >/dev/null 2>&1"
+done
 
 tests=0
 fails=0
@@ -57,7 +78,7 @@ pass() { printf 'PASS: %s\n' "$1"; }
 fail() { printf 'FAIL: %s\n' "$1" >&2; ((fails++)) || :; }
 
 run_quadrant() {
-	local label=$1 out lines
+	local label=$1 out name count startup_log="$work/startup.log" probe_log="$work/probe.log"
 	shift
 	: >"$log"
 	# --foreground keeps interactive Bash in the terminal's process group
@@ -68,30 +89,32 @@ run_quadrant() {
 		HOME="$HOME" USER="$me" LOGNAME="$me" TERM=xterm SHELL="$bash_bin" \
 		PATH="$stub_dir:$base_path" ORIG_PATH="$base_path" \
 		__NIXOS_SET_ENVIRONMENT_DONE=1 SHELL_STARTUP_BENCHMARK=1 \
+		BUDGET_LOG="$log" BUDGET_PROBE_MARKER="$probe_marker" \
 		"$bash_bin" "$@" -c "$probe" 2>/dev/null)
+	sed "/^$probe_marker\$/,\$d" "$log" >"$startup_log"
+	sed -n "/^$probe_marker\$/,\$p" "$log" >"$probe_log"
 
 	((tests++))
-	if [[ "$out" == *"kinds=function,function"* ]]; then
-		pass "$label: needs and array_contains_element are shell functions"
+	if [[ -s "$probe_log" && "$out" == *"kinds=function,function"* ]]; then
+		pass "$label: ${functions[*]} are shell functions"
 	else
 		fail "$label: expected shell functions, probe said: ${out:-<no output>}"
 	fi
 
-	((tests++))
-	if grep -qx 'needs bash' "$log" && grep -qx 'array_contains_element probe_array probe_value' "$log"; then
-		pass "$label: positive control reached every stub"
-	else
-		fail "$label: positive control did not reach the stubs; the oracle is blind"
-	fi
-
-	((tests++))
-	lines=$(grep -vx -e 'needs bash' -e 'array_contains_element probe_array probe_value' "$log")
-	if [[ -z "$lines" ]]; then
-		pass "$label: startup forked none of the in-process helpers"
-	else
-		fail "$label: startup forked $(printf '%s\n' "$lines" | wc -l | tr -d ' ') helper process(es):"
-		printf '    %s\n' "$lines" >&2
-	fi
+	for name in "${!budget[@]}"; do
+		((tests++))
+		if ! grep -qx "$name probe-control" "$probe_log"; then
+			fail "$label: positive control did not reach the $name stub; the oracle is blind"
+			continue
+		fi
+		count=$(grep -c "^$name " "$startup_log")
+		if ((count <= budget[$name])); then
+			pass "$label: startup executed $name $count time(s) (budget ${budget[$name]})"
+		else
+			fail "$label: startup executed $name $count time(s); budget is ${budget[$name]}:"
+			grep "^$name " "$startup_log" | sed 's/^/    /' >&2
+		fi
+	done
 }
 
 run_quadrant 'non-login interactive' -i

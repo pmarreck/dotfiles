@@ -214,9 +214,9 @@ case $OS in
 		# fi
 		;;
 	linux)
-		export DISTRO="$(distro)"
-		export DISTRO_PRETTY="$(distro_pretty)"
-		export DISTRO_VERSION="$(distro_version)"
+		# .pathconfig's engine run already exported DISTRO, DISTRO_PRETTY, and
+		# DISTRO_VERSION, parsed from /etc/os-release exactly as bin/distro,
+		# bin/distro_pretty, and bin/distro_version read it.
 		;;
 	mswin)
 		export DISTRO="Windows"

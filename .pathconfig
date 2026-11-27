@@ -89,12 +89,12 @@ if [ -z "$_pc_luajit" ] || [ ! -x "$_pc_luajit" ]; then
 fi
 
 # The engine prints only NAME='value' lines (lib/shell_startup/shell_assign.lua), so
-# eval assigns exactly the computed bytes. Pass the shell's own state explicitly:
-# ORIG_PATH, PF, and OSTYPE may be unexported, and the locale variables decide the
-# collation Bash would use for glob order.
-if ! _pc_assignments=$(ORIG_PATH="$ORIG_PATH" PF="$PF" OSTYPE="$OSTYPE" \
+# eval assigns exactly the computed bytes: PATH, plus the distribution facts on Linux.
+# Pass the shell's own state explicitly: ORIG_PATH, OS, PF, and OSTYPE may be
+# unexported, and the locale variables decide the collation Bash would use for glob order.
+if ! _pc_assignments=$(ORIG_PATH="$ORIG_PATH" OS="$OS" PF="$PF" OSTYPE="$OSTYPE" \
 	LANG="${LANG-}" LC_COLLATE="${LC_COLLATE-}" LC_ALL="${LC_ALL-}" \
-	"$_pc_luajit" "$HOME/dotfiles/lib/shell_startup/path_env.lua"); then
+	"$_pc_luajit" "$HOME/dotfiles/lib/shell_startup/shell_env.lua"); then
 	echo ".pathconfig: PATH construction failed; PATH was left unchanged." >&2
 	unset _pc_luajit _pc_assignments
 	# shellcheck disable=SC2317 # exit is the executed-file fallback after return fails.
@@ -104,6 +104,8 @@ eval "$_pc_assignments"
 unset _pc_luajit _pc_assignments
 
 export PATH
+# macOS and Windows distribution facts still come from .bashrc.
+[ "$OS" = linux ] && export DISTRO DISTRO_PRETTY DISTRO_VERSION
 
 [ -n "${DEBUG_SHELLCONFIG}" ] && echo "Exiting $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")"
 [ -n "${DEBUG_PATHCONFIG}" ] && echo $PATH || :
