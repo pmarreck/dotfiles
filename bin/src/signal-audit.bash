@@ -20,18 +20,21 @@ signal_identity() {
 signal_logged() {
 	local operation="$1" signal="$2" echo_targets="$3" queue="$4"
 	shift 4
-	local journal pid before after row description status=1 failed=0 attempted=0 native
+	local journal pid before after row description status=1 failed=0 attempted=0 native='' candidate
 	local -a pids=() identities=() names=()
 	builtin kill -l "$signal" >/dev/null 2>&1 || [[ "$signal" == 0 ]] ||
 		{ audit_error "$operation" "invalid signal: $signal"; return 2; }
 	[[ $# -gt 0 ]] || return 1
 	if [[ -n "$queue" ]]; then
 		# util-linux supports queued signals to explicit PIDs.
-		while IFS= read -r native; do
-			[[ -x "$native" && ! "$native" -ef "${BASH_SOURCE[0]%/*}/../kill" ]] || continue
-			break
+		# Read every candidate, keeping the first native one: leaving early closed
+		# the pipe under `type`, which reports a broken pipe if SIGPIPE is ignored.
+		while IFS= read -r candidate; do
+			if [[ -z "$native" && -x "$candidate" && ! "$candidate" -ef "${BASH_SOURCE[0]%/*}/../kill" ]]; then
+				native="$candidate"
+			fi
 		done < <(type -a -p kill)
-		[[ -n "$native" && ! "$native" -ef "${BASH_SOURCE[0]%/*}/../kill" ]] ||
+		[[ -n "$native" ]] ||
 			{ audit_error "$operation" 'queued signals require a native kill executable'; return 2; }
 	fi
 	journal=$(audit_batch signals) || return 1

@@ -27,6 +27,21 @@ capture env HOME="$scratch/private-home" bash --noprofile --norc -c '
 	cd "$HOME" && kill -0 "$1"
 ' audited-child "$fixture_pid"
 check 'child Bash imports audited kill with a private HOME' "$rc" 0
+# A queued signal looks up the native kill and must read all of
+# `type -a -p kill`: stopping early closed the pipe while type could still be
+# writing, and with SIGPIPE ignored type then reported a broken pipe. 2000
+# copies of one directory outgrow any pipe buffer. Its kill only records the
+# call, so this runs on any platform.
+mkdir "$scratch/many"
+printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "%s"\n' "$scratch/queued" > "$scratch/many/kill"
+chmod +x "$scratch/many/kill"
+# shellcheck disable=SC2016 # Expanded by the child shell.
+pipe_err=$( (trap '' PIPE; exec bash --noprofile --norc -c '
+	p=$1; for ((i = 0; i < 2000; i++)); do p+=":$1"; done
+	PATH="$p:$PATH"; . "$2" && signal_logged kill CONT false 7 "$3"' _ "$scratch/many" \
+	"$root/bin/src/signal-audit.bash" "$fixture_pid") 2>&1 >/dev/null)
+check 'queued native lookup with SIGPIPE ignored keeps stderr clean' "$pipe_err" ''
+check 'queued signal goes through the native kill' "$(cat "$scratch/queued" 2>/dev/null)" "--queue 7 -s CONT -- $fixture_pid"
 capture "$root/bin/kill" --log
 [[ "$out" == *"target pid=$fixture_pid "* && "$out" == *"result pid=$fixture_pid status=sent"* ]] ||
 	{ printf 'FAIL missing process identity or signal outcome\n'; failures=$((failures+1)); }

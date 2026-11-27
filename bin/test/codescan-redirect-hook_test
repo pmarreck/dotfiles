@@ -38,9 +38,13 @@ for tool in bash jq cat dirname mkdir sha256sum git; do
 	tool_path=$(command -v "$tool")
 	if [[ $tool == git ]]; then
 		# This fixture admits only native Git, not the PATH wrapper and its runtime.
+		# Read every candidate: leaving early can close the pipe under `type`,
+		# which reports a broken pipe where SIGPIPE is ignored.
+		native_git=''
 		while IFS= read -r candidate; do
-			if [[ ! $candidate -ef $repo_root/bin/git ]]; then tool_path=$candidate; break; fi
+			if [[ -z $native_git && ! $candidate -ef $repo_root/bin/git ]]; then native_git=$candidate; fi
 		done < <(type -a -p git)
+		[[ -z $native_git ]] || tool_path=$native_git
 	fi
 	ln -s "$tool_path" "$scratch/tools/$tool"
 	ln -s "$tool_path" "$scratch/no-codescan/$tool"

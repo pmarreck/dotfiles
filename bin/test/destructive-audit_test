@@ -43,6 +43,18 @@ if [[ "$real" -ef "$chmod_guard" ]]; then
 		if [[ ! "$candidate" -ef "$chmod_guard" ]]; then real="$candidate"; break; fi
 	done < <(type -a -p chmod)
 fi
+# The native lookup must read all of `type -a -p chmod`. Stopping at the first
+# native candidate closed the pipe while type could still be writing; with
+# SIGPIPE ignored (as in the Nix builder) type then reported a broken pipe,
+# intermittently. 2000 copies of one directory outgrow any pipe buffer, so an
+# early-stopping reader always leaves type mid-write.
+mkdir "$scratch/many" && ln -s "$real" "$scratch/many/chmod" && printf 'pipe\n' > "$tree/pipe"
+# shellcheck disable=SC2016 # Expanded by the child shell.
+pipe_err=$( (trap '' PIPE; exec bash --noprofile --norc -c '
+	p=$1; for ((i = 0; i < 2000; i++)); do p+=":$1"; done
+	PATH="$p:$PATH"; shift; . "$@"' _ "$scratch/many" "$chmod_guard" 0604 "$tree/pipe") 2>&1 >/dev/null)
+check 'native lookup with SIGPIPE ignored keeps stderr clean' "$pipe_err" ''
+check 'native lookup over a long candidate list still changes the mode' "$(modes "$tree/pipe")" 604
 native_help=$("$real" --help 2>/dev/null) || native_help=''
 if [[ "$native_help" == *--dereference* ]]; then
 	capture "$chmod_guard" --recursive -H --dereference 0700 "$tree"

@@ -98,9 +98,13 @@ chmod_guard() {
 				'Use a separate ACL-aware backup for macOS ACL edits.'
 			return 0 ;;
 	esac
+	# Read every candidate, keeping the first native one. Leaving the loop early
+	# closed the pipe while `type` could still be writing, and wherever SIGPIPE
+	# is ignored (as in the Nix builder) it then reported a broken pipe.
 	while IFS= read -r candidate; do
-		[[ -x "$candidate" && ! "$candidate" -ef "${BASH_SOURCE[0]}" ]] || continue
-		native="$candidate"; break
+		if [[ -z "$native" && -x "$candidate" && ! "$candidate" -ef "${BASH_SOURCE[0]}" ]]; then
+			native="$candidate"
+		fi
 	done < <(type -a -p chmod)
 	[[ -n "$native" ]] || { audit_error chmod 'native chmod not found'; return 127; }
 	case "${1:-}" in
