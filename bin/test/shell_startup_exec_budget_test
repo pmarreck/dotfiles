@@ -98,6 +98,12 @@ printf "kinds=%s,%s\n" "$(type -t needs)" "$(type -t array_contains_element)"'
 for name in "${!budget[@]}" "${hook_tools[@]}"; do
 	probe+="; command $name probe-control >/dev/null 2>&1"
 done
+# Where a host binary shadows a hook stub (macOS login shells put
+# /usr/local/bin first), report what the shell runs, what the engine's cache
+# entry names, and whether PATH is still the one the engine searched.
+for name in "${hook_tools[@]}"; do
+	probe+="; printf 'hook-$name=%s|%s|%s\\n' \"\$(type -P $name)\" \"\${SHELL_STARTUP_HOOK_${name^^}_BIN-}\" \"\$([[ \$PATH == \${SHELL_STARTUP_HOOK_PATH-} ]] && echo same)\""
+done
 
 tests=0
 fails=0
@@ -146,7 +152,14 @@ run_quadrant() {
 	for name in "${hook_tools[@]}"; do
 		((tests++))
 		if ! grep -qx "$name probe-control" "$probe_log"; then
-			fail "$label: positive control did not reach the $name stub; the oracle is blind"
+			local seen
+			seen=$(sed -n "s/^hook-$name=//p" <<<"$out")
+			IFS='|' read -r resolved named same <<<"$seen"
+			if [[ -n "$resolved" && "$resolved" != "$stub_dir/$name" && "$resolved" == "$named" && "$same" == same ]]; then
+				pass "$label: $name is $resolved here, ahead of the stub; the engine's cache entry names that binary and PATH is unchanged"
+			else
+				fail "$label: positive control did not reach the $name stub; the oracle is blind (shell runs '${resolved:-?}', cache names '${named:-?}', PATH ${same:-changed})"
+			fi
 			continue
 		fi
 		count=$(grep -c -E "^$name (hook|init) " "$startup_log")

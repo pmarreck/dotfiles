@@ -163,9 +163,17 @@ check("hook init: a warm startup has the cached scripts and an unwritable cache 
 	"cold: " .. cold_hooks .. "\nwarm: " .. warm_hooks)
 local first_difference
 do
-	local a, b = {}, {}
-	for line in cold_state:gmatch("[^\n]*") do a[#a + 1] = line end
-	for line in warm_state:gmatch("[^\n]*") do b[#b + 1] = line end
+	-- PS1 holds the prompt as last rendered, with its clock time and the last
+	-- command's duration; only those digits may differ.
+	local function lines(text)
+		local list = {}
+		for line in text:gmatch("[^\n]*") do
+			if line:find("^declare %-%- PS1=") then line = line:gsub("%d+", "N") end
+			list[#list + 1] = line
+		end
+		return list
+	end
+	local a, b = lines(cold_state), lines(warm_state)
 	for n = 1, math.max(#a, #b) do
 		if a[n] ~= b[n] then first_difference = string.format("line %d:\n  tools: %s\n  cache: %s", n, tostring(a[n]), tostring(b[n])) break end
 	end
