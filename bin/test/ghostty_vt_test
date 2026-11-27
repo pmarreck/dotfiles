@@ -76,7 +76,9 @@ local function sgr_remnant(text) return text:match("%[%d+;?%d*m") ~= nil end
 -- 1. The runner answers the shell's queries as a terminal must.
 do
 	local s = start()
-	local ok = run(s, [[printf '\033[6n'; IFS= read -rs -d R reply; printf 'CPR:%s\n' "${reply#*[}"]], "C-PR")
+	-- Echo goes off before the query: the reply can arrive before read starts,
+	-- and the terminal driver would echo it (macOS does, at this timing).
+	local ok = run(s, [[stty -echo; printf '\033[6n'; IFS= read -r -d R reply; stty echo; printf 'CPR:%s\n' "${reply#*[}"]], "C-PR")
 	local row, col = s:text():match("\nCPR:(%d+);(%d+)\n")
 	check("a cursor position query is answered through the runner", ok and row ~= nil, s:text())
 	s:close()

@@ -107,7 +107,7 @@ named=$(P=$background_pid comm_of)
 kill "$background_pid" 2>/dev/null
 wait "$background_pid" 2>/dev/null
 background_pid=''
-if [[ "$named" == cool-retro-term* ]]; then
+if [[ "$named" == *cool-retro-term* ]]; then
 	pass 'process_command names a process by the file it executed, as ps -o comm= does'
 else
 	fail "process_command named a cool-retro-term process '$named'"

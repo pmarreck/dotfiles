@@ -35,8 +35,10 @@ function M.facts(env, read, parent_command)
 	}
 end
 
--- Command name of a process without starting `ps`: /proc on Linux,
--- proc_name(3) on macOS. Returns "" when the process cannot be read.
+-- Command name of a process as `ps -o comm=` prints it, without starting ps:
+-- /proc/PID/comm on Linux; on macOS the process's argv[0], which ps reports
+-- (read with the KERN_PROCARGS2 sysctl), else proc_name(3). Returns "" when
+-- the process cannot be read.
 function M.process_command(pid)
 	pid = tonumber(pid)
 	if not pid or pid <= 0 then return "" end
@@ -48,10 +50,24 @@ function M.process_command(pid)
 	end
 	local ok, ffi = pcall(require, "ffi")
 	if not ok or ffi.os ~= "OSX" then return "" end
-	pcall(ffi.cdef, "int proc_name(int pid, void *buffer, uint32_t buffersize);")
-	local buffer = ffi.new("char[256]")
-	local length = ffi.C.proc_name(pid, buffer, 256)
-	return length > 0 and ffi.string(buffer, length) or ""
+	pcall(ffi.cdef, [[
+		int proc_name(int pid, void *buffer, uint32_t buffersize);
+		int sysctl(int *name, unsigned int namelen, void *oldp, size_t *oldlenp, void *newp, size_t newlen);
+	]])
+	-- KERN_PROCARGS2 holds argc, the exec path, NUL padding, then argv.
+	local mib = ffi.new("int[3]", 1, 49, pid) -- CTL_KERN, KERN_PROCARGS2
+	local size = ffi.new("size_t[1]", 0)
+	if ffi.C.sysctl(mib, 3, nil, size, nil, 0) == 0 and size[0] > 4 then
+		local buffer = ffi.new("char[?]", size[0])
+		if ffi.C.sysctl(mib, 3, buffer, size, nil, 0) == 0 then
+			local args = ffi.string(buffer + 4, size[0] - 4)
+			local argv0 = args:match("^[^%z]*%z+([^%z]+)")
+			if argv0 then return argv0 end
+		end
+	end
+	local name = ffi.new("char[256]")
+	local length = ffi.C.proc_name(pid, name, 256)
+	return length > 0 and ffi.string(name, length) or ""
 end
 
 return M
