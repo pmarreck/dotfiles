@@ -20,6 +20,27 @@ done
 for word in background_colour setColour ColourValue NEIGHBOUR_COUNT; do
 	printf '%s\n' "$word" > "$work/input"; scan; check test "$rc" -eq 1
 done
+# Spellings the owner accepts as American English, although VarCon prefers
+# another form. The generator excludes them; the dictionary must not regain one.
+for word in oversized acknowledgement acknowledgements; do
+	printf '%s\n' "$word" > "$work/input"; scan; check test "$rc" -eq 0
+done
+accepted="$root/share/american-english/accepted-american.txt"
+check test -s "$accepted"
+while IFS= read -r word; do
+	case "$word" in ''|'#'*) continue ;; esac
+	check test -z "$(cut -f1 "$root/share/american-english/british-to-american.tsv" | command grep -x -F -- "$word")"
+done < "$accepted"
+# Command-line flags keep their upstream spelling: a word that begins with --
+# is exempt, while the same word elsewhere on the line is still checked.
+printf 'nix-store --add-root FINAL --realise STORE_PATH\n' > "$work/input"; scan; check test "$rc" -eq 0
+printf '%s\n' 'tool --auto-optimise-store --colour=auto' > "$work/input"; scan; check test "$rc" -eq 0
+printf 'realise\n' > "$work/input"; scan; check test "$rc" -eq 1
+printf '%s\n' '-- colour' > "$work/input"; scan; check test "$rc" -eq 1
+printf '%s\n' '-colour' > "$work/input"; scan; check test "$rc" -eq 1
+printf '%s\n' '--realise' 'colour' > "$work/input"; scan; check test "$rc" -eq 1
+check test "${output#*':2: colour -> color'}" != "$output"
+check test "${output#*realise}" = "$output"
 printf "colour's neighbours’\n" > "$work/input"; scan; check test "$rc" -eq 1
 printf 'colourfulx xcolour xneighboury\n' > "$work/input"; scan; check test "$rc" -eq 0
 printf 'écolour colouré αcolour colourα\n' > "$work/input"; scan; check test "$rc" -eq 0

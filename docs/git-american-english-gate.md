@@ -9,6 +9,9 @@ Unstaged edits cannot hide staged violations. Deleted files, symlink targets,
 submodules and binary blobs are excluded. Staged `.nix` files are also exempt
 because upstream Nix option names can use British spelling, such as
 `auto-optimise-store`. An explicit `--file` scan can still review Nix prose.
+Words beginning with `--` are exempt in every file, because command-line flags
+keep their upstream spelling, such as `nix-store --realise`; the same word
+elsewhere on the line, or after `-- ` or a single `-`, is still checked.
 No historical commit is rewritten.
 
 Examples include `colour`, `COLOURS`, `colouring`, `neighbours` and

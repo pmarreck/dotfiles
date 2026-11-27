@@ -2,6 +2,14 @@
 -- Usage: luajit generate-american-english-dictionary.lua varcon.txt > dictionary.tsv
 local source = assert(arg[1], "VarCon input path required")
 local candidates, american = {}, {}
+-- Spellings the owner accepts as American English count as American forms.
+local here = arg[0]:match("^(.*)/[^/]+$") or "."
+for line in io.lines(here .. "/../../share/american-english/accepted-american.txt") do
+	if line ~= "" and not line:match("^#") then
+		assert(line:match("^[a-z]+$"), "accepted spellings are lowercase words: " .. line)
+		american[line] = true
+	end
+end
 local eligible = false
 for line in io.lines(source) do
 	if line:match("^# ") then

@@ -1,0 +1,5 @@
+# Spellings accepted as American English although VarCon prefers another
+# American form. The dictionary generator excludes them; one word per line.
+acknowledgement
+acknowledgements
+oversized

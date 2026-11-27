@@ -33,7 +33,8 @@ local function main()
 	if #arg == 1 and (arg[1] == "--help" or arg[1] == "-h") then
 		io.write("Usage: american-english-check --staged | --file PATH [--label NAME]\n",
 			"Use PATH - for stdin. Reject British variants with American replacements.\n",
-			"Staged Nix files are exempt to preserve upstream option names.\n",
+			"Staged Nix files and words beginning with -- (command-line flags) are\n",
+			"exempt to preserve upstream option names.\n",
 			"ALLOW_BRITISH_ENGLISH requires a specific reason and warns on stderr.\n")
 		return 0
 	end
@@ -142,6 +143,10 @@ local function main()
 		if not allowed["*"] then
 			local data = assert(entry.data, "missing file data")
 			if not data:find("\0", 1, true) then
+				-- Command-line flags keep their upstream spelling (`--realise`): blank
+				-- every word that begins with --. Newlines are untouched, so reported
+				-- line numbers stay exact; `-- word` and `-word` are still checked.
+				data = data:gsub("%-%-[%w_%-]+", function(flag) return (" "):rep(#flag) end)
 				-- Split identifier components without altering line numbers. Whole-word rg
 				-- matching then covers snake_case, camelCase and acronym-prefixed names.
 				data = data:gsub("(%l)(%u)", "%1 %2"):gsub("(%u)(%u%l)", "%1 %2"):gsub("_", " ")

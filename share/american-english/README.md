@@ -11,8 +11,10 @@ explains dialect tags, verification markers and inflected entries.
 
 The offline generator selects lowercase alphabetic British preferred/equal
 forms (`B`, `B.`) with a different preferred American (`A`) form, from verified
-clusters at SCOWL level 70 or below. It excludes archaic annotations and every
-word also tagged American preferred/equal anywhere in the source. Plurals,
+clusters at SCOWL level 70 or below. It excludes archaic annotations, every
+word also tagged American preferred/equal anywhere in the source, and every
+word in `accepted-american.txt`: spellings accepted as American English though
+VarCon prefers another form, such as `acknowledgement` and `oversized`. Plurals,
 past tenses and other inflections are explicit source rows, not guessed suffixes.
 Possessives are matched at the base-word boundary by the checker.
 
