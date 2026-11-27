@@ -19,18 +19,20 @@ Options:
   --mode MODE      nonlogin, login, or both (default both).
   --decorated      Keep the terminal intro (omit SHELL_STARTUP_BENCHMARK=1).
   --inherit-env    Use this process's environment instead of a clean one.
+  --cwd DIR        Start each shell in DIR (default: HOME, like a new tab).
   -- COMMAND...    Measure COMMAND instead of the Bash modes.
   -a, --about      Print a one-line description.
   -h, --help       Show this help.
 
 The clean environment keeps only HOME, USER, LOGNAME, TERM, LANG, and a PATH
 set to ORIG_PATH (the session's pre-dotfiles PATH) when present, like a new
-terminal tab. Times are wall-clock milliseconds; compare runs only on the
+terminal tab, and shells start in HOME unless --cwd says otherwise; a Git
+repository adds prompt work. Times are wall-clock milliseconds; compare runs only on the
 same host and under similar load.
 EOF
 }
 
-runs=10 warmup=1 mode=both decorated=false inherit=false
+runs=10 warmup=1 mode=both decorated=false inherit=false cwd=$HOME
 command=()
 while (($#)); do
 	case "$1" in
@@ -46,6 +48,11 @@ while (($#)); do
 			shift 2
 			;;
 		--decorated) decorated=true; shift ;;
+		--cwd)
+			[[ -d "${2-}" ]] || { printf 'shell-startup-bench: --cwd needs a directory\n' >&2; exit 2; }
+			cwd=$2
+			shift 2
+			;;
 		--inherit-env) inherit=true; shift ;;
 		-a | --about) printf 'Measure time to first usable prompt for interactive Bash on a real PTY\n'; exit 0 ;;
 		-h | --help) usage; exit 0 ;;
@@ -96,6 +103,8 @@ TCL
 }
 
 bash_bin="${BASH:-$(command -v bash)}"
+# The prompt's Git work depends on the directory, so start where a new tab does.
+cd -- "$cwd" || exit 2
 status=0
 if ((${#command[@]})); then
 	measure command "${command[@]}" || status=1

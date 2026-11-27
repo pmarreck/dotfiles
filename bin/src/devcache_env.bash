@@ -49,6 +49,33 @@ devcache_link_zig_cache() {
 	return 0
 }
 
+# Set _DEVCACHE_TOPLEVEL to what `git rev-parse --show-toplevel` reports for a
+# physical directory, or to the directory itself outside a work tree. This runs
+# before every prompt, so it walks up to the nearest .git (a directory, or the
+# file a worktree or submodule uses) in-process instead of starting Git. Git's
+# location overrides change the answer, so Git itself answers when one is set.
+# Not modeled: safe.directory ownership refusals and stopping at filesystem
+# boundaries (GIT_DISCOVERY_ACROSS_FILESYSTEM); both leave the key unchanged
+# in ordinary checkouts.
+devcache_git_toplevel() {
+	local dir="$1"
+	_DEVCACHE_TOPLEVEL=$dir
+	if [ -n "${GIT_DIR-}${GIT_WORK_TREE-}${GIT_CEILING_DIRECTORIES-}" ]; then
+		_DEVCACHE_TOPLEVEL=$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null) || _DEVCACHE_TOPLEVEL=$dir
+		return 0
+	fi
+	case "$dir/" in */.git/*) return 0 ;; esac # inside a .git directory there is no work tree
+	while :; do
+		if [ -e "${dir%/}/.git" ]; then
+			_DEVCACHE_TOPLEVEL=$dir
+			return 0
+		fi
+		[ "$dir" = / ] && return 0
+		dir=${dir%/*}
+		[ -n "$dir" ] || dir=/
+	done
+}
+
 configure_devcache_env() {
 	local cache_root="${1:-${DEVCACHE_ROOT:-/mnt/devcache}}"
 	local working_dir="${2:-$PWD}"
@@ -60,11 +87,12 @@ configure_devcache_env() {
 		"$cache_root"/projects/*/zig-local) unset ZIG_LOCAL_CACHE_DIR ;;
 	esac
 
-	project_root="$working_dir"
-	if command -v git >/dev/null 2>&1; then
-		project_root=$(git -C "$working_dir" rev-parse --show-toplevel 2>/dev/null) || project_root="$working_dir"
+	# Git discovers repositories along the physical path, so resolve it first.
+	project_root=$(cd "$working_dir" 2>/dev/null && pwd -P) || project_root=""
+	if [ -n "$project_root" ] && command -v git >/dev/null 2>&1; then
+		devcache_git_toplevel "$project_root"
+		project_root=$_DEVCACHE_TOPLEVEL
 	fi
-	project_root=$(cd "$project_root" 2>/dev/null && pwd -P) || project_root=""
 
 	if [ ! -f "$cache_root/.devcache-ready" ]; then
 		[ "${DEVCACHE_ROOT:-}" = "$cache_root" ] && unset DEVCACHE_ROOT
@@ -82,14 +110,20 @@ configure_devcache_env() {
 
 	[ -n "$project_root" ] || return 0
 	project_name="${project_root##*/}"
-	if command -v sha256sum >/dev/null 2>&1; then
-		project_digest=$(printf '%s' "$project_root" | sha256sum)
-	elif command -v shasum >/dev/null 2>&1; then
-		project_digest=$(printf '%s' "$project_root" | shasum -a 256)
-	else
-		project_digest=$(printf '%s' "$project_root" | cksum)
+	# The digest is a pure function of the path; remember it for later prompts.
+	declare -p _DEVCACHE_DIGESTS >/dev/null 2>&1 || declare -gA _DEVCACHE_DIGESTS=()
+	project_digest=${_DEVCACHE_DIGESTS["$project_root"]-}
+	if [ -z "$project_digest" ]; then
+		if command -v sha256sum >/dev/null 2>&1; then
+			project_digest=$(printf '%s' "$project_root" | sha256sum)
+		elif command -v shasum >/dev/null 2>&1; then
+			project_digest=$(printf '%s' "$project_root" | shasum -a 256)
+		else
+			project_digest=$(printf '%s' "$project_root" | cksum)
+		fi
+		project_digest="${project_digest%% *}"
+		_DEVCACHE_DIGESTS["$project_root"]=$project_digest
 	fi
-	project_digest="${project_digest%% *}"
 	project_key="${project_name}-${project_digest:0:12}"
 
 	export DEVCACHE_ROOT="$cache_root"

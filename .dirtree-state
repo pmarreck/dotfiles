@@ -158,6 +158,7 @@ annotate=[
 	bin/test/darktide-sync-mods_test = Test suite for bin/darktide-sync-mods: host-guard matrix, real rsync against temp dirs (idempotency, additive vs --delete), CLI surface
 	bin/test/datetimestamp_test = Bash CLI contract for FFI clocks, precision modes, timezone rendering, epoch integers, and Bash fallback
 	bin/test/destructive-signal-audit_test = Host process identity, log-before-signal, and real child signal-delivery checks
+	bin/test/devcache_git_toplevel_test = Git-as-oracle check that devcache's in-process project-root walk matches rev-parse and that prompts start no Git
 	bin/test/diskhogs_macos_snapshot_test = Deterministic unit test for the macOS disk-I/O collector
 	bin/test/display_image_test = tests DISPLAY_IMAGE_FORCE_PROTOCOL env override (forced kitty/sixel emission, -p precedence, loud unknown-protocol failure)
 	bin/test/edit_test = Editor dispatch, argument boundaries and Linux/macOS display recovery regressions

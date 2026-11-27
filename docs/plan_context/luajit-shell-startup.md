@@ -139,6 +139,26 @@ E. Hook initialization: cache `starship init`, `direnv hook`, and `mcfly init`
 output by resolved binary path, and find the devcache project root without the
 `git` wrapper chain.
 
+Prompt-time devcache (done): `configure_devcache_env` runs before every
+prompt. It used to start `git rev-parse --show-toplevel` through the dotfiles
+`git` wrapper and the repository-budget runner (about 8 processes and 28 ms per
+prompt, even in a non-repository) plus `sha256sum`. `devcache_git_toplevel` now
+walks the physical path up to the nearest `.git` directory or file, treats
+`.git` internals as outside a work tree, and asks Git only when `GIT_DIR`,
+`GIT_WORK_TREE`, or `GIT_CEILING_DIRECTORIES` is set; the digest is memoized
+per root. `devcache_git_toplevel_test` compares the walk with Git across 17
+directories (repositories, subdirectories, nested repositories, worktrees,
+bare repositories, `.git` internals, symlinks) and proves a prompt-time call
+starts no Git. Per prompt: 28 ms → 1.8 ms. Lesson: a test's recording `git`
+stub must exec the underlying Git, not the dotfiles wrapper, or the wrapper
+selects the stub as its "real" Git and the two exec each other forever.
+
+Measurement note: shells started inside a Git repository pay about 150 ms more
+for prompt Git work (2026-11-27: 547 ms in this repository against 397 ms in
+`$HOME`). `shell-startup-bench` now starts shells in `$HOME` by default;
+earlier A/B numbers in this document were all taken inside this repository,
+so they remain comparable with each other.
+
 F. Terminal intro: one LuaJIT process for picks, a pre-rendered Kitty stream
 for the fixed image so startup needs no ImageMagick, and explicit protocol
 selection and cache-compatibility tests. Verify Kitty bytes and text fallback

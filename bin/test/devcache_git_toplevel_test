@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+# configure_devcache_env runs before every prompt, so it finds the project root
+# in-process. Git itself is the oracle: for every fixture directory the walk
+# must report what `git rev-parse --show-toplevel` reports (or the directory
+# itself outside a work tree), and a prompt-time call must start no Git.
+
+set -u
+unset GIT_DIR GIT_WORK_TREE GIT_CEILING_DIRECTORIES GIT_INDEX_FILE
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+# The dotfiles git wrapper runs the first other git on PATH, which would be the
+# recording stub below, and the stub would run the wrapper again. Resolve the
+# underlying Git once, skipping the wrapper.
+real_git=''
+IFS=: read -r -a path_dirs <<<"$PATH"
+for dir in "${path_dirs[@]}"; do
+	candidate="${dir:-.}/git"
+	[[ -f "$candidate" && -x "$candidate" ]] || continue
+	[[ "$candidate" -ef "$repo_root/bin/git" || "$candidate" -ef "$repo_root/bin/src/git" ||
+		"$candidate" -ef "$HOME/dotfiles/bin/git" ]] && continue
+	real_git=$candidate
+	break
+done
+[[ -n "$real_git" ]] || { printf 'FAIL: no git other than the dotfiles wrapper is on PATH\n' >&2; exit 1; }
+work=$(mktemp -d "${TMPDIR:-/tmp}/devcache_git_toplevel_test.XXXXXX") || exit 1
+work=$(cd "$work" && pwd -P)
+trap 'command rm -rf -- "$work"' EXIT
+# shellcheck source=/dev/null
+. "$repo_root/bin/src/devcache_env.bash"
+
+tests=0
+fails=0
+pass() { printf 'PASS: %s\n' "$1"; }
+fail() { printf 'FAIL: %s\n' "$1" >&2; ((fails++)) || :; }
+git_quiet() { "$real_git" -c user.name=t -c user.email=t@example.invalid -c init.defaultBranch=main "$@" >/dev/null 2>&1; }
+
+mkdir -p "$work/repo/sub/deep" "$work/plain/x" "$work/with space/repo/a"
+git_quiet init "$work/repo"
+git_quiet -C "$work/repo" commit --allow-empty -m init
+git_quiet init "$work/repo/sub/nested"
+mkdir -p "$work/repo/sub/nested/inner"
+git_quiet -C "$work/repo" worktree add "$work/worktree"
+mkdir -p "$work/worktree/w"
+git_quiet init --bare "$work/bare.git"
+git_quiet init "$work/with space/repo"
+ln -s "$work/repo/sub/deep" "$work/link-into-repo"
+ln -s "$work/repo" "$work/link-to-repo"
+
+dirs=("$work/repo" "$work/repo/sub" "$work/repo/sub/deep" "$work/repo/.git" "$work/repo/.git/objects"
+	"$work/repo/sub/nested" "$work/repo/sub/nested/inner" "$work/worktree" "$work/worktree/w"
+	"$work/bare.git" "$work/bare.git/objects" "$work/plain" "$work/plain/x" "$work/with space/repo/a"
+	"$work/link-into-repo" "$work/link-to-repo" "$work")
+
+((tests++))
+mismatches=0
+for dir in "${dirs[@]}"; do
+	physical=$(cd "$dir" && pwd -P)
+	expected=$("$real_git" -C "$physical" rev-parse --show-toplevel 2>/dev/null) || expected=$physical
+	expected=$(cd "$expected" && pwd -P)
+	devcache_git_toplevel "$physical"
+	if [[ "$_DEVCACHE_TOPLEVEL" != "$expected" ]]; then
+		printf '  %s: git says %s, walk says %s\n' "${dir#"$work"/}" "$expected" "$_DEVCACHE_TOPLEVEL" >&2
+		((mismatches++))
+	fi
+done
+if ((mismatches == 0)); then
+	pass "the in-process walk matches git rev-parse --show-toplevel for ${#dirs[@]} directories"
+else
+	fail "$mismatches directory(ies) disagree with git"
+fi
+
+# A recording git placed first on PATH counts every Git process.
+mkdir -p "$work/stub" "$work/cache"
+git_log="$work/git.log"
+printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> %q\nexec %q "$@"\n' "$git_log" "$real_git" >"$work/stub/git"
+chmod +x "$work/stub/git"
+touch "$work/cache/.devcache-ready"
+
+((tests++))
+: >"$git_log"
+(
+	# shellcheck disable=SC2030,SC2031 # Each subshell scopes its own PATH on purpose.
+	PATH="$work/stub:$PATH"
+	configure_devcache_env "$work/cache" "$work/repo/sub/deep"
+	first=$CARGO_TARGET_DIR
+	configure_devcache_env "$work/cache" "$work/repo/sub/deep"
+	[[ "$first" == "$CARGO_TARGET_DIR" && "$first" == "$work/cache/projects/repo-"*"/cargo-target" ]]
+)
+keyed=$?
+if ((keyed == 0)) && [[ ! -s "$git_log" ]]; then
+	pass 'prompt-time configuration keys the project without starting Git'
+else
+	fail "configuration keyed=$keyed and started Git: $(tr '\n' ';' <"$git_log")"
+fi
+
+((tests++))
+: >"$git_log"
+(
+	# shellcheck disable=SC2030,SC2031 # Each subshell scopes its own PATH on purpose.
+	PATH="$work/stub:$PATH"
+	GIT_DIR="$work/repo/.git" GIT_WORK_TREE="$work/repo"
+	export GIT_DIR GIT_WORK_TREE
+	devcache_git_toplevel "$work/plain"
+	[[ "$_DEVCACHE_TOPLEVEL" == "$work/repo" ]]
+)
+overridden=$?
+if ((overridden == 0)) && grep -q 'rev-parse --show-toplevel' "$git_log"; then
+	pass 'Git answers when GIT_DIR or GIT_WORK_TREE overrides discovery'
+else
+	fail "override handling: status=$overridden log=$(tr '\n' ';' <"$git_log")"
+fi
+
+if ((fails == 0)); then
+	printf 'All %s devcache git toplevel checks passed.\n' "$tests"
+else
+	printf '%s of %s devcache git toplevel checks failed.\n' "$fails" "$tests" >&2
+fi
+exit "$fails"
