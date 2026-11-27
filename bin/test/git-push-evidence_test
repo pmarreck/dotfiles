@@ -157,6 +157,29 @@ git -C "$notes" config pushEvidence.noCode 'private notes'
 notes_gate --check "$noted"; check test "$rc" = 0
 check test "${output#*exempt as a repository with no code (private notes); no checks verified}" != "$output"
 check test ! -s "$EVIDENCE_CALLS"
+check test "${output#*NO TESTS WERE VERIFIED FOR THIS PUSH}" != "$output"
+# The exemption is checked, not trusted: code, an executable, a symbolic link, or an unlisted file type refuses it.
+printf '{"note": true}\n' > "$notes/data.json"
+printf 'ignored\n' > "$notes/.gitignore"
+git -C "$notes" add . && git -C "$notes" commit -qm data > "$work/commit.log" 2>&1 || exit 1
+notes_gate --check HEAD; check test "$rc" = 0
+for offender in tool.sh main.rs notes.unknown; do
+	printf 'x\n' > "$notes/$offender"
+	git -C "$notes" add "$offender" && git -C "$notes" commit -qm "$offender" > "$work/commit.log" 2>&1 || exit 1
+	notes_gate --check HEAD; check test "$rc" != 0
+	check test "${output#*that are not notes or data, such as $offender}" != "$output"
+	git -C "$notes" rm -q "$offender" && git -C "$notes" commit -qm "remove $offender" > "$work/commit.log" 2>&1 || exit 1
+done
+chmod +x "$notes/lesson.md"
+git -C "$notes" add lesson.md && git -C "$notes" commit -qm executable > "$work/commit.log" 2>&1 || exit 1
+notes_gate --check HEAD; check test "$rc" != 0
+chmod -x "$notes/lesson.md"
+git -C "$notes" add lesson.md && git -C "$notes" commit -qm plain > "$work/commit.log" 2>&1 || exit 1
+ln -s lesson.md "$notes/link.md"
+git -C "$notes" add link.md && git -C "$notes" commit -qm link > "$work/commit.log" 2>&1 || exit 1
+notes_gate --check HEAD; check test "$rc" != 0
+git -C "$notes" rm -q link.md && git -C "$notes" commit -qm unlink > "$work/commit.log" 2>&1 || exit 1
+notes_gate --check HEAD; check test "$rc" = 0
 printf '{ outputs = _: {}; }\n' > "$notes/flake.nix"
 git -C "$notes" add flake.nix
 git -C "$notes" commit -qm flake > "$work/commit.log" 2>&1 || exit 1

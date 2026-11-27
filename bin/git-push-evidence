@@ -61,12 +61,39 @@ local function blob(sha,path)
 	local data,drc=git('show '..quote(sha..':'..path)); if drc~=0 then fail('cannot read committed '..path) end
 	return data
 end
+-- The no-code exemption is checked, not trusted: every file in the pushed tree must be an ordinary file of a
+-- documentation or data type. Anything else, including a type not listed here, keeps the full rule.
+local notes_extensions={md=true,markdown=true,txt=true,rst=true,adoc=true,org=true,json=true,yaml=true,yml=true,
+	csv=true,tsv=true,png=true,jpg=true,jpeg=true,gif=true,svg=true,webp=true,pdf=true}
+local notes_names={['.gitignore']=true,['.gitattributes']=true,['.dirtree-state']=true,LICENSE=true,COPYING=true,
+	NOTICE=true,AUTHORS=true}
+local function not_notes(sha)
+	local listing,lrc=git('ls-tree -r -z --full-tree '..quote(sha)); if lrc~=0 then fail('cannot list '..sha) end
+	local found={}
+	for entry in listing:gmatch('([^%z]+)') do
+		local mode,path=entry:match('^(%d+) %a+ %x+\t(.*)$')
+		local name=path and path:match('([^/]+)$') or entry
+		local extension=name:match('%.([^.]+)$')
+		local listed=notes_names[name] or (extension and notes_extensions[extension:lower()])
+		if mode~='100644' or not listed then found[#found+1]=path or entry end
+	end
+	return found
+end
 local installables,seen,exempt={},{},0
 for _,revision in ipairs(revisions) do
 	local sha,src=git('rev-parse --verify --end-of-options '..quote(revision..'^{commit}'))
 	if src~=0 then fail('revision does not resolve to a commit: '..revision) end
 	sha=trim(sha)
 	if not seen[sha] and exemption and not blob(sha,'flake.nix') then
+		if nocode and not fork then
+			local found=not_notes(sha)
+			if #found>0 then
+				local shown={}
+				for k=1,math.min(#found,5) do shown[k]=found[k] end
+				fail('pushEvidence.noCode is set, but '..sha..' holds '..#found..' file(s) that are not notes or data, such as '..
+					table.concat(shown,', ')..'; a repository with code needs a flake.nix with checks, not this exemption')
+			end
+		end
 		seen[sha]=true; exempt=exempt+1
 	elseif not seen[sha] then
 		seen[sha]=true
@@ -95,6 +122,14 @@ for _,revision in ipairs(revisions) do
 end
 if exempt>0 then
 	io.stderr:write('Push evidence: exempt as '..exemption..'; no checks verified for '..exempt..' commit tip(s).\n')
+	if nocode and not fork then
+		io.stderr:write('Push evidence: ---------------------------------------------------------------------\n'..
+			'Push evidence: NO TESTS WERE VERIFIED FOR THIS PUSH. This exemption is only for repositories\n'..
+			'Push evidence: that hold notes and data, and it was granted because every pushed file is one.\n'..
+			'Push evidence: If this repository should hold code, stop: remove pushEvidence.noCode and add a\n'..
+			'Push evidence: flake.nix with checks. Never add code here to get around a failing check.\n'..
+			'Push evidence: ---------------------------------------------------------------------\n')
+	end
 	if #installables==0 then os.exit(0) end
 end
 local args={}
