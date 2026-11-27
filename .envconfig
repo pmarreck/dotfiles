@@ -104,13 +104,6 @@ case "${PERL5OPT:-}" in
 	*) export PERL5OPT="${PERL5OPT:+$PERL5OPT }-Mutf8" ;;
 esac
 
-# Fixed PAC_USE_AUR logic - was using $(...) which always returns 0
-# Rehydrate GREP_QUIET (exported as a string; arrays can't cross the exec boundary)
-read -ra GREP_QUIET_ARRAY <<< "${GREP_QUIET:-grep -q}"
-if [ -f /etc/os-release ] && "${GREP_QUIET_ARRAY[@]}" '^NAME="Arch' /etc/os-release; then
-    export PAC_USE_AUR=true
-fi
-
 # canonical gcc tweaks for OS X's homebrew gcc; Linux shouldn't need these
 # if [ "$PLATFORM" = "mac" ]; then
 	# needs brew

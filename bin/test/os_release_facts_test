@@ -28,7 +28,7 @@ local corpus = {
 	'PRETTY_NAME="Ubuntu 24.04.1 LTS"\nNAME="Ubuntu"\nVERSION_ID="24.04"\nVERSION="24.04.1 LTS (Noble Numbat)"\nID=ubuntu\nID_LIKE=debian\n',
 	'PRETTY_NAME="Debian GNU/Linux 12 (bookworm)"\nNAME="Debian GNU/Linux"\nVERSION_ID="12"\nVERSION="12 (bookworm)"\nID=debian\n',
 	'NAME="Fedora Linux"\nVERSION="41 (Workstation Edition)"\nID=fedora\nVERSION_ID=41\nPRETTY_NAME="Fedora Linux 41 (Workstation Edition)"\n',
-	'NAME="Arch Linux"\nPRETTY_NAME="Arch Linux"\nID=arch\nBUILD_ID=rolling\n',
+	'NAME="Void"\nPRETTY_NAME="Void Linux"\nID="void"\nBUILD_ID="rolling"\n',
 	'NAME="Alpine Linux"\nID=alpine\nVERSION_ID=3.20.3\nPRETTY_NAME="Alpine Linux v3.20"\n',
 	'NAME="openSUSE Tumbleweed"\nID="opensuse-tumbleweed"\nVERSION_ID="20241120"\nPRETTY_NAME="openSUSE Tumbleweed"\n',
 	"NAME='Single Quoted'\nPRETTY_NAME='It''s single'\nVERSION_ID='1.0'\n",

@@ -163,7 +163,6 @@ _nas_missing_helper_msg() {
 			printf '     Fix on Linux — install the nfs client package:\n'
 			printf '       Debian/Ubuntu: sudo apt install nfs-common\n'
 			printf '       Fedora/RHEL:   sudo dnf install nfs-utils\n'
-			printf '       Arch:          sudo pacman -S nfs-utils\n'
 			;;
 	esac
 }
