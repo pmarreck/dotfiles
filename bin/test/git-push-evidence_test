@@ -133,5 +133,33 @@ check test "${output#*exempt as a fork of https://example.invalid/upstream/proje
 check test ! -s "$EVIDENCE_CALLS"
 output=$(printf 'refs/heads/fix %s refs/heads/fix %s\n' "$forked" "$zero" | (cd "$fork" && "$root/bin/git-push-evidence") 2>&1); rc=$?
 check test "$rc" = 0
+# A repository with no code to build, such as notes, is exempt only with a stated reason and only for a tip
+# with no flake.nix; a repository with a flake keeps the full rule even when marked.
+git -C "$repo" config pushEvidence.noCode 'notes only'
+gate --check "$second"; check test "$rc" != 0
+git -C "$repo" config --unset pushEvidence.noCode
+notes="$work/notes"
+git init -q "$notes"
+git -C "$notes" config core.hooksPath /dev/null
+git -C "$notes" config user.name Test
+git -C "$notes" config user.email test@example.invalid
+printf 'a lesson\n' > "$notes/lesson.md"
+git -C "$notes" add .
+git -C "$notes" commit -qm lesson > "$work/commit.log" 2>&1 || exit 1
+noted=$(git -C "$notes" rev-parse HEAD)
+notes_gate() { output=$(cd "$notes" && "$root/bin/git-push-evidence" "$@" 2>&1); rc=$?; }
+notes_gate --check "$noted"; check test "$rc" != 0
+check test "${output#*has no flake.nix}" != "$output"
+git -C "$notes" config pushEvidence.noCode ''
+notes_gate --check "$noted"; check test "$rc" != 0
+git -C "$notes" config pushEvidence.noCode 'private notes'
+: > "$EVIDENCE_CALLS"
+notes_gate --check "$noted"; check test "$rc" = 0
+check test "${output#*exempt as a repository with no code (private notes); no checks verified}" != "$output"
+check test ! -s "$EVIDENCE_CALLS"
+printf '{ outputs = _: {}; }\n' > "$notes/flake.nix"
+git -C "$notes" add flake.nix
+git -C "$notes" commit -qm flake > "$work/commit.log" 2>&1 || exit 1
+notes_gate --check HEAD; check test "$rc" != 0
 printf '%s checks, %s failures\n' "$checks" "$failures"
 test "$failures" = 0
