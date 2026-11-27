@@ -53,6 +53,26 @@ check test "$hits" -eq "$(wc -l < "$root/share/american-english/british-to-ameri
 cut -f2 "$root/share/american-english/british-to-american.tsv" | tr / '\n' > "$work/input"
 scan; check test "$rc" -eq 0
 output=$(git commit -qm accepted 2>&1); rc=$?; check test "$rc" -eq 0
+# Staged Nix modules keep upstream option names. Explicit scans and files
+# whose final extension is different still use the spelling dictionary.
+nix_module='nested config/configuration.nix'
+nix_upper='nested config/options.NIX'
+mkdir -p -- "${nix_module%/*}" || exit 1
+printf '{ nix.settings.auto-optimise-store = true; }\n' > "$nix_module" || exit 1
+cp -- "$nix_module" "$nix_upper" || exit 1
+git add -- "$nix_module" "$nix_upper" || exit 1
+output=$("$gate" --staged 2>&1); rc=$?; check test "$rc" -eq 0
+check test -z "$output"
+output=$("$gate" --file "$nix_module" 2>&1); rc=$?; check test "$rc" -eq 1
+check test "${output#*'optimise -> optimize'}" != "$output"
+printf 'colour\n' > "$nix_module.txt" || exit 1
+git add -- "$nix_module.txt" || exit 1
+output=$("$gate" --staged 2>&1); rc=$?; check test "$rc" -eq 1
+check test "${output#*'configuration.nix.txt'}" != "$output"
+check test "${output#*'optimise -> optimize'}" = "$output"
+git reset -q HEAD -- "$nix_module.txt" || exit 1
+output=$(git commit -qm nix-exempt 2>&1); rc=$?; check test "$rc" -eq 0
+if (( rc != 0 )); then git reset -q HEAD -- "$nix_module" "$nix_upper" || exit 1; fi
 # Literal path handling and binary/symlink exclusions.
 printf '\000colour\n' > binary; ln -s colour link; git add binary link
 output=$("$gate" --staged 2>&1); rc=$?; check test "$rc" -eq 0
@@ -74,5 +94,6 @@ output=$("$gate" --staged 2>&1); rc=$?; check test "$rc" -eq 0
 # The override does not bypass local hooks or other gates.
 printf '#!%s\nexit 23\n' "$(command -v bash)" > .git/hooks/pre-commit; chmod +x .git/hooks/pre-commit
 output=$(ALLOW_BRITISH_ENGLISH='Preserving a verbatim quotation' git commit -qm rejected-local 2>&1); rc=$?; check test "$rc" -ne 0
+cd "$root" || exit 1
 printf '%s checks, %s failures\n' "$tests" "$failures"
 test "$failures" -eq 0

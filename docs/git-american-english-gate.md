@@ -6,7 +6,10 @@ LuaJIT selects complete staged regular-file blobs and normalizes ASCII case;
 `rg` does fixed-string whole-word matching against the local sourced dictionary,
 retaining Unicode word boundaries. Git object reads and searches are batched.
 Unstaged edits cannot hide staged violations. Deleted files, symlink targets,
-submodules and binary blobs are excluded. No historical commit is rewritten.
+submodules and binary blobs are excluded. Staged `.nix` files are also exempt
+because upstream Nix option names can use British spelling, such as
+`auto-optimise-store`. An explicit `--file` scan can still review Nix prose.
+No historical commit is rewritten.
 
 Examples include `colour`, `COLOURS`, `colouring`, `neighbours` and
 `neighbourhoods`. Identifier component splitting also catches `setColour` and

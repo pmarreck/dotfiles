@@ -33,6 +33,7 @@ local function main()
 	if #arg == 1 and (arg[1] == "--help" or arg[1] == "-h") then
 		io.write("Usage: american-english-check --staged | --file PATH [--label NAME]\n",
 			"Use PATH - for stdin. Reject British variants with American replacements.\n",
+			"Staged Nix files are exempt to preserve upstream option names.\n",
 			"ALLOW_BRITISH_ENGLISH requires a specific reason and warns on stderr.\n")
 		return 0
 	end
@@ -102,7 +103,8 @@ local function main()
 		end
 		for path in git("diff --cached --name-only --diff-filter=ACMRT -z --"):gmatch("([^%z]+)%z") do
 			local entry = assert(entries[path], "missing index entry")
-			if path ~= ".american-english-allowlist" and (entry.mode == "100644" or entry.mode == "100755") then
+			local exempt = path == ".american-english-allowlist" or path:sub(-4):lower() == ".nix"
+			if not exempt and (entry.mode == "100644" or entry.mode == "100755") then
 				files[#files + 1] = {path=path, hash=entry.hash}
 			end
 		end

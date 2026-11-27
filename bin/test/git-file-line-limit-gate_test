@@ -49,8 +49,18 @@ restore_sample() {
 	git add sample.lua
 }
 
-run_gate() {
+run_default_gate() {
 	output=$("$gate" 2>&1)
+	rc=$?
+}
+
+# Keep exercising the hard policy so that re-enabling it preserves its checks
+# and the approved repository exceptions. This copy is private to the test.
+enforcing_gate="$work/enforcing-gate"
+sed 's/^local ENFORCE_BY_DEFAULT = false$/local ENFORCE_BY_DEFAULT = true/' "$gate" > "$enforcing_gate" || exit 1
+rg -q '^local ENFORCE_BY_DEFAULT = true$' "$enforcing_gate" || exit 1
+run_gate() {
+	output=$(luajit "$enforcing_gate" 2>&1)
 	rc=$?
 }
 
@@ -92,6 +102,39 @@ git add payload.bin source-link
 run_gate
 check test "$rc" -eq 0
 git -c core.hooksPath=/dev/null commit -qm exempt-fixtures || exit 1
+
+# A long Nix config stays exempt even when an over-limit script shares the
+# index. A path-only commit can include the config and leave the script staged.
+nix_config='systems/example host/configuration.nix'
+mkdir -p -- "${nix_config%/*}" || exit 1
+awk 'BEGIN {
+	print "{"
+	for (i = 1; i <= 501; i++) print "  value" i " = " i ";"
+	print "}"
+}' > "$nix_config" || exit 1
+git add -- "$nix_config" || exit 1
+run_gate
+check test "$rc" -eq 0
+run_default_gate
+check test "$rc" -eq 0
+check test -z "$output"
+stage_lines 501
+run_gate
+check test "$rc" -eq 1
+check test "${output#*'sample.lua'}" != "$output"
+check test "${output#*'configuration.nix'}" = "$output"
+run_default_gate
+check test "$rc" -eq 0
+check test "${output#*'ADVISORY:'}" != "$output"
+check test "${output#*'sample.lua'}" != "$output"
+check test "${output#*'501 lines (limit 500)'}" != "$output"
+check test "${output#*'strongly recommends'}" != "$output"
+check test "${output#*'configuration.nix'}" = "$output"
+check test "${output#*'ERROR: commit blocked'}" = "$output"
+output=$(git commit -qm 'Commit just the Nix configuration' --only -- "$nix_config" 2>&1); rc=$?
+check test "$rc" -eq 0
+check test "$(git diff --cached --name-only)" = sample.lua
+restore_sample
 
 # Existing over-limit source is tolerated until changed. Odd Git pathnames are
 # still classified from the index without shell splitting or option parsing.
@@ -171,18 +214,20 @@ if [[ -f local-hook-log ]]; then hook_runs=$(wc -l < local-hook-log); fi
 check test "$hook_runs" -eq 1
 git remote set-url origin git@github.com:someone/validate.git
 stage_lines 502
-output=$(git commit -qm hard-blocked 2>&1); rc=$?
-check test "$rc" -ne 0
+output=$(git commit -qm global-advisory-allowed 2>&1); rc=$?
+check test "$rc" -eq 0
+check test "${output#*'ADVISORY:'}" != "$output"
+check test "${output#*'502 lines (limit 500)'}" != "$output"
 hook_runs=0
 if [[ -f local-hook-log ]]; then hook_runs=$(wc -l < local-hook-log); fi
-check test "$hook_runs" -eq 1
+check test "$hook_runs" -eq 2
 
 # Inspection failures cannot become advisory passes.
 printf 'not a git index\n' > "$work/broken-index"
 output=$(GIT_INDEX_FILE="$work/broken-index" "$gate" 2>&1); rc=$?
 check test "$rc" -eq 2
 cd "$work" || exit 1
-run_gate
+run_default_gate
 check test "$rc" -gt 1
 cd "$root" || exit 1
 

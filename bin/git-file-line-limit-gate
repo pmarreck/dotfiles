@@ -3,6 +3,8 @@
 local PROGRAM = "git-file-line-limit-gate"
 local LIMIT = 500
 local BYPASS = "I_SWEAR_TO_AMODEI_ALTMAN_AND_MARRECK_THAT_THESE_NEED_TO_BE_ONE_FILE"
+-- Keep the global advisory in effect until the owner restores enforcement.
+local ENFORCE_BY_DEFAULT = false
 -- Entries require explicit owner approval in dotfiles. A project-local file or
 -- environment variable cannot add another repository to this table.
 local ADVISORY_GITHUB_REPOSITORIES = {
@@ -12,11 +14,17 @@ local ADVISORY_GITHUB_REPOSITORIES = {
 local function help()
 	io.write([[Usage: git-file-line-limit-gate [--help | --about]
 
-Refuse commits that add or change a staged text source file longer than 500
-lines. Unchanged files are not inspected. Documents and configuration files
-are exempt. Repositories in the owner-approved dotfiles advisory table receive
-the same strong recommendation without a hard block. For an intentional
-single-file exception elsewhere, set the explicit bypass:
+Report staged text source files longer than 500 lines. Unchanged files,
+documents, and configuration files (including Nix files) are exempt.
+]])
+	if ENFORCE_BY_DEFAULT then
+		io.write("Over-limit files block commits except in owner-approved advisory repositories.\n")
+	else
+		io.write("Over-limit files produce a strong advisory and allow the commit to proceed.\n")
+	end
+	io.write([[
+
+For an intentional single-file exception, set the explicit bypass:
 
   I_SWEAR_TO_AMODEI_ALTMAN_AND_MARRECK_THAT_THESE_NEED_TO_BE_ONE_FILE=1 git commit
   I_SWEAR_TO_AMODEI_ALTMAN_AND_MARRECK_THAT_THESE_NEED_TO_BE_ONE_FILE=yes git commit
@@ -33,7 +41,7 @@ if #arg > 0 then
 		help()
 		os.exit(0)
 	elseif #arg == 1 and arg[1] == "--about" then
-		io.write(PROGRAM .. " 0.2.0 - Enforce owner-scoped 500-line staged source-file limits\n")
+		io.write(PROGRAM .. " 0.3.0 - Check the 500-line limit on staged source files\n")
 		os.exit(0)
 	end
 	fail("unknown option; use --help", 2)
@@ -201,7 +209,8 @@ if #violations > 0 then
 	for _, violation in ipairs(violations) do
 		io.stderr:write(string.format("  %q: %d lines (limit %d)\n", violation.path, violation.lines, LIMIT))
 	end
-	local advisory = advisory_repository()
+	local advisory_repo = ENFORCE_BY_DEFAULT and advisory_repository()
+	local advisory = not ENFORCE_BY_DEFAULT or advisory_repo ~= nil
 	if advisory then
 		io.stderr:write("\nADVISORY: changed source files exceed 500 lines.\n")
 	else
@@ -212,19 +221,19 @@ Break each source file into coherent, independently testable, self-contained
 modules where the language and project structure make that practical. This
 usually reduces maintenance cost and makes omissions easier to catch.
 
-Documents and configuration files are exempt. ]])
+Documents and configuration files are exempt.
+]])
 	if advisory then
-		io.stderr:write(string.format([[
-The owner-approved exception for %s strongly recommends splitting these files,
-but this commit is allowed. Future repositories remain hard-blocking unless the
-owner approves another explicit entry in dotfiles.
-]], advisory))
+		if advisory_repo then
+			io.stderr:write(string.format("Owner-approved advisory for %s.\n", advisory_repo))
+		end
+		io.stderr:write("This gate strongly recommends splitting these files. The commit is allowed by the line-limit check.\n")
 		os.exit(0)
 	end
-	io.stderr:write([[A genuinely intentional
-single-file design, a language without a useful include/module mechanism, or a
-split that would impose prohibitive maintenance cost may use the explicit
-per-commit bypass printed by --help. Keep the reason in the commit or review.
+	io.stderr:write([[A genuinely intentional single-file design, a language without a useful
+include/module mechanism, or a split with prohibitive maintenance cost may use
+the explicit per-commit bypass printed by --help. Keep the reason in the commit
+or review.
 ]])
 	os.exit(1)
 end
