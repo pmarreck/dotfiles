@@ -46,7 +46,7 @@ local stand_in = work .. "/luajit"
 local file = assert(io.open(stand_in, "w"))
 file:write([[#!/bin/sh
 case "$1" in
-	*/bin/fun_intro) exec "$REAL_LUAJIT" "$@" --pick="$INTRO_PICK" ;;
+	*/bin/fun_intro) printf '%s\n' "$INTRO_PICK" >> "$INTRO_LOG"; exec "$REAL_LUAJIT" "$@" --pick="$INTRO_PICK" ;;
 	*) exec "$REAL_LUAJIT" "$@" ;;
 esac
 ]])
@@ -68,7 +68,11 @@ local function garbage(text)
 	return false
 end
 
+-- Each run of the intro is recorded, so a check can prove startup ran it.
+local invocations = work .. "/intro-invocations"
+
 local function startup(mode, pick)
+	os.remove(invocations)
 	local argv = { bash, "-i" }
 	if mode == "login" then argv = { bash, "--login", "-i" } end
 	local s = session.start({ argv = argv, cols = 100, rows = 50, env = {
@@ -76,7 +80,7 @@ local function startup(mode, pick)
 		"TERM=xterm-ghostty", "TERM_PROGRAM=ghostty", "PATH=" .. base, "ORIG_PATH=" .. base,
 		"__NIXOS_SET_ENVIRONMENT_DONE=1", "__NIX_DARWIN_SET_ENVIRONMENT_DONE=1",
 		"XDG_CACHE_HOME=" .. work .. "/cache", "SHELL_STARTUP_LUAJIT=" .. stand_in,
-		"REAL_LUAJIT=" .. luajit, "INTRO_PICK=" .. pick,
+		"REAL_LUAJIT=" .. luajit, "INTRO_PICK=" .. pick, "INTRO_LOG=" .. invocations,
 	} })
 	-- Typed at once; the terminal holds it until the shell reads its first
 	-- line. The marker is printed in halves so the echoed line never matches.
@@ -87,7 +91,10 @@ local function startup(mode, pick)
 	local text = s:text()
 	local placements = s:placements()
 	s:close()
-	return ready, usable, text, placements
+	local log = io.open(invocations, "rb")
+	local ran = log and log:read("*a") or ""
+	if log then log:close() end
+	return ready, usable, text, placements, ran == pick .. "\n"
 end
 
 local function intro_text(text)
@@ -102,7 +109,7 @@ for _, mode in ipairs({ "non-login", "login" }) do
 		for _, pick in ipairs(picks.IMAGE) do mode_picks[#mode_picks + 1] = pick end
 	end
 	for _, pick in ipairs(mode_picks) do
-		local ready, usable, text, placements = startup(mode, pick)
+		local ready, usable, text, placements, ran = startup(mode, pick)
 		local intro = intro_text(text)
 		local shown
 		if picks.known(pick) and pick == "inthebeginning" then
@@ -111,7 +118,7 @@ for _, mode in ipairs({ "non-login", "login" }) do
 			shown = intro:gsub("%s", "") ~= "" and #placements == 0
 		end
 		check(mode .. ", " .. pick .. ": the intro appears before a prompt that accepts commands",
-			ready and usable and shown and not garbage(text), text:sub(-800))
+			ready and usable and ran and shown and not garbage(text), text:sub(-800))
 	end
 end
 

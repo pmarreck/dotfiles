@@ -97,7 +97,6 @@ ppp() { set +H; local plv="${2:-PATH}"; echo -n "${1%/}:${!plv}" | awk -v RS=: -
 
 exclude_path() {
   [ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-  local AWK=$(which awk || echo -n "/run/current-system/sw/bin/awk") # in case you accidentally exclude the path that has awk...
   function docs() {
     echo "Usage: exclude_path [-o|-h|--help] <path_to_exclude> [name_of_path_var, defaults to PATH]" >&2
     echo "Setting -o will print the new path to stdout instead of exporting it" >&2
@@ -132,10 +131,16 @@ exclude_path() {
     $stdout || $IGNORE_EXCLUDE_PATH_WARNINGS || echo "exclude_path warning: $var is empty, nothing to exclude" >&2
     return
   fi
-  # Filter out the specified directory
-  local newpath=$(echo -n "$paths" | $AWK -v RS=: -v ORS=: -v path="$dir" '$0 != path')
-  # Remove trailing colon (awk's ORS (output record separator) adds a trailing colon)
-  newpath=${newpath%:}
+  # Filter out the specified directory without starting a process. Fields split
+  # as awk's RS=: split them, which this replaced: a trailing empty field is
+  # dropped, leading and interior empty fields are kept.
+  local -a parts
+  local part newpath='' first=true
+  IFS=: read -r -a parts <<< "$paths"
+  for part in "${parts[@]}"; do
+    [ "$part" = "$dir" ] && continue
+    if $first; then newpath=$part; first=false; else newpath+=":$part"; fi
+  done
   [ -n "${DEBUG_PATHCONFIG}" ] && echo "After exclude_path($dir), ${var} is now $newpath" >&2
   $stdout && echo "$newpath" || export ${var}="$newpath"
 }

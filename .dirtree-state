@@ -173,6 +173,7 @@ annotate=[
 	bin/test/erect-agent-stack_latest_context_test = Hermetic classifier-set and failure-mode tests for latest native agent context discovery.
 	bin/test/erect-agent-stack_test = Hermetic Herdr launch, timeout reinspection, resume-record migration and identity regression tests
 	bin/test/erect-recent-agent-stacks_test = Synthetic cross-harness selection and launch coverage for recent Claude, Codex, and Grok sessions.
+	bin/test/exclude_path_test = exclude_path's Bash filtering against the awk version it replaced, on edge-case lists in -o and export modes; usage errors
 	bin/test/exclude_test = test suite for bin/exclude (semantics + --help regression guards)
 	bin/test/executable-names_test = Set-classifier gate preventing new underscore-named top-level executables.
 	bin/test/ffpw_alias_test = Sources .aliases in isolation and rejects implicit ffpw channel selection

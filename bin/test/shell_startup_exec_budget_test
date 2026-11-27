@@ -34,6 +34,10 @@ budget+=([check_sixel_support]=0 [check_kitty_support]=0 [infocmp]=0 [ps]=0)
 # GNU tool paths come from the engine's version cache; the old helper piped
 # every candidate's --version through head.
 budget+=([head]=0)
+# exclude_path filters in Bash and TMPDIR comes from the engine. (tty is not
+# budgeted: NixOS's own /etc/bashrc runs it for GPG_TTY; the dotfiles take
+# the terminal's name from the engine, checked in ghostty_vt_test.)
+budget+=([which]=0 [realpath]=0)
 if [[ "$("$real_uname" -s)" == Linux ]]; then
 	budget[distro_pretty]=0
 	budget[distro_version]=0

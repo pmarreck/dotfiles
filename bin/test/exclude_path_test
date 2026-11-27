@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# exclude_path (bin/src/prepend_path.bash) filters a colon list in Bash now;
+# it used to start `which` and `awk` on every call, and .envconfig calls it on
+# every startup. This compares it with the awk version, frozen below, on lists
+# with repeats, empty fields at either end and inside, trailing slashes, and
+# spaces, in both -o and export modes, and checks its usage errors.
+# No `set -u`: prepend_path.bash is written for shells without nounset, as
+# startup runs it.
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+awk_bin=$(command -v gawk || command -v awk) || { printf 'FAIL: no awk for the oracle\n' >&2; exit 1; }
+
+tests=0
+fails=0
+pass() { ((tests++)) || :; printf 'PASS: %s\n' "$1"; }
+fail() { ((tests++)) || :; ((fails++)) || :; printf 'FAIL: %s\n' "$1" >&2; }
+
+# The filtering step of the previous exclude_path, verbatim apart from names.
+old_filter() { # <dir> <paths>
+	local dir="${1%/}" paths=$2 newpath
+	# shellcheck disable=SC2016 # An awk program, not a shell expansion.
+	newpath=$(echo -n "$paths" | "$awk_bin" -v RS=: -v ORS=: -v path="$dir" '$0 != path')
+	printf '%s' "${newpath%:}"
+}
+
+# shellcheck source=/dev/null
+. "$root/bin/src/prepend_path.bash"
+
+lists=('/a:/b:/c' '/b:/a:/b' '/a::/b' ':/a' '/a:' '/a::' ':' '/b' '/a:/b/:/b' '/a b:/b:/c d' '/b:/b:/b' '/a:/a/b:/b/a')
+dirs=('/b' '/b/' '/a' '/c d' '/nowhere')
+mismatches=''
+count=0
+for list in "${lists[@]}"; do
+	for dir in "${dirs[@]}"; do
+		want=$(old_filter "$dir" "$list")
+		got=$(LIST="$list" exclude_path -o "$dir" LIST)
+		((count++)) || :
+		[[ "$want" == "$got" ]] || mismatches+=$'\n'"  exclude $dir from '$list': awk gave '$want', Bash '$got'"
+	done
+done
+if [[ -z "$mismatches" ]]; then
+	pass "exclude_path -o matches the awk filter on $count list and directory pairs"
+else
+	fail "exclude_path -o differs from the awk filter:$mismatches"
+fi
+
+LIST='/x:/y:/z'
+exclude_path /y LIST
+if [[ "$LIST" == '/x:/z' ]] && declare -p LIST | grep -q '^declare -x'; then
+	pass 'without -o, exclude_path exports the filtered list'
+else
+	fail "export mode left LIST='$LIST' ($(declare -p LIST))"
+fi
+
+out=$(exclude_path '' LIST 2>&1)
+status=$?
+if ((status == 2)) && [[ "$out" == *'Usage: exclude_path'* ]]; then
+	pass 'an empty directory is a usage error'
+else
+	fail "empty directory: status $status: $out"
+fi
+out=$(EMPTY='' exclude_path /a EMPTY 2>&1)
+if [[ "$out" == *'EMPTY is empty, nothing to exclude'* ]]; then
+	pass 'an empty list is reported, not filtered'
+else
+	fail "empty list: $out"
+fi
+out=$(LIST='a:b' exclude_path -o a LIST 2>&1)
+if [[ "$out" == *"'a' is not an absolute path"*b ]]; then
+	pass 'a relative directory warns and still filters'
+else
+	fail "relative directory: $out"
+fi
+
+if ((fails == 0)); then
+	printf 'All %s exclude_path checks passed.\n' "$tests"
+else
+	printf '%s of %s exclude_path checks failed.\n' "$fails" "$tests" >&2
+fi
+exit "$fails"

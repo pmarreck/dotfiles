@@ -84,6 +84,17 @@ do
 	s:close()
 end
 
+-- 1b. The startup engine names the terminal on its stdin exactly as tty does
+-- (.envconfig takes GPG_TTY from it instead of starting tty).
+do
+	local s = start()
+	-- tty runs first: inside the pipeline its stdin would be the pipe.
+	local ok = run(s, [[t=$(tty); n=$(SED= DATE= TAC= SHUF= STAT= TIMEOUT= OS=linux PF=linux-amd64 ORIG_PATH=$PATH luajit ']]
+		.. root .. [[/lib/shell_startup/shell_env.lua' | grep -c -F "SHELL_STARTUP_TTY='$t'"); printf 'TTYMATCH:%s\n' "$n"]], "T-TY")
+	check("the startup engine names the terminal as tty does", ok and s:text():find("\nTTYMATCH:1\n", 1, true), s:text():sub(-600))
+	s:close()
+end
+
 -- 2. The intro image arrives as one Kitty placement of the pre-rendered size.
 do
 	local s = start()
@@ -118,7 +129,9 @@ end
 local luajit = shell_output("command -v luajit")
 local stand_in = work .. "/luajit-pick"
 local file = assert(io.open(stand_in, "w"))
-file:write('#!/bin/sh\nexec "$REAL_LUAJIT" "$1" --pick="$INTRO_PICK"\n')
+-- It also records each run, so a round can prove the gate really ran it.
+local invocations = work .. "/intro-invocations"
+file:write('#!/bin/sh\nprintf "%s\\n" "$INTRO_PICK" >> "$INTRO_LOG"\nexec "$REAL_LUAJIT" "$1" --pick="$INTRO_PICK"\n')
 file:close()
 os.execute("chmod +x '" .. stand_in .. "'")
 -- fortune is not among the suite's tools; this stand-in plays it.
@@ -127,7 +140,9 @@ os.execute("mkdir -p '" .. work .. "/stub' && printf '#!/bin/sh\\nprintf \"A for
 local picks = require("fun_intro.picks")
 local gate = '. "$HOME/dotfiles/.profile"'
 local function gate_round(label, pick, facts)
+	os.remove(invocations)
 	local env = { "INTERACTIVE_SHELL=true", "_SHELL_STARTUP_LUAJIT=" .. stand_in, "REAL_LUAJIT=" .. luajit,
+		"INTRO_LOG=" .. invocations,
 		"INTRO_PICK=" .. pick, "PATH=" .. work .. "/stub:" .. os.getenv("PATH") }
 	for _, fact in ipairs(facts) do env[#env + 1] = fact end
 	local s = start(env)
@@ -138,7 +153,12 @@ local function gate_round(label, pick, facts)
 	local before = (text:match("^(.-)G%-ATE") or ""):gsub("PROMPT>[^\n]*", ""):gsub("%s", "")
 	s:type("echo $((6*7))\n")
 	local usable = s:wait_for(function(x) return x:text():find("\n42\n", 1, true) end, 20)
-	return ok, before ~= "" or #s:placements() > 0, usable, s:placements(), text, s:close()
+	-- The gate must have run fun_intro exactly once, with this pick.
+	local log = io.open(invocations, "rb")
+	local ran = log and log:read("*a") or ""
+	if log then log:close() end
+	local shown = ran == pick .. "\n" and (before ~= "" or #s:placements() > 0)
+	return ok, shown, usable, s:placements(), text, s:close()
 end
 for _, pick in ipairs(picks.TEXT) do
 	local ok, shown, usable, placements, text = gate_round("Ghostty", pick,
@@ -148,19 +168,19 @@ for _, pick in ipairs(picks.TEXT) do
 	check("Ghostty, " .. pick .. ": the prompt after the intro accepts commands", usable)
 end
 for _, pick in ipairs(picks.IMAGE) do
-	local ok, _, usable, placements, text = gate_round("Ghostty", pick,
+	local ok, shown, usable, placements, text = gate_round("Ghostty", pick,
 		{ "TERM_PROGRAM=ghostty", "KITTY_CAPABLE=true", "SIXEL_CAPABLE=false", "IMAGE_CAPABLE=true" })
 	check("Ghostty, " .. pick .. ": one image placement before the prompt, nothing leaked",
-		ok and #placements == 1 and not garbage(text), text:sub(-600))
+		ok and shown and #placements == 1 and not garbage(text), text:sub(-600))
 	check("Ghostty, " .. pick .. ": the prompt after the image accepts commands", usable)
 end
 -- Where the shell's facts deny graphics, a forced image pick must not send
 -- Kitty bytes: it reports that no protocol works.
 do
-	local ok, _, usable, placements, text = gate_round("no graphics", picks.IMAGE[1],
+	local ok, shown, usable, placements, text = gate_round("no graphics", picks.IMAGE[1],
 		{ "TERM_PROGRAM=Apple_Terminal", "KITTY_CAPABLE=false", "SIXEL_CAPABLE=false", "IMAGE_CAPABLE=false" })
 	check("no graphics: an image pick sends no image and says why",
-		ok and #placements == 0 and not garbage(text) and text:find("No supported graphics protocol", 1, true), text:sub(-600))
+		ok and shown and #placements == 0 and not garbage(text) and text:find("No supported graphics protocol", 1, true), text:sub(-600))
 	check("no graphics: the prompt still accepts commands", usable)
 end
 

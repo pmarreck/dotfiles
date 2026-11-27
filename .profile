@@ -44,7 +44,7 @@ ${INTERACTIVE_SHELL:-false} && ${LOGIN_SHELL:-false} && echo "$DISTRO_PRETTY"
 # set default tab stops to 2 spaces
 # Note that this may mess up ncurses code that might assume 8 spaces
 # Only tweak tabs on an interactive TTY if `tabs` exists:
-if ${INTERACTIVE_SHELL:-false} && command -v tabs >/dev/null 2>&1 && tty -s; then
+if ${INTERACTIVE_SHELL:-false} && command -v tabs >/dev/null 2>&1 && [ -t 0 ]; then
 	export DEFAULT_TABSIZE=2
 	tabs -${DEFAULT_TABSIZE}
 fi

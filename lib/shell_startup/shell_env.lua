@@ -11,7 +11,10 @@
 -- reports it), SIXEL_ENV, SIXEL_CAPABLE, KITTY_CAPABLE, IMAGE_CAPABLE; then
 -- whichever of SED, DATE, TAC, SHUF, STAT, TIMEOUT the environment lacks,
 -- resolved on the incoming PATH (see gnu_tools.lua), and
--- SHELL_STARTUP_LOGIN_SED, the sed .bash_profile chooses on the new PATH.
+-- SHELL_STARTUP_LOGIN_SED, the sed .bash_profile chooses on the new PATH;
+-- then SHELL_STARTUP_TMPDIR, the resolved /tmp .envconfig uses as TMPDIR, and
+-- SHELL_STARTUP_TTY, the terminal on stdin (the caller's own: command
+-- substitution captures only stdout), which .envconfig uses as GPG_TTY.
 local here = (arg and arg[0] or ""):match("^(.*)/[^/]*$") or "."
 package.path = here .. "/?.lua;" .. here .. "/../?.lua;" .. package.path
 
@@ -92,6 +95,10 @@ local ok, result = pcall(function()
 		for _, tool in ipairs(tools) do assignments[#assignments + 1] = tool end
 	end)
 	if not tools_ok then io.stderr:write("shell_startup: GNU tool lookup failed: ", tostring(tools_error), "\n") end
+	local tmp = fs.realpath("/tmp")
+	if tmp then assignments[#assignments + 1] = { "SHELL_STARTUP_TMPDIR", tmp } end
+	local tty = fs.ttyname(0)
+	if tty then assignments[#assignments + 1] = { "SHELL_STARTUP_TTY", tty } end
 	return shell_assign.render(assignments)
 end)
 if not ok then fail(tostring(result)) end

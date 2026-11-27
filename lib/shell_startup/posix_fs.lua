@@ -37,6 +37,7 @@ ffi.cdef([[
 	int rename(const char *from, const char *to);
 	int unlink(const char *path);
 	int getpid(void);
+	char *ttyname(int fd);
 ]])
 
 local S_IFMT, S_IFDIR = 0xF000, 0x4000
@@ -98,6 +99,14 @@ function M.write_atomic(path, text)
 	if wrote and closed and ffi.C.rename(temporary, path) == 0 then return true end
 	ffi.C.unlink(temporary)
 	return false
+end
+
+-- The terminal device on file descriptor `fd`, as `tty` prints it for its
+-- stdin, or nil when the descriptor is not a terminal.
+function M.ttyname(fd)
+	local name = ffi.C.ttyname(fd)
+	if name == nil then return nil end
+	return ffi.string(name)
 end
 
 -- Entry names of a directory, excluding "." and "..", or nil if it cannot be

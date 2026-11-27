@@ -216,8 +216,9 @@ export COLORTERM=${COLORTERM:-truecolor}
 export MICRO_TRUECOLOR=1
 
 # GPG configuration to set up in-terminal challenge-response
+# The startup engine (.pathconfig) named the terminal without starting tty.
 if [ -t 0 ]; then
-	GPG_TTY="$(tty)"
+	GPG_TTY="${SHELL_STARTUP_TTY:-$(tty)}"
 	export GPG_TTY
 fi
 
@@ -293,7 +294,8 @@ export CHARSET_PUNC='!@#$%^&*'
 export CHARSET_HEX="${CHARSET_NUM}abcdef"
 
 # create a global TMPDIR which is on /tmp (in memory on my OS'es) and unique to this process
-TMPDIR=$(realpath "/tmp")
+# The startup engine (.pathconfig) resolved /tmp without starting realpath.
+TMPDIR=${SHELL_STARTUP_TMPDIR:-$(realpath "/tmp")}
 # turn off terminal-PID-specific TMPDIR since it was causing problems...
 # TMPDIR="$TMPDIR/$$" && mkdir -p "$TMPDIR" # a canonical process-ID-specific temp directory
 export TMPDIR

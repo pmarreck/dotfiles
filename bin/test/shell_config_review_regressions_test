@@ -53,7 +53,7 @@ require_literal .bashrc '[ "$is_gnu_awk" = false ]' "GNU Awk warning requires a 
 require_literal .envconfig '[[ -v BASH_INT_MAX ]] || declare -irx BASH_INT_MAX=' "maximum Bash integer is reload-safe"
 require_literal .envconfig '[[ -v BASH_INT_MIN ]] || declare -irx BASH_INT_MIN=' "minimum Bash integer is reload-safe"
 require_literal .envconfig 'if [ -t 0 ]; then' "GPG terminal is exported only from a TTY"
-require_literal .envconfig 'GPG_TTY="$(tty)"' "GPG terminal uses the active TTY"
+require_literal .envconfig 'GPG_TTY="${SHELL_STARTUP_TTY:-$(tty)}"' "GPG terminal uses the active TTY (named by the startup engine)"
 reject_literal .envconfig 'KERL_CONFIGURE_OPTIONS="--disable-parallel-configure --disable-debug --disable-silent-rules --without-javac --enable-shared-zlib --enable-dynamic-ssl-lib --enable-sctp --enable-threads --enable-kernel-poll --enable-wx --enable-darwin-64bit"' "Darwin kerl option is not unconditional"
 
 # randompass.bash is the byte-for-byte preserved predecessor for the LuaJIT port.
