@@ -72,21 +72,19 @@ fi
 # LuaJIT must be found before PATH exists: an SSH or launchd PATH may hold no Nix
 # directories at all. Check the Nix profile locations first so a project bin on the
 # incoming PATH cannot substitute its own interpreter. SHELL_STARTUP_LUAJIT pins one.
-_pc_luajit=${SHELL_STARTUP_LUAJIT-}
-if [ -z "$_pc_luajit" ]; then
-	for _pc_candidate in /run/current-system/sw/bin/luajit "/etc/profiles/per-user/${USER:-}/bin/luajit" \
-		"$HOME/.nix-profile/bin/luajit" /nix/var/nix/profiles/default/bin/luajit; do
-		if [ -x "$_pc_candidate" ]; then _pc_luajit=$_pc_candidate; break; fi
-	done
-	[ -n "$_pc_luajit" ] || _pc_luajit=$(command -v luajit 2>/dev/null)
-	unset _pc_candidate
-fi
-if [ -z "$_pc_luajit" ] || [ ! -x "$_pc_luajit" ]; then
-	echo ".pathconfig: LuaJIT not found${_pc_luajit:+ at $_pc_luajit}; PATH was left unchanged. Install luajit through this host's Nix configuration." >&2
-	unset _pc_luajit
+# On a new machine without LuaJIT, the resolver warns and fetches it once with Nix
+# into a GC-rooted link under XDG state, which later shells find directly.
+# shellcheck source=/dev/null # HOME is replaced by isolated startup fixtures.
+. "$HOME/dotfiles/bin/src/shell_startup_luajit.bash"
+if ! shell_startup_resolve_luajit "${XDG_STATE_HOME:-$HOME/.local/state}/dotfiles/luajit" \
+	/run/current-system/sw/bin/luajit "/etc/profiles/per-user/${USER:-}/bin/luajit" \
+	"$HOME/.nix-profile/bin/luajit" /nix/var/nix/profiles/default/bin/luajit \
+	--nix /run/current-system/sw/bin/nix /nix/var/nix/profiles/default/bin/nix \
+	"$HOME/.nix-profile/bin/nix" "/etc/profiles/per-user/${USER:-}/bin/nix"; then
 	# shellcheck disable=SC2317 # exit is the executed-file fallback after return fails.
 	return 1 2>/dev/null || exit 1
 fi
+_pc_luajit=$_SHELL_STARTUP_LUAJIT
 
 # The engine prints only NAME='value' lines (lib/shell_startup/shell_assign.lua), so
 # eval assigns exactly the computed bytes: PATH, plus the distribution facts on Linux.

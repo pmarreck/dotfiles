@@ -85,6 +85,19 @@ an `en_US.UTF-8` archive so collation is really exercised),
 `.pathconfig` fell from 75 ms to 21 ms; interleaved A/B against increment A:
 non-login 755 → 705 ms, login 877 → 832 ms.
 
+Bootstrap on a machine without LuaJIT (owner request): `.pathconfig`
+resolves the interpreter through `bin/src/shell_startup_luajit.bash`. Order:
+`SHELL_STARTUP_LUAJIT` (a broken pin fails and is never replaced), the Nix
+profile locations, the GC-rooted link `$XDG_STATE_HOME/dotfiles/luajit`, then
+PATH (searched in-process). Only when all miss does it warn and run
+`nix --extra-experimental-features 'nix-command flakes' build --out-link
+<that link> nixpkgs#luajit`, so later shells reuse it without Nix. Startup
+never runs Nix while LuaJIT is reachable. Evidence: `shell_startup_luajit_test`
+(injected candidates, recording Nix stubs) and a manual end-to-end run on
+2026-11-27 with `/run/current-system/sw/bin` hidden in a user mount
+namespace: the first shell warned, fetched through the daemon, and rebuilt
+PATH; the second reused the link silently.
+
 Port details worth keeping: Bash sorts glob matches by full path under
 strcoll, not by directory name (in `en_US`, `a b/bin` sorts before `a/bin`),
 so the engine sorts full candidate paths. Intentional difference: the old

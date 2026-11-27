@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+# LuaJIT resolution for shell startup: pins, Nix profile candidates, the
+# bootstrap GC root, PATH, and the one-time Nix fetch with its warning. Every
+# Nix here is a recording stub; candidate lists are injected, so the host's
+# real Nix and LuaJIT are never reachable from the function under test.
+
+# shellcheck disable=SC2319 # Each check records the status of the condition just above it.
+set -u
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+real_ln="$(command -v ln)"
+real_mkdir="$(command -v mkdir)"
+real_luajit="$(command -v luajit)" || { printf 'FAIL: luajit is not on PATH\n' >&2; exit 1; }
+work=$(mktemp -d "${TMPDIR:-/tmp}/shell_startup_luajit_test.XXXXXX") || exit 1
+trap 'command rm -rf -- "$work"' EXIT
+# shellcheck source=/dev/null
+. "$repo_root/bin/src/shell_startup_luajit.bash"
+
+tests=0
+fails=0
+pass() { printf 'PASS: %s\n' "$1"; }
+fail() { printf 'FAIL: %s\n' "$1" >&2; ((fails++)) || :; }
+
+mkdir -p "$work/candidate/bin" "$work/onpath" "$work/empty" "$work/fake-store/bin" "$work/nix-ok" "$work/nix-fail"
+ln -s "$real_luajit" "$work/candidate/bin/luajit"
+ln -s "$real_luajit" "$work/onpath/luajit"
+ln -s "$real_luajit" "$work/fake-store/bin/luajit"
+nix_log="$work/nix.log"
+# A Nix that records its arguments and creates the requested out-link, with
+# its parent directories, the way `nix build --out-link` does (verified with
+# Nix 2.35), pointing at a fake store path.
+cat >"$work/nix-ok/nix" <<EOF
+#!/bin/sh
+printf '%s\n' "\$*" >> "$nix_log"
+while [ \$# -gt 0 ]; do
+	if [ "\$1" = --out-link ]; then "$real_mkdir" -p "\${2%/*}" && "$real_ln" -sfn "$work/fake-store" "\$2"; fi
+	shift
+done
+EOF
+printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> %q\nexit 1\n' "$nix_log" >"$work/nix-fail/nix"
+chmod +x "$work/nix-ok/nix" "$work/nix-fail/nix"
+
+resolve() { # <PATH> <args...>: sets status, err
+	local path=$1 err_file="$work/err"
+	shift
+	PATH=$path shell_startup_resolve_luajit "$@" 2>"$err_file"
+	status=$?
+	err=$(<"$err_file")
+}
+
+check() { # <label> <condition-status>
+	((tests++))
+	if (($2 == 0)); then pass "$1"; else fail "$1 (status=$status luajit=${_SHELL_STARTUP_LUAJIT:-} err=[$err])"; fi
+}
+
+SHELL_STARTUP_LUAJIT="$work/onpath/luajit" resolve "$work/empty" "$work/root1" "$work/candidate/bin/luajit"
+[[ $status == 0 && $_SHELL_STARTUP_LUAJIT == "$work/onpath/luajit" ]]
+check 'an executable pin wins over every candidate' $?
+
+: >"$nix_log"
+SHELL_STARTUP_LUAJIT="$work/missing" resolve "$work/nix-ok" "$work/root1"
+[[ $status == 1 && -z $_SHELL_STARTUP_LUAJIT && $err == *"SHELL_STARTUP_LUAJIT=$work/missing is not an executable"* && ! -s $nix_log ]]
+check 'a broken pin fails loudly and is never replaced by a fetch' $?
+
+resolve "$work/onpath" "$work/root1" "$work/missing-candidate" "$work/candidate/bin/luajit"
+[[ $status == 0 && $_SHELL_STARTUP_LUAJIT == "$work/candidate/bin/luajit" ]]
+check 'the first executable Nix profile candidate wins over PATH' $?
+
+resolve "$work/empty:$work/onpath" "$work/root1" "$work/missing-candidate"
+[[ $status == 0 && $_SHELL_STARTUP_LUAJIT == "$work/onpath/luajit" ]]
+check 'PATH supplies LuaJIT when no candidate exists' $?
+
+: >"$nix_log"
+resolve "$work/empty:$work/nix-ok" "$work/state/dotfiles/luajit" "$work/missing-candidate" --nix "$work/missing-nix"
+[[ $status == 0 && $_SHELL_STARTUP_LUAJIT == "$work/state/dotfiles/luajit/bin/luajit" && -x $_SHELL_STARTUP_LUAJIT ]]
+check 'a missing LuaJIT is fetched with Nix into the bootstrap root' $?
+((tests++))
+expected_args="--extra-experimental-features nix-command flakes build --out-link $work/state/dotfiles/luajit nixpkgs#luajit"
+if [[ "$(<"$nix_log")" == "$expected_args" && $err == "Warning: LuaJIT was not found, so shell startup is fetching nixpkgs#luajit with Nix"* ]]; then
+	pass 'the fetch warns first and asks Nix for exactly one GC-rooted luajit build'
+else
+	fail "fetch arguments or warning were wrong: args=[$(<"$nix_log")] err=[$err]"
+fi
+
+: >"$nix_log"
+resolve "$work/empty:$work/nix-ok" "$work/state/dotfiles/luajit" "$work/missing-candidate"
+[[ $status == 0 && $_SHELL_STARTUP_LUAJIT == "$work/state/dotfiles/luajit/bin/luajit" && ! -s $nix_log && -z $err ]]
+check 'later shells reuse the bootstrap root silently without running Nix' $?
+
+: >"$nix_log"
+resolve "$work/empty" "$work/root2" --nix "$work/missing-nix" "$work/nix-ok/nix"
+[[ $status == 0 && $_SHELL_STARTUP_LUAJIT == "$work/root2/bin/luajit" && -s $nix_log ]]
+check 'a Nix candidate is used when PATH has no Nix' $?
+
+resolve "$work/nix-fail" "$work/root3"
+[[ $status == 1 && -z $_SHELL_STARTUP_LUAJIT && $err == *"fetching LuaJIT with Nix failed"*"Retry with: . ~/.pathconfig"* ]]
+check 'a failed fetch reports the failure and how to retry' $?
+
+resolve "$work/empty" "$work/root4" --nix "$work/missing-nix"
+[[ $status == 1 && -z $_SHELL_STARTUP_LUAJIT && $err == *"neither LuaJIT nor Nix was found"* ]]
+check 'no LuaJIT and no Nix fails with a message' $?
+
+if ((fails == 0)); then
+	printf 'All %s shell startup LuaJIT resolution checks passed.\n' "$tests"
+else
+	printf '%s of %s shell startup LuaJIT resolution checks failed.\n' "$fails" "$tests" >&2
+fi
+exit "$fails"

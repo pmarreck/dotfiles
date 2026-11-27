@@ -41,10 +41,10 @@ run() { # <SHELL_STARTUP_LUAJIT value> -> sets status, out, err
 
 run "$work/missing-luajit"
 ((tests++))
-if [[ "$out" == *"status=1"* && "$out" == *"PATH=$entry_path"* && "$err" == *"LuaJIT not found at $work/missing-luajit"* ]]; then
-	pass 'a missing LuaJIT fails with a message and leaves PATH unchanged'
+if [[ "$out" == *"status=1"* && "$out" == *"PATH=$entry_path"* && "$err" == *"SHELL_STARTUP_LUAJIT=$work/missing-luajit is not an executable LuaJIT"* ]]; then
+	pass 'a broken LuaJIT pin fails with a message and leaves PATH unchanged'
 else
-	fail "missing LuaJIT: out=[$out] err=[$err]"
+	fail "broken LuaJIT pin: out=[$out] err=[$err]"
 fi
 
 run "$work/stub/failing-luajit"
