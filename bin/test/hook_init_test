@@ -1,0 +1,182 @@
+#!/usr/bin/env bash
+# The prompt hooks' cached init scripts: the startup engine's side
+# (lib/shell_startup/hook_init.lua) and apply-hooks' side
+# (bin/src/hook_init_cache.bash), with fake direnv, mcfly, and starship. The
+# fake starship embeds the path it finds by PATH search, as the real one does,
+# so the cache must be produced the way the shell would run it.
+set -u
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+work=$(mktemp -d "${TMPDIR:-/tmp}/hook_init_test.XXXXXX") || exit 1
+trap 'command rm -rf -- "$work"' EXIT
+work=$(cd "$work" && pwd -P)
+luajit_bin=$(command -v luajit) || { printf 'FAIL: luajit is not on PATH\n' >&2; exit 1; }
+bash_bin=$(command -v bash)
+
+tests=0
+fails=0
+pass() { ((tests++)) || :; printf 'PASS: %s\n' "$1"; }
+fail() { ((tests++)) || :; ((fails++)) || :; printf 'FAIL: %s\n' "$1" >&2; }
+
+log="$work/runs.log"
+mkdir -p "$work/d1/direnv" "$work/d2" "$work/d3" "$work/tools"
+# fake DIR NAME BODY: a tool that logs each run, then runs BODY.
+fake() {
+	printf '#!/bin/sh\nprintf "%%s\\n" "%s $*" >> "%s"\n%s\n' "$2" "$log" "$3" >"$1/$2"
+	chmod +x "$1/$2"
+}
+# shellcheck disable=SC2016 # Expanded by the fake tools.
+{
+	fake "$work/d2" direnv 'printf "direnv_hook() { :; }\n# args: %s\n" "$*"'
+	fake "$work/d1" mcfly 'printf "mcfly_prompt_command() { :; }\n# mcfly v1\n"'
+	fake "$work/d2" starship 'if [ "$*" = "init bash" ]; then
+	printf "eval -- \"\$(%s init bash --print-full-init)\"\n" "$(command -v starship)"
+else
+	printf "STARSHIP_FOUND=%s\nstarship_precmd() { :; }\n" "$(command -v starship)"
+fi'
+}
+# A directory named direnv comes first and is skipped, as the shell skips it.
+for tool in sh printf; do ln -s "$(command -v "$tool")" "$work/tools/$tool"; done
+fixture_path="$work/d1:$work/d2:$work/tools"
+cache="$work/cache/hook-init"
+
+# resolve PATH: the engine's assignments, one NAME=value per line. The
+# engine's own PATH holds none of the tools, as at startup the incoming PATH
+# differs from the one it builds: they must be found on the PATH it is given.
+resolve() {
+	env -i PATH="$work/tools" SEARCH="$1" LUA_PATH="$root/lib/shell_startup/?.lua;;" CACHE="$cache" "$luajit_bin" -e '
+		local hook_init = require("hook_init")
+		for _, a in ipairs(hook_init.resolve(os.getenv("SEARCH"), os.getenv("CACHE"), require("posix_fs"))) do
+			io.write(a[1], "=", a[2], "\n")
+		end' /dev/null
+}
+value() { sed -n "s/^$1=//p" "$2"; }
+
+: >"$log"
+resolve "$fixture_path" >"$work/cold.out"
+if [[ "$(value SHELL_STARTUP_HOOK_DIRENV_BIN "$work/cold.out")" == "$work/d2/direnv" &&
+	"$(value SHELL_STARTUP_HOOK_MCFLY_BIN "$work/cold.out")" == "$work/d1/mcfly" &&
+	"$(value SHELL_STARTUP_HOOK_STARSHIP_BIN "$work/cold.out")" == "$work/d2/starship" ]]; then
+	pass 'each tool resolves to the first executable file in PATH order'
+else
+	fail "resolution: $(tr '\n' ' ' <"$work/cold.out")"
+fi
+if [[ "$(cat "$log")" == $'direnv hook bash\nmcfly init bash\nstarship init bash --print-full-init' ]]; then
+	pass 'a cold cache runs each tool once, starship for its full init'
+else
+	fail "cold runs: $(tr '\n' ';' <"$log")"
+fi
+
+# What the shell evaluated before: each tool's output, run by name on the
+# same PATH, and for starship whatever its stub evaluates.
+mismatch=''
+for spec in 'DIRENV direnv hook bash' 'MCFLY mcfly init bash' 'STARSHIP starship init bash --print-full-init'; do
+	read -r var name args <<<"$spec"
+	# shellcheck disable=SC2086 # The arguments are words.
+	live=$(PATH="$fixture_path" "$name" $args; printf x)
+	init=$(value "SHELL_STARTUP_HOOK_${var}_INIT" "$work/cold.out")
+	cached=$(cat "$init" 2>/dev/null; printf x)
+	[[ "$live" == "$cached" ]] || mismatch+=" $name"
+done
+# shellcheck disable=SC2016 # Expanded by the child shell.
+stub_found=$(PATH="$fixture_path" "$bash_bin" --noprofile --norc -c 'eval "$(starship init bash)"; printf %s "$STARSHIP_FOUND"')
+# shellcheck disable=SC1090
+cached_found=$(. "$(value SHELL_STARTUP_HOOK_STARSHIP_INIT "$work/cold.out")"; printf %s "$STARSHIP_FOUND")
+if [[ -z "$mismatch" && "$stub_found" == "$cached_found" && "$cached_found" == "$work/d2/starship" ]]; then
+	pass 'cached scripts are byte-identical to live output, and starship finds itself as its stub would'
+else
+	fail "cached scripts differ from live output:${mismatch:- none}; stub found '$stub_found', cache '$cached_found'"
+fi
+
+: >"$log"
+resolve "$fixture_path" >"$work/warm.out"
+if [[ ! -s "$log" ]] && cmp -s "$work/cold.out" "$work/warm.out"; then
+	pass 'a warm cache runs no tool and names the same files'
+else
+	fail "warm run: ran '$(tr '\n' ';' <"$log")'"
+fi
+
+old_mcfly=$(value SHELL_STARTUP_HOOK_MCFLY_INIT "$work/cold.out")
+printf '# upgraded\n' >>"$work/d1/mcfly"
+: >"$log"
+resolve "$fixture_path" >"$work/upgrade.out"
+new_mcfly=$(value SHELL_STARTUP_HOOK_MCFLY_INIT "$work/upgrade.out")
+if [[ "$(cat "$log")" == 'mcfly init bash' && "$new_mcfly" != "$old_mcfly" && ! -e "$old_mcfly" && -s "$new_mcfly" &&
+	-e "$(value SHELL_STARTUP_HOOK_DIRENV_INIT "$work/upgrade.out")" ]]; then
+	pass 'a replaced binary is run again, alone, and its old script is pruned'
+else
+	fail "after replacing mcfly: ran '$(tr '\n' ';' <"$log")', old kept=$([[ -e $old_mcfly ]] && echo yes || echo no)"
+fi
+
+fake "$work/d1" starship 'exit 3'
+rm -f "$work/d1/mcfly"
+rmdir "$work/d1/direnv"
+before=$(find "$work/cache" -type f | sort)
+resolve "$work/d1:$work/d3:$work/tools" >"$work/fail.out"
+if [[ ! -s "$work/fail.out" && "$(find "$work/cache" -type f | sort)" == "$before" ]]; then
+	pass 'a failing init and missing tools yield no assignments and cache nothing'
+else
+	fail "failing or missing tools: $(tr '\n' ' ' <"$work/fail.out")"
+fi
+rm -f "$work/d1/starship"
+
+# --- apply-hooks' side ---
+# shellcheck disable=SC2016 # Expanded by the child shell.
+check_helper() { # <label> <expect 0|1> <PATH> <setup>
+	local status
+	"$bash_bin" --noprofile --norc -c '
+		. "$1/bin/src/hook_init_cache.bash"; eval "$2"
+		PATH=$3 hook_init_cached starship STARSHIP || exit 1
+		[[ "${_hook_init_text}x" == "$(cat "$SHELL_STARTUP_HOOK_STARSHIP_INIT"; printf x)" ]]' \
+		_ "$root" "$4" "$3"
+	status=$?
+	if [[ "$status" == "$2" ]]; then pass "apply-hooks: $1"; else fail "apply-hooks: $1 (status $status)"; fi
+}
+star_init=$(value SHELL_STARTUP_HOOK_STARSHIP_INIT "$work/cold.out")
+vars="SHELL_STARTUP_HOOK_STARSHIP_BIN='$work/d2/starship' SHELL_STARTUP_HOOK_STARSHIP_INIT='$star_init'"
+check_helper 'uses the cached script for the binary the shell would run' 0 "$fixture_path" "$vars"
+fake "$work/d1" starship 'echo other'
+check_helper 'runs the tool when PATH now finds another binary' 1 "$fixture_path" "$vars"
+rm -f "$work/d1/starship"
+# The engine's PATH stands in for a search only while PATH is unchanged.
+same_path="$vars SHELL_STARTUP_HOOK_PATH='$work/tools'"
+check_helper 'trusts the engine without searching while PATH is the one it searched' 0 "$work/tools" "$same_path"
+fake "$work/d1" starship 'echo other'
+check_helper 'searches again once PATH differs from the one the engine searched' 1 "$fixture_path" \
+	"$vars SHELL_STARTUP_HOOK_PATH='$work/d2:$work/tools'"
+rm -f "$work/d1/starship"
+check_helper 'runs the tool when a function shadows it' 1 "$fixture_path" "$vars; starship() { :; }"
+check_helper 'runs the tool when an alias shadows it' 1 "$fixture_path" "$vars; shopt -s expand_aliases; alias starship=:"
+check_helper 'runs the tool when the engine named no script' 1 "$fixture_path" ''
+check_helper 'runs the tool when the script is gone' 1 "$fixture_path" "${vars/$star_init/$work/missing.bash}"
+mkdir "$work/cwd" && cp "$work/d2/starship" "$work/cwd/starship"
+# shellcheck disable=SC2016 # Expanded by the child shell.
+check_helper 'counts a trailing empty PATH entry as the current directory' 1 "$work/tools:" "$vars; cd '$work/cwd'"
+
+# --- the engine's gate: interactive shells only ---
+# shellcheck disable=SC2016 # Expanded by the child shell.
+engine() {
+	env -i HOME="$work" XDG_CACHE_HOME="$work/cache2" PATH="$fixture_path" ORIG_PATH="$fixture_path" OS=linux \
+		PF=linux-amd64 OSTYPE=linux-gnu SED= DATE= TAC= SHUF= STAT= TIMEOUT= "$@" \
+		"$luajit_bin" "$root/lib/shell_startup/shell_env.lua" 2>/dev/null | grep -c '^SHELL_STARTUP_HOOK_'
+}
+# mcfly was removed above, so two tools remain, with two assignments each,
+# plus the PATH they were found on.
+if [[ "$(engine)" == 0 && "$(engine SHELL_STARTUP_HOOKS=1)" == 5 ]]; then
+	pass 'the engine names hook scripts only when .pathconfig says the shell is interactive'
+else
+	fail "engine gate: without $(engine), with $(engine SHELL_STARTUP_HOOKS=1) assignments"
+fi
+# shellcheck disable=SC2016 # Literal text searched for in .pathconfig.
+if grep -q 'SHELL_STARTUP_HOOKS="$_pc_hooks"' "$root/.pathconfig" && grep -q "case \$- in \*i\*) _pc_hooks=1" "$root/.pathconfig"; then
+	pass '.pathconfig passes interactivity to the engine'
+else
+	fail '.pathconfig no longer passes SHELL_STARTUP_HOOKS from $-'
+fi
+
+if ((fails == 0)); then
+	printf 'All %s hook init checks passed.\n' "$tests"
+else
+	printf '%s of %s hook init checks failed.\n' "$fails" "$tests" >&2
+fi
+exit "$fails"

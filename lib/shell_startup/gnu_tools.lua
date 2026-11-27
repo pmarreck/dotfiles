@@ -25,6 +25,17 @@ local function candidates(name, path_value, fs)
 	end
 	return found
 end
+M.candidates = candidates
+
+-- The first of them, which is what the shell runs for `name`, without
+-- scanning the rest of PATH.
+function M.first_candidate(name, path_value, fs)
+	for dir in ((path_value or "") .. ":"):gmatch("([^:]*):") do
+		local candidate = (dir == "" and "." or dir) .. "/" .. name
+		if fs.is_executable(candidate) then return candidate end
+	end
+	return nil
+end
 
 -- A version probe with a persistent cache. `run(candidate)` returns the first
 -- line of `candidate --version`; `store` has read() -> text or nil and

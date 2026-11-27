@@ -3,7 +3,9 @@
 -- with this account's startup files, from a clean environment like a new tab,
 -- every byte through libghostty-vt. Checks what a person would see: the intro
 -- (one forced pick at a time) appears before a prompt that accepts commands,
--- the character after it survives, and no image bytes leak as text.
+-- the character after it survives, and no image bytes leak as text. Also
+-- that the prompt hooks' cached init scripts leave the shell as running the
+-- tools did.
 --
 -- Host-only (bin/test/NOT_HERMETIC): it runs the account's real startup chain,
 -- whose prompt and hook tools are absent from the Nix sandbox.
@@ -121,6 +123,71 @@ for _, mode in ipairs({ "non-login", "login" }) do
 			ready and usable and ran and shown and not garbage(text), text:sub(-800))
 	end
 end
+
+-- The prompt hooks' cached init scripts (lib/shell_startup/hook_init.lua)
+-- must leave the shell as running the tools did. One startup gets an
+-- unwritable cache, so apply-hooks runs direnv, mcfly, and starship; a second
+-- startup fills a fresh cache and a third evaluates it. All dump their
+-- functions and prompt variables, which must match (session keys excluded).
+local function read_all(path)
+	local f = io.open(path, "rb")
+	if not f then return nil end
+	local text = f:read("*a")
+	f:close()
+	return text
+end
+local function hook_state(cache_home, tag)
+	local state, hooks = work .. "/state-" .. tag, work .. "/hooks-" .. tag
+	local s = session.start({ argv = { bash, "-i" }, cols = 100, rows = 50, env = {
+		"HOME=" .. home, "USER=" .. user, "LOGNAME=" .. user, "SHELL=" .. bash, "LANG=en_US.UTF-8",
+		"TERM=xterm-ghostty", "TERM_PROGRAM=ghostty", "PATH=" .. base, "ORIG_PATH=" .. base,
+		"__NIXOS_SET_ENVIRONMENT_DONE=1", "__NIX_DARWIN_SET_ENVIRONMENT_DONE=1",
+		"XDG_CACHE_HOME=" .. cache_home, "SHELL_STARTUP_LUAJIT=" .. stand_in,
+		"REAL_LUAJIT=" .. luajit, "INTRO_PICK=fortune", "INTRO_LOG=" .. invocations,
+	} })
+	s:type("{ declare -f; declare -p PS0 PS1 PS2 PROMPT_COMMAND precmd_functions preexec_functions; } >'" .. state
+		.. "' 2>&1; { declare -p PATH; for v in ${!SHELL_STARTUP_HOOK_*}; do printf '%s=%s\\n' \"$v\" \"${!v}\"; done; } >'"
+		.. hooks .. "'; printf '%s%s\\n' D 'UMPED'\n")
+	local done = s:wait_for(function(x) return x:text():find("\nDUMPED\n", 1, true) end, 60)
+	s:close()
+	return done, read_all(state) or "", read_all(hooks) or ""
+end
+local unwritable = work .. "/not-a-directory"
+assert(io.open(unwritable, "w")):close()
+local cold_ok, cold_state, cold_hooks = hook_state(unwritable, "cold")
+hook_state(work .. "/hook-cache", "fill")
+local warm_ok, warm_state, warm_hooks = hook_state(work .. "/hook-cache", "warm")
+local cached_count = select(2, warm_hooks:gsub("\nSHELL_STARTUP_HOOK_%u+_INIT=", ""))
+check("hook init: a warm startup has the cached scripts and an unwritable cache has none",
+	cold_ok and warm_ok and cached_count > 0 and not cold_hooks:find("SHELL_STARTUP_HOOK_", 1, true),
+	"cold: " .. cold_hooks .. "\nwarm: " .. warm_hooks)
+local first_difference
+do
+	local a, b = {}, {}
+	for line in cold_state:gmatch("[^\n]*") do a[#a + 1] = line end
+	for line in warm_state:gmatch("[^\n]*") do b[#b + 1] = line end
+	for n = 1, math.max(#a, #b) do
+		if a[n] ~= b[n] then first_difference = string.format("line %d:\n  tools: %s\n  cache: %s", n, tostring(a[n]), tostring(b[n])) break end
+	end
+end
+check("hook init: cached scripts leave the same functions and prompt variables as running the tools",
+	(cold_state:find("_direnv_hook", 1, true) or cold_state:find("mcfly_prompt_command", 1, true)
+		or cold_state:find("starship_precmd", 1, true)) and first_difference == nil,
+	first_difference or "the startups defined no hook functions, so the comparison proves nothing")
+-- Each cached script is byte-identical to what the tool prints now, run by
+-- name on the shell's PATH (for starship, the full init its stub evaluates).
+local path_value = warm_hooks:match('declare %-x PATH="([^"]*)"') or ""
+local differing = {}
+for var, file in warm_hooks:gmatch("SHELL_STARTUP_HOOK_(%u+)_INIT=([^\n]+)") do
+	local command = ({ DIRENV = "direnv hook bash", MCFLY = "mcfly init bash",
+		STARSHIP = "starship init bash --print-full-init" })[var]
+	local pipe = io.popen("PATH='" .. path_value:gsub("'", "'\\''") .. "' " .. command .. " 2>/dev/null")
+	local live = pipe:read("*a")
+	pipe:close()
+	if not command or live ~= read_all(file) then differing[#differing + 1] = var end
+end
+check("hook init: each cached script matches its tool's live output", path_value ~= "" and #differing == 0,
+	"differing: " .. table.concat(differing, ", "))
 
 os.execute("rm -rf '" .. work .. "'")
 if fails == 0 then

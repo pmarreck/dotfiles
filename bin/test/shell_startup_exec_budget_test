@@ -66,6 +66,21 @@ for name in "${!budget[@]}"; do
 	fi
 done
 
+# Prompt hook tools present on this host. A warm startup evaluates their
+# cached init scripts (lib/shell_startup/hook_init.lua) instead of running
+# `direnv hook bash`, `mcfly init bash`, or `starship init bash`. Starship's
+# init script itself runs `starship time` and `starship prompt`, so only init
+# runs are counted for these.
+hook_tools=()
+for name in direnv mcfly starship; do
+	if system_tool=$(command -v "$name"); then
+		stub "$name" "$system_tool"
+		hook_tools+=("$name")
+	else
+		printf 'NOTE: %s is not installed here; its init cache is not exercised\n' "$name"
+	fi
+done
+
 # An SSH-like pristine base. ORIG_PATH is pinned to the base so the stub
 # directory classifies as a foreign injection and stays at the front.
 base_path="/run/current-system/sw/bin:/usr/bin:/bin"
@@ -80,7 +95,7 @@ probe_marker='--- probe ---'
 # shellcheck disable=SC2016 # The child shell expands the probe.
 probe='printf "%s\n" "$BUDGET_PROBE_MARKER" >> "$BUDGET_LOG"
 printf "kinds=%s,%s\n" "$(type -t needs)" "$(type -t array_contains_element)"'
-for name in "${!budget[@]}"; do
+for name in "${!budget[@]}" "${hook_tools[@]}"; do
 	probe+="; command $name probe-control >/dev/null 2>&1"
 done
 
@@ -127,7 +142,38 @@ run_quadrant() {
 			grep "^$name " "$startup_log" | sed 's/^/    /' >&2
 		fi
 	done
+
+	for name in "${hook_tools[@]}"; do
+		((tests++))
+		if ! grep -qx "$name probe-control" "$probe_log"; then
+			fail "$label: positive control did not reach the $name stub; the oracle is blind"
+			continue
+		fi
+		count=$(grep -c -E "^$name (hook|init) " "$startup_log")
+		if ((count == 0)); then
+			pass "$label: startup evaluated the cached $name init script without running $name for it"
+		else
+			fail "$label: startup ran $name for its init script $count time(s):"
+			grep -E "^$name (hook|init) " "$startup_log" | sed 's/^/    /' >&2
+		fi
+	done
 }
+
+# One startup fills the hook init cache, as the first shell after an upgrade
+# does; the quadrants below then measure warm startups.
+timeout --foreground --kill-after=5 20 env -i \
+	HOME="$HOME" USER="$me" LOGNAME="$me" TERM=xterm SHELL="$bash_bin" XDG_CACHE_HOME="$work/cache" \
+	PATH="$stub_dir:$base_path" ORIG_PATH="$base_path" \
+	__NIXOS_SET_ENVIRONMENT_DONE=1 __NIX_DARWIN_SET_ENVIRONMENT_DONE=1 SHELL_STARTUP_BENCHMARK=1 \
+	BUDGET_LOG="$log" "$bash_bin" -i -c : >/dev/null 2>&1
+if ((${#hook_tools[@]} > 0)); then
+	((tests++))
+	if grep -q -E "^(${hook_tools[0]}) (hook|init) " "$log"; then
+		pass "the first startup ran ${hook_tools[0]} to fill the cache (the counting below is not blind)"
+	else
+		fail "the first startup never ran ${hook_tools[0]} for its init script; the hook counts below prove nothing"
+	fi
+fi
 
 run_quadrant 'non-login interactive' -i
 run_quadrant 'login interactive' -l -i

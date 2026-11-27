@@ -217,6 +217,25 @@ pre-existing difference is preserved, not endorsed. Startup execve calls:
 152 → 12. Interleaved A/B, 14 samples, load 5 to 9: non-login 324 → 259 ms,
 login 400 → 312 ms.
 
+Prompt hook init (2026-11-27). apply-hooks ran `direnv hook bash`, `mcfly
+init bash`, and `starship init bash` (whose stub runs starship again with
+`--print-full-init`) on every interactive startup, about 21 ms under load.
+Each output depends only on the binary and the path it was found at; starship
+embeds the path it finds by PATH search when run by name, so the engine runs
+the tools by name with the new PATH. `lib/shell_startup/hook_init.lua` caches
+each script in an immutable file named by a hash of invoked path, resolved
+path, size, mtime, and arguments, and prunes a tool's older files when a new
+one lands. `bin/src/hook_init_cache.bash` lets apply-hooks use a script only
+when the shell would run that very binary: the engine's PATH is unchanged
+(otherwise it searches PATH itself; the dotfiles turn hashing off, so `hash`
+cannot answer) and no function or alias shadows the name. The text is
+evaluated in apply-hooks' own scope, as the tool output was. A first attempt
+searched the 165-entry startup PATH in Bash for every tool and cost 10 ms,
+half the saving; trusting the engine while PATH is unchanged brought the
+shell side to 0.9 ms, plus 1.2 ms in the engine. ghostty_live_shell_test
+compares functions and prompt variables after cached and uncached startups
+and the cached scripts with live tool output on each host.
+
 G. Headless Ghostty runner (requested and built 2026-11-27). `lib/ghostty_vt`
 binds libghostty-vt through the LuaJIT FFI (`forkpty`, `poll`, Ghostty's VT
 engine, its formatter and Kitty placement API) and answers the program's

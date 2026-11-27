@@ -123,10 +123,14 @@ report_prompt_commands "after" "bash-preexec source"
 
 # Now run tool initializers - they will add their hooks to precmd_functions
 # Each tool's init script defines a function and adds it to PROMPT_COMMAND or precmd_functions
+# Their init scripts come from the startup engine's cache when it has the one
+# for the binary this shell would run; otherwise the tool prints it as before.
+. "$HOME/dotfiles/bin/src/hook_init_cache.bash"
 
 # direnv - defines _direnv_hook and adds to PROMPT_COMMAND
 if command -v direnv >/dev/null 2>&1; then
-	eval "$(direnv hook bash)" || err "direnv hook failed"
+	if hook_init_cached direnv DIRENV; then eval "$_hook_init_text"; else eval "$(direnv hook bash)"; fi ||
+		err "direnv hook failed"
 	report_prompt_commands "after" "direnv hook"
 fi
 
@@ -137,7 +141,8 @@ if command -v mcfly >/dev/null 2>&1; then
 	# re-registration on a re-source — otherwise mcfly is silently dropped from
 	# precmd_functions and stops recording history after the 2nd .bashrc source.
 	unset __MCFLY_LOADED
-	eval "$(mcfly init bash)" || err "mcfly init failed"
+	if hook_init_cached mcfly MCFLY; then eval "$_hook_init_text"; else eval "$(mcfly init bash)"; fi ||
+		err "mcfly init failed"
 	report_prompt_commands "after" "mcfly init"
 fi
 
@@ -150,9 +155,12 @@ fi
 
 # starship - defines starship_precmd and uses precmd_functions if bash-preexec is loaded
 if command -v starship >/dev/null 2>&1; then
-	eval "$(starship init bash)" || err "starship init failed"
+	# The cached text is the full init that `starship init bash` evaluates.
+	if hook_init_cached starship STARSHIP; then eval "$_hook_init_text"; else eval "$(starship init bash)"; fi ||
+		err "starship init failed"
 	report_prompt_commands "after" "starship init"
 fi
+unset _hook_init_text
 
 # Manual Starship Timing via PS0 (Native Bash Hook)
 # This works reliably even if preexec/DEBUG traps are flaky or disabled.

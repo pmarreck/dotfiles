@@ -14,7 +14,10 @@
 -- SHELL_STARTUP_LOGIN_SED, the sed .bash_profile chooses on the new PATH;
 -- then SHELL_STARTUP_TMPDIR, the resolved /tmp .envconfig uses as TMPDIR, and
 -- SHELL_STARTUP_TTY, the terminal on stdin (the caller's own: command
--- substitution captures only stdout), which .envconfig uses as GPG_TTY.
+-- substitution captures only stdout), which .envconfig uses as GPG_TTY;
+-- then, when SHELL_STARTUP_HOOKS=1 (an interactive shell), the
+-- SHELL_STARTUP_HOOK_<TOOL>_BIN and _INIT pairs bin/apply-hooks evaluates
+-- instead of running direnv, mcfly, and starship (see hook_init.lua).
 local here = (arg and arg[0] or ""):match("^(.*)/[^/]*$") or "."
 package.path = here .. "/?.lua;" .. here .. "/../?.lua;" .. package.path
 
@@ -38,6 +41,7 @@ local ok, result = pcall(function()
 	local shell_assign = require("shell_assign")
 	local graphics_env = require("graphics_env")
 	local gnu_tools = require("gnu_tools")
+	local hook_init = require("hook_init")
 
 	local home, pf, os_name = os.getenv("HOME"), os.getenv("PF"), os.getenv("OS")
 	if not home or home == "" then error("HOME is not set", 0) end
@@ -99,6 +103,18 @@ local ok, result = pcall(function()
 	if tmp then assignments[#assignments + 1] = { "SHELL_STARTUP_TMPDIR", tmp } end
 	local tty = fs.ttyname(0)
 	if tty then assignments[#assignments + 1] = { "SHELL_STARTUP_TTY", tty } end
+	-- Like the GNU tools, a hook cache failure leaves apply-hooks to run the
+	-- tools itself rather than costing the shell its PATH.
+	if os.getenv("SHELL_STARTUP_HOOKS") == "1" then
+		local cache_home = os.getenv("XDG_CACHE_HOME")
+		if not cache_home or cache_home == "" then cache_home = home .. "/.cache" end
+		local hooks_ok, hooks = pcall(hook_init.resolve, assignments[1][2], cache_home .. "/dotfiles/hook-init", fs)
+		if hooks_ok then
+			for _, hook in ipairs(hooks) do assignments[#assignments + 1] = hook end
+		else
+			io.stderr:write("shell_startup: hook init cache failed: ", tostring(hooks), "\n")
+		end
+	end
 	return shell_assign.render(assignments)
 end)
 if not ok then fail(tostring(result)) end
