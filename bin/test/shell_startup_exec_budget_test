@@ -83,12 +83,12 @@ run_quadrant() {
 	: >"$log"
 	# --foreground keeps interactive Bash in the terminal's process group
 	# under a concurrent runner; the deadline bounds a hung regression.
-	# NixOS /etc/profile replaces PATH unless the session environment is
+	# NixOS /etc/profile and nix-darwin /etc/bashrc replace PATH unless the session environment is
 	# already applied, as it is for a shell started inside a desktop session.
 	out=$(timeout --foreground --kill-after=5 20 env -i \
 		HOME="$HOME" USER="$me" LOGNAME="$me" TERM=xterm SHELL="$bash_bin" \
 		PATH="$stub_dir:$base_path" ORIG_PATH="$base_path" \
-		__NIXOS_SET_ENVIRONMENT_DONE=1 SHELL_STARTUP_BENCHMARK=1 \
+		__NIXOS_SET_ENVIRONMENT_DONE=1 __NIX_DARWIN_SET_ENVIRONMENT_DONE=1 SHELL_STARTUP_BENCHMARK=1 \
 		BUDGET_LOG="$log" BUDGET_PROBE_MARKER="$probe_marker" \
 		"$bash_bin" "$@" -c "$probe" 2>/dev/null)
 	sed "/^$probe_marker\$/,\$d" "$log" >"$startup_log"
