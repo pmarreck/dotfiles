@@ -4,6 +4,12 @@ set -u
 here=$(cd -P -- "$(dirname "${BASH_SOURCE[0]}")" && pwd) || exit 2
 # During development this launcher lives in bin/src; bin/git is the published copy.
 if [[ ${here##*/} == src ]]; then here=${here%/src}; fi
+# Count this hand-off for everything the native tool starts (see
+# bin/src/wrapper_depth.bash): wrappers running each other in a loop stop.
+# shellcheck source-path=SCRIPTDIR source=wrapper_depth.bash
+. "$here/src/wrapper_depth.bash"
+dotfiles_wrapper_depth "git" || exit
+export DOTFILES_WRAPPER_DEPTH=$_dotfiles_wrapper_next
 # Another copy of this launcher earlier on PATH (a second checkout's bin, a test
 # fixture home) would look like the real Git, and the two copies would run each
 # other forever. Each launcher therefore records itself in an inherited list,

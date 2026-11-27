@@ -3,6 +3,12 @@
 set -u
 tool=${0##*/}
 case "$tool" in cp|install|rsync) ;; *) exit 64 ;; esac
+# Count this hand-off for everything the native tool starts (see
+# bin/src/wrapper_depth.bash): wrappers running each other in a loop stop.
+# shellcheck source-path=SCRIPTDIR source=src/wrapper_depth.bash
+. "${BASH_SOURCE[0]%/*}/src/wrapper_depth.bash"
+dotfiles_wrapper_depth "$tool" || exit
+export DOTFILES_WRAPPER_DEPTH=$_dotfiles_wrapper_next
 
 refuse() {
 	printf '%s: REFUSING ad hoc Nix-store copy: %q\n' "$tool" "$1" >&2

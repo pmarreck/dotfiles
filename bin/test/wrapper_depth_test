@@ -1,0 +1,148 @@
+#!/usr/bin/env bash
+# The nesting guard for wrappers that hand off to the next tool of their name
+# on PATH (bin/src/wrapper_depth.bash). Two copies of such a wrapper, each
+# taking the other for the native tool, once grew a chain of tens of thousands
+# of processes. Checks: every wrapper is found mechanically and uses the
+# guard; each refuses at the limit; the count reaches the native tool without
+# leaking into an interactive shell; and real loops between two copies end.
+set -u
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+work=$(mktemp -d "${TMPDIR:-/tmp}/wrapper_depth_test.XXXXXX") || exit 1
+trap 'command rm -rf -- "$work"' EXIT
+work=$(cd "$work" && pwd -P)
+bash_bin=$(command -v bash)
+timeout_bin=$(type -P gtimeout || type -P timeout) || { printf 'FAIL: no timeout command\n' >&2; exit 1; }
+
+tests=0
+fails=0
+pass() { ((tests++)) || :; printf 'PASS: %s\n' "$1"; }
+fail() { ((tests++)) || :; ((fails++)) || :; printf 'FAIL: %s\n' "$1" >&2; }
+
+# shellcheck source=../src/wrapper_depth.bash
+. "$root/bin/src/wrapper_depth.bash"
+max=$DOTFILES_WRAPPER_DEPTH_MAX
+
+# --- Discovery: skipping itself to find the native tool marks a wrapper ---
+discovered=()
+while IFS= read -r file; do
+	[[ -f "$root/$file" && ! -L "$root/$file" ]] || continue
+	if grep -q -E -- '-ef[[:space:]]+"?\$\{BASH_SOURCE|self=\$\(readlink -f "\$\{BASH_SOURCE\[0\]\}"' "$root/$file"; then
+		discovered+=("$file")
+	fi
+done < <(git -C "$root" ls-files bin 2>/dev/null || find "$root/bin" -type f | sed "s|^$root/||")
+unguarded=()
+for file in "${discovered[@]}"; do
+	grep -q 'dotfiles_wrapper_depth' "$root/$file" || unguarded+=("$file")
+done
+missing=()
+for known in bin/chmod bin/cp bin/rg bin/gh bin/src/git-budget-launcher bin/sed bin/date bin/tac bin/shuf bin/stat \
+	bin/src/signal-audit.bash; do
+	[[ " ${discovered[*]} " == *" $known "* ]] || missing+=("$known")
+done
+if ((${#unguarded[@]} == 0 && ${#missing[@]} == 0)); then
+	pass "all ${#discovered[@]} wrappers that skip themselves on PATH use the nesting guard"
+else
+	fail "unguarded wrappers: ${unguarded[*]:-none}; known wrappers no longer discovered: ${missing[*]:-none}"
+fi
+
+# --- Every wrapper name refuses at the limit, before looking for its tool ---
+refusals=''
+for name in chmod cp install rsync rg fd find bfs gh git sed date tac shuf stat; do
+	out=$(DOTFILES_WRAPPER_DEPTH=$max "$root/bin/$name" --version 2>&1 >/dev/null)
+	status=$?
+	[[ $status == 126 && "$out" == "$name: refusing to hand off: $max dotfiles wrappers are already nested"* ]] ||
+		refusals+=$'\n'"  $name: status $status: $out"
+done
+if [[ -z "$refusals" ]]; then
+	pass "every wrapper name refuses with status 126 once $max hand-offs are nested"
+else
+	fail "wrappers that did not refuse at the limit:$refusals"
+fi
+
+# --- The count reaches the native tool ---
+mkdir -p "$work/fake"
+for name in gh gsed kill; do
+	printf '#!/bin/sh\nprintf "%%s\\n" "${DOTFILES_WRAPPER_DEPTH-unset}" >> "%s/seen.%s"\n' "$work" "$name" >"$work/fake/$name"
+	chmod +x "$work/fake/$name"
+done
+DOTFILES_WRAPPER_DEPTH=3 PATH="$work/fake:$PATH" "$root/bin/gh" version >/dev/null 2>&1
+DOTFILES_WRAPPER_DEPTH=3 PATH="$work/fake:$PATH" "$root/bin/sed" --version >/dev/null 2>&1
+DOTFILES_WRAPPER_DEPTH=abc PATH="$work/fake:$PATH" "$root/bin/sed" --version >/dev/null 2>&1
+DOTFILES_WRAPPER_DEPTH=99999999999 PATH="$work/fake:$PATH" "$root/bin/sed" --version >/dev/null 2>&1
+huge_status=$?
+if [[ "$(cat "$work/seen.gh" 2>/dev/null)" == 4 && "$(cat "$work/seen.gsed" 2>/dev/null)" == $'4\n1' && $huge_status == 126 ]]; then
+	pass 'the native tool sees the count one higher (exported and per-command forms); noise counts as 0, a huge count as a loop'
+else
+	fail "native tools saw: gh '$(cat "$work/seen.gh" 2>/dev/null)', gsed '$(tr '\n' ' ' <"$work/seen.gsed" 2>/dev/null)', huge count status $huge_status"
+fi
+# shellcheck disable=SC2016 # Expanded by the child shell.
+leak=$(DOTFILES_WRAPPER_DEPTH=3 PATH="$work/fake:$PATH" "$bash_bin" --noprofile --norc -c '
+	. "$1/bin/sed"; sed --version >/dev/null 2>&1; printf %s "$DOTFILES_WRAPPER_DEPTH"' _ "$root")
+if [[ "$leak" == 3 ]]; then
+	pass 'a wrapper running as a function leaves the shell'"'"'s own count alone'
+else
+	fail "calling the sed function changed the shell's count to '$leak'"
+fi
+sleep 30 &
+target=$!
+# shellcheck disable=SC2016 # Expanded by the child shell.
+DOTFILES_WRAPPER_DEPTH=5 TMPDIR="$work" PATH="$work/fake:$PATH" "$bash_bin" --noprofile --norc -c '
+	. "$1/bin/src/signal-audit.bash" && signal_logged kill CONT false 7 "$2"' _ "$root" "$target" >/dev/null 2>&1
+command kill "$target" 2>/dev/null
+wait "$target" 2>/dev/null
+if [[ "$(cat "$work/seen.kill" 2>/dev/null)" == 6 ]]; then
+	pass "a queued signal hands the count to the native kill"
+else
+	fail "the native kill saw '$(cat "$work/seen.kill" 2>/dev/null)' for a queued signal at depth 5"
+fi
+
+# --- Loops between two copies of a wrapper end ---
+# copy NAME: two copies of bin/NAME, each with the helpers it sources.
+copy() {
+	local side
+	for side in a b; do
+		mkdir -p "$work/$1-$side/bin/src"
+		cp "$root/bin/$1" "$work/$1-$side/bin/$1"
+		cp "$root/bin/src/wrapper_depth.bash" "$root/bin/src/destructive-audit.bash" "$work/$1-$side/bin/src/"
+	done
+}
+mkdir -p "$work/tools"
+# Everything the copies need except chmod and tac themselves, so each copy
+# finds only the other.
+for tool in bash sh env dirname basename readlink grep cat mktemp stat id mkdir date find mv ln sort head tail tr wc touch ps; do
+	# The native tool, never the repo's own wrapper of that name.
+	while IFS= read -r tool_path; do
+		[[ -e "$root/bin/$tool" && "$tool_path" -ef "$root/bin/$tool" ]] && continue
+		ln -s "$tool_path" "$work/tools/$tool"
+		break
+	done < <(type -a -P "$tool")
+done
+# loop LABEL NAME START ARGS...: run copy a of NAME, which finds copy b first.
+loop() {
+	local label=$1 name=$2 start=$3 out status
+	shift 3
+	copy "$name"
+	out=$(DOTFILES_WRAPPER_DEPTH=$start TMPDIR="$work" PATH="$work/$name-a/bin:$work/$name-b/bin:$work/tools" \
+		"$timeout_bin" -k 5 30 "$work/$name-a/bin/$name" "$@" 2>&1 </dev/null)
+	status=$?
+	if [[ $status != 124 && $status != 137 && "$out" == *"refusing to hand off: $max dotfiles wrappers are already nested"* ]]; then
+		pass "$label: two copies running each other stop at the limit (status $status)"
+	else
+		fail "$label: the loop did not stop at the limit (status $status): ${out:0:300}"
+	fi
+}
+# gh hands off with exec: a straight chain from 0 to the limit.
+loop 'exec hand-off (gh)' gh 0 version
+# chmod probes --help before the real call, so each level starts two
+# children; starting near the limit keeps the run short.
+loop 'probe then call (chmod)' chmod $((max - 3)) 0644 "$work/tools"
+# tac runs as a function and probes --version when no gtac exists.
+loop 'function form (tac)' tac $((max - 3)) /dev/null
+
+if ((fails == 0)); then
+	printf 'All %s wrapper nesting checks passed.\n' "$tests"
+else
+	printf '%s of %s wrapper nesting checks failed.\n' "$fails" "$tests" >&2
+fi
+exit "$fails"

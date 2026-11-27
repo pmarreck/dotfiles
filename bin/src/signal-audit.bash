@@ -1,5 +1,7 @@
 # shellcheck source=destructive-audit.bash
 . "${BASH_SOURCE[0]%/*}/destructive-audit.bash"
+# shellcheck source-path=SCRIPTDIR source=wrapper_depth.bash
+. "${BASH_SOURCE[0]%/*}/wrapper_depth.bash"
 
 signal_identity() {
 	local pid="$1" row=''
@@ -36,6 +38,7 @@ signal_logged() {
 		done < <(type -a -p kill)
 		[[ -n "$native" ]] ||
 			{ audit_error "$operation" 'queued signals require a native kill executable'; return 2; }
+		dotfiles_wrapper_depth "$operation" || return
 	fi
 	journal=$(audit_batch signals) || return 1
 	printf 'command=%s signal=%q queue=%q\n' "$operation" "$signal" "$queue" > "$journal/log" || return 1
@@ -63,7 +66,7 @@ signal_logged() {
 			failed=1
 			continue
 		fi
-		if { if [[ -n "$queue" ]]; then "$native" --queue "$queue" -s "$signal" -- "$pid"; else builtin kill -s "$signal" -- "$pid"; fi; }; then
+		if { if [[ -n "$queue" ]]; then DOTFILES_WRAPPER_DEPTH=$_dotfiles_wrapper_next "$native" --queue "$queue" -s "$signal" -- "$pid"; else builtin kill -s "$signal" -- "$pid"; fi; }; then
 			printf 'result pid=%s status=sent\n' "$pid" >> "$journal/log" || return 1
 			[[ "$echo_targets" == false ]] || printf '%s killed (pid %s)\n' "${names[attempted]}" "$pid"
 			status=0

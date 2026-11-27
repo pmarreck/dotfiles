@@ -22,7 +22,14 @@
 # canonical path and skips any fallback candidate whose readlink -f
 # matches it — so the wrapper can't pick itself up via PATH lookup.
 
+# Hand-off nesting guard (bin/src/wrapper_depth.bash). As a function in an
+# interactive shell this must not raise the shell's own count, so only the
+# native commands below receive the new value.
+# shellcheck source-path=SCRIPTDIR source=src/wrapper_depth.bash
+. "${BASH_SOURCE[0]%/*}/src/wrapper_depth.bash"
+
 sed() {
+	dotfiles_wrapper_depth sed || return
 	local self
 	self=$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null) || self="${BASH_SOURCE[0]}"
 
@@ -44,7 +51,7 @@ sed() {
 		# Detect whether the fallback is GNU. GNU has `--version` and
 		# prints "(GNU sed)"; BSD prints usage to stderr and exits non-zero.
 		is_gnu=0
-		if [ -n "$whichsed" ] && "$whichsed" --version 2>/dev/null | grep -q GNU; then
+		if [ -n "$whichsed" ] && DOTFILES_WRAPPER_DEPTH=$_dotfiles_wrapper_next "$whichsed" --version 2>/dev/null | grep -q GNU; then
 			is_gnu=1
 		fi
 	fi
@@ -55,7 +62,7 @@ sed() {
 	if (( ! is_gnu )) && [ -z "$MUTE_GNU_WRAPPER_WARNINGS" ]; then
 		printf '\033[38;5;208mwarning: bin/sed is using non-GNU sed (%s); GNU semantics may not apply\033[0m\n' "$whichsed" >&2
 	fi
-	"$whichsed" "$@"
+	DOTFILES_WRAPPER_DEPTH=$_dotfiles_wrapper_next "$whichsed" "$@"
 }
 
 # Run the function if this script is executed directly

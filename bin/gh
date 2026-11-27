@@ -2,6 +2,12 @@
 # Check PR prose before handing it to the real GitHub CLI. Other commands pass through.
 set -u
 script_dir=$(cd -P -- "$(dirname "${BASH_SOURCE[0]}")" && pwd) || exit 2
+# Count this hand-off for everything the native tool starts (see
+# bin/src/wrapper_depth.bash): wrappers running each other in a loop stop.
+# shellcheck source-path=SCRIPTDIR source=src/wrapper_depth.bash
+. "$script_dir/src/wrapper_depth.bash"
+dotfiles_wrapper_depth "gh" || exit
+export DOTFILES_WRAPPER_DEPTH=$_dotfiles_wrapper_next
 real=''
 IFS=: read -r -a search_dirs <<< "$PATH"
 for directory in "${search_dirs[@]}"; do

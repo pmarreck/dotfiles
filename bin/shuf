@@ -16,7 +16,14 @@
 # path and skips any fallback candidate whose readlink -f matches it — so
 # the wrapper can't pick itself up via PATH lookup.
 
+# Hand-off nesting guard (bin/src/wrapper_depth.bash). As a function in an
+# interactive shell this must not raise the shell's own count, so only the
+# native commands below receive the new value.
+# shellcheck source-path=SCRIPTDIR source=src/wrapper_depth.bash
+. "${BASH_SOURCE[0]%/*}/src/wrapper_depth.bash"
+
 shuf() {
+	dotfiles_wrapper_depth shuf || return
 	local self
 	self=$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null) || self="${BASH_SOURCE[0]}"
 
@@ -38,7 +45,7 @@ shuf() {
 		# Detect whether the fallback is GNU. GNU has `--version` and
 		# prints "(GNU coreutils)"; BSD-flavored tools error out instead.
 		is_gnu=0
-		if [ -n "$whichshuf" ] && "$whichshuf" --version 2>/dev/null | grep -q GNU; then
+		if [ -n "$whichshuf" ] && DOTFILES_WRAPPER_DEPTH=$_dotfiles_wrapper_next "$whichshuf" --version 2>/dev/null | grep -q GNU; then
 			is_gnu=1
 		fi
 	fi
@@ -49,7 +56,7 @@ shuf() {
 	if (( ! is_gnu )) && [ -z "$MUTE_GNU_WRAPPER_WARNINGS" ]; then
 		printf '\033[38;5;208mwarning: bin/shuf is using non-GNU shuf (%s); GNU semantics may not apply\033[0m\n' "$whichshuf" >&2
 	fi
-	"$whichshuf" "$@"
+	DOTFILES_WRAPPER_DEPTH=$_dotfiles_wrapper_next "$whichshuf" "$@"
 }
 
 # Run the function if this script is executed directly

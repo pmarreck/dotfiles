@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 # Mode changes are journaled individually, including recursive operations.
 . "${BASH_SOURCE[0]%/*}/src/destructive-audit.bash"
+# Count this hand-off for everything the native tool starts (see
+# bin/src/wrapper_depth.bash): wrappers running each other in a loop stop.
+# shellcheck source-path=SCRIPTDIR source=src/wrapper_depth.bash
+. "${BASH_SOURCE[0]%/*}/src/wrapper_depth.bash"
+dotfiles_wrapper_depth "chmod" || exit
+export DOTFILES_WRAPPER_DEPTH=$_dotfiles_wrapper_next
 
 chmod_stat() {
 	if [[ "$OSTYPE" == darwin* ]]; then

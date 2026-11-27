@@ -8,6 +8,13 @@
 
 set -u
 
+# Count this hand-off for everything the native tool starts (see
+# bin/src/wrapper_depth.bash): wrappers running each other in a loop stop.
+# shellcheck source-path=SCRIPTDIR source=src/wrapper_depth.bash
+. "${BASH_SOURCE[0]%/*}/src/wrapper_depth.bash"
+dotfiles_wrapper_depth "${0##*/}" || exit
+export DOTFILES_WRAPPER_DEPTH=$_dotfiles_wrapper_next
+
 readonly EX_NOPERM=77
 readonly NIX_STORE=/nix/store
 readonly INVOKED_AS="${0##*/}"

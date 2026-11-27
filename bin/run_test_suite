@@ -20,6 +20,10 @@ Options:
 	                 Results are always reported in discovery order, so
 	                 the report does not depend on the job count.
 
+Each test file must finish within DOTFILES_TEST_TIMEOUT seconds (default 300).
+At the limit it is stopped with everything it started (TERM, then KILL 10
+seconds later) and fails.
+
 The compatibility command test_dotfiles invokes this same runner.
 EOF
 }
@@ -205,6 +209,20 @@ run_test_suite() {
 		fi
 	fi
 
+	# A deadline per test, so one that hangs or recurses without bound is
+	# stopped with everything it started (wrappers running each other once grew
+	# tens of thousands of processes). GNU timeout signals its whole process
+	# group: TERM at the limit, KILL 10 seconds later.
+	local limit=${DOTFILES_TEST_TIMEOUT:-300} timeout_bin
+	if [[ ! "$limit" =~ ^[1-9][0-9]{0,5}$ ]]; then
+		printf 'Error: DOTFILES_TEST_TIMEOUT must be a positive number of seconds: %s\n' "$limit" >&2
+		return 2
+	fi
+	timeout_bin=$(type -P gtimeout || type -P timeout) || {
+		printf 'Error: GNU timeout is required to bound each test.\n' >&2
+		return 2
+	}
+
 	printf 'Running %s test files from %s (jobs: %s)\n' "$total" "$test_dir" "$jobs"
 
 	# Execute concurrently into per-test scratch files, then report strictly in
@@ -233,8 +251,15 @@ run_test_suite() {
 				printf '%s' "$local_status" >"$work_dir/$slot.status"
 				: >"$work_dir/$slot.out"
 			else
-				(cd "$repo_root" && "$local_file") >"$work_dir/$slot.out" 2>&1
+				local_start=$SECONDS
+				(cd "$repo_root" && "$timeout_bin" -k 10 "$limit" "$local_file") >"$work_dir/$slot.out" 2>&1
 				local_status=$?
+				# 124 and 137 are timeout's own statuses, but a test may exit 124
+				# itself; only the elapsed time says the deadline was reached.
+				if [[ $local_status == 124 || $local_status == 137 ]] && ((SECONDS - local_start >= limit)); then
+					printf '\nrun_test_suite: %s did not finish within %s s; it was stopped with every process it started.\n' \
+						"$local_name" "$limit" >>"$work_dir/$slot.out"
+				fi
 				printf '%s' "$local_status" >"$work_dir/$slot.status"
 			fi
 			printf 'completed [%s/%s]: %s (exit %s)\n' \

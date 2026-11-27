@@ -23,7 +23,14 @@
 # canonical path and skips any fallback candidate whose readlink -f
 # matches it — so the wrapper can't pick itself up via PATH lookup.
 
+# Hand-off nesting guard (bin/src/wrapper_depth.bash). As a function in an
+# interactive shell this must not raise the shell's own count, so only the
+# native commands below receive the new value.
+# shellcheck source-path=SCRIPTDIR source=src/wrapper_depth.bash
+. "${BASH_SOURCE[0]%/*}/src/wrapper_depth.bash"
+
 stat() {
+	dotfiles_wrapper_depth stat || return
 	local self
 	self=$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null) || self="${BASH_SOURCE[0]}"
 
@@ -45,7 +52,7 @@ stat() {
 		# Detect whether the fallback is GNU. GNU has `--version` and
 		# prints "(GNU coreutils)"; BSD prints usage to stderr and exits non-zero.
 		is_gnu=0
-		if [ -n "$whichstat" ] && "$whichstat" --version 2>/dev/null | grep -q GNU; then
+		if [ -n "$whichstat" ] && DOTFILES_WRAPPER_DEPTH=$_dotfiles_wrapper_next "$whichstat" --version 2>/dev/null | grep -q GNU; then
 			is_gnu=1
 		fi
 	fi
@@ -56,7 +63,7 @@ stat() {
 	if (( ! is_gnu )) && [ -z "$MUTE_GNU_WRAPPER_WARNINGS" ]; then
 		printf '\033[38;5;208mwarning: bin/stat is using non-GNU stat (%s); GNU semantics may not apply\033[0m\n' "$whichstat" >&2
 	fi
-	"$whichstat" "$@"
+	DOTFILES_WRAPPER_DEPTH=$_dotfiles_wrapper_next "$whichstat" "$@"
 }
 
 # Run the function if this script is executed directly

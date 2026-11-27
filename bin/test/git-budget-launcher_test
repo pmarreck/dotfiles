@@ -40,7 +40,7 @@ expected=$("$real_git" --version)
 # Two independent copies of the published layout: bin/git -> src/launcher.
 for copy in first second; do
 	mkdir -p "$work/$copy/bin/src"
-	cp "$repo_root/bin/src/git-budget-launcher" "$work/$copy/bin/src/"
+	cp "$repo_root/bin/src/git-budget-launcher" "$repo_root/bin/src/wrapper_depth.bash" "$work/$copy/bin/src/"
 	cp "$repo_root/bin/git-repository-budget" "$work/$copy/bin/"
 	ln -s src/git-budget-launcher "$work/$copy/bin/git"
 done

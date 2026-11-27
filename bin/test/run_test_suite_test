@@ -265,6 +265,38 @@ test_run_test_suite() {
 		fi
 	done
 
+	# A test past its deadline fails and is stopped with what it started: its
+	# background child must not outlive it.
+	mkdir -p "$tmpdir/slow"
+	printf '%s\n' "#!$bash_bin" "sleep 600 & printf '%s\\n' \"\$!\" > '$tmpdir/slow-child.pid'" 'sleep 600' \
+		>"$tmpdir/slow/hang_test"
+	chmod +x "$tmpdir/slow/hang_test"
+	(( tests++ ))
+	local started=$SECONDS child_pid
+	output=$(HOME="$tmpdir/home" DOTFILES_TEST_TIMEOUT=2 "$runner" --test-dir "$tmpdir/slow" 2>&1)
+	actual=$?
+	child_pid=$(cat "$tmpdir/slow-child.pid" 2>/dev/null)
+	if (( actual != 0 && SECONDS - started < 30 )) && [[ "$output" == *'hang_test did not finish within 2 s'* &&
+		"$output" == *'FAIL hang_test'* && -n "$child_pid" ]] && ! kill -0 "$child_pid" 2>/dev/null; then
+		printf '✓ a test past its deadline fails and is stopped with its children\n'
+	else
+		printf '✗ deadline: status %s after %s s, child %s %s\nOutput: %q\n' "$actual" "$((SECONDS - started))" \
+			"${child_pid:-?}" "$(kill -0 "$child_pid" 2>/dev/null && echo 'still running' || echo gone)" "$output" >&2
+		[[ -n "$child_pid" ]] && kill "$child_pid" 2>/dev/null
+		(( fails++ ))
+	fi
+	for bad_limit in 0 -5 abc 9999999; do
+		(( tests++ ))
+		output=$(HOME="$tmpdir/home" DOTFILES_TEST_TIMEOUT=$bad_limit "$runner" --test-dir "$tmpdir/passing" 2>&1)
+		actual=$?
+		if (( actual == 2 )) && [[ "$output" == *'DOTFILES_TEST_TIMEOUT must be a positive number of seconds'* ]]; then
+			printf '✓ DOTFILES_TEST_TIMEOUT=%s is a usage error\n' "$bad_limit"
+		else
+			printf '✗ DOTFILES_TEST_TIMEOUT=%s: status %s\nOutput: %q\n' "$bad_limit" "$actual" "$output" >&2
+			(( fails++ ))
+		fi
+	done
+
 	if (( fails > 0 )); then
 		printf '%s of %s run_test_suite tests failed!\n' "$fails" "$tests" >&2
 	else
