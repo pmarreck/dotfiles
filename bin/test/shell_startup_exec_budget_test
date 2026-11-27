@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+# Interactive startup must not fork helper scripts whose work is a lookup the
+# current shell can answer itself. Each forked dual-mode helper costs roughly
+# 10 ms: an `env bash` PATH walk, a Bash startup, a `basename` exec, and a
+# second PATH walk inside the helper.
+#
+# Oracle: logging stubs placed in a foreign PATH entry. .pathconfig keeps
+# foreign entries ahead of its own additions, so any startup code that executes
+# one of these names reaches the stub first and leaves a log line. A sourced
+# function shadows the stub and logs nothing. Each probe also executes every
+# stub once through `command`, which bypasses functions, so a stub that is not
+# reachable fails the positive control instead of passing silently.
+
+set -u
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+bash_bin="${BASH:-$(command -v bash)}"
+work=$(mktemp -d "${TMPDIR:-/tmp}/shell_startup_exec_budget_test.XXXXXX") || exit 1
+trap 'command rm -rf -- "$work"' EXIT
+stub_dir="$work/stub-bin"
+log="$work/exec.log"
+mkdir -p "$stub_dir" || exit 1
+
+# Names that startup must resolve in-process. Each must be a dotfiles helper.
+in_process=(needs array_contains_element)
+
+for name in "${in_process[@]}"; do
+	real="$repo_root/bin/$name"
+	if [[ ! -x "$real" ]]; then
+		printf 'FAIL: helper %s is missing at %s\n' "$name" "$real" >&2
+		exit 1
+	fi
+	{
+		printf '#!/bin/sh\n'
+		printf 'printf "%%s\\n" "%s $*" >> %q\n' "$name" "$log"
+		printf 'exec %q "$@"\n' "$real"
+	} >"$stub_dir/$name"
+	chmod +x "$stub_dir/$name"
+done
+
+# An SSH-like pristine base. ORIG_PATH is pinned to the base so the stub
+# directory classifies as a foreign injection and stays at the front.
+base_path="/run/current-system/sw/bin:/usr/bin:/bin"
+[[ -d /run/current-system/sw/bin ]] || base_path="/usr/bin:/bin:/usr/sbin:/sbin"
+me="$(id -un)"
+
+# shellcheck disable=SC2016 # The child shell expands the probe.
+probe='
+	command needs bash >/dev/null 2>&1
+	command array_contains_element probe_array probe_value >/dev/null 2>&1
+	printf "kinds=%s,%s\n" "$(type -t needs)" "$(type -t array_contains_element)"
+'
+
+tests=0
+fails=0
+pass() { printf 'PASS: %s\n' "$1"; }
+fail() { printf 'FAIL: %s\n' "$1" >&2; ((fails++)) || :; }
+
+run_quadrant() {
+	local label=$1 out lines
+	shift
+	: >"$log"
+	# --foreground keeps interactive Bash in the terminal's process group
+	# under a concurrent runner; the deadline bounds a hung regression.
+	# NixOS /etc/profile replaces PATH unless the session environment is
+	# already applied, as it is for a shell started inside a desktop session.
+	out=$(timeout --foreground --kill-after=5 20 env -i \
+		HOME="$HOME" USER="$me" LOGNAME="$me" TERM=xterm SHELL="$bash_bin" \
+		PATH="$stub_dir:$base_path" ORIG_PATH="$base_path" \
+		__NIXOS_SET_ENVIRONMENT_DONE=1 SHELL_STARTUP_BENCHMARK=1 \
+		"$bash_bin" "$@" -c "$probe" 2>/dev/null)
+
+	((tests++))
+	if [[ "$out" == *"kinds=function,function"* ]]; then
+		pass "$label: needs and array_contains_element are shell functions"
+	else
+		fail "$label: expected shell functions, probe said: ${out:-<no output>}"
+	fi
+
+	((tests++))
+	if grep -qx 'needs bash' "$log" && grep -qx 'array_contains_element probe_array probe_value' "$log"; then
+		pass "$label: positive control reached every stub"
+	else
+		fail "$label: positive control did not reach the stubs; the oracle is blind"
+	fi
+
+	((tests++))
+	lines=$(grep -vx -e 'needs bash' -e 'array_contains_element probe_array probe_value' "$log")
+	if [[ -z "$lines" ]]; then
+		pass "$label: startup forked none of the in-process helpers"
+	else
+		fail "$label: startup forked $(printf '%s\n' "$lines" | wc -l | tr -d ' ') helper process(es):"
+		printf '    %s\n' "$lines" >&2
+	fi
+}
+
+run_quadrant 'non-login interactive' -i
+run_quadrant 'login interactive' -l -i
+
+if ((fails == 0)); then
+	printf 'All %s startup exec-budget checks passed.\n' "$tests"
+else
+	printf '%s of %s startup exec-budget checks failed.\n' "$fails" "$tests" >&2
+fi
+exit "$fails"

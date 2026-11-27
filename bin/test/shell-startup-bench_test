@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# Contract checks for shell-startup-bench. The live dotfiles startup is not
+# measured here; a bare interactive Bash exercises the PTY readiness protocol.
+
+set -u
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+bench="$repo_root/bin/shell-startup-bench"
+bash_bin="${BASH:-$(command -v bash)}"
+tests=0
+fails=0
+pass() { printf 'PASS: %s\n' "$1"; }
+fail() { printf 'FAIL: %s\n' "$1" >&2; ((fails++)) || :; }
+
+((tests++))
+about=$("$bench" --about)
+if [[ "$about" == "Measure time to first usable prompt"* && "$about" != *$'\n'* ]]; then
+	pass '--about prints one line'
+else
+	fail "--about output was: $about"
+fi
+
+((tests++))
+if "$bench" --help | grep -q '^Usage: shell-startup-bench'; then
+	pass '--help prints usage'
+else
+	fail '--help did not print usage'
+fi
+
+((tests++))
+err=$("$bench" --runs nope 2>&1 >/dev/null)
+status=$?
+if ((status == 2)) && [[ "$err" == *"--runs needs a count"* ]]; then
+	pass 'rejects a non-numeric run count with status 2'
+else
+	fail "bad run count gave status $status: $err"
+fi
+
+((tests++))
+err=$("$bench" --mode sideways 2>&1 >/dev/null)
+status=$?
+if ((status == 2)) && [[ "$err" == *"--mode must be"* ]]; then
+	pass 'rejects an unknown mode with status 2'
+else
+	fail "bad mode gave status $status: $err"
+fi
+
+((tests++))
+out=$("$bench" --runs 2 --warmup 0 -- "$bash_bin" --noprofile --norc -i 2>&1)
+status=$?
+if ((status == 0)) && [[ "$out" =~ ^command\ +n=2\ min=[0-9]+\.[0-9]ms\ median=[0-9]+\.[0-9]ms\ max=[0-9]+\.[0-9]ms$ ]]; then
+	pass 'measures a bare interactive Bash and reports two samples'
+else
+	fail "bare Bash measurement gave status $status: $out"
+fi
+
+((tests++))
+err=$("$bench" --runs 1 --warmup 0 -- "$bash_bin" --noprofile --norc -c 'exit 0' 2>&1 >/dev/null)
+status=$?
+if ((status == 1)) && [[ "$err" == *"exited before its first prompt"* ]]; then
+	pass 'fails when the shell exits before printing a prompt'
+else
+	fail "early exit gave status $status: $err"
+fi
+
+if ((fails == 0)); then
+	printf 'All %s shell-startup-bench checks passed.\n' "$tests"
+else
+	printf '%s of %s shell-startup-bench checks failed.\n' "$fails" "$tests" >&2
+fi
+exit "$fails"

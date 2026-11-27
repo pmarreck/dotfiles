@@ -30,6 +30,12 @@ fi
 # CRITICAL: Remove any DEBUG traps that may cause command hanging
 trap - DEBUG
 
+# The hook checks below inspect this shell's precmd_functions array, which an
+# executed helper cannot see, and run often enough that forking each would cost
+# real startup time. .bashrc normally defines both already.
+declare -F needs >/dev/null || . "$HOME/dotfiles/bin/needs"
+declare -F array_contains_element >/dev/null || . "$HOME/dotfiles/bin/array_contains_element"
+
 ##### rust cargo hook and related environment dependencies
 # [[ -s "$HOME/.cargo/env" ]] && source "$HOME/.cargo/env"
 # needs rustc "curl https://sh.rustup.rs -sSf | sh"

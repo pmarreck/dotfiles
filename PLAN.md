@@ -6,6 +6,16 @@ Open work is listed in priority order. Completed history is in `docs/PLAN_LOG.md
 
 - [x] Verify the Linux Nix check (`checks.x86_64-linux.test`): completed 2026-11-25 EST for `3a04e750`, including the collision branch of `normalize-filenames_test` and the Linux `renameat2` path.
 
+## LuaJIT shell startup rewrite
+
+- [x] Build PATH once per interactive startup and define `needs` and `array_contains_element` in the current shell, with a forked-helper budget test and a PTY time-to-first-prompt benchmark; interleaved A/B non-login 1,013 → 770 ms and login 1,067 → 885 ms (context: docs/plan_context/luajit-shell-startup.md; done 2026-11-27 12:20 EST).
+- [ ] Compute PATH in one LuaJIT run that prints validated `export NAME='value'` lines for Bash to eval, with a round-trip quoting property test, explicit luajit bootstrap candidates, and every `pathconfig_*` test kept green (context: docs/plan_context/luajit-shell-startup.md).
+- [ ] Move platform and distribution facts into the same LuaJIT run (uname via FFI, os-release, macOS version, is_nix_darwin) and extend the exec-budget test to keep them at zero forks (context: docs/plan_context/luajit-shell-startup.md).
+- [ ] Replace GNU tool, terminal image capability, and rg string checks with cached or in-process facts (context: docs/plan_context/luajit-shell-startup.md).
+- [ ] Cache starship, direnv, and mcfly init output by resolved binary path and find the devcache project root without the git wrapper chain (context: docs/plan_context/luajit-shell-startup.md).
+- [ ] Rebuild the terminal intro as one LuaJIT pick process with a pre-rendered Kitty stream, explicit protocol selection, and text fallback tests (context: docs/plan_context/luajit-shell-startup.md).
+- [ ] Verify fresh Ghostty and WezTerm tabs, SSH commands, and scripts on each supported host, including luajit availability before PATH exists, before calling the rewrite shipped.
+
 ## Current
 
 - [x] Make the staged 500-line source-file gate a strong nonblocking advisory only for the owner-approved `pmarreck/validate` repository, retaining hard enforcement everywhere else and proving the exception against spoofed repository identities in an isolated real-index/commit test; future entries require separate explicit owner approval in dotfiles (done 2026-11-26 10:41 EST; commit 66204dd).

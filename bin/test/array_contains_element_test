@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# array_contains_element is sourced into interactive shells (apply-hooks uses
+# it on precmd_functions), so it must inspect the caller's arrays, match
+# literally, leave no variables behind, and refuse to eval a non-identifier.
+
+set -u
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+tests=0
+fails=0
+pass() { printf 'PASS: %s\n' "$1"; }
+fail() { printf 'FAIL: %s\n' "$1" >&2; ((fails++)) || :; }
+check() { # <label> <expected-status> <actual-status>
+	((tests++))
+	if [[ "$2" == "$3" ]]; then pass "$1"; else fail "$1 (expected status $2, got $3)"; fi
+}
+
+# shellcheck source=/dev/null
+. "$repo_root/bin/array_contains_element"
+
+# shellcheck disable=SC2034 # Passed by name to the function under test.
+hooks=(alpha 'two words' '*' "line"$'\n'"break")
+array_contains_element hooks alpha; check 'finds a plain element in a caller array' 0 $?
+array_contains_element hooks 'two words'; check 'finds an element containing spaces' 0 $?
+array_contains_element hooks "line"$'\n'"break"; check 'finds an element containing a newline' 0 $?
+array_contains_element hooks missing; check 'reports a missing element' 1 $?
+array_contains_element hooks 'alp*'; check 'matches literally rather than as a glob' 1 $?
+array_contains_element hooks '*'; check 'finds a literal asterisk element' 0 $?
+# shellcheck disable=SC2034 # Passed by name to the function under test.
+empty=()
+array_contains_element empty alpha; check 'reports absence in an empty array' 1 $?
+
+marker="$(mktemp -u "${TMPDIR:-/tmp}/array_contains_element_test.XXXXXX")"
+array_contains_element "hooks[@]}\"); touch $marker; #" alpha 2>/dev/null
+status=$?
+((tests++))
+if [[ ! -e "$marker" ]] && ((status == 2)); then
+	pass 'rejects a non-identifier array name without evaluating it'
+else
+	fail "a non-identifier array name was evaluated or accepted (status $status)"
+	command rm -f -- "$marker"
+fi
+
+((tests++))
+leaked=()
+for name in array element item; do
+	declare -p "$name" >/dev/null 2>&1 && leaked+=("$name")
+done
+if ((${#leaked[@]} == 0)); then
+	pass 'leaves no working variables in the caller shell'
+else
+	fail "leaked caller variables: ${leaked[*]}"
+fi
+
+if ((fails == 0)); then
+	printf 'All %s array_contains_element checks passed.\n' "$tests"
+else
+	printf '%s of %s array_contains_element checks failed.\n' "$fails" "$tests" >&2
+fi
+exit "$fails"

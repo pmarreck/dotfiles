@@ -22,11 +22,20 @@ else
 	echo "Warning: Couldn't parse Bash version: $BASH_VERSION"
 fi
 
-# When .bashrc is sourced directly (non-login interactive shell — e.g. SSH sessions,
-# tmux panes, editor subshells), .bash_profile hasn't run, so .pathconfig hasn't either
-# and ~/bin (which holds `needs` and friends) isn't on PATH yet. .pathconfig is idempotent
-# and cheap by design, so ensure it has run before anything below calls `needs`.
-command -v needs >/dev/null 2>&1 || . "$HOME/.pathconfig"
+# Build PATH once, before anything below looks up a command. A login shell's
+# .bash_profile has already sourced .pathconfig; the BASH_SOURCE call stack (local to
+# this source chain, never an exported flag) shows that. Every other entry, such as a
+# terminal tab, tmux pane, or SSH session, starts here and needs PATH built now.
+case " ${BASH_SOURCE[*]} " in
+	*"/.bash_profile "*) ;;
+	*) . "$HOME/.pathconfig" ;;
+esac
+
+# Startup repeats these lookups dozens of times. Executing the helper scripts costs a
+# Bash startup and two PATH walks per call, so define them in this shell instead
+# (bin/test/shell_startup_exec_budget_test).
+. "$HOME/dotfiles/bin/needs"
+. "$HOME/dotfiles/bin/array_contains_element"
 
 # Turn off command hashing
 set +h
@@ -97,17 +106,6 @@ unset _llm_parent_command
 
 # `code <partial>` jumps to a ~/Code project by fuzzy name (needs cd → must be sourced)
 . "$HOME/dotfiles/bin/src/code.bash"
-
-# Pull in path configuration — but only if .bash_profile hasn't already done so.
-# We detect that by inspecting the BASH_SOURCE call stack (local to this source
-# chain, NOT an exported variable) — so we avoid the Claude-staleness footgun
-# of the old `_PATHCONFIG_LOADED` guard while still skipping the redundant
-# second source on the login path (.bash_profile -> .bashrc -> .pathconfig 2x).
-# Fresh shells (no parent .bash_profile in chain) still source normally.
-case " ${BASH_SOURCE[*]} " in
-	*"/.bash_profile "*) ;;  # parent .bash_profile already sourced .pathconfig
-	*) . $HOME/.pathconfig ;;
-esac
 
 # Set SED env var - with Nix, sed is already GNU sed
 if [ -z ${SED+x} ]; then

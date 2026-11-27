@@ -2,20 +2,18 @@
 
 array_contains_element() {
 	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-	# declare -n array=$1
-	# We can't use nameref, so use eval to indirectly reference the array
-	eval 'array=("${'"$1"'[@]}")'
-	element="$2"
+	# Bash 4.2 has no namerefs, so the named array is copied through eval.
+	# Validate the name first so eval can never run caller-supplied code, and
+	# keep every working variable local: shells source this function, and a
+	# call must leave the caller's variables untouched.
+	[[ "${1-}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 2
+	local -a __ace_items
+	local __ace_item
+	eval '__ace_items=("${'"$1"'[@]}")'
 
-	# Loop through the array and check if the element exists
-	for item in "${array[@]}"; do
-		if [[ "$item" == "$element" ]]; then
-			# Element found in array, exit with 0
-			return 0
-		fi
+	for __ace_item in "${__ace_items[@]}"; do
+		[[ "$__ace_item" == "${2-}" ]] && return 0
 	done
-
-	# If we got here, the element was not found in the array, exit with 1
 	return 1
 }
 

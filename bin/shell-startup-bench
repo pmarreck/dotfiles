@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+# Measure time to first usable prompt for interactive Bash on a real PTY.
+
+set -u
+
+usage() {
+	cat <<'EOF'
+Usage: shell-startup-bench [options] [-- COMMAND...]
+
+Measure time to the first usable prompt of interactive Bash on a real PTY.
+Each sample spawns the shell under expect, types a command at once, and stops
+the clock when the shell prints that command's output. Typed input waits in
+the PTY until the shell reads it, so the sample ends at the first prompt that
+accepts input, plus the cost of one printf.
+
+Options:
+  --runs N         Measured samples per mode (default 10).
+  --warmup N       Discarded samples per mode before measuring (default 1).
+  --mode MODE      nonlogin, login, or both (default both).
+  --decorated      Keep the terminal intro (omit SHELL_STARTUP_BENCHMARK=1).
+  --inherit-env    Use this process's environment instead of a clean one.
+  -- COMMAND...    Measure COMMAND instead of the Bash modes.
+  -a, --about      Print a one-line description.
+  -h, --help       Show this help.
+
+The clean environment keeps only HOME, USER, LOGNAME, TERM, LANG, and a PATH
+set to ORIG_PATH (the session's pre-dotfiles PATH) when present, like a new
+terminal tab. Times are wall-clock milliseconds; compare runs only on the
+same host and under similar load.
+EOF
+}
+
+runs=10 warmup=1 mode=both decorated=false inherit=false
+command=()
+while (($#)); do
+	case "$1" in
+		--runs | --warmup)
+			[[ "${2-}" =~ ^[0-9]+$ ]] || { printf 'shell-startup-bench: %s needs a count\n' "$1" >&2; exit 2; }
+			if [[ "$1" == --runs ]]; then runs=$2; else warmup=$2; fi
+			shift 2
+			;;
+		--mode)
+			case "${2-}" in nonlogin | login | both) mode=$2 ;; *)
+				printf 'shell-startup-bench: --mode must be nonlogin, login, or both\n' >&2; exit 2 ;;
+			esac
+			shift 2
+			;;
+		--decorated) decorated=true; shift ;;
+		--inherit-env) inherit=true; shift ;;
+		-a | --about) printf 'Measure time to first usable prompt for interactive Bash on a real PTY\n'; exit 0 ;;
+		-h | --help) usage; exit 0 ;;
+		--) shift; command=("$@"); break ;;
+		*) printf 'shell-startup-bench: unknown argument: %s\n' "$1" >&2; exit 2 ;;
+	esac
+done
+((runs > 0)) || { printf 'shell-startup-bench: --runs must be at least 1\n' >&2; exit 2; }
+command -v expect >/dev/null 2>&1 || { printf 'shell-startup-bench: expect is required\n' >&2; exit 1; }
+
+env_prefix=(env)
+if ! $inherit; then
+	env_prefix=(env -i HOME="$HOME" USER="${USER:-$(id -un)}" LOGNAME="${LOGNAME:-$(id -un)}"
+		TERM="${TERM:-xterm-256color}" LANG="${LANG:-en_US.UTF-8}" PATH="${ORIG_PATH:-$PATH}")
+fi
+$decorated || env_prefix+=(SHELL_STARTUP_BENCHMARK=1)
+
+# The typed command prints READYMARK through an octal escape, so the PTY's echo
+# of the typed text never matches the pattern; only the executed output does.
+measure() { # <label> <command...>
+	local label=$1
+	shift
+	"${env_prefix[@]}" expect -N -n -f - "$label" "$runs" "$warmup" "$@" <<'TCL'
+lassign $argv label runs warmup
+set cmd [lrange $argv 3 end]
+log_user 0
+set timeout 30
+set samples {}
+for {set i 0} {$i < $runs + $warmup} {incr i} {
+    set t0 [clock microseconds]
+    if {[catch {spawn -noecho {*}$cmd} err]} { puts stderr "$label: cannot spawn: $err"; exit 1 }
+    send "printf '\\122EADY%s\\n' MARK\r"
+    expect {
+        -re "READYMARK" { set t1 [clock microseconds] }
+        timeout { puts stderr "$label: no prompt within $timeout s"; exit 1 }
+        eof { puts stderr "$label: shell exited before its first prompt"; exit 1 }
+    }
+    if {$i >= $warmup} { lappend samples [expr {($t1 - $t0) / 1000.0}] }
+    send "exit\r"
+    expect { eof {} timeout { close } }
+    catch {wait}
+}
+set s [lsort -real $samples]
+set n [llength $s]
+puts [format "%-9s n=%d min=%.1fms median=%.1fms max=%.1fms" $label $n \
+    [lindex $s 0] [lindex $s [expr {$n / 2}]] [lindex $s end]]
+TCL
+}
+
+bash_bin="${BASH:-$(command -v bash)}"
+status=0
+if ((${#command[@]})); then
+	measure command "${command[@]}" || status=1
+else
+	if [[ "$mode" == nonlogin || "$mode" == both ]]; then measure nonlogin "$bash_bin" -i || status=1; fi
+	if [[ "$mode" == login || "$mode" == both ]]; then measure login "$bash_bin" -l -i || status=1; fi
+fi
+exit "$status"
