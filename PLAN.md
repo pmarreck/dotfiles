@@ -8,8 +8,8 @@ Open work is listed in priority order. Completed history is in `docs/PLAN_LOG.md
 
 ## LuaJIT shell startup rewrite
 
-- [x] Build PATH once per interactive startup and define `needs` and `array_contains_element` in the current shell, with a forked-helper budget test and a PTY time-to-first-prompt benchmark; interleaved A/B non-login 1,013 → 770 ms and login 1,067 → 885 ms (context: docs/plan_context/luajit-shell-startup.md; done 2026-11-27 12:20 EST).
-- [ ] Compute PATH in one LuaJIT run that prints validated `export NAME='value'` lines for Bash to eval, with a round-trip quoting property test, explicit luajit bootstrap candidates, and every `pathconfig_*` test kept green (context: docs/plan_context/luajit-shell-startup.md).
+- [x] Build PATH once per interactive startup and define `needs` and `array_contains_element` in the current shell, with a forked-helper budget test and a PTY time-to-first-prompt benchmark; interleaved A/B non-login 1,013 → 770 ms and login 1,067 → 885 ms (context: docs/plan_context/luajit-shell-startup.md; done 2026-11-27 12:20 EST; commit 7160838).
+- [x] Compute PATH in one LuaJIT run that prints validated `NAME='value'` lines for Bash to eval, proven equal to the frozen Bash implementation by a seeded differential test, with a round-trip quoting property test, explicit luajit bootstrap candidates, and loud no-change failure; interleaved A/B non-login 755 → 705 ms and login 877 → 832 ms (context: docs/plan_context/luajit-shell-startup.md; done 2026-11-27 12:40 EST).
 - [ ] Move platform and distribution facts into the same LuaJIT run (uname via FFI, os-release, macOS version, is_nix_darwin) and extend the exec-budget test to keep them at zero forks (context: docs/plan_context/luajit-shell-startup.md).
 - [ ] Replace GNU tool, terminal image capability, and rg string checks with cached or in-process facts (context: docs/plan_context/luajit-shell-startup.md).
 - [ ] Cache starship, direnv, and mcfly init output by resolved binary path and find the devcache project root without the git wrapper chain (context: docs/plan_context/luajit-shell-startup.md).

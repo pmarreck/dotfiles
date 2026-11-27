@@ -104,7 +104,7 @@ truthy DEBUG_PATHCONFIG && echo "$PATH" || :
 # export PATH="$PATH:/Users/pmarreck/.cache/lm-studio/bin"
 # End of LM Studio CLI section
 # oMLX: CLI shim path begin
-# (moved to PATH_ADDITIONS in .pathconfig; markers kept so the installer sees its block)
+# (moved to declared_additions in lib/shell_startup/path_plan.lua; markers kept so the installer sees its block)
 # case ":$PATH:" in
 #   *":$HOME/.omlx/bin:"*) ;;
 #   *) export PATH="$HOME/.omlx/bin:$PATH" ;;

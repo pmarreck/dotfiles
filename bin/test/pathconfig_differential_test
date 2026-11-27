@@ -1,0 +1,187 @@
+#!/usr/bin/env bash
+# Differential oracle for the LuaJIT PATH engine behind .pathconfig: across
+# seeded random project trees, incoming PATHs, ORIG_PATH values, platforms,
+# and locales, it must produce exactly what the frozen pre-port Bash
+# implementation (fixtures/pathconfig_reference) produced, on first source and
+# on re-source, including stderr.
+#
+# Known, intentional difference not generated here: the old loops expanded
+# PATH entries containing glob characters when noglob was off; the engine
+# never glob-expands entries.
+
+set -u
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+reference="$repo_root/bin/test/fixtures/pathconfig_reference/pathconfig.bash"
+bash_bin="${BASH:-$(command -v bash)}"
+luajit_bin="$(command -v luajit)" || { printf 'FAIL: luajit is not on PATH\n' >&2; exit 1; }
+cases="${PATHCONFIG_DIFFERENTIAL_CASES:-48}"
+work=$(mktemp -d "${TMPDIR:-/tmp}/pathconfig_differential_test.XXXXXX") || exit 1
+trap 'command rm -rf -- "$work"' EXIT
+
+# Children start from env -i, so carry a locale archive explicitly. The Nix
+# check supplies one under a dedicated name; NixOS hosts find theirs by default.
+locale_archive="${DOTFILES_TEST_LOCALE_ARCHIVE:-${LOCALE_ARCHIVE-}}"
+
+base_path="/run/current-system/sw/bin:/usr/bin:/bin"
+[ -d /run/current-system/sw/bin ] || base_path="$PATH"
+
+names=(alpha 'beta project' Gamma gamma 'a b' a ab a-b a_b A 'caf'$'\303\251' _under 10 9 mpnetwork
+	.hidden 'x*y' 'q[1]' rm_safe ixnay)
+pfs=(macos-arm64 linux-amd64 linux-arm64 mswin-amd64 mswin-arm64)
+# shellcheck disable=SC2034 # These arrays are read through pick's nameref.
+platforms=('Linux|x86_64|6.8.0' 'Linux|aarch64|6.8.0' 'Darwin|arm64|23.5.0' 'MINGW64_NT-10.0|AMD64|10.0'
+	'Linux|x86_64|5.15.90.1-microsoft-standard-WSL2')
+# shellcheck disable=SC2034 # Read through pick's nameref.
+ostypes=(linux-gnu darwin23)
+# shellcheck disable=SC2034 # Read through pick's nameref.
+locales=(C en_US.UTF-8)
+
+chance() { (( RANDOM % 100 < $1 )); }
+pick() { local -n _list=$1; printf '%s' "${_list[RANDOM % ${#_list[@]}]}"; }
+
+# shellcheck disable=SC2016 # The child shell expands the probe.
+probe='
+	uname() {
+		case "${1:-}" in
+			-s) printf "%s\n" "$TEST_UNAME_OS" ;;
+			-m) printf "%s\n" "$TEST_UNAME_ARCH" ;;
+			-r) printf "%s\n" "$TEST_UNAME_KERNEL" ;;
+			*) return 2 ;;
+		esac
+	}
+	report() { printf "status=%s\nPATH=%s\nORIG_PATH=%s\nCODE=%s\nDOCUMENTS=%s\nPF=%s\n" \
+		"$1" "$PATH" "${ORIG_PATH-<unset>}" "${CODE-<unset>}" "${DOCUMENTS-<unset>}" "${PF-<unset>}"; }
+	. "$1"; report "$?"
+	. "$1"; report "$?"
+'
+
+run_impl() { # <impl> <outfile> <errfile>
+	local -a env_args=(HOME="$home" PATH="$incoming" NIX_PATH=fixture LANG="$locale" OSTYPE="$ostype"
+		TEST_UNAME_OS="$raw_os" TEST_UNAME_ARCH="$raw_arch" TEST_UNAME_KERNEL="$raw_kernel"
+		SHELL_STARTUP_LUAJIT="$luajit_bin")
+	$orig_set && env_args+=(ORIG_PATH="$orig")
+	[ -n "$locale_archive" ] && env_args+=(LOCALE_ARCHIVE="$locale_archive")
+	env -i "${env_args[@]}" "$bash_bin" --noprofile --norc -c "$probe" _ "$1" >"$2" 2>"$3"
+}
+
+fails=0
+
+# The en_US cases only test collation if that locale takes effect. glibc
+# collates "a" before "B" there, unlike C; without the locale the cases would
+# silently degrade to C. (macOS UTF-8 locales may collate bytewise, and Bash
+# and the engine share libc strcoll there, so only Linux requires this.)
+if [[ "$(uname -s)" == Linux ]]; then
+	collation=$(env -i ${locale_archive:+LOCALE_ARCHIVE="$locale_archive"} LANG=en_US.UTF-8 "$luajit_bin" -e '
+		os.setlocale("", "collate")
+		local ffi = require("ffi")
+		ffi.cdef("int strcoll(const char *, const char *);")
+		io.write(ffi.C.strcoll("a", "B") < 0 and "en_US" or "C")')
+	if [[ "$collation" != en_US ]]; then
+		printf 'FAIL: en_US.UTF-8 collation is unavailable (got %s); set DOTFILES_TEST_LOCALE_ARCHIVE\n' "$collation" >&2
+		((fails++))
+	fi
+fi
+
+for ((seed = 1; seed <= cases; seed++)); do
+	RANDOM=$seed
+	case_dir="$work/case$seed"
+	home="$case_dir/home"
+	code="$home/Code"
+	mkdir -p "$code" "$case_dir/store" || exit 1
+	ln -s "$repo_root" "$home/dotfiles"
+	ln -s "$repo_root/.pathconfig" "$home/.pathconfig"
+
+	dirs=()
+	projects=()
+	for name in "${names[@]}"; do
+		chance 55 || continue
+		projects+=("$name")
+		project="$code/$name"
+		if chance 75; then
+			dirs+=("$project/bin/nested")
+			for pf in "${pfs[@]}"; do chance 30 && dirs+=("$project/bin/$pf"); done
+		elif chance 20; then
+			mkdir -p "$project" && : >"$project/bin"
+		fi
+		if chance 30; then
+			dirs+=("$project/result/bin")
+		elif chance 15; then
+			mkdir -p "$project" "$case_dir/store/$seed-$RANDOM/bin"
+			ln -s "$(printf '%s\n' "$case_dir"/store/*/bin | tail -1)" "$project/result" 2>/dev/null
+		elif chance 10; then
+			mkdir -p "$project" && ln -s "$case_dir/missing-output" "$project/result"
+		fi
+		chance 30 && dirs+=("$project/zig-out/bin")
+	done
+	for addition in .local/bin Scripts .cargo/bin bin .grok/bin .local/share/mise/shims .nix-profile/bin; do
+		chance 50 && dirs+=("$home/$addition")
+	done
+	for foreign in 1 2 3 4; do chance 70 && dirs+=("$case_dir/foreign$foreign"); done
+	dirs+=("$case_dir/with space")
+	((${#dirs[@]})) && mkdir -p "${dirs[@]}"
+
+	# Entries for incoming PATH and ORIG_PATH. Names with glob characters stay
+	# out of these lists (see the header); they still appear as projects.
+	# shellcheck disable=SC2088 # The exclusion list holds this literal tilde string.
+	pool=("" "" "$case_dir/foreign1" "$case_dir/foreign2" "$case_dir/foreign3" "$case_dir/foreign4"
+		"$case_dir/missing" "$case_dir/with space" /usr/local/share/dotnet '~/.dotnet/tools'
+		/System/Cryptexes/App/usr/bin "$home/.local/bin" "$home/bin" "$home/.nix-profile/bin" .
+		"$code/mpnetwork/bin" "$code/mpnetwork/sub")
+	IFS=: read -ra base_entries <<<"$base_path"
+	pool+=("${base_entries[@]}")
+	for name in "${projects[@]}"; do
+		case "$name" in *[*?[]*) continue ;; esac
+		pool+=("$code/$name/bin" "$code/$name/bin/$(pick pfs)" "$code/$name/result/bin" "$code/$name/zig-out/bin")
+	done
+	sample() { # <count>: colon-join random pool entries, repeats allowed
+		local i out=''
+		for ((i = 0; i < $1; i++)); do out+="${out:+:}$(pick pool)"; done
+		printf '%s' "$out"
+	}
+	incoming="$(sample $((RANDOM % 10)))"
+	chance 80 && incoming="${incoming:+$incoming:}$base_path"
+	orig_set=true
+	case $((RANDOM % 4)) in
+		0) orig_set=false; orig='' ;;
+		1) orig='' ;;
+		2) orig="$base_path" ;;
+		3) orig="$(sample $((RANDOM % 6))):$base_path" ;;
+	esac
+	IFS='|' read -r raw_os raw_arch raw_kernel <<<"$(pick platforms)"
+	ostype="$(pick ostypes)"
+	locale="$(pick locales)"
+
+	run_impl "$reference" "$case_dir/ref.out" "$case_dir/ref.err"
+	run_impl "$home/.pathconfig" "$case_dir/new.out" "$case_dir/new.err"
+	if ! grep -q '^status=0$' "$case_dir/ref.out"; then
+		: # Unsupported host pairs fail in both; equality below still applies.
+	fi
+	if cmp -s "$case_dir/ref.out" "$case_dir/new.out" && cmp -s "$case_dir/ref.err" "$case_dir/new.err"; then
+		continue
+	fi
+	((fails++))
+	{
+		printf 'FAIL seed %s: %s/%s ostype=%s locale=%s orig_set=%s\n' "$seed" "$raw_os" "$raw_arch" "$ostype" "$locale" "$orig_set"
+		printf '  incoming=%q\n  orig=%q\n' "$incoming" "$orig"
+		diff <(tr ':' '\n' <"$case_dir/ref.out") <(tr ':' '\n' <"$case_dir/new.out") | sed 's/^/  /' | head -20
+		diff "$case_dir/ref.err" "$case_dir/new.err" | sed 's/^/  stderr /' | head -10
+	} >&2
+done
+
+# The oracle must exercise the interesting paths, not only trivial PATHs.
+coverage_fail=0
+for needle in '/bin/linux-amd64' '/result/bin' '/zig-out/bin' 'beta project' "$work"; do
+	if ! cat "$work"/case*/ref.out 2>/dev/null | grep -qF -- "$needle"; then
+		printf 'FAIL coverage: no reference PATH contained %s\n' "$needle" >&2
+		coverage_fail=1
+	fi
+done
+((fails += coverage_fail))
+
+if ((fails == 0)); then
+	printf 'All %s pathconfig differential cases matched the reference.\n' "$cases"
+else
+	printf '%s pathconfig differential failure(s) across %s cases.\n' "$fails" "$cases" >&2
+fi
+exit "$fails"

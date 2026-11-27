@@ -67,16 +67,29 @@ A. Done: build PATH once per startup and define `needs` and
 non-login 1,013 → 770 ms (−24%), login 1,067 → 885 ms (−17%), in fixture homes.
 `bin/test/shell_startup_exec_budget_test` keeps the forks at zero.
 
-B. PATH construction in LuaJIT. Lua computes PATH and prints assignments;
-Bash applies them with `eval "$(luajit …)"` (owner's design). Lua emits only
-`export NAME='value'` lines: names must match `^[A-Za-z_][A-Za-z0-9_]*$` and
-values use single-quote escaping (`'` becomes `'\''`), which is lossless for
-every byte except NUL. A round-trip property test proves eval reproduces values
-containing spaces, globs, `$`, backticks, quotes, and newlines. The adapter
-must find `luajit` by explicit candidates before PATH exists (an SSH base PATH
-on macOS lacks Nix), keep foreign-entry preservation and PF precedence, and
-fail loudly rather than leave a silently wrong PATH. Existing `pathconfig_*`
-tests remain the contract.
+B. Done: PATH construction in LuaJIT (owner's design: Lua prints
+definitions, Bash evals them). `lib/shell_startup/path_plan.lua` holds the
+rules as a pure function with injected filesystem and collation;
+`path_env.lua` prints `NAME='value'` lines through `shell_assign.lua` (names
+must match `^[A-Za-z_][A-Za-z0-9_]*$`; `'` becomes `'\''`, lossless for every
+byte except NUL). `.pathconfig` keeps current-shell work (ORIG_PATH capture,
+helper functions, platform facts, `nix-daemon.sh`) and its one `export PATH`.
+It finds `luajit` through Nix profile candidates before PATH exists
+(`SHELL_STARTUP_LUAJIT` pins one), and on any failure prints a message, leaves
+PATH unchanged, and evaluates nothing. Evidence:
+`pathconfig_differential_test` matches the frozen pre-port Bash `.pathconfig`
+across 48 seeded cases (both mutants tried were caught; the Nix check supplies
+an `en_US.UTF-8` archive so collation is really exercised),
+`shell_assign_test` round-trips 591 hazardous values, and
+`pathconfig_engine_failure_test` covers the failure paths. Sourcing
+`.pathconfig` fell from 75 ms to 21 ms; interleaved A/B against increment A:
+non-login 755 → 705 ms, login 877 → 832 ms.
+
+Port details worth keeping: Bash sorts glob matches by full path under
+strcoll, not by directory name (in `en_US`, `a b/bin` sorts before `a/bin`),
+so the engine sorts full candidate paths. Intentional difference: the old
+loops glob-expanded PATH entries containing `*`, `?`, or `[` whenever noglob
+was off; the engine never does.
 
 C. Platform and distribution facts in the same Lua run: `uname` through FFI,
 `/etc/os-release` parsed directly, macOS version from SystemVersion.plist, and

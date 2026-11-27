@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+# .pathconfig must fail loudly and leave PATH untouched when its LuaJIT engine
+# is missing or fails, and must never evaluate output from a failed run.
+
+set -u
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+bash_bin="${BASH:-$(command -v bash)}"
+work=$(mktemp -d "${TMPDIR:-/tmp}/pathconfig_engine_failure_test.XXXXXX") || exit 1
+trap 'command rm -rf -- "$work"' EXIT
+home="$work/home"
+mkdir -p "$home/Code" "$home/bin" "$work/stub" "$work/entry" || exit 1
+ln -s "$repo_root" "$home/dotfiles"
+ln -s "$repo_root/.pathconfig" "$home/.pathconfig"
+canary="$work/canary"
+entry_path="$work/entry:/usr/bin:/bin"
+
+# A failing engine that still prints an assignment and a command.
+{
+	printf '#!%s\n' "$bash_bin"
+	printf 'printf "PATH=/hijacked\\ntouch %s\\n"\n' "$canary"
+	printf 'exit 1\n'
+} >"$work/stub/failing-luajit"
+chmod +x "$work/stub/failing-luajit"
+
+tests=0
+fails=0
+pass() { printf 'PASS: %s\n' "$1"; }
+fail() { printf 'FAIL: %s\n' "$1" >&2; ((fails++)) || :; }
+
+run() { # <SHELL_STARTUP_LUAJIT value> -> sets status, out, err
+	local err_file="$work/err"
+	# shellcheck disable=SC2016 # The child shell expands the probe.
+	out=$(env -i HOME="$home" PATH="$entry_path" NIX_PATH=fixture SHELL_STARTUP_LUAJIT="$1" \
+		"$bash_bin" --noprofile --norc -c '
+			uname() { case "$1" in -s) echo Linux ;; -m) echo x86_64 ;; -r) echo fixture ;; esac; }
+			. "$HOME/.pathconfig"; status=$?
+			printf "status=%s\nPATH=%s\n" "$status" "$PATH"' 2>"$err_file")
+	err=$(<"$err_file")
+}
+
+run "$work/missing-luajit"
+((tests++))
+if [[ "$out" == *"status=1"* && "$out" == *"PATH=$entry_path"* && "$err" == *"LuaJIT not found at $work/missing-luajit"* ]]; then
+	pass 'a missing LuaJIT fails with a message and leaves PATH unchanged'
+else
+	fail "missing LuaJIT: out=[$out] err=[$err]"
+fi
+
+run "$work/stub/failing-luajit"
+((tests++))
+if [[ "$out" == *"status=1"* && "$out" == *"PATH=$entry_path"* && "$err" == *"PATH construction failed"* ]]; then
+	pass 'a failing engine leaves PATH unchanged and reports the failure'
+else
+	fail "failing engine: out=[$out] err=[$err]"
+fi
+((tests++))
+if [[ ! -e "$canary" && "$out" != *"/hijacked"* ]]; then
+	pass 'output from a failed engine run is never evaluated'
+else
+	fail 'a failed engine run had its output evaluated'
+fi
+
+# Positive control: the same harness with the real interpreter succeeds, so the
+# failures above are attributable to the engine selection alone.
+run "$(command -v luajit)"
+((tests++))
+if [[ "$out" == *"status=0"* && "$out" == *"PATH=$home/bin:"* && "$out" == *"$work/entry"* ]]; then
+	pass 'the real interpreter rebuilds PATH in the same harness'
+else
+	fail "positive control: out=[$out] err=[$err]"
+fi
+
+if ((fails == 0)); then
+	printf 'All %s pathconfig engine failure checks passed.\n' "$tests"
+else
+	printf '%s of %s pathconfig engine failure checks failed.\n' "$fails" "$tests" >&2
+fi
+exit "$fails"

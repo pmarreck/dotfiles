@@ -1,0 +1,313 @@
+#!/usr/bin/env bash
+
+# NOTE: this file is intentionally idempotent — PATH is rebuilt from ORIG_PATH
+# on every invocation, so re-sourcing always produces the same result.
+# An earlier "_PATHCONFIG_LOADED guard" was removed 2026-05-17 after it caused
+# a Claude-Code-staleness bug: Claude inherited PATH from the launching shell
+# but never re-ran .pathconfig because the non-exported _PATHCONFIG_LOADED flag
+# unset in the subshell silently masked a stale PATH snapshot.
+# Lesson: when construction is idempotent, "skip if already loaded" is a
+# pessimization that trades a few ms of redundant work for a real staleness
+# footgun. Re-sourcing must be cheap and correct, full stop.
+
+[[ "$(type -t append_dotfile_progress)" == "function" ]] || . "$HOME/dotfiles/bin/src/append_dotfile_progress.sh"
+[ -n "${DEBUG_SHELLCONFIG}" ] && echo "Entering $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")" || ${INTERACTIVE_SHELL:-false} && ${LOGIN_SHELL:-false} && append_dotfile_progress "P"
+[ -n "${DEBUG_PATHCONFIG}" ] && echo "PATH is: $PATH"
+
+# Capture the truly pristine PATH once per session, then export it so every child shell
+# inherits the same original. PATH is rebuilt from ORIG_PATH every shell — our additions
+# are applied idempotently by construction, and entries injected by external tools are
+# preserved by the foreign-entry classification further down. To force a re-capture
+# (e.g. after a NixOS rebuild), run: unset ORIG_PATH; . ~/.pathconfig
+: "${ORIG_PATH:=$PATH}"
+# NOT readonly: this variable is exported, so it is inherited by every child shell. Making
+# an inherited variable readonly turns a recoverable mistake into an unrecoverable one —
+# the child cannot correct a stale snapshot, and the re-capture documented above silently
+# fails ("cannot unset: readonly variable") in exactly the shell that needs it.
+export ORIG_PATH
+
+# Snapshot the INCOMING PATH before any of our own machinery mutates it. This is
+# the only correct input for the foreign-entry classification further down: the
+# modern-bash bootstrap below deliberately prepends a transient entry that the
+# rebuild is *supposed* to discard, so classifying against the live PATH would
+# mistake our own scaffolding for a foreign injection and re-hoist it to the
+# front — which on NixOS would put the raw, non-setuid system sudo ahead of its
+# privileged wrapper. (Caught by bin/test/pathconfig_bash_prepend_test.)
+_pc_incoming="$PATH"
+
+# Source path helpers (prepend_path, exclude_path)
+. "$HOME/dotfiles/bin/src/prepend_path.bash"
+# shellcheck source=/dev/null # HOME is replaced by isolated startup fixtures.
+. "$HOME/dotfiles/bin/src/platform_env.bash"
+if ! configure_platform_env; then
+	# shellcheck disable=SC2317 # exit is the executed-file fallback after return fails.
+	return 1 2>/dev/null || exit 1
+fi
+
+# CODE is the canonical home for Git repositories across platforms
+CODE="$HOME/Code"
+export CODE
+
+# The actual OS's Documents folder (no longer used for coding projects)
+DOCUMENTS="$HOME/Documents"
+export DOCUMENTS
+
+# Ensure a modern bash (from Nix) is reachable on PATH so #!/usr/bin/env bash
+# subprocesses don't fall back to macOS's /bin/bash 3.2 during early bootstrap.
+# nix-daemon.sh (sourced below) only adds ~/.nix-profile/bin and /nix/var/nix/profiles/default/bin,
+# neither of which contains bash on this system — bash 5 lives in nix-darwin's
+# system profile at /run/current-system/sw/bin, which isn't added until later
+# in this file. Idempotent via the case-dedup; safe on every re-source.
+case "$OSTYPE" in
+	darwin*|linux*)
+		if [ -x /run/current-system/sw/bin/bash ]; then
+			_modern_bash_dir=/run/current-system/sw/bin
+		elif [ -x "$HOME/.nix-profile/bin/bash" ]; then
+			_modern_bash_dir="$HOME/.nix-profile/bin"
+		else
+			echo "Warning from .pathconfig: no Nix bash found at /run/current-system/sw/bin/bash or ~/.nix-profile/bin/bash" >&2
+			echo "         #!/usr/bin/env bash subprocesses may fall back to /bin/bash 3.2 on macOS" >&2
+			_modern_bash_dir=""
+		fi
+		if [ -n "$_modern_bash_dir" ]; then
+			case ":$PATH:" in
+				*":$_modern_bash_dir:"*) ;;
+				*) PATH="$_modern_bash_dir:$PATH" ;;
+			esac
+		fi
+		unset _modern_bash_dir
+		;;
+esac
+
+# On macOS, source nix-daemon.sh to get env vars (NIX_PATH, NIX_SSL_CERT_FILE, etc).
+# PATH modifications from it are discarded — we manage PATH declaratively below.
+# Guarded by NIX_PATH check: nix-daemon.sh is expensive (~50ms) and only needs to
+# run once per session — its env vars are exported, so re-sources can skip it.
+if [[ "$OSTYPE" == "darwin"* ]] && [ -z "$NIX_PATH" ] && [ -e '/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh' ]; then
+	source '/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh'
+fi
+
+# Declarative list of PATH additions.
+# Order: entries LATER in the list end up CLOSER to the FRONT of PATH (last prepend wins).
+# Non-existent dirs are silently skipped.
+
+PATH_ADDITIONS=(
+	# User-local bins (XDG, pip --user, etc.)
+	"$HOME/.local/bin"
+	"$HOME/Scripts"
+	"$HOME/.cargo/bin"
+	"$HOME/.cache/lm-studio/bin"
+	"$HOME/.npm-global/bin"
+	# mise shims: Node only (see ~/.config/mise/config.toml). Shims, not `mise activate`, so
+	# non-interactive shells get node too and PATH is never rewritten per directory.
+	# Kept behind the Nix entries below so Nix wins any name collision.
+	"$HOME/.local/share/mise/shims"
+	"$HOME/.local/share/pnpm/bin"
+)
+
+# macOS Nix: prefer Nix over system and Homebrew
+if [[ "$OSTYPE" == "darwin"* ]]; then
+	PATH_ADDITIONS+=(
+		"/nix/var/nix/profiles/default/bin"
+		"$HOME/.nix-profile/bin"
+		"/run/current-system/sw/bin"
+	)
+fi
+
+PATH_ADDITIONS+=(
+	"$HOME/bin"
+	# Vendor-installed AI agent CLIs, each with its own ~/.<tool>/bin. Declared
+	# here rather than left where their installers put them: they append a raw
+	# `export PATH=...:$PATH` to .bashrc or .bash_profile, which lands AFTER this
+	# file has built PATH declaratively and so escapes the ordering and dedup
+	# rules entirely. (The oMLX installer also replaced the ~/.bash_profile
+	# symlink with an edited copy; check for that after running it.)
+	"$HOME/.antigravity/antigravity/bin"
+	"$HOME/.grok/bin"
+	"$HOME/.omlx/bin"
+	# Non-Zig personal projects
+	"$CODE/ixnay/bin"
+	"$CODE/jumpscript/bin"
+	"$CODE/yt-transcriber/bin"
+	"$CODE/printable_binary/bin"
+	"$CODE/rm_safe/bin"
+)
+
+# Auto-discover personal project command dirs under $CODE. Generic bin/ and
+# current bin/<PF>/ directories are collected separately, then appended as two
+# groups. The later native group therefore precedes every generic project bin
+# after the last-prepend-wins PATH rebuild. An unmigrated project temporarily
+# retains its old result/bin and zig-out/bin entries, even if it never had a
+# generic bin/. Legacy output groups remain behind the generic-bin group,
+# preserving the prior cross-project precedence. As soon as bin/<PF>/ exists,
+# those raw build outputs leave PATH for that project.
+# Foreign PFs and arbitrary nested bin children are never admitted.
+# Use inline native globbing (noglob is on globally via set -f) — avoids subprocess fork
+# AND avoids #!/usr/bin/env bash resolving to /bin/bash 3.2 during early bootstrap.
+#
+# Projects whose bin/ must NOT join the global PATH. The auto-discovery above is
+# a convenience for LIVE personal tools; it becomes a hazard the moment a
+# dormant project ships generic names, because it captures those names for the
+# whole machine. mpnetwork's bin/ holds `yarn`, `mocha`, `s`, `scale`, `secret`,
+# `predeps`, `dbup`/`dbdown` and `version.bump` — 2023-era deploy helpers for one
+# Elixir app. `yarn` was not even shadowing a real yarn; it WAS the only yarn on
+# PATH, so `yarn <anything>` anywhere on the system ran that wrapper.
+# Denied by project name, matched exactly, and applied before the entry is ever
+# added rather than excluded afterwards.
+CODE_BIN_DENYLIST=(
+	mpnetwork
+)
+_saved_f=$-
+set +f
+shopt -s nullglob
+for _legacy_kind in result/bin zig-out/bin; do
+	for _dir in "$CODE"/*/"$_legacy_kind"; do
+		_project_root=${_dir%/result/bin}
+		[ "$_project_root" = "$_dir" ] && _project_root=${_dir%/zig-out/bin}
+		[ -d "$_project_root/bin/$PF" ] && continue
+		_proj=${_project_root#"$CODE"/}
+		_denied=0
+		for _deny in "${CODE_BIN_DENYLIST[@]}"; do
+			if [ "$_proj" = "$_deny" ]; then _denied=1; break; fi
+		done
+		[ "$_denied" -eq 1 ] || PATH_ADDITIONS+=("$_dir")
+	done
+done
+_code_generic_bins=()
+_code_pf_bins=()
+for _dir in "$CODE"/*/bin; do
+	_proj=${_dir#"$CODE"/}
+	_proj=${_proj%%/*}
+	_denied=0
+	for _deny in "${CODE_BIN_DENYLIST[@]}"; do
+		if [ "$_proj" = "$_deny" ]; then _denied=1; break; fi
+	done
+	[ "$_denied" -eq 1 ] && continue
+	_code_generic_bins+=("$_dir")
+	[ -d "$_dir/$PF" ] && _code_pf_bins+=("$_dir/$PF")
+done
+PATH_ADDITIONS+=("${_code_generic_bins[@]}" "${_code_pf_bins[@]}")
+shopt -u nullglob
+[[ "$_saved_f" == *f* ]] && set -f
+unset _saved_f _legacy_kind _dir _proj _denied _deny _project_root \
+	_code_generic_bins _code_pf_bins
+
+# Declarative list of PATH exclusions (mostly macOS cruft that keeps reinserting itself).
+# https://support.apple.com/guide/deployment/rapid-security-responses-dep93ff7ea78/web
+PATH_EXCLUSIONS=(
+	'~/.dotnet/tools'
+	'/usr/local/share/dotnet'
+	'/System/Cryptexes/App/usr/bin'
+	'/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin'
+	'/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin'
+	'/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin'
+)
+
+# ── Classify FOREIGN PATH entries before the rebuild wipes them ──────────────
+# Rebuilding from ORIG_PATH treats every non-base entry as stale garbage. But
+# ORIG_PATH is exported and therefore INHERITED, so a child shell's ORIG_PATH is
+# a snapshot taken BEFORE any external tool injected into PATH — and the rebuild
+# then silently deletes those injections. That is what broke `nix shell` /
+# `nix develop` in every *interactive* shell: the store bin dir vanished before
+# the prompt appeared. (`nix develop -c cmd` is non-interactive and never sources
+# this file, which is exactly why it went unnoticed for so long; direnv survived
+# because its hook re-applies PATH on every prompt, after this runs.)
+#
+# So this is a filter over a set, not "keep ORIG_PATH, drop the rest":
+#     foreign = current PATH − ORIG_PATH − PATH_ADDITIONS
+# Our own additions stay excluded from `foreign`, which keeps re-sourcing
+# idempotent. Bash 4.2 associative arrays make membership exact without a
+# subprocess or treating path punctuation as a shell pattern.
+declare -A _pc_known=()
+declare -a _pc_foreign_entries=()
+_pc_old_ifs=$IFS
+IFS=:
+for _pc_e in $ORIG_PATH; do
+	[ -n "$_pc_e" ] && _pc_known["$_pc_e"]=1
+done
+IFS=$_pc_old_ifs
+for _pc_e in "${PATH_ADDITIONS[@]}"; do
+	[ -n "$_pc_e" ] && _pc_known["$_pc_e"]=1
+done
+IFS=:
+for _pc_e in $_pc_incoming; do
+	[ -n "$_pc_e" ] || continue
+	if [ -z "${_pc_known[$_pc_e]+present}" ]; then
+		_pc_foreign_entries+=("$_pc_e")
+		_pc_known["$_pc_e"]=1
+	fi
+done
+IFS=$_pc_old_ifs
+unset _pc_known _pc_e _pc_incoming
+
+# Build and filter the complete precedence sequence once. PATH_ADDITIONS is
+# declarative in last-prepend-wins order, so walk it backwards. This replaces
+# one echo+awk pipeline per directory and repeated whole-PATH rescans with one
+# in-process O(n) classifier. Foreign injections retain their original order at
+# the front; the pristine base retains its internal order at the back.
+declare -a _pc_candidates=("${_pc_foreign_entries[@]}")
+for ((_pc_i = ${#PATH_ADDITIONS[@]} - 1; _pc_i >= 0; _pc_i--)); do
+	_pc_candidates+=("${PATH_ADDITIONS[_pc_i]}")
+done
+# On macOS the Nix system profile is also the early modern-Bash bootstrap. Keep
+# it reachable even when the declarative list did not already contain it. NixOS
+# owns its own ordering because its privileged wrappers must remain ahead of the
+# raw system binaries.
+if [[ "$OSTYPE" == "darwin"* && -d "/run/current-system/sw/bin" ]]; then
+	_pc_candidates+=("/run/current-system/sw/bin")
+fi
+IFS=:
+for _pc_e in $ORIG_PATH; do _pc_candidates+=("$_pc_e"); done
+IFS=$_pc_old_ifs
+
+declare -A _pc_seen=()
+declare -a _pc_final=()
+for _path in "${_pc_candidates[@]}"; do
+	[ -n "$_path" ] || continue
+	[ -z "${_pc_seen[$_path]+present}" ] || continue
+	_pc_seen["$_path"]=1
+
+	_pc_drop=false
+	for _excl in "${PATH_EXCLUSIONS[@]}"; do
+		if [ "$_path" = "$_excl" ]; then _pc_drop=true; break; fi
+	done
+	$_pc_drop && continue
+
+	# Denial is a property of the destination, not of how the entry arrived.
+	for _deny in "${CODE_BIN_DENYLIST[@]}"; do
+		case "$_path" in
+			"$CODE/$_deny"|"$CODE/$_deny"/*) _pc_drop=true; break ;;
+		esac
+	done
+	$_pc_drop && continue
+
+	# Retire raw outputs once a project publishes its current PF directory, and
+	# remove foreign PF directories while retaining generic project bins.
+	case "$_path" in
+		"$CODE"/*/result/bin|"$CODE"/*/zig-out/bin)
+			_legacy_project=${_path%/result/bin}
+			[ "$_legacy_project" = "$_path" ] && _legacy_project=${_path%/zig-out/bin}
+			[ -d "$_legacy_project/bin/$PF" ] && continue
+			;;
+		"$CODE"/*/bin/macos-arm64|"$CODE"/*/bin/linux-amd64|"$CODE"/*/bin/linux-arm64|"$CODE"/*/bin/mswin-amd64|"$CODE"/*/bin/mswin-arm64)
+			case "$_path" in
+				"$CODE"/*/bin/"$PF") ;;
+				*) continue ;;
+			esac
+			;;
+	esac
+
+	[ -d "$_path" ] || continue
+	_pc_final+=("$_path")
+done
+
+IFS=:
+PATH="${_pc_final[*]}"
+IFS=$_pc_old_ifs
+unset _pc_old_ifs _pc_foreign_entries _pc_candidates _pc_final _pc_seen \
+	_pc_i _pc_e _path _excl _deny _pc_drop _legacy_project
+
+export PATH
+
+[ -n "${DEBUG_SHELLCONFIG}" ] && echo "Exiting $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")"
+[ -n "${DEBUG_PATHCONFIG}" ] && echo $PATH || :

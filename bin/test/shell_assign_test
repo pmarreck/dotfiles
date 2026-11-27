@@ -1,0 +1,100 @@
+#!/usr/bin/env luajit
+
+-- Round-trip property for the startup eval handoff: Bash evaluating the
+-- rendered assignments must reproduce every value byte for byte and must
+-- never execute anything a value contains.
+
+local script_dir = arg[0]:match("^(.*)/[^/]*$") or "."
+package.path = script_dir .. "/../../lib/shell_startup/?.lua;" .. package.path
+
+local fails, tests = 0, 0
+local function check(label, cond, detail)
+	tests = tests + 1
+	if cond then return end
+	fails = fails + 1
+	io.stderr:write("FAIL ", label, detail and ("\n  " .. detail) or "", "\n")
+end
+
+local ok, shell_assign = pcall(require, "shell_assign")
+check("shell_assign module loads", ok, tostring(shell_assign))
+if not ok then os.exit(1) end
+
+-- The harness quotes its own command lines, independent of the module under
+-- test, so a broken quoter fails the property rather than the harness.
+local function harness_quote(s) return "'" .. (s:gsub("'", "'\\''")) .. "'" end
+
+local work = assert(io.popen("mktemp -d \"${TMPDIR:-/tmp}/shell_assign_test.XXXXXX\"")):read("*l")
+assert(work and work ~= "", "mktemp failed")
+local canary = work .. "/canary"
+
+-- Hand-picked hazards, then every single byte except NUL, then seeded random
+-- byte strings biased toward shell metacharacters.
+local values = {
+	"", " ", "two words", "'", "''", "it's", "'\\''", "\"", "\\", "\\n", "$HOME", "${HOME}",
+	"$(touch " .. canary .. ")", "`touch " .. canary .. "`", "'; touch " .. canary .. "; '",
+	"*", "?", "[a-z]", "~", "~/x", "!", "!!", "#comment", "-e", "--", "a\nb", "\n", "trailing\n\n",
+	"\t", "\r", "caf\195\169", "\255\254", "a:b::c", "=", "x=y; touch " .. canary,
+}
+for byte = 1, 255 do values[#values + 1] = string.char(byte) end
+local alphabet = { "'", "\"", "\\", "$", "`", "(", ")", ";", "&", "|", "\n", " ", "*", "?", "[", "]",
+	"{", "}", "~", "!", "#", "=", ":", "a", "Z", "0", "\t", "\128", "\255" }
+local seed = 20261127
+local function next_random(n)
+	seed = (seed * 1103515245 + 12345) % 2147483648
+	return seed % n + 1
+end
+for _ = 1, 300 do
+	local parts = {}
+	for i = 1, next_random(24) - 1 do parts[i] = alphabet[next_random(#alphabet)] end
+	values[#values + 1] = table.concat(parts)
+end
+
+local pairs_list = {}
+for i, value in ipairs(values) do pairs_list[i] = { "V" .. i, value } end
+local rendered = shell_assign.render(pairs_list)
+
+local assignments_path, actual_path = work .. "/assignments", work .. "/actual"
+local file = assert(io.open(assignments_path, "wb"))
+file:write(rendered)
+file:close()
+
+-- Bash reads the rendered text, evals it once, and writes each value back
+-- NUL-terminated. NUL never occurs inside a value, so the framing is exact.
+local program = 'eval "$(cat "$1")" || exit 3; n=$2; i=1; while (( i <= n )); do v="V$i"; printf "%s\\0" "${!v}"; ((i++)); done > "$3"'
+local command = string.format("bash --noprofile --norc -c %s _ %s %d %s",
+	harness_quote(program), harness_quote(assignments_path), #values, harness_quote(actual_path))
+local status = os.execute(command)
+check("Bash evaluates the rendered assignments", status == 0 or status == true, "status " .. tostring(status))
+
+local actual_file = io.open(actual_path, "rb")
+local actual = actual_file and actual_file:read("*a") or ""
+if actual_file then actual_file:close() end
+local expected = table.concat(values, "\0") .. "\0"
+check("every value round-trips byte for byte (" .. #values .. " values)", actual == expected)
+if actual ~= expected then
+	local index = 1
+	for got in actual:gmatch("([^%z]*)%z") do
+		if got ~= values[index] then
+			io.stderr:write(string.format("  first mismatch V%d: expected %q got %q\n", index, values[index], got))
+			break
+		end
+		index = index + 1
+	end
+end
+check("no value executed a command", io.open(canary, "r") == nil)
+
+check("each assignment is one NAME='...' form",
+	shell_assign.assignment("PATH", "a'b") == "PATH='a'\\''b'", shell_assign.assignment("PATH", "a'b"))
+for _, name in ipairs({ "", "1A", "A-B", "A B", "A;B", "$A", "A\n", "é" }) do
+	check(string.format("rejects invalid name %q", name), not pcall(shell_assign.assignment, name, "v"))
+end
+check("rejects a value containing NUL", not pcall(shell_assign.assignment, "A", "a\0b"))
+check("rejects a non-string value", not pcall(shell_assign.assignment, "A", 7))
+
+os.execute("rm -rf -- " .. harness_quote(work))
+if fails == 0 then
+	print(string.format("All %d shell_assign checks passed.", tests))
+	os.exit(0)
+end
+io.stderr:write(string.format("%d of %d shell_assign checks failed.\n", fails, tests))
+os.exit(1)

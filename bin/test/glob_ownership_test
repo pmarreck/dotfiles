@@ -25,11 +25,26 @@ expect_absent 'legacy glob behavior test moved to the glob repository' \
 expect_absent 'legacy stripped-Bash test moved to the glob repository' \
 	"$repo_root/bin/test/glob_no_compgen_test"
 
+# The glob command now ships from its own ~/Code/glob project, so it is
+# reachable only if PATH construction discovers project-owned bin directories.
+# Prove resolution in a fixture home rather than searching source text.
 ((tests++))
-if rg -q --fixed-strings '"$CODE"/*/bin' "$repo_root/.pathconfig"; then
+fixture_home=$(mktemp -d "${TMPDIR:-/tmp}/glob_ownership_test.XXXXXX") || exit 1
+trap 'command rm -rf -- "$fixture_home"' EXIT
+mkdir -p "$fixture_home/Code/glob/bin"
+printf '#!/bin/sh\n' >"$fixture_home/Code/glob/bin/glob"
+chmod +x "$fixture_home/Code/glob/bin/glob"
+ln -s "$repo_root" "$fixture_home/dotfiles"
+base_path="/run/current-system/sw/bin:/usr/bin:/bin"
+[[ -d /run/current-system/sw/bin ]] || base_path=$PATH
+# shellcheck disable=SC2016 # The child shell expands its own program.
+resolved=$(env -i HOME="$fixture_home" PATH="$base_path" NIX_PATH=fixture \
+	"${BASH:-bash}" --noprofile --norc -c '. "$HOME/dotfiles/.pathconfig" >/dev/null 2>&1; command -v glob')
+if [[ "$resolved" == "$fixture_home/Code/glob/bin/glob" ]]; then
 	printf 'PASS: path configuration discovers project-owned bin directories\n'
 else
-	printf 'FAIL: .pathconfig no longer discovers project-owned bin directories\n' >&2
+	printf 'FAIL: .pathconfig no longer discovers project-owned bin directories (glob resolved to %s)\n' \
+		"${resolved:-nothing}" >&2
 	((fails++))
 fi
 

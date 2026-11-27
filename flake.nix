@@ -127,6 +127,12 @@
               export JUMPSCRIPT_ROC="${roc_luajit.packages.${system}.roc}/bin/roc"
               export TMPDIR="$NIX_BUILD_TOP/tmp"
               mkdir -p "$TMPDIR"
+              # pathconfig_differential_test checks glob order under en_US.UTF-8
+              # collation, and a Linux sandbox has no locale archive. A dedicated
+              # name keeps every other test's locale behavior unchanged.
+              ${pkgs.lib.optionalString pkgs.stdenv.isLinux ''
+                export DOTFILES_TEST_LOCALE_ARCHIVE="${pkgs.glibcLocalesUtf8}/lib/locale/locale-archive"
+              ''}
 
               cd "$HOME/dotfiles"
 

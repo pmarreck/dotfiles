@@ -84,8 +84,15 @@ if (( scan_status > 1 )); then
 	exit 2
 fi
 
+# The LuaJIT PATH engine's differential oracle is a frozen copy of the pre-port
+# .pathconfig. It never runs during startup, so its one canonical export is not
+# a second construction site; it gets the same one-export allowance and nothing
+# more.
+frozen_reference='bin/test/fixtures/pathconfig_reference/pathconfig.bash'
+canonical_export='^[[:space:]]*export[[:space:]]+PATH[[:space:]]*(#.*)?$'
 violations=()
 allowed_count=0
+reference_count=0
 while IFS= read -r hit; do
 	[ -n "$hit" ] || continue
 	path=${hit%%:*}
@@ -94,8 +101,10 @@ while IFS= read -r hit; do
 	line_number=${remainder%%:*}
 	source_line=${remainder#*:}
 	[[ "$source_line" =~ $comment_line ]] && continue
-	if [[ "$path" == '.pathconfig' && "$source_line" =~ ^[[:space:]]*export[[:space:]]+PATH[[:space:]]*(#.*)?$ ]]; then
+	if [[ "$path" == '.pathconfig' && "$source_line" =~ $canonical_export ]]; then
 		((allowed_count++))
+	elif [[ "$path" == "$frozen_reference" && "$source_line" =~ $canonical_export ]]; then
+		((reference_count++))
 	else
 		violations+=("$path:$line_number:$source_line")
 	fi
@@ -106,6 +115,13 @@ if (( allowed_count <= 1 )); then
 	pass ".pathconfig has at most one canonical PATH export ($allowed_count found)"
 else
 	fail ".pathconfig has $allowed_count canonical PATH exports; at most one is allowed"
+fi
+
+((tests++))
+if (( reference_count <= 1 )); then
+	pass "the frozen pathconfig reference has at most one canonical PATH export ($reference_count found)"
+else
+	fail "the frozen pathconfig reference has $reference_count canonical PATH exports; at most one is allowed"
 fi
 
 ((tests++))

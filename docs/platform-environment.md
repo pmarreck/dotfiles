@@ -33,7 +33,9 @@ Canonical project discovery examines only immediate `$HOME/Code/*/bin` and
 `bin/<PF>` directories. The staged compatibility path also examines exact
 `result/bin` and `zig-out/bin` directories for unmigrated projects. Discovery
 does not recurse, admit a foreign PF, or run Nix or a language build during
-startup.
+startup. The rules live in `lib/shell_startup/path_plan.lua`; `.pathconfig`
+runs them in one LuaJIT process and evaluates the `PATH=...` assignment it
+prints.
 
 For a project with an existing `bin/<PF>` directory, command precedence is:
 
@@ -75,4 +77,6 @@ command -v COMMAND
 Removing or moving the PF directory recoverably and re-sourcing `.pathconfig`
 restores that project's legacy discovery. The complete regression gate is
 `./test`; focused contracts live in `bin/test/platform_env_test`,
-`bin/test/pathconfig_pf_test`, and `bin/test/shell_startup_test`.
+`bin/test/pathconfig_pf_test`, `bin/test/pathconfig_differential_test` (the
+LuaJIT engine against the frozen pre-port Bash implementation), and
+`bin/test/shell_startup_test`.
