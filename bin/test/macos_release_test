@@ -81,14 +81,20 @@ engine_run() {
 		SED= DATE= TAC= SHUF= STAT= TIMEOUT= "$luajit_bin" "$root/lib/shell_startup/shell_env.lua" 2>/dev/null
 }
 plist_file=/System/Library/CoreServices/SystemVersion.plist
-if [[ -r "$plist_file" ]] && command -v sw_vers >/dev/null 2>&1; then
-	version=$(sw_vers -productVersion 2>/dev/null)
+if [[ -r "$plist_file" ]]; then
+	# sw_vers when it can run (not inside the Nix sandbox); otherwise the
+	# version as sed reads it from the plist, independently of the engine.
+	if command -v sw_vers >/dev/null 2>&1; then
+		version=$(sw_vers -productVersion 2>/dev/null) source_name=sw_vers
+	else
+		version=$(sed -n '/<key>ProductVersion<\/key>/{n;s/.*<string>\(.*\)<\/string>.*/\1/p;}' "$plist_file") source_name='the plist'
+	fi
 	want="DISTRO='macOS' DISTRO_PRETTY='macOS $(mac_os_version_number_to_name "$version")' DISTRO_VERSION='$version' SHELL_STARTUP_MACOS_FACTS='1'"
 	got=$(engine_run | grep -E '^(DISTRO|DISTRO_PRETTY|DISTRO_VERSION|SHELL_STARTUP_MACOS_FACTS)=' | tr '\n' ' ')
-	if [[ "$got" == "$want " ]]; then
-		pass "on this Mac the engine reports what sw_vers and the name script report ($version)"
+	if [[ -n "$version" && "$got" == "$want " ]]; then
+		pass "on this Mac the engine reports what $source_name and the name script report ($version)"
 	else
-		fail "on this Mac: wanted [$want], engine said [$got]"
+		fail "on this Mac: wanted [$want] from $source_name, engine said [$got]"
 	fi
 else
 	if ! engine_run | grep -q -E '^(DISTRO[A-Z_]*|SHELL_STARTUP_MACOS_FACTS)='; then
