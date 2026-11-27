@@ -1,0 +1,171 @@
+#!/usr/bin/env luajit
+-- Shells in a headless Ghostty: real Bash on a pseudo-terminal, every byte
+-- through libghostty-vt (Ghostty's own terminal engine), checked on the
+-- rendered screen. Covers the runner's reply path, the intro's Kitty image and
+-- text as Ghostty renders them, and the .profile intro gate with and without
+-- image support.
+local function shell_output(command)
+	local pipe = assert(io.popen(command))
+	local out = pipe:read("*a")
+	pipe:close()
+	return (out:gsub("%s+$", ""))
+end
+
+local here = arg[0]:match("^(.*)/[^/]+$") or "."
+local root = shell_output("cd '" .. here .. "/../..' && pwd -P")
+assert(root ~= "", "cannot resolve the repository root")
+package.path = root .. "/lib/?.lua;" .. package.path
+
+-- The Nix check supplies the pinned library; elsewhere build it from the flake.
+local loaded, why = require("ghostty_vt.library").ensure(root)
+if not loaded then io.stderr:write("FAIL: ", why, "\n") os.exit(1) end
+local session = require("ghostty_vt.session")
+
+local tests, fails = 0, 0
+local function check(label, ok, detail)
+	tests = tests + 1
+	if ok then
+		print("PASS: " .. label)
+	else
+		fails = fails + 1
+		io.stderr:write("FAIL: " .. label .. (detail and ("\n" .. detail) or "") .. "\n")
+	end
+end
+
+local work = shell_output("mktemp -d \"${TMPDIR:-/tmp}/ghostty_vt_test.XXXXXX\"")
+assert(work ~= "", "mktemp failed")
+local bash = shell_output("command -v bash")
+os.execute("mkdir -p '" .. work .. "/home' '" .. work .. "/cache' && ln -s '" .. root .. "' '" .. work
+	.. "/home/dotfiles' && : > '" .. work .. "/home/.pathconfig'")
+
+local base_env = {
+	"HOME=" .. work .. "/home", "PATH=" .. os.getenv("PATH"), "XDG_CACHE_HOME=" .. work .. "/cache",
+	"TERM=xterm-ghostty", "PS1=PROMPT> ", "LANG=C.UTF-8",
+}
+local function start(extra_env)
+	local env = {}
+	for _, value in ipairs(base_env) do env[#env + 1] = value end
+	for _, value in ipairs(extra_env or {}) do env[#env + 1] = value end
+	local s = session.start({ argv = { bash, "--noprofile", "--norc", "-i" }, env = env, cols = 100, rows = 40 })
+	assert(s:wait_for(function(x) return x:text():find("PROMPT>", 1, true) end, 20), "no prompt in the headless terminal")
+	return s
+end
+-- Run a command line and wait for the marker it prints last.
+local function run(s, line, marker)
+	-- The marker is printed in two halves so the echoed command line never matches.
+	s:type(line .. "; printf '%s%s\\n' " .. marker:sub(1, 1) .. " '" .. marker:sub(2) .. "'\n")
+	return s:wait_for(function(x) return x:text():find("\n" .. marker .. "\n", 1, true) end, 30)
+end
+-- Image-protocol bytes a terminal should have consumed, not displayed: Kitty
+-- APC remnants, the PNG signature in base64, a Sixel raster header, or a long
+-- mixed-case base64 run (natural text, URLs, and mandelbash's all-capital rows
+-- cannot produce one, and any leaked Kitty chunk is 4096 characters).
+local function garbage(text)
+	if text:find("_Ga=", 1, true) or text:find("_Gm=", 1, true) or text:find("iVBORw0KGgo", 1, true)
+		or text:match('"1;1;%d+;%d+') then
+		return true
+	end
+	for run in text:gmatch("[%w+/]+") do
+		if #run >= 200 and run:find("%l") and run:find("%u") and run:find("[%d+/]") then return true end
+	end
+	return false
+end
+-- SGR remnants: color sequences shown as text instead of applied.
+local function sgr_remnant(text) return text:match("%[%d+;?%d*m") ~= nil end
+
+-- 1. The runner answers the shell's queries as a terminal must.
+do
+	local s = start()
+	local ok = run(s, [[printf '\033[6n'; IFS= read -rs -d R reply; printf 'CPR:%s\n' "${reply#*[}"]], "C-PR")
+	local row, col = s:text():match("\nCPR:(%d+);(%d+)\n")
+	check("a cursor position query is answered through the runner", ok and row ~= nil, s:text())
+	s:close()
+end
+
+-- 2. The intro image arrives as one Kitty placement of the pre-rendered size.
+do
+	local s = start()
+	local ok = run(s, "DISPLAY_IMAGE_FORCE_PROTOCOL=kitty '" .. root .. "/bin/inthebeginning'", "I-MG")
+	local placements = s:placements()
+	local p = placements[1] or {}
+	check("inthebeginning renders in Ghostty as a single 600x270 Kitty image",
+		ok and #placements == 1 and p.width == 600 and p.height == 270 and p.visible,
+		string.format("done=%s placements=%d size=%sx%s", tostring(ok), #placements, tostring(p.width), tostring(p.height)))
+	check("the image covers ceil(600/8) x ceil(270/16) cells", p.grid_cols == 75 and p.grid_rows == 17,
+		string.format("grid %sx%s", tostring(p.grid_cols), tostring(p.grid_rows)))
+	check("no image bytes show up as text", not garbage(s:text()), s:text():sub(-600))
+	s:close()
+end
+
+-- 3. Colored text renders as text.
+do
+	local s = start()
+	local ok = run(s, "'" .. root .. "/bin/asciidragon'", "D-RAGON")
+	local text = s:text()
+	check("asciidragon renders as art without escape remnants",
+		ok and text:find("___====-_  _-====___", 1, true) and not garbage(text) and not sgr_remnant(text),
+		text:sub(-600))
+	s:close()
+end
+
+-- 4. The .profile gate, once per pick: the intro precedes a usable prompt, its
+-- output leaves the next character intact, and nothing leaks as text. The
+-- gate runs fun_intro on the LuaJIT .pathconfig resolved; this stand-in for
+-- that LuaJIT forces one pick, so every pick is covered on every run. The
+-- pool's random choice is tested in fun_intro_test.
+local luajit = shell_output("command -v luajit")
+local stand_in = work .. "/luajit-pick"
+local file = assert(io.open(stand_in, "w"))
+file:write('#!/bin/sh\nexec "$REAL_LUAJIT" "$1" --pick="$INTRO_PICK"\n')
+file:close()
+os.execute("chmod +x '" .. stand_in .. "'")
+-- fortune is not among the suite's tools; this stand-in plays it.
+os.execute("mkdir -p '" .. work .. "/stub' && printf '#!/bin/sh\\nprintf \"A fortune for the test.\\\\n\"\\n' > '"
+	.. work .. "/stub/fortune' && chmod +x '" .. work .. "/stub/fortune'")
+local picks = require("fun_intro.picks")
+local gate = '. "$HOME/dotfiles/.profile"'
+local function gate_round(label, pick, facts)
+	local env = { "INTERACTIVE_SHELL=true", "_SHELL_STARTUP_LUAJIT=" .. stand_in, "REAL_LUAJIT=" .. luajit,
+		"INTRO_PICK=" .. pick, "PATH=" .. work .. "/stub:" .. os.getenv("PATH") }
+	for _, fact in ipairs(facts) do env[#env + 1] = fact end
+	local s = start(env)
+	-- Exported at the prompt, as .profile itself would; the typed line keeps
+	-- _SHELL_STARTUP_LUAJIT a shell variable, as .pathconfig leaves it.
+	local ok = run(s, "_SHELL_STARTUP_LUAJIT=" .. stand_in .. "; " .. gate, "G-ATE")
+	local text = s:text()
+	local before = (text:match("^(.-)G%-ATE") or ""):gsub("PROMPT>[^\n]*", ""):gsub("%s", "")
+	s:type("echo $((6*7))\n")
+	local usable = s:wait_for(function(x) return x:text():find("\n42\n", 1, true) end, 20)
+	return ok, before ~= "" or #s:placements() > 0, usable, s:placements(), text, s:close()
+end
+for _, pick in ipairs(picks.TEXT) do
+	local ok, shown, usable, placements, text = gate_round("Ghostty", pick,
+		{ "TERM_PROGRAM=ghostty", "KITTY_CAPABLE=true", "SIXEL_CAPABLE=false", "IMAGE_CAPABLE=true" })
+	check("Ghostty, " .. pick .. ": intro before the prompt, next character intact, nothing leaked",
+		ok and shown and not garbage(text) and #placements == 0, text:sub(-600))
+	check("Ghostty, " .. pick .. ": the prompt after the intro accepts commands", usable)
+end
+for _, pick in ipairs(picks.IMAGE) do
+	local ok, _, usable, placements, text = gate_round("Ghostty", pick,
+		{ "TERM_PROGRAM=ghostty", "KITTY_CAPABLE=true", "SIXEL_CAPABLE=false", "IMAGE_CAPABLE=true" })
+	check("Ghostty, " .. pick .. ": one image placement before the prompt, nothing leaked",
+		ok and #placements == 1 and not garbage(text), text:sub(-600))
+	check("Ghostty, " .. pick .. ": the prompt after the image accepts commands", usable)
+end
+-- Where the shell's facts deny graphics, a forced image pick must not send
+-- Kitty bytes: it reports that no protocol works.
+do
+	local ok, _, usable, placements, text = gate_round("no graphics", picks.IMAGE[1],
+		{ "TERM_PROGRAM=Apple_Terminal", "KITTY_CAPABLE=false", "SIXEL_CAPABLE=false", "IMAGE_CAPABLE=false" })
+	check("no graphics: an image pick sends no image and says why",
+		ok and #placements == 0 and not garbage(text) and text:find("No supported graphics protocol", 1, true), text:sub(-600))
+	check("no graphics: the prompt still accepts commands", usable)
+end
+
+os.execute("rm -rf '" .. work .. "'")
+if fails == 0 then
+	print(string.format("All %d headless Ghostty checks passed.", tests))
+else
+	io.stderr:write(string.format("%d of %d headless Ghostty checks failed.\n", fails, tests))
+end
+os.exit(fails)

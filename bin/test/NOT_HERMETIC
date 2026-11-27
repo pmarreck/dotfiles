@@ -25,6 +25,8 @@ shell_startup_test
 # Runs the user's real interactive startup chain, which needs host-installed
 # prompt and hook tools (starship, direnv, mcfly) absent from the sandbox.
 shell_startup_exec_budget_test
+# Drives the same real startup chain in a headless Ghostty (libghostty-vt).
+ghostty_live_shell_test
 
 # ── Requires the user's live system configuration or account layout ──────────
 # pathconfig asserts NixOS wrapper ordering under /run/wrappers.

@@ -203,8 +203,28 @@ Verification findings:
   the probe's verdict only; it used to include infocmp's own error text when
   TERM had no terminfo entry.
 
-G. Headless Ghostty runner (requested 2026-11-27). Current PTY tests use
-`expect` and see only the byte stream. nixpkgs ships `libghostty-vt`
+G. Headless Ghostty runner (requested and built 2026-11-27). `lib/ghostty_vt`
+binds libghostty-vt through the LuaJIT FFI (`forkpty`, `poll`, Ghostty's VT
+engine, its formatter and Kitty placement API) and answers the program's
+terminal queries. `ghostty_vt_test` runs in the Nix check on both platforms;
+`ghostty_live_shell_test` runs the account's real startup on the host. Two
+traps: flake.lock pins libghostty-vt 2026-07-20, whose `ghostty_terminal_new`
+takes an options struct (newer releases take cols and rows), so the header was
+checked declaration by declaration against the pinned release and the loader
+refuses any other version; and LuaJIT forbids entering a Lua callback from an
+FFI call made by compiled code, so the functions that call `vt_write` stay
+interpreted. PNG payloads are "decoded" to a blank image of the declared size;
+the runner checks placement, not pixels.
+
+Its first finding: mandelbash ended every row with `ESC [ m ESC (` and no
+final byte, so after the last row the terminal took the next printable
+character as the charset designation and swallowed it: the first character
+of the prompt after a mandelbash intro, or of whatever followed it at a
+prompt. It surfaced as an intermittent failure because the gate rounds then
+chose picks at random; they now force each pick in turn. mandelbash and
+mandelroc now end rows with `ESC ( B` (select ASCII), as tput sgr0 does.
+
+Original notes: current PTY tests use `expect` and see only the byte stream. nixpkgs ships `libghostty-vt`
 (`0.1.0-unstable-2026-08-06`, outputs `out` and `dev`, cached for
 x86_64-linux and aarch64-darwin). Plan: a LuaJIT runner opens a PTY, starts
 the real shell in a fixture home, feeds every byte into a libghostty-vt

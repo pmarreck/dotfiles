@@ -1,0 +1,124 @@
+#!/usr/bin/env luajit
+-- The real interactive startup in a headless Ghostty: login and non-login Bash
+-- with this account's startup files, from a clean environment like a new tab,
+-- every byte through libghostty-vt. Checks what a person would see: the intro
+-- (one forced pick at a time) appears before a prompt that accepts commands,
+-- the character after it survives, and no image bytes leak as text.
+--
+-- Host-only (bin/test/NOT_HERMETIC): it runs the account's real startup chain,
+-- whose prompt and hook tools are absent from the Nix sandbox.
+local function shell_output(command)
+	local pipe = assert(io.popen(command))
+	local out = pipe:read("*a")
+	pipe:close()
+	return (out:gsub("%s+$", ""))
+end
+
+local here = arg[0]:match("^(.*)/[^/]+$") or "."
+local root = shell_output("cd '" .. here .. "/../..' && pwd -P")
+package.path = root .. "/lib/?.lua;" .. package.path
+local loaded, why = require("ghostty_vt.library").ensure(root)
+if not loaded then io.stderr:write("FAIL: ", why, "\n") os.exit(1) end
+local session = require("ghostty_vt.session")
+local picks = require("fun_intro.picks")
+
+local tests, fails = 0, 0
+local function check(label, ok, detail)
+	tests = tests + 1
+	if ok then
+		print("PASS: " .. label)
+	else
+		fails = fails + 1
+		io.stderr:write("FAIL: " .. label .. (detail and ("\n" .. detail) or "") .. "\n")
+	end
+end
+
+local home = os.getenv("HOME")
+local work = shell_output("mktemp -d \"${TMPDIR:-/tmp}/ghostty_live_shell_test.XXXXXX\"")
+assert(work ~= "", "mktemp failed")
+local bash = shell_output("command -v bash")
+local luajit = shell_output("command -v luajit")
+local user = shell_output("id -un")
+
+-- SHELL_STARTUP_LUAJIT pins the LuaJIT startup runs. This stand-in runs the
+-- real one and forces the intro's pick, so every pick is covered on every run.
+local stand_in = work .. "/luajit"
+local file = assert(io.open(stand_in, "w"))
+file:write([[#!/bin/sh
+case "$1" in
+	*/bin/fun_intro) exec "$REAL_LUAJIT" "$@" --pick="$INTRO_PICK" ;;
+	*) exec "$REAL_LUAJIT" "$@" ;;
+esac
+]])
+file:close()
+os.execute("chmod +x '" .. stand_in .. "'")
+
+-- An SSH-like pristine base, as the exec-budget test uses.
+local base = "/run/current-system/sw/bin:/usr/bin:/bin"
+if not io.open("/run/current-system/sw/bin/bash", "rb") then base = "/usr/bin:/bin:/usr/sbin:/sbin" end
+
+local function garbage(text)
+	if text:find("_Ga=", 1, true) or text:find("_Gm=", 1, true) or text:find("iVBORw0KGgo", 1, true)
+		or text:match('"1;1;%d+;%d+') then
+		return true
+	end
+	for run in text:gmatch("[%w+/]+") do
+		if #run >= 200 and run:find("%l") and run:find("%u") and run:find("[%d+/]") then return true end
+	end
+	return false
+end
+
+local function startup(mode, pick)
+	local argv = { bash, "-i" }
+	if mode == "login" then argv = { bash, "--login", "-i" } end
+	local s = session.start({ argv = argv, cols = 100, rows = 50, env = {
+		"HOME=" .. home, "USER=" .. user, "LOGNAME=" .. user, "SHELL=" .. bash, "LANG=en_US.UTF-8",
+		"TERM=xterm-ghostty", "TERM_PROGRAM=ghostty", "PATH=" .. base, "ORIG_PATH=" .. base,
+		"__NIXOS_SET_ENVIRONMENT_DONE=1", "__NIX_DARWIN_SET_ENVIRONMENT_DONE=1",
+		"XDG_CACHE_HOME=" .. work .. "/cache", "SHELL_STARTUP_LUAJIT=" .. stand_in,
+		"REAL_LUAJIT=" .. luajit, "INTRO_PICK=" .. pick,
+	} })
+	-- Typed at once; the terminal holds it until the shell reads its first
+	-- line. The marker is printed in halves so the echoed line never matches.
+	s:type("printf '%s%s\\n' R 'EADY-1'\n")
+	local ready = s:wait_for(function(x) return x:text():find("\nREADY%-1\n") end, 60)
+	s:type("echo $((6*7))\n")
+	local usable = ready and s:wait_for(function(x) return x:text():find("\n42\n", 1, true) end, 20)
+	local text = s:text()
+	local placements = s:placements()
+	s:close()
+	return ready, usable, text, placements
+end
+
+local function intro_text(text)
+	local before = text:match("^(.-)\nREADY%-1\n") or ""
+	return (before:gsub("[^\n]*R' 'EADY%-1'[^\n]*", ""))
+end
+
+for _, mode in ipairs({ "non-login", "login" }) do
+	local mode_picks = mode == "login" and { "asciidragon", "inthebeginning" } or {}
+	if mode == "non-login" then
+		for _, pick in ipairs(picks.TEXT) do mode_picks[#mode_picks + 1] = pick end
+		for _, pick in ipairs(picks.IMAGE) do mode_picks[#mode_picks + 1] = pick end
+	end
+	for _, pick in ipairs(mode_picks) do
+		local ready, usable, text, placements = startup(mode, pick)
+		local intro = intro_text(text)
+		local shown
+		if picks.known(pick) and pick == "inthebeginning" then
+			shown = #placements == 1 and placements[1].width == 600
+		else
+			shown = intro:gsub("%s", "") ~= "" and #placements == 0
+		end
+		check(mode .. ", " .. pick .. ": the intro appears before a prompt that accepts commands",
+			ready and usable and shown and not garbage(text), text:sub(-800))
+	end
+end
+
+os.execute("rm -rf '" .. work .. "'")
+if fails == 0 then
+	print(string.format("All %d live Ghostty startup checks passed.", tests))
+else
+	io.stderr:write(string.format("%d of %d live Ghostty startup checks failed.\n", fails, tests))
+end
+os.exit(fails)

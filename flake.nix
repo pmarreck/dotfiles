@@ -47,6 +47,9 @@
           '';
         };
 
+        # libghostty-vt's shared library, for the LuaJIT FFI in lib/ghostty_vt.
+        libghosttyVt = "${pkgs.libghostty-vt}/lib/libghostty-vt${pkgs.stdenv.hostPlatform.extensions.sharedLibrary}";
+
         # Tools the suite shells out to. This is deliberately explicit rather than
         # inheriting the builder's environment: the point of the check is to prove
         # the dotfiles work against a declared toolset, not against whatever happens
@@ -125,6 +128,9 @@
               export JUMPSCRIPT_ROC="${roc_luajit.packages.${system}.roc}/bin/roc"
               export TMPDIR="$NIX_BUILD_TOP/tmp"
               mkdir -p "$TMPDIR"
+              # The headless Ghostty runner (lib/ghostty_vt) drives shells through
+              # Ghostty's own terminal engine; host runs build the same package.
+              export DOTFILES_LIBGHOSTTY_VT="${libghosttyVt}"
               # pathconfig_differential_test checks glob order under en_US.UTF-8
               # collation, and a Linux sandbox has no locale archive. A dedicated
               # name keeps every other test's locale behavior unchanged.
@@ -149,6 +155,10 @@
             '';
           };
         };
+
+        # Ghostty's terminal engine for the headless shell runner, pinned with
+        # the rest of nixpkgs; host-phase tests build it from here.
+        packages.libghostty-vt = pkgs.libghostty-vt;
 
         devShells.default = pkgs.mkShell {
           packages = suiteTools ++ [ pkgs.hyperfine pkgs.shellcheck ];
