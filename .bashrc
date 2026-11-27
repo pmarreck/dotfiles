@@ -234,9 +234,14 @@ if [ "$AWK" = "" ]; then
 fi
 # echo "AWK in .bashrc:258 is: $AWK"
 # using the right awk is a PITA on macOS vs. Linux so let's ensure GNU Awk everywhere
-is_gnu_awk=$($AWK --version | "${GREP_QUIET_ARRAY[@]}" -m 1 'GNU Awk' && echo true || echo false)
-if [ "$OS" = macos ] && [ "$(basename "$AWK")" = awk ] && [ "$is_gnu_awk" = false ]; then
-	echo "WARNING: The awk on PATH is not GNU Awk on macOS, which may cause problems" >&2
+# Only an awk named plain "awk" on macOS can be BSD awk, so only that one is
+# asked for its version, and without piping it through another program.
+if [ "$OS" = macos ] && [ "${AWK##*/}" = awk ]; then
+	is_gnu_awk=false
+	[[ "$($AWK --version 2>/dev/null)" == *"GNU Awk"* ]] && is_gnu_awk=true
+	if [ "$is_gnu_awk" = false ]; then
+		echo "WARNING: The awk on PATH is not GNU Awk on macOS, which may cause problems" >&2
+	fi
 fi
 
 # # asdf config

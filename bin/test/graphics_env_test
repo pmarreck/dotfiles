@@ -69,7 +69,9 @@ for term in sixdesc plainterm xterm-256color xterm-kitty dumb; do
 					bash -c "$old_block" >>"$work/expected" 2>&1
 				# The engine reads its parent from SHELL_STARTUP_PPID; this shell's
 				# own PID names a process whose command is bash, as the stand-in says.
+				# The GNU tool variables are preset so the engine resolves none.
 				env -i "${common[@]}" PATH=/nonexistent ORIG_PATH=/nonexistent OS=linux PF=linux-amd64 \
+					SED= DATE= TAC= SHUF= STAT= TIMEOUT= \
 					OSTYPE=linux-gnu LUAJIT="$luajit_bin" ROOT="$root" \
 					"$(command -v bash)" -c 'SHELL_STARTUP_PPID=$$ '"$engine" >>"$work/actual" 2>&1
 				((rows++))

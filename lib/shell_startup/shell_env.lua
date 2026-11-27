@@ -8,7 +8,10 @@
 --
 -- Output, in order: PATH; then on Linux DISTRO, DISTRO_PRETTY, DISTRO_VERSION;
 -- then SHELL_STARTUP_PARENT_COMMAND (the parent's name, as `ps -o comm=`
--- reports it), SIXEL_ENV, SIXEL_CAPABLE, KITTY_CAPABLE, IMAGE_CAPABLE.
+-- reports it), SIXEL_ENV, SIXEL_CAPABLE, KITTY_CAPABLE, IMAGE_CAPABLE; then
+-- whichever of SED, DATE, TAC, SHUF, STAT, TIMEOUT the environment lacks,
+-- resolved on the incoming PATH (see gnu_tools.lua), and
+-- SHELL_STARTUP_LOGIN_SED, the sed .bash_profile chooses on the new PATH.
 local here = (arg and arg[0] or ""):match("^(.*)/[^/]*$") or "."
 package.path = here .. "/?.lua;" .. here .. "/../?.lua;" .. package.path
 
@@ -31,6 +34,7 @@ local ok, result = pcall(function()
 	local os_release = require("os_release")
 	local shell_assign = require("shell_assign")
 	local graphics_env = require("graphics_env")
+	local gnu_tools = require("gnu_tools")
 
 	local home, pf, os_name = os.getenv("HOME"), os.getenv("PF"), os.getenv("OS")
 	if not home or home == "" then error("HOME is not set", 0) end
@@ -62,6 +66,32 @@ local ok, result = pcall(function()
 	for _, name in ipairs(graphics_env.NAMES) do
 		assignments[#assignments + 1] = { name, graphics[name] }
 	end
+
+	-- GNU tool paths. A failure here must not cost the shell its PATH, so it
+	-- reports and leaves the variables unset.
+	local tools_ok, tools_error = pcall(function()
+		local cache_home = os.getenv("XDG_CACHE_HOME")
+		if not cache_home or cache_home == "" then cache_home = home .. "/.cache" end
+		local cache_path = cache_home .. "/dotfiles/gnu-tool-versions"
+		local function first_version_line(candidate)
+			local pipe = io.popen("'" .. candidate:gsub("'", "'\\''") .. "' --version 2>/dev/null")
+			if not pipe then return "" end
+			local line = pipe:read("*l") or ""
+			pipe:close()
+			return line
+		end
+		local probe, save = gnu_tools.cached_probe(fs, first_version_line, {
+			read = function() return read_file(cache_path) end,
+			write = function(text) fs.write_atomic(cache_path, text) end,
+		})
+		local tools, messages = gnu_tools.resolve(os.getenv, incoming, home, fs, probe)
+		local login_sed = gnu_tools.first_gnu({ "gsed", "sed" }, assignments[1][2], fs, probe)
+		tools[#tools + 1] = { "SHELL_STARTUP_LOGIN_SED", login_sed or "" }
+		save()
+		for _, message in ipairs(messages) do io.stderr:write(message, "\n") end
+		for _, tool in ipairs(tools) do assignments[#assignments + 1] = tool end
+	end)
+	if not tools_ok then io.stderr:write("shell_startup: GNU tool lookup failed: ", tostring(tools_error), "\n") end
 	return shell_assign.render(assignments)
 end)
 if not ok then fail(tostring(result)) end

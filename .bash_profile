@@ -56,13 +56,19 @@ fi
 # Set SED env var to first gnu sed found on PATH; otherwise warn
 # Use [[ "$($candidate_sed --version 2>/dev/null | head -1)" =~ .*GNU.* ]] to detect
 # Find the first GNU sed in PATH
+# The startup engine (.pathconfig) made this choice from cached --version
+# answers; the loop runs only when it did not.
 unset SED
-for candidate_sed in $(type -a -p gsed) $(type -a -p sed); do
-	if [[ "$($candidate_sed --version 2>/dev/null | head -1)" =~ .*GNU.* ]]; then
-		export SED=$candidate_sed
-		break
-	fi
-done
+if [ -n "${SHELL_STARTUP_LOGIN_SED+set}" ]; then
+	[ -n "$SHELL_STARTUP_LOGIN_SED" ] && export SED=$SHELL_STARTUP_LOGIN_SED
+else
+	for candidate_sed in $(type -a -p gsed) $(type -a -p sed); do
+		if [[ "$($candidate_sed --version 2>/dev/null | head -1)" =~ .*GNU.* ]]; then
+			export SED=$candidate_sed
+			break
+		fi
+	done
+fi
 # Warn if no GNU sed found
 if [ -z ${SED+x} ]; then
 	echo "Warning from .bash_profile: No GNU sed found in PATH. This may result in problems. Using system's default sed." >&2

@@ -102,6 +102,8 @@ eval "$_pc_assignments"
 unset _pc_luajit _pc_assignments
 
 export PATH
+# The engine assigned only the GNU tool variables the environment lacked.
+export SED DATE TAC SHUF STAT TIMEOUT
 # macOS and Windows distribution facts still come from .bashrc.
 [ "$OS" = linux ] && export DISTRO DISTRO_PRETTY DISTRO_VERSION
 

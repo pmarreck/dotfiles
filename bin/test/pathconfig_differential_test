@@ -60,6 +60,10 @@ run_impl() { # <impl> <outfile> <errfile>
 	local -a env_args=(HOME="$home" PATH="$incoming" NIX_PATH=fixture LANG="$locale" OSTYPE="$ostype"
 		TEST_UNAME_OS="$raw_os" TEST_UNAME_ARCH="$raw_arch" TEST_UNAME_KERNEL="$raw_kernel"
 		SHELL_STARTUP_LUAJIT="$luajit_bin")
+	# GNU tool resolution moved from prepend_path.bash (which the reference
+	# sources live) into the engine; gnu_tools_test compares it exactly with
+	# the Bash helper. Preset here, both sides skip it and stay about PATH.
+	env_args+=(SED= DATE= TAC= SHUF= STAT= TIMEOUT=)
 	$orig_set && env_args+=(ORIG_PATH="$orig")
 	[ -n "$locale_archive" ] && env_args+=(LOCALE_ARCHIVE="$locale_archive")
 	env -i "${env_args[@]}" "$bash_bin" --noprofile --norc -c "$probe" _ "$1" >"$2" 2>"$3"

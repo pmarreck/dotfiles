@@ -203,6 +203,20 @@ Verification findings:
   the probe's verdict only; it used to include infocmp's own error text when
   TERM had no terminfo entry.
 
+GNU tool probes (2026-11-27). `bin/src/export_gnu_tool.bash` ran
+`CANDIDATE --version | head -1` for six tools on every startup (31 ms in
+isolation), `.bash_profile` repeated the sed search for login shells, and
+`.bashrc` piped `awk --version` through the `~/bin/rg` wrapper, a
+`#!/usr/bin/env bash` script whose `env` failed 123 PATH lookups before
+finding bash. `lib/shell_startup/gnu_tools.lua` now makes both choices with
+`--version` answers cached in `~/.cache/dotfiles/gnu-tool-versions`, keyed by
+resolved path, invoked name (coreutils is one multicall binary), size, and
+mtime; a warm startup probes nothing. Login shells still choose the
+`~/bin/sed` wrapper and non-login shells the real sed, as before; that
+pre-existing difference is preserved, not endorsed. Startup execve calls:
+152 → 12. Interleaved A/B, 14 samples, load 5 to 9: non-login 324 → 259 ms,
+login 400 → 312 ms.
+
 G. Headless Ghostty runner (requested and built 2026-11-27). `lib/ghostty_vt`
 binds libghostty-vt through the LuaJIT FFI (`forkpty`, `poll`, Ghostty's VT
 engine, its formatter and Kitty placement API) and answers the program's

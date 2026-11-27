@@ -27,13 +27,9 @@ find_binary() {
 # terminal has nonstandard behavior and non-GNU sed breaks things; broadened
 # later as the same pattern. STAT and TIMEOUT in particular: BSD stat has
 # wholly different syntax from GNU; BSD has no system 'timeout' at all on macOS.
-. "$HOME/dotfiles/bin/src/export_gnu_tool.bash"
-_export_gnu_tool SED     sed     gsed
-_export_gnu_tool DATE    date    gdate
-_export_gnu_tool TAC     tac     gtac
-_export_gnu_tool SHUF    shuf    gshuf
-_export_gnu_tool STAT    stat    gstat
-_export_gnu_tool TIMEOUT timeout gtimeout
+# The startup engine (lib/shell_startup/gnu_tools.lua) now does this with
+# cached --version answers; bin/src/export_gnu_tool.bash, which probed every
+# candidate on every startup here, remains as its oracle.
 # Awk-ward! (see note below about "using the right awk"...)
 [ -z "${AWK+x}" ] && \
   export AWK=$(command -v frawk || command -v gawk || command -v awk)

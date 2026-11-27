@@ -1,0 +1,165 @@
+#!/usr/bin/env bash
+# The startup engine's GNU tool resolution (lib/shell_startup/gnu_tools.lua)
+# against the Bash helper it replaced (bin/src/export_gnu_tool.bash), over
+# fixture PATHs that reach every branch: GNU and non-GNU g-prefixed tools,
+# plain fallbacks, dotfiles wrappers (directly and through a symlink), one
+# multicall binary answering differently by name, a missing tool, and a
+# variable already set. Then the version cache: a warm
+# run probes nothing, and a replaced binary is probed again.
+set -u
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+work=$(mktemp -d "${TMPDIR:-/tmp}/gnu_tools_test.XXXXXX") || exit 1
+trap 'command rm -rf -- "$work"' EXIT
+luajit_bin=$(command -v luajit) || { printf 'FAIL: luajit is not on PATH\n' >&2; exit 1; }
+work=$(cd "$work" && pwd -P)
+
+tests=0
+fails=0
+pass() { ((tests++)) || :; printf 'PASS: %s\n' "$1"; }
+fail() { ((tests++)) || :; ((fails++)) || :; printf 'FAIL: %s\n' "$1" >&2; }
+
+home="$work/home"
+mkdir -p "$work/d1" "$work/d2" "$work/d3" "$home/dotfiles/bin" "$work/tools"
+log="$work/version.log"
+# tool DIR NAME VERSION_LINE: a fake tool that logs each --version call.
+tool() {
+	printf '#!/bin/sh\nprintf "%%s\\n" "%s" >> "%s"\nprintf "%%s\\n" "%s"\n' "$1/$2" "$log" "$3" >"$1/$2"
+	chmod +x "$1/$2"
+}
+tool "$work/d1" gsed 'sed (BSD) 1.0'
+tool "$work/d2" gsed 'sed (GNU sed) 4.9'
+tool "$work/d1" date 'date (BSD) 1.0'
+tool "$home/dotfiles/bin" datewrap 'date (GNU coreutils) wrapper'
+ln -s "$home/dotfiles/bin/datewrap" "$work/d2/date"
+tool "$work/d3" date 'date (GNU coreutils) 9.0'
+tool "$home/dotfiles/bin" tac 'tac (GNU coreutils) wrapper'
+tool "$work/d1" tac ''
+# One binary behind two names, as coreutils is: BSD as gdate, GNU as gtac.
+# shellcheck disable=SC2016 # Expanded by the generated script.
+printf '#!/bin/sh\nprintf "%%s\\n" "$0" >> "%s"\ncase "${0##*/}" in gtac) echo "tac (GNU coreutils) 9.0" ;; *) echo "date (BSD) 1.0" ;; esac\n' \
+	"$log" >"$work/multicall"
+chmod +x "$work/multicall"
+ln -s "$work/multicall" "$work/d1/gdate"
+ln -s "$work/multicall" "$work/d1/gtac"
+tool "$work/d2" timeout 'timeout (BSD) 1.0'
+tool "$work/d3" stat 'stat (GNU coreutils) 9.0'
+mkdir "$work/d2/gstat" # a directory is not a candidate
+# The Bash helper also needs head and readlink, which no fixture shadows.
+for helper in head readlink; do ln -s "$(command -v "$helper")" "$work/tools/$helper"; done
+fixture_path="$work/d1::$work/d2:$work/d3:$home/dotfiles/bin:$work/tools"
+
+# shellcheck disable=SC2016 # Expanded by the child shell.
+report='for v in SED DATE TAC SHUF STAT TIMEOUT; do [ -n "${!v+x}" ] && printf "%s=%s\n" "$v" "${!v}"; done; :'
+# shellcheck disable=SC2016 # Expanded by the child shell.
+old_run='. "$HELPER"; for spec in "SED sed gsed" "DATE date gdate" "TAC tac gtac" "SHUF shuf gshuf" "STAT stat gstat" "TIMEOUT timeout gtimeout"; do _export_gnu_tool $spec; done; '"$report"
+env -i HOME="$home" PATH="$fixture_path" STAT=preset HELPER="$root/bin/src/export_gnu_tool.bash" \
+	"$(command -v bash)" --noprofile --norc -c "$old_run" >"$work/old.out" 2>"$work/old.err"
+
+# drive CACHE_FILE: the engine's resolution with a file-backed cache.
+drive() {
+	env -i HOME="$home" PATH="$fixture_path" STAT=preset LUA_PATH="$root/lib/shell_startup/?.lua;;" CACHE="$1" \
+		"$luajit_bin" -e '
+		local fs = require("posix_fs")
+		local gnu_tools = require("gnu_tools")
+		local cache = os.getenv("CACHE")
+		local function run(candidate)
+			local pipe = io.popen("\039" .. candidate .. "\039 --version 2>/dev/null")
+			local line = pipe:read("*l") or ""
+			pipe:close()
+			return line
+		end
+		local probe, save = gnu_tools.cached_probe(fs, run, {
+			read = function() local f = io.open(cache, "rb"); if not f then return nil end
+				local t = f:read("*a"); f:close(); return t end,
+			write = function(text) fs.write_atomic(cache, text) end,
+		})
+		local tools, messages = gnu_tools.resolve(os.getenv, os.getenv("PATH"), os.getenv("HOME"), fs, probe)
+		save()
+		for _, m in ipairs(messages) do io.stderr:write(m, "\n") end
+		for _, t in ipairs(tools) do io.write(t[1], "=", t[2], "\n") end
+		io.write("STAT=", os.getenv("STAT"), "\n")' /dev/null
+}
+drive "$work/cache" >"$work/new.unsorted" 2>"$work/new.err"
+# The report prints in SED..TIMEOUT order; STAT comes from the environment.
+for v in SED DATE TAC SHUF STAT TIMEOUT; do grep "^$v=" "$work/new.unsorted"; done >"$work/new.out"
+
+if cmp -s "$work/old.out" "$work/new.out"; then
+	pass "the engine chooses what the Bash helper chose ($(tr '\n' ' ' <"$work/old.out"))"
+else
+	fail 'the engine chose differently from the Bash helper'
+	diff "$work/old.out" "$work/new.out" >&2
+fi
+if cmp -s "$work/old.err" "$work/new.err"; then
+	pass 'the engine prints the same fallback warning and missing-tool error'
+else
+	fail 'the engine messages differ from the Bash helper'
+	diff "$work/old.err" "$work/new.err" >&2
+fi
+if grep -q "SED=$work/d2/gsed" "$work/new.out" && grep -q "DATE=$work/d3/date" "$work/new.out" &&
+	grep -q "TAC=$work/d1/gtac" "$work/new.out" && ! grep -q '^SHUF=' "$work/new.out" &&
+	grep -q '^STAT=preset$' "$work/new.out" && grep -q "TIMEOUT=$work/d2/timeout" "$work/new.out"; then
+	pass 'the fixtures reach every branch: GNU g-prefix, plain GNU past wrappers, multicall names, fallback, missing, preset'
+else
+	fail "the fixtures no longer reach every branch: $(tr '\n' ' ' <"$work/new.out")"
+fi
+
+# --- The login profile's sed choice: no wrapper skip, gsed before sed ---
+tool "$work/d1" sed 'sed (BSD) 1.0'
+tool "$home/dotfiles/bin" sed 'sed (GNU sed) wrapper'
+tool "$work/d3" sed 'sed (GNU sed) 4.9'
+for login_path in "$work/d1:$home/dotfiles/bin:$work/d3" "$work/d3:$work/d1" "$work/d1:$work/d2:$work/d3"; do
+	# shellcheck disable=SC2016 # Expanded by the child shell.
+	old_login=$(env -i PATH="$login_path:$work/tools" "$(command -v bash)" --noprofile --norc -c '
+		for candidate_sed in $(type -a -p gsed) $(type -a -p sed); do
+			if [[ "$($candidate_sed --version 2>/dev/null | head -1)" =~ .*GNU.* ]]; then echo "$candidate_sed"; break; fi
+		done')
+	new_login=$(env -i PATH="$login_path:$work/tools" LUA_PATH="$root/lib/shell_startup/?.lua;;" "$luajit_bin" -e '
+		local fs = require("posix_fs")
+		local gnu = require("gnu_tools")
+		local function run(c) local p = io.popen("\039" .. c .. "\039 --version 2>/dev/null"); local l = p:read("*l") or ""; p:close(); return l end
+		io.write(gnu.first_gnu({ "gsed", "sed" }, os.getenv("PATH"), fs, run) or "", "\n")' /dev/null)
+	if [[ "$old_login" == "$new_login" ]]; then
+		pass "login sed choice matches .bash_profile's loop on ${login_path//$work/W} (${new_login//$work/W})"
+	else
+		fail "login sed choice on ${login_path//$work/W}: loop chose '$old_login', engine '$new_login'"
+	fi
+done
+
+# --- The cache ---
+: >"$log"
+drive "$work/cache" >/dev/null 2>&1
+if [[ ! -s "$log" ]]; then
+	pass 'a warm run probes no tool'
+else
+	fail "a warm run probed: $(tr '\n' ' ' <"$log")"
+fi
+printf '# replaced\n' >>"$work/d3/date"
+: >"$log"
+drive "$work/cache" >/dev/null 2>&1
+if [[ "$(cat "$log")" == "$work/d3/date" ]]; then
+	pass 'a replaced binary is probed again, and only it'
+else
+	fail "after replacing d3/date the run probed: $(tr '\n' ' ' <"$log")"
+fi
+grep -q "^$work/d1/date|" "$work/cache" || fail 'd1/date was never cached, so the next check proves nothing'
+command rm -f "$work/d1/date"
+printf '# replaced\n' >>"$work/d2/gsed"
+drive "$work/cache" >/dev/null 2>&1
+if ! grep -q "^$work/d1/date|" "$work/cache" && grep -q "$work/d2/gsed" "$work/cache"; then
+	pass 'rewriting the cache drops entries for files that are gone'
+else
+	fail 'the cache kept an entry for a deleted file'
+fi
+if [[ -z "$(find "$work" -maxdepth 1 -name 'cache.new.*')" ]]; then
+	pass 'cache writes leave no temporary files'
+else
+	fail 'a cache write left a temporary file'
+fi
+
+if ((fails == 0)); then
+	printf 'All %s GNU tool checks passed.\n' "$tests"
+else
+	printf '%s of %s GNU tool checks failed.\n' "$fails" "$tests" >&2
+fi
+exit "$fails"

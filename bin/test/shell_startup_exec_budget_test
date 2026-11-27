@@ -31,6 +31,9 @@ declare -A budget=([needs]=0 [array_contains_element]=0 [is_nix_darwin]=0 [distr
 # Terminal graphics facts come from the startup engine, so the Bash probes and
 # the tools they ran (infocmp, and ps for one terminal) stay idle.
 budget+=([check_sixel_support]=0 [check_kitty_support]=0 [infocmp]=0 [ps]=0)
+# GNU tool paths come from the engine's version cache; the old helper piped
+# every candidate's --version through head.
+budget+=([head]=0)
 if [[ "$("$real_uname" -s)" == Linux ]]; then
 	budget[distro_pretty]=0
 	budget[distro_version]=0
@@ -91,7 +94,7 @@ run_quadrant() {
 	# NixOS /etc/profile and nix-darwin /etc/bashrc replace PATH unless the session environment is
 	# already applied, as it is for a shell started inside a desktop session.
 	out=$(timeout --foreground --kill-after=5 20 env -i \
-		HOME="$HOME" USER="$me" LOGNAME="$me" TERM=xterm SHELL="$bash_bin" \
+		HOME="$HOME" USER="$me" LOGNAME="$me" TERM=xterm SHELL="$bash_bin" XDG_CACHE_HOME="$work/cache" \
 		PATH="$stub_dir:$base_path" ORIG_PATH="$base_path" \
 		__NIXOS_SET_ENVIRONMENT_DONE=1 __NIX_DARWIN_SET_ENVIRONMENT_DONE=1 SHELL_STARTUP_BENCHMARK=1 \
 		BUDGET_LOG="$log" BUDGET_PROBE_MARKER="$probe_marker" \
@@ -135,7 +138,7 @@ for parent in claude parentshell; do
 	ln -sf "$bash_bin" "$work/$parent"
 	: >"$log"
 	out=$(timeout --foreground --kill-after=5 20 env -i \
-		HOME="$HOME" USER="$me" LOGNAME="$me" TERM=xterm SHELL="$bash_bin" \
+		HOME="$HOME" USER="$me" LOGNAME="$me" TERM=xterm SHELL="$bash_bin" XDG_CACHE_HOME="$work/cache" \
 		PATH="$stub_dir:$base_path" ORIG_PATH="$base_path" \
 		__NIXOS_SET_ENVIRONMENT_DONE=1 __NIX_DARWIN_SET_ENVIRONMENT_DONE=1 SHELL_STARTUP_BENCHMARK=1 \
 		BUDGET_LOG="$log" "$work/$parent" -c "$parent_script" "$parent" "$bash_bin" "$llm_probe" 2>/dev/null)
