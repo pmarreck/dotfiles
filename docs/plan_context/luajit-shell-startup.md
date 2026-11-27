@@ -236,6 +236,23 @@ shell side to 0.9 ms, plus 1.2 ms in the engine. ghostty_live_shell_test
 compares functions and prompt variables after cached and uncached startups
 and the cached scripts with live tool output on each host.
 
+macOS distribution facts (2026-11-27). .bashrc ran `sw_vers` twice (once
+through bin/distro_version, which also ran uname) and the
+bin/mac_os_version_number_to_name script: about 34 ms per startup on the Mac.
+`lib/shell_startup/macos_release.lua` reads ProductVersion from
+SystemVersion.plist, as sw_vers does, and parses the marketing names from
+that script's own `case` table so the table stays the single list; the test
+fails if any arm is not parsed. When either input is unusable the engine
+emits nothing and .bashrc runs the commands as before. Note: the table maps
+macOS 27 to "<Please Update Me>", which the Mac currently runs.
+
+Mac findings while verifying (2026-11-27, not changed here): macOS login
+shells put /usr/local/bin first (path_helper in /etc/profile), and the Mac
+has an older /usr/local/bin/mcfly there that shadows the Nix one in login
+shells. Its init script runs a top-level `[[ -t 0 ]] || return`, which, when
+stdin is not a terminal, returns from apply-hooks itself and skips starship
+setup ("Problem when sourcing apply-hooks"). Real terminals are unaffected.
+
 G. Headless Ghostty runner (requested and built 2026-11-27). `lib/ghostty_vt`
 binds libghostty-vt through the LuaJIT FFI (`forkpty`, `poll`, Ghostty's VT
 engine, its formatter and Kitty placement API) and answers the program's

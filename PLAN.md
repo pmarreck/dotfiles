@@ -11,8 +11,7 @@ Open work is listed in priority order. Completed history is in `docs/PLAN_LOG.md
 
 ## LuaJIT shell startup rewrite
 
-- [ ] Read macOS distribution facts without forking sw_vers, distro_version, or mac_os_version_number_to_name, verified on the Mac (context: docs/plan_context/luajit-shell-startup.md).
-- [x] Stop git launcher copies on PATH from exec'ing each other forever, with a two-copy regression test (done 2026-11-27 14:30 EST; commit 7ccab8f).
+- [x] Read macOS distribution facts without forking sw_vers, distro_version, or mac_os_version_number_to_name: the engine reads SystemVersion.plist and the script's own case table, .bashrc keeps the commands as fallback; verified on the Mac (identical values, zero runs, about 34 ms saved per startup) (context: docs/plan_context/luajit-shell-startup.md; done 2026-11-27 17:35 EST).
 - [ ] Verify the startup commits on the macOS and WSL hosts in fixture homes from a clean environment, then report before syncing their live checkouts.
 - [x] Re-apply the WSL checkout's two unpublished commits (drop macOS-only absolute bin symlinks; propagate NAS mount failures) onto the rewrite with credit, then move that checkout to the result as the owner approved; its old head and stash are kept as local refs (done 2026-11-27 15:17 EST; commits 760809c, 2e17edc).
 - [x] Port the remaining startup helpers: GNU tool paths and the login sed choice now come from the engine's cached --version answers, and the GNU awk check runs only where its warning can fire; startup execve calls 152 → 12, interleaved A/B non-login 324 → 259 ms, login 400 → 312 ms (context: docs/plan_context/luajit-shell-startup.md; done 2026-11-27 16:15 EST).

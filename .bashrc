@@ -196,19 +196,24 @@ export SSH_KEY_PATH="$HOME/.ssh/id_ed25519"
 # .pathconfig before this point and must retain their execution-platform meaning.
 case $OS in
 	macos)
-		export DISTRO="macOS"
-		if command -v mac_os_version_number_to_name >/dev/null 2>&1 && command -v sw_vers >/dev/null 2>&1; then
-			MACOS_VERSION="$(sw_vers -productVersion 2>/dev/null)"
-			if [ -n "$MACOS_VERSION" ]; then
-				export DISTRO_PRETTY="$DISTRO $(mac_os_version_number_to_name "$MACOS_VERSION")"
+		# .pathconfig's engine run normally exported all three already, read
+		# from SystemVersion.plist and the name table in
+		# bin/mac_os_version_number_to_name; these commands are the fallback.
+		if [ -z "${SHELL_STARTUP_MACOS_FACTS-}" ]; then
+			export DISTRO="macOS"
+			if command -v mac_os_version_number_to_name >/dev/null 2>&1 && command -v sw_vers >/dev/null 2>&1; then
+				MACOS_VERSION="$(sw_vers -productVersion 2>/dev/null)"
+				if [ -n "$MACOS_VERSION" ]; then
+					export DISTRO_PRETTY="$DISTRO $(mac_os_version_number_to_name "$MACOS_VERSION")"
+				else
+					export DISTRO_PRETTY="$DISTRO"
+				fi
 			else
 				export DISTRO_PRETTY="$DISTRO"
 			fi
-		else
-			export DISTRO_PRETTY="$DISTRO"
+			unset MACOS_VERSION
+			export DISTRO_VERSION="$(distro_version)"
 		fi
-		unset MACOS_VERSION
-		export DISTRO_VERSION="$(distro_version)"
 		# Initialize RAM disk for /private/tmp if interactive login shell
 		# NOTE: This is now handled by a LaunchAgent (com.pmarreck.ramdisk.plist)
 		# which runs ~/dotfiles/bin/ramdisk-daemon on login. Use 'ramdisk-status' to check status.

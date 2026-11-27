@@ -6,7 +6,10 @@
 -- $PPID). Prints nothing and exits nonzero on any failure, so the caller
 -- never evaluates a partial result.
 --
--- Output, in order: PATH; then on Linux DISTRO, DISTRO_PRETTY, DISTRO_VERSION;
+-- Output, in order: PATH; then on Linux DISTRO, DISTRO_PRETTY, DISTRO_VERSION,
+-- and on macOS the same three plus SHELL_STARTUP_MACOS_FACTS=1 when
+-- SystemVersion.plist and the version-name table are readable (see
+-- macos_release.lua);
 -- then SHELL_STARTUP_PARENT_COMMAND (the parent's name, as `ps -o comm=`
 -- reports it), SIXEL_ENV, SIXEL_CAPABLE, KITTY_CAPABLE, IMAGE_CAPABLE; then
 -- whichever of SED, DATE, TAC, SHUF, STAT, TIMEOUT the environment lacks,
@@ -42,6 +45,7 @@ local ok, result = pcall(function()
 	local graphics_env = require("graphics_env")
 	local gnu_tools = require("gnu_tools")
 	local hook_init = require("hook_init")
+	local macos_release = require("macos_release")
 
 	local home, pf, os_name = os.getenv("HOME"), os.getenv("PF"), os.getenv("OS")
 	if not home or home == "" then error("HOME is not set", 0) end
@@ -65,6 +69,16 @@ local ok, result = pcall(function()
 		local facts = os_release.facts(read_file("/etc/os-release") or "")
 		for _, name in ipairs({ "DISTRO", "DISTRO_PRETTY", "DISTRO_VERSION" }) do
 			assignments[#assignments + 1] = { name, facts[name] }
+		end
+	elseif os_name == "macos" then
+		-- Unreadable inputs leave .bashrc to run sw_vers and the name script.
+		local facts = macos_release.facts(read_file("/System/Library/CoreServices/SystemVersion.plist"),
+			read_file(here .. "/../../bin/mac_os_version_number_to_name"))
+		if facts then
+			for _, name in ipairs({ "DISTRO", "DISTRO_PRETTY", "DISTRO_VERSION" }) do
+				assignments[#assignments + 1] = { name, facts[name] }
+			end
+			assignments[#assignments + 1] = { "SHELL_STARTUP_MACOS_FACTS", "1" }
 		end
 	end
 	local parent = graphics_env.process_command(os.getenv("SHELL_STARTUP_PPID"))

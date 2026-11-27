@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+# macOS distribution facts from the startup engine
+# (lib/shell_startup/macos_release.lua) against what .bashrc computed with
+# `sw_vers -productVersion` and bin/mac_os_version_number_to_name: over
+# hand-picked versions and two samples derived from every arm of the script's
+# own `case` table, plus the engine's wiring. On a Mac it also compares the
+# real SystemVersion.plist with sw_vers.
+set -u
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+luajit_bin=$(command -v luajit) || { printf 'FAIL: luajit is not on PATH\n' >&2; exit 1; }
+names_script="$root/bin/mac_os_version_number_to_name"
+
+tests=0
+fails=0
+pass() { ((tests++)) || :; printf 'PASS: %s\n' "$1"; }
+fail() { ((tests++)) || :; ((fails++)) || :; printf 'FAIL: %s\n' "$1" >&2; }
+
+# shellcheck source=/dev/null
+. "$names_script"
+declare -F mac_os_version_number_to_name >/dev/null || { printf 'FAIL: the name script defines no function\n' >&2; exit 1; }
+
+# engine_lua CODE: run CODE with the module loaded as `m` and the name script's
+# text as `script`.
+engine_lua() {
+	LUA_PATH="$root/lib/shell_startup/?.lua;;" SCRIPT="$names_script" "$luajit_bin" -e '
+		local m = require("macos_release")
+		local f = assert(io.open(os.getenv("SCRIPT"), "rb")); local script = f:read("*a"); f:close()
+		local function plist(version)
+			return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist version=\"1.0\">\n<dict>\n"
+				.. "\t<key>ProductName</key>\n\t<string>macOS</string>\n"
+				.. "\t<key>ProductVersion</key>\n\t<string>" .. version .. "</string>\n</dict>\n</plist>\n"
+		end
+		'"$1" /dev/null
+}
+
+# shellcheck disable=SC2016 # A sed address, not a shell expansion.
+arm_count=$(sed -n '/^[[:space:]]*case \$version in/,/^[[:space:]]*esac/p' "$names_script" | grep -c 'distribution="')
+parsed_count=$(engine_lua 'print(#m.name_table(script))')
+if [[ "$arm_count" -gt 0 && "$parsed_count" == "$arm_count" ]]; then
+	pass "the engine parses all $arm_count arms of the name table"
+else
+	fail "the engine parsed $parsed_count of $arm_count name-table arms"
+fi
+
+# Two samples per arm (its glob with * removed, and with * as 5), and versions
+# chosen for first-match order (10.10 before 10.1) and the catch-all.
+versions=$(engine_lua 'for _, arm in ipairs(m.name_table(script)) do
+	local glob = arm[1]:sub(2, -2):gsub("%%%.", "."):gsub("%.%*", "*")
+	print((glob:gsub("%*", ""))); print((glob:gsub("%*", "5")))
+end')
+versions+=$'\n'$(printf '%s\n' 26.0 26.1.2 27.2.1 28.0 15.7.1 14 13.0 12.7.6 11.0.1 10.15 10.15.7 10.14.6 \
+	10.10.5 10.1 10.1.5 10.0 10.9.5 10.2.8 9.2 3 1.2.3 26)
+mismatches=''
+count=0
+while IFS= read -r version; do
+	[[ -n "$version" ]] || continue
+	((count++)) || :
+	want="macOS $(mac_os_version_number_to_name "$version")|$version"
+	got=$(V="$version" engine_lua 'local f = m.facts(plist(os.getenv("V")), script)
+		io.write(f and (f.DISTRO_PRETTY .. "|" .. f.DISTRO_VERSION) or "nil")')
+	[[ "$want" == "$got" ]] || mismatches+=$'\n'"  $version: script gave '$want', engine '$got'"
+done <<<"$versions"
+if [[ -z "$mismatches" ]]; then
+	pass "DISTRO_PRETTY and DISTRO_VERSION match the name script on $count versions"
+else
+	fail "the engine differs from the name script:$mismatches"
+fi
+
+if [[ "$(engine_lua 'io.write(tostring(m.facts("<plist><dict></dict></plist>", script)), " ",
+	tostring(m.facts(plist(""), script)), " ", tostring(m.facts(plist("26.1"), "no table here")))')" == 'nil nil nil' ]]; then
+	pass 'a plist without a version, an empty version, or a missing name table yields no facts (.bashrc falls back)'
+else
+	fail 'unusable inputs still produced facts'
+fi
+
+# The engine's wiring: facts only from a readable plist, with the marker that
+# tells .pathconfig and .bashrc to skip the commands.
+engine_run() {
+	env -i HOME="$root" PATH="/usr/bin:/bin" ORIG_PATH="/usr/bin:/bin" OS=macos PF=macos-arm64 OSTYPE=darwin \
+		SED= DATE= TAC= SHUF= STAT= TIMEOUT= "$luajit_bin" "$root/lib/shell_startup/shell_env.lua" 2>/dev/null
+}
+plist_file=/System/Library/CoreServices/SystemVersion.plist
+if [[ -r "$plist_file" ]] && command -v sw_vers >/dev/null 2>&1; then
+	version=$(sw_vers -productVersion 2>/dev/null)
+	want="DISTRO='macOS' DISTRO_PRETTY='macOS $(mac_os_version_number_to_name "$version")' DISTRO_VERSION='$version' SHELL_STARTUP_MACOS_FACTS='1'"
+	got=$(engine_run | grep -E '^(DISTRO|DISTRO_PRETTY|DISTRO_VERSION|SHELL_STARTUP_MACOS_FACTS)=' | tr '\n' ' ')
+	if [[ "$got" == "$want " ]]; then
+		pass "on this Mac the engine reports what sw_vers and the name script report ($version)"
+	else
+		fail "on this Mac: wanted [$want], engine said [$got]"
+	fi
+else
+	if ! engine_run | grep -q -E '^(DISTRO[A-Z_]*|SHELL_STARTUP_MACOS_FACTS)='; then
+		pass 'without a readable SystemVersion.plist the engine reports no macOS facts'
+	else
+		fail 'the engine reported macOS facts without a readable SystemVersion.plist'
+	fi
+fi
+for file in .pathconfig .bashrc; do
+	if grep -q 'SHELL_STARTUP_MACOS_FACTS-' "$root/$file"; then
+		pass "$file consults the engine's macOS facts marker"
+	else
+		fail "$file no longer consults SHELL_STARTUP_MACOS_FACTS"
+	fi
+done
+
+if ((fails == 0)); then
+	printf 'All %s macOS release checks passed.\n' "$tests"
+else
+	printf '%s of %s macOS release checks failed.\n' "$fails" "$tests" >&2
+fi
+exit "$fails"

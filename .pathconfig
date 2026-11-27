@@ -107,8 +107,12 @@ unset _pc_luajit _pc_assignments _pc_hooks
 export PATH
 # The engine assigned only the GNU tool variables the environment lacked.
 export SED DATE TAC SHUF STAT TIMEOUT
-# macOS and Windows distribution facts still come from .bashrc.
-[ "$OS" = linux ] && export DISTRO DISTRO_PRETTY DISTRO_VERSION
+# Windows distribution facts, and macOS ones the engine could not read, still
+# come from .bashrc.
+case $OS in
+	linux) export DISTRO DISTRO_PRETTY DISTRO_VERSION ;;
+	macos) [ -z "${SHELL_STARTUP_MACOS_FACTS-}" ] || export DISTRO DISTRO_PRETTY DISTRO_VERSION ;;
+esac
 
 [ -n "${DEBUG_SHELLCONFIG}" ] && echo "Exiting $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")"
 [ -n "${DEBUG_PATHCONFIG}" ] && echo $PATH || :

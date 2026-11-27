@@ -43,6 +43,11 @@ if [[ "$("$real_uname" -s)" == Linux ]]; then
 	budget[distro_version]=0
 	budget[check-system-mutations]=0 # a nix-darwin drift check
 	budget[uname]=3 # one kernel classification: uname -s, -m, -r
+elif [[ "$("$real_uname" -s)" == Darwin ]]; then
+	# The engine reads SystemVersion.plist and the name table itself.
+	budget[sw_vers]=0
+	budget[distro_version]=0
+	budget[mac_os_version_number_to_name]=0
 fi
 
 stub() { # <name> <real executable>
