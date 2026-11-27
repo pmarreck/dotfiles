@@ -73,6 +73,244 @@ check test "${output#*'500-line'}" != "$output"
 output=$("$gate" --unknown 2>&1); rc=$?
 check test "$rc" -eq 2
 
+# Only code lines count: blank lines and comment-only lines (including doc
+# comments and docstrings) are free, so the limit never rewards removing
+# comments or spacing. Comment markers inside strings, heredocs and long
+# strings are code. An unknown language excludes blank lines only.
+counts="$work/counts"
+mkdir -p "$counts"
+# --count prints code, comment and blank line counts, then the path.
+expect_count() {
+	local file=$1 want=$2 got
+	got=$("$gate" --count "$counts/$file" | cut -f1-3)
+	check test "$file:$got" = "$file:$want"
+}
+cat > "$counts/sample.c" <<'EOF'
+#include <stdio.h>
+
+/* block comment
+   spanning lines */
+int main(void) {
+    // a comment
+    printf("/* not a comment */ // nor this\n");
+    /* inline */ return 0;
+}
+EOF
+expect_count sample.c "5	3	1"
+cat > "$counts/sample.rs" <<'EOF'
+//! Crate documentation
+/// Item documentation
+fn main() {
+    /* outer /* nested */ still a comment */
+    let s = "line one
+// inside a string, so code
+end";
+    let c = '"';
+}
+EOF
+expect_count sample.rs "6	3	0"
+cat > "$counts/sample.py" <<'EOF'
+#!/usr/bin/env python3
+"""Module docstring
+spanning lines."""
+import os
+
+def f():
+    """Docstring."""
+    text = """data # not a comment
+# still data
+"""
+    return text  # trailing comment
+EOF
+expect_count sample.py "6	4	1"
+cat > "$counts/sample.lua" <<'EOF'
+#!/usr/bin/env luajit
+--[[ block
+comment ]]
+local a = 1
+--[==[ level-two block ]] still a comment
+]==]
+local s = [[
+-- inside a long string, so code
+]]
+local t = "--not a comment"
+-- comment
+EOF
+expect_count sample.lua "5	6	0"
+cat > "$counts/sample.sh" <<'EOF'
+#!/usr/bin/env bash
+# comment
+cat <<'DOC'
+# heredoc body is data
+DOC
+echo "# not a comment"
+size=${#items[@]}  # trailing comment
+EOF
+expect_count sample.sh "5	2	0"
+cat > "$counts/Sample.elm" <<'EOF'
+module Main exposing (main)
+{-| Documentation
+    {- nested -}
+-}
+-- line comment
+main = text "{- not a comment -}"
+EOF
+expect_count Sample.elm "2	4	0"
+cat > "$counts/Sample.lean" <<'EOF'
+/-! Module documentation -/
+theorem two : 1 + 1 = 2 := by
+  -- comment
+  decide
+/- block /- nested -/ still a comment -/
+EOF
+expect_count Sample.lean "2	3	0"
+cat > "$counts/sample.wat" <<'EOF'
+;; comment
+(module
+  (; block (; nested ;) ;)
+  (func (export "f") (result i32)
+    i32.const 1)
+)
+EOF
+expect_count sample.wat "4	2	0"
+printf '#!/usr/bin/env luajit\n-- comment\nlocal x = 1\n' > "$counts/lua-script"
+expect_count lua-script "1	2	0"
+printf '# unknown syntax\ncode\n\nmore\n' > "$counts/sample.unknownlang"
+expect_count sample.unknownlang "3	0	1"
+
+# Block comments: one opened after code, code after a closing marker, an
+# opening marker inside a line comment (which must not start a block), two
+# blocks on one line, a doc block, and a closing marker inside a string.
+cat > "$counts/multiline.c" <<'EOF'
+int a = 1; /* opens after code
+   continues */
+   resumes(); /* x */ int b;
+// a line comment mentioning /* does not open a block
+int c = 3;
+/* one */ /* two */
+/**
+ * documentation block
+ */
+char *s = "*/";
+EOF
+expect_count multiline.c "4	6	0"
+cat > "$counts/sample.cpp" <<'EOF'
+// comment
+#include <string>
+/* block
+   comment */
+std::string s = R"(not // a comment)";
+EOF
+expect_count sample.cpp "2	3	0"
+cat > "$counts/sample.zig" <<'EOF'
+//! Module documentation
+const std = @import("std");
+/// Documentation comment
+pub fn main() void {
+    // comment
+    const s =
+        \\multiline string // not a comment
+    ;
+    _ = s;
+}
+EOF
+expect_count sample.zig "7	3	0"
+cat > "$counts/sample.ex" <<'EOF'
+defmodule Sample do
+  @moduledoc """
+  Module documentation.
+  # still documentation
+  """
+  # comment
+  @doc "Says hello."
+  def hello, do: "# not a comment"
+end
+EOF
+expect_count sample.ex "3	6	0"
+cat > "$counts/sample.erl" <<'EOF'
+%% @doc Module documentation
+-module(sample).
+-moduledoc """
+Module documentation.
+""".
+-export([hello/0]).
+% comment
+hello() -> "% not a comment".
+EOF
+expect_count sample.erl "4	4	0"
+cat > "$counts/sample.bash" <<'EOF'
+# comment
+: <<'END_COMMENT'
+the no-op heredoc idiom is a multiline comment
+END_COMMENT
+echo hi
+EOF
+expect_count sample.bash "1	4	0"
+cat > "$counts/sample.roc" <<'EOF'
+## Documentation comment
+module [greet]
+
+# comment
+greet = \name ->
+    """
+    Hello, # not a comment
+    """
+EOF
+expect_count sample.roc "5	2	1"
+cat > "$counts/sample.awk" <<'EOF'
+#!/usr/bin/awk -f
+# comment
+BEGIN { print "# not a comment" }
+{ total += $1 }  # trailing comment
+EOF
+expect_count sample.awk "2	2	0"
+cat > "$counts/sample.nim" <<'EOF'
+## Module documentation
+#[ block
+   #[ nested ]#
+]#
+##[ documentation block
+spanning lines ]##
+proc greet(): string =
+  # comment
+  result = "# not a comment"
+EOF
+expect_count sample.nim "2	7	0"
+cat > "$counts/sample.js" <<'EOF'
+/**
+ * JSDoc block
+ */
+const url = "http://example.com"; // trailing comment
+const tpl = `line one
+// inside a template literal, so code
+`;
+// comment
+EOF
+expect_count sample.js "4	4	0"
+cat > "$counts/sample.rb" <<'EOF'
+# comment
+=begin
+block comment
+  =end inside the block does not close it
+=end
+puts "# not a comment"
+x = 1 # trailing comment
+EOF
+expect_count sample.rb "2	5	0"
+
+# Comments and blank lines cannot push a file over the limit.
+awk 'BEGIN { for (i = 1; i <= 500; i++) { print "-- why value " i " exists"; print ""; print "local value_" i " = " i } }' > sample.lua
+git add sample.lua
+run_gate
+check test "$rc" -eq 0
+printf 'local one_more = true\n' >> sample.lua
+git add sample.lua
+run_gate
+check test "$rc" -eq 1
+check test "${output#*'501 code lines (limit 500'}" != "$output"
+check test "${output#*'500 comment and 500 blank lines not counted'}" != "$output"
+restore_sample
+
 # The limit is inclusive and the staged blob, not the working copy, is authoritative.
 stage_lines 500
 run_gate
@@ -81,7 +319,7 @@ stage_lines 501
 run_gate
 check test "$rc" -eq 1
 check test "${output#*'sample.lua'}" != "$output"
-check test "${output#*'501 lines (limit 500)'}" != "$output"
+check test "${output#*'501 code lines (limit 500'}" != "$output"
 check test "${output#*'ERROR: commit blocked'}" != "$output"
 printf 'local working_copy_is_short = true\n' > sample.lua
 run_gate
@@ -96,12 +334,24 @@ restore_sample
 # Documents, configuration, binary blobs and symlinks are not source-file violations.
 stage_lines 501 notes.md
 stage_lines 501 settings.toml
+# Markup, stylesheets and templates, including Phoenix's, are exempt too.
+for markup in page.html styles.css theme.scss index.html.heex layout.eex email.erb; do
+	stage_lines 501 "$markup"
+done
 awk 'BEGIN { printf "binary%cdata\n", 0 }' > payload.bin
 ln -s sample.lua source-link
 git add payload.bin source-link
 run_gate
 check test "$rc" -eq 0
 git -c core.hooksPath=/dev/null commit -qm exempt-fixtures || exit 1
+
+# Components that carry script logic are source, not markup.
+stage_lines 501 Widget.svelte
+run_gate
+check test "$rc" -eq 1
+check test "${output#*'Widget.svelte'}" != "$output"
+git rm -q -f --cached -- Widget.svelte
+command rm -f -- Widget.svelte
 
 # A long Nix config stays exempt even when an over-limit script shares the
 # index. A path-only commit can include the config and leave the script staged.
@@ -127,7 +377,7 @@ run_default_gate
 check test "$rc" -eq 0
 check test "${output#*'ADVISORY:'}" != "$output"
 check test "${output#*'sample.lua'}" != "$output"
-check test "${output#*'501 lines (limit 500)'}" != "$output"
+check test "${output#*'501 code lines (limit 500'}" != "$output"
 check test "${output#*'strongly recommends'}" != "$output"
 check test "${output#*'configuration.nix'}" = "$output"
 check test "${output#*'ERROR: commit blocked'}" = "$output"
@@ -166,7 +416,7 @@ do
 	run_gate
 	check test "$rc" -eq 0
 	check test "${output#*'sample.lua'}" != "$output"
-	check test "${output#*'501 lines (limit 500)'}" != "$output"
+	check test "${output#*'501 code lines (limit 500'}" != "$output"
 	check test "${output#*'ADVISORY:'}" != "$output"
 	check test "${output#*'strongly recommends'}" != "$output"
 	check test "${output#*'commit is allowed'}" != "$output"
@@ -217,7 +467,7 @@ stage_lines 502
 output=$(git commit -qm global-advisory-allowed 2>&1); rc=$?
 check test "$rc" -eq 0
 check test "${output#*'ADVISORY:'}" != "$output"
-check test "${output#*'502 lines (limit 500)'}" != "$output"
+check test "${output#*'502 code lines (limit 500'}" != "$output"
 hook_runs=0
 if [[ -f local-hook-log ]]; then hook_runs=$(wc -l < local-hook-log); fi
 check test "$hook_runs" -eq 2

@@ -12,10 +12,16 @@ local ADVISORY_GITHUB_REPOSITORIES = {
 }
 
 local function help()
-	io.write([[Usage: git-file-line-limit-gate [--help | --about]
+	io.write([[Usage: git-file-line-limit-gate [--help | --about | --count FILE...]
 
-Report staged text source files longer than 500 lines. Unchanged files,
-documents, and configuration files (including Nix files) are exempt.
+Report staged text source files with more than 500 code lines. Blank lines and
+comment-only lines (including doc comments and docstrings) are not counted, so
+comments and spacing never push a file over the limit. Unchanged files,
+documents, configuration files (including Nix files), markup, stylesheets and
+templates are exempt.
+
+  --count FILE...  Print code, comment and blank line counts for each file,
+                   tab-separated, followed by its path.
 ]])
 	if ENFORCE_BY_DEFAULT then
 		io.write("Over-limit files block commits except in owner-approved advisory repositories.\n")
@@ -36,12 +42,275 @@ local function fail(message, status)
 	os.exit(status or 2)
 end
 
+-- Comment syntax. Scanning is the same for every language: line markers start
+-- a comment that runs to the end of the line, and block pairs delimit comments
+-- that may span lines (nested where the language nests them). Languages differ
+-- only in which markers and pairs they use and how their strings work, so each
+-- language is one row combining a line-marker group, block pairs and a string
+-- style. A block pair beginning with ^ must start a line, as Ruby's
+-- =begin/=end do. A language without a row counts every non-blank line as code.
+local QUOTES = { '"', "'" }
+local STRINGS = {
+	-- Single-line strings in either quote.
+	c = { quotes = QUOTES },
+	-- JavaScript template literals and Go raw strings may span lines.
+	backtick = { quotes = { '"', "'", "`" }, multiline = { ["`"] = true } },
+	-- Double-quoted strings may span lines; ' is a char literal or lifetime.
+	multiline = { quotes = QUOTES, multiline = { ['"'] = true } },
+	-- ' is not a string delimiter (Haskell primes, Lisp quote, OCaml types).
+	double = { quotes = { '"' } },
+	double_multiline = { quotes = { '"' }, multiline = { ['"'] = true } },
+	shell = { quotes = QUOTES, multiline = { ['"'] = true, ["'"] = true }, raw = { ["'"] = true }, heredoc = true },
+	-- Triple-quoted strings; a docstring that opens a statement is documentation.
+	python = { quotes = QUOTES, triple = true, docstrings = true },
+	triple = { quotes = QUOTES, triple = true },
+	-- Strings after a doc attribute (@doc, -moduledoc) are documentation.
+	elixir = { quotes = QUOTES, multiline = { ['"'] = true }, triple = true, doc_prefix = "^%s*@%a*doc%s*$" },
+	erlang = { quotes = { '"' }, multiline = { ['"'] = true }, triple = true, doc_prefix = "^%s*%-%a*doc%s*$" },
+	-- Lua long brackets: --[==[ comment ]==] and [==[ string ]==].
+	lua = { quotes = QUOTES, long_brackets = true },
+	none = {},
+}
+local LANGUAGES = {
+	-- extensions, line markers, block pairs, nested blocks, string style
+	{ "c h cc cpp cxx c++ hpp hh hxx h++ m mm java cs proto glsl hlsl wgsl sol d ino scss less",
+		"//", "/* */", false, "c" },
+	{ "js mjs cjs jsx ts tsx mts cts go vue svelte", "//", "/* */", false, "backtick" },
+	{ "rs", "//", "/* */", true, "multiline" },
+	{ "swift kt kts scala sc dart odin", "//", "/* */", true, "c" },
+	{ "zig gleam", "//", "", false, "c" },
+	{ "php", "// #", "/* */", false, "c" },
+	{ "css", "", "/* */", false, "c" },
+	{ "fs fsi fsx", "//", "(* *)", true, "double" },
+	{ "sh bash zsh ksh fish", "#", "", false, "shell" },
+	{ "py pyi", "#", "", false, "python" },
+	{ "jl", "#", "#= =#", true, "python" },
+	{ "nim", "#", "##[ ]##, #[ ]#", true, "triple" },
+	{ "roc", "#", "", false, "triple" },
+	{ "ex exs", "#", "", false, "elixir" },
+	{ "rb", "#", "^=begin ^=end", false, "multiline" },
+	{ "pl pm r tcl awk cmake cr bend", "#", "", false, "multiline" },
+	{ "ps1 psm1", "#", "<# #>", false, "c" },
+	{ "lua", "--", "", false, "lua" },
+	{ "hs elm purs agda idr", "--", "{- -}", true, "double" },
+	{ "lean", "--", "/- -/", true, "double" },
+	{ "sql", "--", "/* */", false, "c" },
+	{ "adb ads vhd vhdl", "--", "", false, "double" },
+	{ "lisp lsp cl el clj cljs cljc scm ss rkt fnl", ";", "#| |#", true, "double_multiline" },
+	{ "asm nasm", ";", "", false, "c" },
+	{ "wat wast", ";;", "(; ;)", true, "double" },
+	{ "erl hrl", "%", "", false, "erlang" },
+	{ "ml mli sml", "", "(* *)", true, "double" },
+	{ "html htm xhtml", "", "<!-- -->", false, "none" },
+}
+local SYNTAX = {}
+for _, row in ipairs(LANGUAGES) do
+	local spec = { line = {}, block = {}, nested = row[4] }
+	for marker in row[2]:gmatch("%S+") do spec.line[#spec.line + 1] = marker end
+	for pair in row[3]:gmatch("[^,]+") do
+		local open, close = pair:match("^%s*(%S+)%s+(%S+)%s*$")
+		local anchored = open:sub(1, 1) == "^"
+		spec.block[#spec.block + 1] = { anchored and open:sub(2) or open, anchored and close:sub(2) or close, anchored }
+	end
+	for key, value in pairs(STRINGS[row[5]]) do spec[key] = value end
+	for extension in row[1]:gmatch("%S+") do SYNTAX[extension] = spec end
+end
+
+-- Interpreters named on a #! line, for scripts without an extension.
+local INTERPRETERS = {
+	lua = "lua", luajit = "lua", bash = "sh", sh = "sh", zsh = "sh", ksh = "sh", dash = "sh",
+	fish = "fish", python = "py", node = "js", deno = "js", bun = "js", ruby = "rb", perl = "pl",
+	elixir = "exs", julia = "jl", pwsh = "ps1", tclsh = "tcl", rscript = "r", awk = "awk",
+	["nix-shell"] = "sh",
+}
+
+local function syntax_for(path, text)
+	local basename = (path:match("[^/\\]+$") or path):lower()
+	local extension = basename:match("%.([^.]+)$")
+	if extension and SYNTAX[extension] then return SYNTAX[extension] end
+	local command, rest = text:match("^#!%s*(%S+)([^\n]*)")
+	if not command then return {} end
+	local interpreter = command:match("[^/]+$")
+	if interpreter == "env" then
+		for word in rest:gmatch("%S+") do
+			if not word:match("^%-") then interpreter = word break end
+		end
+	end
+	interpreter = interpreter:lower():gsub("[%d%.]+$", "")
+	return SYNTAX[INTERPRETERS[interpreter] or ""] or {}
+end
+
+-- Index of the next unescaped `delimiter` at or after `start`, or nil.
+local function find_close(line, delimiter, start, raw)
+	local i = start
+	while i <= #line do
+		if not raw and line:byte(i) == 92 then
+			i = i + 2
+		elseif line:sub(i, i + #delimiter - 1) == delimiter then
+			return i
+		else
+			i = i + 1
+		end
+	end
+end
+
+local function starts_with(line, i, prefix)
+	return line:sub(i, i + #prefix - 1) == prefix
+end
+
+-- Counts code, comment-only and blank lines. A line is code if any code is on
+-- it; a trailing comment does not change that. Lines inside a string or a
+-- heredoc are code, except a docstring: a triple-quoted string that opens a
+-- statement documents rather than computes. When unsure, a line is code.
+local function classify(text, spec)
+	local code, comment, blank = 0, 0, 0
+	if text == "" then return code, comment, blank end
+	local quotes = {}
+	for _, quote in ipairs(spec.quotes or {}) do quotes[quote] = true end
+	local multiline, raw = spec.multiline or {}, spec.raw or {}
+	local depth, block_open, block_close, anchored = 0, nil, nil, false
+	local str_close, str_doc, str_raw = nil, false, false
+	local heredoc
+	local line_number = 0
+	if text:sub(-1) ~= "\n" then text = text .. "\n" end
+	for line in text:gmatch("([^\n]*)\n") do
+		line = line:gsub("\r$", "")
+		line_number = line_number + 1
+		local has_code = str_close ~= nil and not str_doc
+		local has_comment = str_close ~= nil and str_doc
+		local pending_heredoc
+		if heredoc then
+			if heredoc.comment then has_comment = true else has_code = true end
+			if (heredoc.dash and line:gsub("^\t+", "") or line) == heredoc.tag then heredoc = nil end
+		elseif line_number == 1 and starts_with(line, 1, "#!") then
+			has_comment = true
+		else
+			local i, n = 1, #line
+			while i <= n do
+				if depth > 0 then
+					has_comment = true
+					local close_at = line:find(block_close, i, true)
+					if anchored and close_at ~= 1 then close_at = nil end
+					local open_at = spec.nested and block_open and line:find(block_open, i, true)
+					if open_at and (not close_at or open_at < close_at) then
+						depth, i = depth + 1, open_at + #block_open
+					elseif close_at then
+						depth, i = depth - 1, close_at + #block_close
+					else
+						i = n + 1
+					end
+				elseif str_close then
+					local close_at = find_close(line, str_close, i, str_raw)
+					if close_at then
+						i, str_close = close_at + #str_close, nil
+					else
+						i = n + 1
+					end
+				elseif line:find("^%s", i) then
+					i = i + 1
+				else
+					local matched = false
+					if spec.long_brackets then
+						local level = line:match("^%-%-%[(=*)%[", i)
+						if level then
+							depth, block_open, block_close, anchored = 1, nil, "]" .. level .. "]", false
+							has_comment, i, matched = true, i + 4 + #level, true
+						else
+							level = line:match("^%[(=*)%[", i)
+							if level then
+								str_close, str_doc, str_raw = "]" .. level .. "]", false, true
+								has_code, i, matched = true, i + 2 + #level, true
+							end
+						end
+					end
+					for _, pair in ipairs(matched and {} or spec.block or {}) do
+						if starts_with(line, i, pair[1]) and (not pair[3] or i == 1) then
+							depth, block_open, block_close, anchored = 1, pair[1], pair[2], pair[3]
+							has_comment, i, matched = true, i + #pair[1], true
+							break
+						end
+					end
+					for _, marker in ipairs(matched and {} or spec.line or {}) do
+						if starts_with(line, i, marker) then
+							has_comment, i, matched = true, n + 1, true
+							break
+						end
+					end
+					local triple, char = line:sub(i, i + 2), line:sub(i, i)
+					local delimiter = spec.triple and (triple == '"""' or triple == "'''") and triple
+						or quotes[char] and char or nil
+					if not matched and delimiter then
+						-- Documentation, not code: a docstring that opens a statement, or
+						-- a string after a doc attribute such as @doc or -moduledoc.
+						local doc = spec.docstrings and #delimiter == 3 and not has_code
+							or spec.doc_prefix ~= nil and line:sub(1, i - 1):match(spec.doc_prefix) ~= nil
+						if doc then has_code, has_comment = false, true else has_code = true end
+						local close_at = find_close(line, delimiter, i + #delimiter, raw[delimiter])
+						if close_at then
+							i = close_at + #delimiter
+						elseif #delimiter == 3 or multiline[delimiter] then
+							str_close, str_doc, str_raw, i = delimiter, doc, raw[delimiter] == true, n + 1
+						else
+							i = i + 1 -- an unterminated quote, such as a Rust lifetime, is plain code
+						end
+						matched = true
+					end
+					if not matched then
+						has_code = true
+						if spec.heredoc and char == "<" and not starts_with(line, i, "<<<") then
+							local dash, _, tag = line:match("^<<(%-?)%s*(['\"]?)([%a_][%w_]*)%2", i)
+							-- `: <<'END'` feeds a heredoc to a no-op: the shell's
+							-- multiline comment idiom.
+							local comment = line:sub(1, i - 1):match("^%s*:%s*$") ~= nil
+							if tag then pending_heredoc = { tag = tag, dash = dash == "-", comment = comment } end
+						end
+						-- A backslash outside a string escapes the next character,
+						-- as in the shell idiom 'it'\''s'.
+						i = i + (char == "\\" and 2 or 1)
+					end
+				end
+			end
+		end
+		if pending_heredoc then
+			heredoc = pending_heredoc
+			if heredoc.comment then has_code, has_comment = false, true end
+		end
+		if has_code then
+			code = code + 1
+		elseif has_comment then
+			comment = comment + 1
+		else
+			blank = blank + 1
+		end
+	end
+	return code, comment, blank
+end
+
+local function count_file(path)
+	local file = io.open(path, "rb")
+	if not file then fail("cannot read " .. string.format("%q", path)) end
+	local text = file:read("*a")
+	file:close()
+	if text:find("\0", 1, true) then return nil end
+	return classify(text, syntax_for(path, text))
+end
+
 if #arg > 0 then
 	if #arg == 1 and (arg[1] == "-h" or arg[1] == "--help") then
 		help()
 		os.exit(0)
 	elseif #arg == 1 and arg[1] == "--about" then
-		io.write(PROGRAM .. " 0.3.0 - Check the 500-line limit on staged source files\n")
+		io.write(PROGRAM .. " 0.4.0 - Check the 500-line limit on staged source files, counting code lines only\n")
+		os.exit(0)
+	elseif arg[1] == "--count" and #arg > 1 then
+		for index = 2, #arg do
+			local code, comment, blank = count_file(arg[index])
+			if code then
+				io.write(string.format("%d\t%d\t%d\t%s\n", code, comment, blank, arg[index]))
+			else
+				io.write(string.format("binary\t\t\t%s\n", arg[index]))
+			end
+		end
 		os.exit(0)
 	end
 	fail("unknown option; use --help", 2)
@@ -119,6 +388,15 @@ local configuration_extensions = {
 	json = true, jsonc = true, json5 = true, xml = true, conf = true,
 	cfg = true, properties = true, env = true, lock = true,
 }
+-- Markup, stylesheets and templates (including Phoenix's) are long by nature
+-- and are not split into modules the way program source is.
+local markup_extensions = {
+	html = true, htm = true, xhtml = true, svg = true,
+	css = true, scss = true, sass = true, less = true, styl = true,
+	heex = true, eex = true, leex = true, erb = true, haml = true, slim = true,
+	hbs = true, handlebars = true, mustache = true, ejs = true, jinja = true,
+	jinja2 = true, j2 = true, liquid = true, njk = true, twig = true,
+}
 local known_documents = {
 	readme = true, license = true, copying = true, notice = true,
 	changelog = true, contributing = true, authors = true, credits = true,
@@ -136,8 +414,8 @@ local function is_exempt(path)
 	if known_documents[basename] or known_configuration[basename] then return true end
 	if basename:match("^%.env%.") then return true end
 	local extension = basename:match("%.([^.]*)$")
-	return extension ~= nil and
-		(documentation_extensions[extension] == true or configuration_extensions[extension] == true)
+	return extension ~= nil and (documentation_extensions[extension] == true or
+		configuration_extensions[extension] == true or markup_extensions[extension] == true)
 end
 
 local function index_entry(path)
@@ -152,7 +430,8 @@ local function index_entry(path)
 	return nil
 end
 
-local function count_text_lines(object_id)
+-- Reads a staged blob by object ID; returns nil, "binary" for binary content.
+local function read_text_blob(object_id)
 	local size_output, size_error = command_output(
 		"git cat-file -s " .. shell_quote(object_id)
 	)
@@ -164,10 +443,8 @@ local function count_text_lines(object_id)
 	end
 	local pipe = io.popen("git cat-file blob " .. shell_quote(object_id), "r")
 	if not pipe then return nil, "could not read staged blob " .. object_id end
-	local newline_count = 0
+	local chunks = {}
 	local byte_count = 0
-	local contains_nul = false
-	local last_byte
 	while byte_count < expected_bytes do
 		local chunk = pipe:read(math.min(8192, expected_bytes - byte_count))
 		if not chunk or #chunk == 0 then
@@ -175,19 +452,16 @@ local function count_text_lines(object_id)
 			return nil, "staged blob ended early: " .. object_id
 		end
 		byte_count = byte_count + #chunk
-		local _, count = chunk:gsub("\n", "")
-		newline_count = newline_count + count
-		if chunk:find("\0", 1, true) then contains_nul = true end
-		last_byte = chunk:byte(#chunk)
+		chunks[#chunks + 1] = chunk
 	end
 	local extra = pipe:read(1)
 	pipe:close()
 	if extra then
 		return nil, "staged blob exceeded its reported size: " .. object_id
 	end
-	if contains_nul then return nil, "binary" end
-	if byte_count == 0 then return 0 end
-	return newline_count + (last_byte == 10 and 0 or 1)
+	local text = table.concat(chunks)
+	if text:find("\0", 1, true) then return nil, "binary" end
+	return text
 end
 
 local violations = {}
@@ -195,10 +469,13 @@ for _, path in ipairs(changed_paths) do
 	if not is_exempt(path) then
 		local mode, object_id = index_entry(path)
 		if mode == "100644" or mode == "100755" then
-			local lines, err = count_text_lines(object_id)
-			if lines == nil and err ~= "binary" then fail("cannot inspect " .. string.format("%q", path) .. ": " .. err) end
-			if lines and lines > LIMIT then
-				violations[#violations + 1] = { path = path, lines = lines }
+			local text, err = read_text_blob(object_id)
+			if text == nil and err ~= "binary" then fail("cannot inspect " .. string.format("%q", path) .. ": " .. err) end
+			if text then
+				local code, comment, blank = classify(text, syntax_for(path, text))
+				if code > LIMIT then
+					violations[#violations + 1] = { path = path, code = code, comment = comment, blank = blank }
+				end
 			end
 		end
 	end
@@ -207,21 +484,23 @@ end
 if #violations > 0 then
 	table.sort(violations, function(a, b) return a.path < b.path end)
 	for _, violation in ipairs(violations) do
-		io.stderr:write(string.format("  %q: %d lines (limit %d)\n", violation.path, violation.lines, LIMIT))
+		io.stderr:write(string.format("  %q: %d code lines (limit %d); %d comment and %d blank lines not counted\n",
+			violation.path, violation.code, LIMIT, violation.comment, violation.blank))
 	end
 	local advisory_repo = ENFORCE_BY_DEFAULT and advisory_repository()
 	local advisory = not ENFORCE_BY_DEFAULT or advisory_repo ~= nil
 	if advisory then
-		io.stderr:write("\nADVISORY: changed source files exceed 500 lines.\n")
+		io.stderr:write("\nADVISORY: changed source files exceed 500 code lines.\n")
 	else
-		io.stderr:write("\nERROR: commit blocked because changed source files exceed 500 lines.\n")
+		io.stderr:write("\nERROR: commit blocked because changed source files exceed 500 code lines.\n")
 	end
 	io.stderr:write([[
 Break each source file into coherent, independently testable, self-contained
 modules where the language and project structure make that practical. This
 usually reduces maintenance cost and makes omissions easier to catch.
 
-Documents and configuration files are exempt.
+Blank lines and comments are never counted. Documents, configuration, markup,
+stylesheets and templates are exempt.
 ]])
 	if advisory then
 		if advisory_repo then
