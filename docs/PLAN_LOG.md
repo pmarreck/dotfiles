@@ -328,3 +328,8 @@ Completed PLAN.md items retired by plan-retire, oldest retirement first.
 ## Retired 2026-11-26
 
 - [x] [Completed: preserve local work and reconcile GitHub (2026-11-25)] Require a complete ordered conflict block in one staged file, with opening, separator, and closing markers; test standalone separators, partial fragments, diff3, marker sizes, and staged-content behavior before implementation. Completed 2026-11-25 EST: the old gate failed 12 new expectations; the updated gate passes 64 checks and the complete 228-file suite. The added upstream tmux runner needed symbolic signal-name handling on macOS; its TERM and KILL integration checks now pass. Publication remains tracked above.
+
+## Retired 2026-11-27
+
+- [x] [Completed: no system Python; NFC file names (2026-11-09)] Verify the Linux Nix check (`checks.x86_64-linux.test`): completed 2026-11-25 EST for `3a04e750`, including the collision branch of `normalize-filenames_test` and the Linux `renameat2` path.
+- [x] [Current] Profile real interactive terminal startup to first usable prompt, attribute dominant phases, make only evidence-backed reversible improvements, and verify the actual route plus login/non-login and SSH semantics (done 2026-11-25 18:24 EST; commit 588b234).

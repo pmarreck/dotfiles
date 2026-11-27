@@ -1,0 +1,173 @@
+#!/usr/bin/env bash
+# Terminal graphics capability in LuaJIT against the Bash probes it replaced:
+# frozen copies of check_kitty_support and check_sixel_support run over an
+# environment matrix with infocmp and ps stubbed, and the terminfo reader
+# against real infocmp over a real terminfo database.
+set -u
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+work=$(mktemp -d "${TMPDIR:-/tmp}/fun_intro_terminal_test.XXXXXX") || exit 1
+trap 'command rm -rf -- "$work"' EXIT
+luajit_bin=$(command -v luajit) || { printf 'FAIL: luajit is not on PATH\n' >&2; exit 1; }
+fixtures="$root/bin/test/fixtures/fun_intro"
+
+tests=0
+fails=0
+pass() { ((tests++)) || :; printf 'PASS: %s\n' "$1"; }
+fail() { ((tests++)) || :; ((fails++)) || :; printf 'FAIL: %s\n' "$1" >&2; }
+drive() { LUA_PATH="$root/lib/?.lua;;" "$luajit_bin" "$fixtures/drive.lua" "$@"; }
+
+# --- Decision tables: every combination of the inputs the probes read ---
+for term in xterm-kitty xterm-256color xterm-ghostty mlterm yaft wezterm dumb ''; do
+	for program in WezTerm ghostty Apple_Terminal WarpTerminal Hyper ''; do
+		for kitty_window in '' 1; do
+			for wsl in '' WT_SESSION; do
+				for alacritty in none log window; do
+					for sixel in 0 1; do
+						for parent in cool-retro-term ghostty; do
+							log='' window=''
+							[[ $alacritty == log ]] && log=/tmp/alacritty.log
+							[[ $alacritty == window ]] && window=94371
+							printf '%s|%s|%s|%s|%s|%s|%s|%s\n' "$term" "$program" "$kitty_window" "$wsl" \
+								"$log" "$window" "$sixel" "$parent"
+						done
+					done
+				done
+			done
+		done
+	done
+done >"$work/rows"
+
+(
+	# shellcheck source=/dev/null
+	. "$fixtures/check_kitty_support.bash"
+	# shellcheck source=/dev/null
+	. "$fixtures/check_sixel_support.bash"
+	# The sourced probes call these stubs and read the row variables below.
+	# shellcheck disable=SC2329
+	infocmp() { if [[ $ROW_SIXEL == 1 ]]; then printf 'xterm-test|sixel capable,\n'; else printf 'xterm-test|plain,\n'; fi; }
+	# shellcheck disable=SC2329
+	ps() { printf '%s\n' "$ROW_PARENT"; }
+	export GREP_QUIET='grep -q' DEBUG_SHELLCONFIG=1
+	# shellcheck disable=SC2034
+	while IFS='|' read -r TERM TERM_PROGRAM KITTY_WINDOW_ID WSLENV ALACRITTY_LOG ALACRITTY_WINDOW_ID ROW_SIXEL ROW_PARENT; do
+		check_kitty_support 2>"$work/k.err"
+		kitty_code=$?
+		check_sixel_support 2>"$work/s.err"
+		sixel_code=$?
+		IFS= read -r -d '' kitty_message <"$work/k.err"
+		IFS= read -r -d '' sixel_message <"$work/s.err"
+		printf '%s|%s|%s|%s\n' "$kitty_code" "${kitty_message%$'\n'}" "$sixel_code" "${sixel_message%$'\n'}"
+	done <"$work/rows"
+) >"$work/terminal.expected"
+drive terminal "$work/rows" >"$work/terminal.actual"
+if cmp -s "$work/terminal.expected" "$work/terminal.actual"; then
+	pass "kitty and sixel verdicts and messages match the Bash probes on all $(wc -l <"$work/rows") rows"
+else
+	fail 'kitty or sixel verdicts differ from the Bash probes'
+	diff "$work/terminal.expected" "$work/terminal.actual" | head -6 >&2
+fi
+
+# --- Terminfo: the reader sees sixel exactly when `infocmp -1` prints it ---
+# compare_terminfo LABEL DB NAME...: one verdict per entry from each side.
+compare_terminfo() {
+	local label=$1 db=$2 name
+	shift 2
+	for name in "$@"; do
+		if infocmp -1 -A "$db" "$name" 2>/dev/null | grep -q sixel; then
+			printf '%s 1\n' "$name"
+		else
+			printf '%s 0\n' "$name"
+		fi
+	done >"$work/terminfo.expected"
+	drive terminfo "$db" "$@" >"$work/terminfo.actual"
+	if cmp -s "$work/terminfo.expected" "$work/terminfo.actual"; then
+		pass "$label"
+	else
+		fail "$label"
+		diff "$work/terminfo.expected" "$work/terminfo.actual" | head -6 >&2
+	fi
+}
+if ! command -v infocmp >/dev/null 2>&1 || ! command -v tic >/dev/null 2>&1; then
+	fail 'infocmp and tic are required as the oracle for the terminfo reader'
+else
+	# Synthetic entries put "sixel" everywhere a compiled entry can hold it.
+	# Plain infocmp hides the user-defined capability, so it must not count.
+	cat >"$work/synthetic.ti" <<'TERMINFO'
+sixdesc|terminal with sixel graphics,
+	am, cols#80,
+sixstr|string value carries it,
+	am, smcup=\E[?80sixel,
+sixext|user-defined capability name,
+	am, sixel,
+sixel-named|plain description,
+	am,
+plainterm|no graphics here,
+	am, cols#80, smcup=\E[?1049h,
+TERMINFO
+	tic -x -o "$work/synthetic" "$work/synthetic.ti" 2>"$work/tic.err" || cat "$work/tic.err" >&2
+	synthetic=(sixdesc sixstr sixext sixel-named plainterm)
+	compare_terminfo 'terminfo reader agrees with infocmp on sixel in names, descriptions, strings, and extensions' \
+		"$work/synthetic" "${synthetic[@]}"
+	if [[ "$(tr '\n' ' ' <"$work/terminfo.expected")" == 'sixdesc 1 sixstr 1 sixext 0 sixel-named 1 plainterm 0 ' ]]; then
+		pass 'infocmp oracle distinguishes the synthetic entries as expected'
+	else
+		fail "infocmp oracle verdicts changed: $(tr '\n' ' ' <"$work/terminfo.expected")"
+	fi
+
+	db=''
+	while IFS= read -r dir; do
+		[[ -d "$dir/x" || -d "$dir/78" ]] && { db=$dir; break; }
+	done < <(infocmp -D 2>/dev/null)
+	if [[ -z "$db" ]]; then
+		fail 'infocmp reports no terminfo database to compare against'
+	else
+		# Every entry whose bytes mention sixel, plus every 25th entry.
+		mapfile -t all < <(find -L "$db" -mindepth 2 -maxdepth 2 -type f -printf '%f\n' | LC_ALL=C sort -u)
+		mapfile -t sixel_entries < <(grep -l -R -a sixel "$db" | sed 's|.*/||' | LC_ALL=C sort -u)
+		names=("${sixel_entries[@]}")
+		for ((i = 0; i < ${#all[@]}; i += 25)); do names+=("${all[i]}"); done
+		compare_terminfo "terminfo reader agrees with infocmp on ${#names[@]} entries of the system database" \
+			"$db" "${names[@]}"
+	fi
+fi
+
+# --- Protocol choice: forced, startup facts, then detection ---
+cat >"$work/protocol.rows" <<'ROWS'
+DISPLAY_IMAGE_FORCE_PROTOCOL=sixel,KITTY_CAPABLE=true
+DISPLAY_IMAGE_FORCE_PROTOCOL=kitty,TERM_PROGRAM=Apple_Terminal
+DISPLAY_IMAGE_FORCE_PROTOCOL=bogus
+KITTY_CAPABLE=true,SIXEL_CAPABLE=true
+KITTY_CAPABLE=false,SIXEL_CAPABLE=true
+KITTY_CAPABLE=false,SIXEL_CAPABLE=false,TERM_PROGRAM=ghostty
+TERM_PROGRAM=ghostty
+TERM=xterm-256color
+TERM=dumb,TERMINFO_TEXT=dumb|has sixel,
+TERM=dumb,TERM_PROGRAM=Apple_Terminal
+ROWS
+cat >"$work/protocol.expected" <<'EXPECTED'
+DISPLAY_IMAGE_FORCE_PROTOCOL=sixel,KITTY_CAPABLE=true => sixel
+DISPLAY_IMAGE_FORCE_PROTOCOL=kitty,TERM_PROGRAM=Apple_Terminal => kitty
+DISPLAY_IMAGE_FORCE_PROTOCOL=bogus => nil (Unknown protocol 'bogus'. Use 'kitty' or 'sixel'.)
+KITTY_CAPABLE=true,SIXEL_CAPABLE=true => kitty
+KITTY_CAPABLE=false,SIXEL_CAPABLE=true => sixel
+KITTY_CAPABLE=false,SIXEL_CAPABLE=false,TERM_PROGRAM=ghostty => nil (No supported graphics protocol detected (tried kitty and sixel).)
+TERM_PROGRAM=ghostty => kitty
+TERM=xterm-256color => sixel
+TERM=dumb,TERMINFO_TEXT=dumb|has sixel, => sixel
+TERM=dumb,TERM_PROGRAM=Apple_Terminal => nil (No supported graphics protocol detected (tried kitty and sixel).)
+EXPECTED
+drive protocol "$work/protocol.rows" >"$work/protocol.actual"
+if cmp -s "$work/protocol.expected" "$work/protocol.actual"; then
+	pass 'image protocol honors forcing, then the shell'"'"'s exported facts, then detection'
+else
+	fail 'image protocol choice differs'
+	diff "$work/protocol.expected" "$work/protocol.actual" >&2
+fi
+
+if ((fails == 0)); then
+	printf 'All %s fun_intro terminal checks passed.\n' "$tests"
+else
+	printf '%s of %s fun_intro terminal checks failed.\n' "$fails" "$tests" >&2
+fi
+exit "$fails"

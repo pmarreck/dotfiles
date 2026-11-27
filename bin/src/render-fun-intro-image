@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Regenerate the terminal intro's pre-rendered image streams from the source
+# photograph, so shell startup never needs ImageMagick. Run this after changing
+# bin/data/inthebeginning.jpg and commit both outputs.
+#
+#   bin/data/inthebeginning.png  PNG the Kitty graphics protocol transmits
+#   bin/data/inthebeginning.six  Sixel stream replayed verbatim
+#
+# Both use the geometry the intro has always requested (fit within 600x360).
+set -u
+
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P) || exit 1
+source_image="$root/bin/data/inthebeginning.jpg"
+command -v magick >/dev/null 2>&1 || { printf 'render-fun-intro-image: magick is required\n' >&2; exit 1; }
+[ -r "$source_image" ] || { printf 'render-fun-intro-image: missing %s\n' "$source_image" >&2; exit 1; }
+
+# -strip and the excluded date and time chunks keep the PNG byte-stable.
+magick "$source_image" -geometry 600x360 -strip -define png:exclude-chunks=date,time \
+	"png:$root/bin/data/inthebeginning.png" || exit 1
+magick "$source_image" -geometry 600x360 -compress none -type truecolor \
+	"sixel:$root/bin/data/inthebeginning.six" || exit 1
+printf 'Rendered %s and %s\n' "$root/bin/data/inthebeginning.png" "$root/bin/data/inthebeginning.six"

@@ -61,6 +61,7 @@
           perl
           util-linux   # hexdump
           xxd
+          ncurses      # infocmp, the oracle for the intro's terminfo reader
           imagemagick  # magick
           libjxl       # cjxl, djxl
           ffmpeg       # ffmpeg, ffprobe
@@ -92,9 +93,6 @@
             # would prove nothing about Linux.
             postPatch = ''
               patchShebangs test bin .githooks .global-githooks .repository-budget-hooks
-              substituteInPlace bin/warhammer_quote \
-                --replace-fail '#!/usr/bin/env yuerun' '#!${pkgs.coreutils}/bin/env yuerun'
-              touch -r bin/warhammer_quote.lua bin/warhammer_quote
             '';
 
             checkPhase = ''

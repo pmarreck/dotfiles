@@ -177,30 +177,11 @@ fi
 export SIXEL_ENV SIXEL_CAPABLE KITTY_CAPABLE IMAGE_CAPABLE
 
 # Terminal tabs can start interactive Bash without making it a login shell.
+# The intro renders its pick live in one LuaJIT process (lib/fun_intro), on
+# the LuaJIT .pathconfig resolved; images join the pool only when
+# IMAGE_CAPABLE says this terminal can show them.
 if ${INTERACTIVE_SHELL:-false} && [ -t 0 ] && [ -t 1 ] && [ -z "${SHELL_STARTUP_BENCHMARK:-}" ]; then
-	# Decoration via cache: display previously-cached pick instantly, then
-	# bg-fork a regenerator so the NEXT shell has a fresh pick ready. The
-	# regenerator uses expect to allocate a PTY (preserves ANSI), times out
-	# after 5s (expect's `set timeout 5`), and logs to error.log on failure.
-	# Cold start (no cache yet): fall through to a normal synchronous fun_intro
-	# so the user sees something this time too, AND prime the cache for next.
-	# Cache is split into two capability buckets — image_capable (may contain
-	# kitty/sixel escapes) and image_incapable (text-only). Read the bucket
-	# matching THIS terminal so we never replay graphics into a terminal that
-	# can't render them.
-	if ${IMAGE_CAPABLE:-false}; then
-		_fi_cache="${XDG_CACHE_HOME:-$HOME/.cache}/dotfiles/fun_intro/cached.image_capable"
-	else
-		_fi_cache="${XDG_CACHE_HOME:-$HOME/.cache}/dotfiles/fun_intro/cached.image_incapable"
-	fi
-	if [ -s "$_fi_cache" ]; then
-		cat "$_fi_cache"
-	else
-		fun_intro
-	fi
-	# Double-fork so the regenerator survives this shell's exit.
-	( ( fun_intro --regenerate-cache </dev/null >/dev/null 2>&1 & ) & ) </dev/null >/dev/null 2>&1
-	unset _fi_cache
+	"${_SHELL_STARTUP_LUAJIT:-luajit}" "$HOME/dotfiles/bin/fun_intro"
 fi
 
 [ -n "$DEBUG_SHELLCONFIG" ] && echo "Exiting $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")"

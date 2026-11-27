@@ -1,0 +1,114 @@
+#!/usr/bin/env bash
+# shellcheck disable=SC1003 # '\033\\' is the escape-sequence terminator, not a quote escape.
+# The intro image without ImageMagick: base64 against coreutils, Kitty framing
+# against a frozen copy of display_image's Bash chunker, and the committed
+# pre-rendered assets against the geometry the intro always requested.
+set -u
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+work=$(mktemp -d "${TMPDIR:-/tmp}/fun_intro_image_test.XXXXXX") || exit 1
+trap 'command rm -rf -- "$work"' EXIT
+luajit_bin=$(command -v luajit) || { printf 'FAIL: luajit is not on PATH\n' >&2; exit 1; }
+png="$root/bin/data/inthebeginning.png"
+six="$root/bin/data/inthebeginning.six"
+jpg="$root/bin/data/inthebeginning.jpg"
+
+tests=0
+fails=0
+pass() { ((tests++)) || :; printf 'PASS: %s\n' "$1"; }
+fail() { ((tests++)) || :; ((fails++)) || :; printf 'FAIL: %s\n' "$1" >&2; }
+same() { if cmp -s "$2" "$3"; then pass "$1"; else fail "$1"; fi; }
+lua() { LUA_PATH="$root/lib/?.lua;;" "$luajit_bin" -e "$1" /dev/null; }
+
+# display_image's Kitty framing, frozen from the Bash version, fed base64 text.
+old_kitty_frame() {
+	local png_data=$1
+	local chunk_size=4096
+	local data_len=${#png_data}
+	local offset=0
+	local remaining=$data_len
+	if [[ $remaining -le $chunk_size ]]; then
+		printf '\033_Ga=T,f=100;%s\033\\' "$png_data"
+	else
+		local first=1
+		while [[ $remaining -gt 0 ]]; do
+			local chunk="${png_data:$offset:$chunk_size}"
+			if [[ $first -eq 1 ]]; then
+				if [[ $remaining -le $chunk_size ]]; then
+					printf '\033_Ga=T,f=100;%s\033\\' "$chunk"
+				else
+					printf '\033_Ga=T,f=100,m=1;%s\033\\' "$chunk"
+				fi
+				first=0
+			elif [[ $remaining -le $chunk_size ]]; then
+				printf '\033_Gm=0;%s\033\\' "$chunk"
+			else
+				printf '\033_Gm=1;%s\033\\' "$chunk"
+			fi
+			offset=$((offset + chunk_size))
+			remaining=$((remaining - ${#chunk}))
+		done
+	fi
+	echo
+}
+
+# Inputs straddling every padding case and the 4096-character chunk edge.
+sizes=(0 1 2 3 4 5 31 3071 3072 3073 6144 6145 9000)
+for size in "${sizes[@]}"; do
+	head -c "$size" /dev/urandom >"$work/in.$size"
+done
+cp "$png" "$work/in.png"
+inputs=("${sizes[@]}" png)
+
+for name in "${inputs[@]}"; do
+	file="$work/in.$name"
+	base64 -w 0 <"$file" >"$work/b64.expected"
+	F="$file" lua 'local image = require("fun_intro.image")
+		io.write(image.base64(io.open(os.getenv("F"), "rb"):read("*a")))' >"$work/b64.actual"
+	same "base64 matches coreutils for input $name" "$work/b64.expected" "$work/b64.actual"
+
+	old_kitty_frame "$(base64 -w 0 <"$file")" >"$work/kitty.expected"
+	F="$file" lua 'local image = require("fun_intro.image")
+		io.write(image.kitty(io.open(os.getenv("F"), "rb"):read("*a")))' >"$work/kitty.actual"
+	same "Kitty framing matches display_image for input $name" "$work/kitty.expected" "$work/kitty.actual"
+done
+
+# The committed PNG fits the source photograph inside 600x360, as
+# `display_image -g 600x360` rendered it.
+read -r src_w src_h < <(file -b "$jpg" | grep -o '[0-9][0-9]*x[0-9][0-9]*' | tail -n 1 | tr x ' ')
+read -r png_w png_h < <(F="$png" lua 'local image = require("fun_intro.image")
+	print(image.png_size(io.open(os.getenv("F"), "rb"):read("*a")))')
+want_h=$(( (src_h * 600 + src_w / 2) / src_w ))
+if [[ "$png_w" == 600 && "$png_h" == "$want_h" && "$want_h" -le 360 ]]; then
+	pass "pre-rendered PNG is ${png_w}x${png_h}, the source ${src_w}x${src_h} fit within 600x360"
+else
+	fail "pre-rendered PNG is ${png_w}x${png_h}; expected 600x${want_h} from source ${src_w}x${src_h}"
+fi
+if [[ "$(head -c 2 "$six")" == $'\033P' && "$(tail -c 2 "$six")" == $'\033\\' ]] &&
+	grep -q -a '"1;1;600;270' "$six"; then
+	pass 'pre-rendered Sixel stream is one 600x270 DCS sequence'
+else
+	fail 'pre-rendered Sixel stream is not a 600x270 DCS sequence'
+fi
+
+# End to end through the command, with each protocol forced.
+DISPLAY_IMAGE_FORCE_PROTOCOL=kitty "$root/bin/inthebeginning" >"$work/cmd.kitty" 2>"$work/cmd.err"
+old_kitty_frame "$(base64 -w 0 <"$png")" >"$work/kitty.png.expected"
+same 'inthebeginning sends the PNG over Kitty exactly as display_image did' "$work/kitty.png.expected" "$work/cmd.kitty"
+DISPLAY_IMAGE_FORCE_PROTOCOL=sixel "$root/bin/inthebeginning" >"$work/cmd.sixel" 2>>"$work/cmd.err"
+same 'inthebeginning replays the Sixel stream verbatim' "$six" "$work/cmd.sixel"
+result=$(env -i PATH="$PATH" HOME="$work" TERM=dumb KITTY_CAPABLE=false SIXEL_CAPABLE=false \
+	"$root/bin/inthebeginning" 2>&1)
+status=$?
+if ((status == 1)) && [[ "$result" == *"No supported graphics protocol detected"* && "$result" != *$'\033'* ]]; then
+	pass 'inthebeginning refuses, without escape bytes, where no graphics protocol works'
+else
+	fail "inthebeginning without graphics: status $status: $result"
+fi
+
+if ((fails == 0)); then
+	printf 'All %s fun_intro image checks passed.\n' "$tests"
+else
+	printf '%s of %s fun_intro image checks failed.\n' "$fails" "$tests" >&2
+fi
+exit "$fails"

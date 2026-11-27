@@ -1,0 +1,181 @@
+#!/usr/bin/env bash
+# Differential checks for the intro's LuaJIT text picks. Each oracle is the
+# pipeline the Bash command used to run (cut | fold, the original awk
+# programs, date and bc), with the random choice forced on both sides: awk's
+# rand() reads the same values the Lua random source returns.
+set -u
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+work=$(mktemp -d "${TMPDIR:-/tmp}/fun_intro_text_test.XXXXXX") || exit 1
+trap 'command rm -rf -- "$work"' EXIT
+luajit_bin=$(command -v luajit) || { printf 'FAIL: luajit is not on PATH\n' >&2; exit 1; }
+locale_archive="${DOTFILES_TEST_LOCALE_ARCHIVE:-${LOCALE_ARCHIVE-}}"
+drive_lua="$root/bin/test/fixtures/fun_intro/drive.lua"
+data="$root/bin/data"
+
+tests=0
+fails=0
+pass() { ((tests++)) || :; printf 'PASS: %s\n' "$1"; }
+fail() { ((tests++)) || :; ((fails++)) || :; printf 'FAIL: %s\n' "$1" >&2; }
+same() { # same LABEL EXPECTED_FILE ACTUAL_FILE
+	if cmp -s "$2" "$3"; then pass "$1"; else
+		fail "$1"
+		diff <(od -c "$2") <(od -c "$3") | head -8 >&2
+	fi
+}
+in_locale() { # in_locale LOCALE COMMAND...
+	env ${locale_archive:+LOCALE_ARCHIVE="$locale_archive"} LC_ALL="$1" "${@:2}"
+}
+drive() { # drive LOCALE MODE ARGS...
+	in_locale "$1" env LUA_PATH="$root/lib/?.lua;;" "$luajit_bin" "$drive_lua" "${@:2}"
+}
+
+locales=(C)
+if [[ "$(in_locale en_US.UTF-8 locale charmap 2>/dev/null)" == UTF-8 ]]; then
+	locales+=(en_US.UTF-8)
+elif [[ "$(uname -s)" == Linux ]]; then
+	fail 'en_US.UTF-8 is unavailable, so multibyte folding is untested; set DOTFILES_TEST_LOCALE_ARCHIVE'
+fi
+
+# --- chuck: every record through cut | fold, in each locale and width ---
+chuck_file="$data/chuck_norris.txt"
+chuck_count=$(wc -l <"$chuck_file")
+picks=(1 2 "$((chuck_count / 2))" "$chuck_count")
+for loc in "${locales[@]}"; do
+	for width in 20 37 80 132; do
+		{
+			in_locale "$loc" cut -d'|' -f2- "$chuck_file" | in_locale "$loc" fold -s -w "$width"
+			for index in "${picks[@]}"; do
+				sed -n "${index}p" "$chuck_file" | in_locale "$loc" cut -d'|' -f2- | in_locale "$loc" fold -s -w "$width"
+			done
+		} >"$work/chuck.expected"
+		drive "$loc" chuck "$width" "$chuck_file" "${picks[@]}" >"$work/chuck.actual"
+		same "chuck matches cut | fold for all $chuck_count records at width $width in $loc" \
+			"$work/chuck.expected" "$work/chuck.actual"
+	done
+done
+
+# --- fold: generated edge cases against GNU fold ---
+# Inputs are valid UTF-8 without backspaces. GNU fold 9.12 measures those two
+# inconsistently: a backspace after a tab subtracts the width of the last
+# printable character (none at the start of input), and invalid bytes count
+# one column when first read but none when re-measured after a break. The
+# intro's data has neither, which the next check asserts.
+if ! grep -q $'\b' "$data/chuck_norris.txt" &&
+	[[ -z "$(in_locale en_US.UTF-8 grep -a -v -x '.*' "$data/chuck_norris.txt")" ]]; then
+	pass 'chuck_norris.txt is valid UTF-8 without backspaces, the input fold_spaces matches GNU fold on'
+else
+	fail 'chuck_norris.txt has backspaces or invalid UTF-8, where fold_spaces and GNU fold 9.12 disagree'
+fi
+tokens=(a b xyz longwordlongword ' ' ' ' '  ' '\t' '\r' '\n' '\303\251' '\346\227\245'
+	'e\314\201' '\033' '\302\240' '\357\273\277' '\343\200\200' '\342\200\202')
+RANDOM=4242
+cases=()
+for ((c = 0; c < 64; c++)); do
+	file="$work/fold.$c"
+	: >"$file"
+	for ((t = RANDOM % 40 + 1; t > 0; t--)); do
+		printf '%b' "${tokens[RANDOM % ${#tokens[@]}]}" >>"$file"
+	done
+	cases+=("$file")
+done
+widths=(1 2 3 5 8 13)
+for loc in "${locales[@]}"; do
+	: >"$work/fold.expected"
+	for width in "${widths[@]}"; do
+		for file in "${cases[@]}"; do
+			in_locale "$loc" fold -s -w "$width" "$file" >>"$work/fold.expected"
+			printf '\0' >>"$work/fold.expected"
+		done
+	done
+	widths_csv=$(IFS=,; printf '%s' "${widths[*]}")
+	drive "$loc" fold "$widths_csv" "${cases[@]}" >"$work/fold.actual"
+	same "fold_spaces matches GNU fold -s on ${#cases[@]} generated inputs at ${#widths[@]} widths in $loc" \
+		"$work/fold.expected" "$work/fold.actual"
+done
+
+# --- bashorg_quote: the original awk program with rand() supplied ---
+bashorg_file="$root/bin/src/bashorg_quotes_unwrapped.tsv"
+awk 'BEGIN { srand(7); for (i = 0; i < 300; i++) printf "%.17g\n", rand(); print 0; print 0.99999999999999989 }' \
+	>"$work/bashorg.units"
+awk -F'\t' -v units="$work/bashorg.units" '
+	{
+		score = $2 + 10;
+		quotes[NR] = $0;
+		total += score;
+		scores[NR] = total;
+	}
+	END {
+		while ((getline u < units) > 0) {
+			random_num = int(u * total);
+			for (i = 1; i <= NR; i++) {
+				if (scores[i] >= random_num) {
+					split(quotes[i], fields, "\t");
+					gsub(/\\n/, "\n", fields[3]);
+					print fields[3];
+					break;
+				}
+			}
+			printf "%c", 0;
+		}
+	}
+' "$bashorg_file" >"$work/bashorg.expected"
+drive C bashorg "$work/bashorg.units" "$bashorg_file" >"$work/bashorg.actual"
+same 'bashorg_quote matches the original weighted awk selection for 302 rand() values' \
+	"$work/bashorg.expected" "$work/bashorg.actual"
+
+# --- just_one_taoup: the original awk program at every index ---
+taoup_file="$data/taoup.ansi"
+awk '/^-{3,}/ { next } !/^$/ { c++ } END { for (i = 0; i < c; i++) printf "%.17g\n", (i + 0.5) / c }' \
+	"$taoup_file" >"$work/taoup.units"
+awk -v units="$work/taoup.units" '
+	/^-{3,}/ { header = $0; next }
+	!/^$/ { lines[count++] = $0; headers[count - 1] = header; }
+	END {
+		while ((getline u < units) > 0) {
+			randIndex = int(u * count);
+			print headers[randIndex];
+			print lines[randIndex];
+			printf "%c", 0;
+		}
+	}
+' "$taoup_file" >"$work/taoup.expected"
+drive C taoup "$work/taoup.units" "$taoup_file" >"$work/taoup.actual"
+same "just_one_taoup matches the original awk at all $(wc -l <"$work/taoup.units") indexes" \
+	"$work/taoup.expected" "$work/taoup.actual"
+
+# --- warhammer_quote: the range covers every non-blank line, both ends reachable ---
+warhammer_file="$data/warhammer_quotes.txt"
+{
+	grep -c -v '^[[:space:]]*$' "$warhammer_file"
+	printf '%s!\n' "$(grep -v '^[[:space:]]*$' "$warhammer_file" | head -n 1)"
+	printf '%s!\n' "$(grep -v '^[[:space:]]*$' "$warhammer_file" | tail -n 1)"
+} >"$work/warhammer.expected"
+drive C warhammer "$warhammer_file" >"$work/warhammer.actual"
+same 'warhammer_quote asks for exactly 1..N non-blank quotes and reaches both ends' \
+	"$work/warhammer.expected" "$work/warhammer.actual"
+
+# --- times_older_than_samson: date -d and bc scale=50 at fixed clocks ---
+nows=(1700000000 1710054000 1764200000 2000000000)
+for zone in UTC0 'EST5EDT,M3.2.0,M11.1.0'; do
+	for now in "${nows[@]}"; do
+		peter=$(TZ=$zone date -d 1972-04-05 +%s)
+		samson=$(TZ=$zone date -d 2021-06-25 +%s)
+		ratio=$(echo "scale=50; $((now - peter)) / $((now - samson))" | BC_LINE_LENGTH=0 bc)
+		printf 'Peter, you are %s times older than Samson.\n' "$ratio"
+	done >"$work/samson.expected"
+	TZ=$zone drive C samson "${nows[@]}" >"$work/samson.actual"
+	same "times_older_than_samson matches date and bc in TZ=$zone" "$work/samson.expected" "$work/samson.actual"
+done
+
+# --- asciidragon: the frozen output of the Bash version ---
+drive C dragon >"$work/dragon.actual"
+same 'asciidragon matches the Bash version byte for byte' \
+	"$root/bin/test/fixtures/fun_intro/asciidragon.out" "$work/dragon.actual"
+
+if ((fails == 0)); then
+	printf 'All %s fun_intro text checks passed.\n' "$tests"
+else
+	printf '%s of %s fun_intro text checks failed.\n' "$fails" "$tests" >&2
+fi
+exit "$fails"

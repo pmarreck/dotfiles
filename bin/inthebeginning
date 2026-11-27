@@ -1,21 +1,5 @@
-#!/usr/bin/env bash
-
-inthebeginning() {
-	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-	# Get the directory where this script is located
-	local SCRIPT_PATH=$(dirname "$(readlink -f "$BASH_SOURCE")")
-	needs magick please install imagemagick && display_image -g 600x360 "$SCRIPT_PATH/data/inthebeginning.jpg"
-}
-
-# Run the function if this script is executed directly
-if ! (return 0 2>/dev/null); then
-	# Check if we are running tests
-	if [ "$1" = "--test" ]; then
-		# Run tests from the test file
-		_test_file="$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
-		if [ -f "$_test_file" ]; then . "$_test_file" > /dev/null; fi
-	else
-		# If called directly, pass all arguments to the function
-		$(basename "${0##\-}") "$@"
-	fi
-fi
+#!/usr/bin/env luajit
+-- inthebeginning: show the pre-rendered "In the beginning" image over Kitty or Sixel graphics.
+local root = (arg[0]:match("^(.*)/[^/]+$") or ".") .. "/.."
+package.path = root .. "/lib/?.lua;" .. package.path
+os.exit(require("fun_intro.cli").pick_command("inthebeginning", arg, root))

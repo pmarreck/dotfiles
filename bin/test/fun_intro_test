@@ -1,155 +1,124 @@
 #!/usr/bin/env bash
-# fun_intro_test — capability-bucketed cache behavior.
-#
-# Verifies:
-#   - --cache-path resolves to the bucket matching IMAGE_CAPABLE (default = incapable, fail-safe)
-#   - --pick=<name> runs a specific named tool (deterministic stand-in for the random pool)
-#   - --regenerate-cache --pick=<text-name> writes to BOTH buckets sharing one inode (hardlink saves IO)
-#   - --regenerate-cache --pick=<image-name> writes ONLY image_capable; image_incapable left untouched
-#   - hardlink failure surfaces loudly (no silent cp fallback)
-
+# check() evaluates its condition string, so single-quoted expansions and
+# variables read only there are intended.
+# shellcheck disable=SC2016,SC2034
+# fun_intro_test: the LuaJIT intro's command line, pick registry, pools, and
+# mandelbash memo. Picks themselves are checked against their Bash
+# originals in fun_intro_text_test, fun_intro_image_test, and
+# fun_intro_terminal_test.
 set -u
 
-PATH="$HOME/dotfiles/bin:$PATH"
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+work=$(mktemp -d "${TMPDIR:-/tmp}/fun_intro_test.XXXXXX") || exit 1
+trap 'command rm -rf -- "$work"' EXIT
+luajit_bin=$(command -v luajit) || { printf 'FAIL: luajit is not on PATH\n' >&2; exit 1; }
+drive() { LUA_PATH="$root/lib/?.lua;;" "$luajit_bin" "$root/bin/test/fixtures/fun_intro/drive.lua" "$@"; }
 
 tests=0
 fails=0
+pass() { ((tests++)) || :; printf 'PASS: %s\n' "$1"; }
+fail() { ((tests++)) || :; ((fails++)) || :; printf 'FAIL: %s\n' "$1" >&2; }
+check() { if eval "$2"; then pass "$1"; else fail "$1"; fi; }
 
-assert_eq() {
-	local actual="$1" expected="$2" msg="$3"
-	((tests++))
-	if [ "$actual" = "$expected" ]; then
-		echo "✓ $msg"
-	else
-		{
-			echo "✗ $msg"
-			echo "  expected: $expected"
-			echo "  actual:   $actual"
-		} >&2
-		((fails++)) || :
-	fi
-}
+# A private cache and a stub fortune: fortune is not part of the suite's tools.
+mkdir -p "$work/stub" "$work/cache"
+printf '#!/bin/sh\nprintf "FORTUNE-STUB\\n"\n' >"$work/stub/fortune"
+chmod +x "$work/stub/fortune"
+intro() { env XDG_CACHE_HOME="$work/cache" PATH="$work/stub:$PATH" "$root/bin/fun_intro" "$@"; }
 
-assert_true() {
-	local cond="$1" msg="$2"
-	((tests++))
-	if eval "$cond"; then
-		echo "✓ $msg"
-	else
-		echo "✗ $msg (failed: $cond)" >&2
-		((fails++)) || :
-	fi
-}
+# The pools, frozen from the Bash version's lists.
+text_pool='fortune warhammer_quote bashorg_quote chuck mandelbash asciidragon just_one_taoup times_older_than_samson'
+image_pool='inthebeginning'
 
-# Isolated cache dir per run. fun_intro honors XDG_CACHE_HOME.
-TEST_CACHE=$(mktemp -d --tmpdir fun_intro_test.XXXXXX)
-trap 'rm -rf "$TEST_CACHE"' EXIT
-export XDG_CACHE_HOME="$TEST_CACHE"
-CACHE_DIR="$TEST_CACHE/dotfiles/fun_intro"
-CAP="$CACHE_DIR/cached.image_capable"
-INCAP="$CACHE_DIR/cached.image_incapable"
+# --- Command line ---
+result=$(intro --help 2>&1)
+check '--help prints usage' '[[ $? == 0 && "$result" == *"--pick=NAME"* ]]'
+result=$(intro --bogus 2>&1)
+status=$?
+check 'an unknown argument exits 2' '[[ $status == 2 && "$result" == *"unknown arg: --bogus"* ]]'
+result=$(intro --pick=nope 2>&1)
+status=$?
+check 'an unknown pick exits 127' '[[ $status == 127 && "$result" == *"unknown pick"* ]]'
 
-# Returns inode number, or MISSING:<path> if the file is absent —
-# prevents false-equal comparisons between two missing files.
-inode_of() {
-	if [ ! -e "$1" ]; then
-		printf 'MISSING:%s\n' "$1"
-		return
-	fi
-	ls -di "$1" | awk '{print $1}'
-}
+# --- Every pick runs by name ---
+for name in $text_pool $image_pool; do
+	result=$(DISPLAY_IMAGE_FORCE_PROTOCOL=kitty intro --pick="$name" 2>"$work/err")
+	status=$?
+	check "--pick=$name prints its pick" '[[ $status == 0 && -n "$result" && ! -s "$work/err" ]]'
+done
+result=$(intro --pick=fortune)
+check '--pick=fortune runs the fortune on PATH' '[[ "$result" == FORTUNE-STUB ]]'
+result=$(env PATH="$work/empty" "$luajit_bin" "$root/bin/fun_intro" --pick=fortune 2>&1)
+status=$?
+check 'a missing fortune is reported, not hidden' \
+	'[[ $status == 1 && "$result" == *"Tried to call '"'"'fortune'"'"', but it was not defined"* ]]'
 
-# ─── --cache-path resolution ───────────────────────────────────────────────
-echo "==> --cache-path resolution"
+# --- The registry matches the pools and the standalone commands ---
+registry=$(LUA_PATH="$root/lib/?.lua;;" "$luajit_bin" -e 'local p = require("fun_intro.picks")
+	print(table.concat(p.TEXT, " ")); print(table.concat(p.IMAGE, " "))' /dev/null)
+check 'the registry pools match the Bash version' '[[ "$registry" == "$text_pool"$'"'"'\n'"'"'"$image_pool" ]]'
+missing=''
+for name in $text_pool $image_pool; do
+	case $name in fortune | mandelbash) continue ;; esac
+	grep -q "pick_command(\"$name\"" "$root/bin/$name" 2>/dev/null || missing+=" $name"
+done
+check 'each LuaJIT pick has a standalone command of the same name' '[[ -z "$missing" ]]' ||
+	printf '  missing:%s\n' "$missing" >&2
+strays=''
+while IFS= read -r command_file; do
+	name=$(sed -n 's/.*pick_command("\([^"]*\)".*/\1/p' "$command_file")
+	[[ " $text_pool $image_pool " == *" $name "* && "$(basename "$command_file")" == "$name" ]] || strays+=" $command_file"
+done < <(grep -l -s 'fun_intro.cli").pick_command(' "$root"/bin/*)
+check 'every standalone pick command names a registered pick' '[[ -z "$strays" ]]'
 
-actual=$(IMAGE_CAPABLE=true fun_intro --cache-path)
-assert_eq "$actual" "$CAP" "--cache-path → image_capable when IMAGE_CAPABLE=true"
+# --- Random choice draws from the right pool ---
+pool_names() { grep -o "^Running '[a-z_]*' from fun_intro" | sed "s/^Running '\([a-z_]*\)'.*/\1/" | tr '\n' ' '; }
+read -ra text_names <<<"$text_pool"
+result=$(drive choose false "$root" "${#text_names[@]}" | pool_names)
+check 'without image support, the random source chooses among the text picks only' '[[ "$result" == "$text_pool " ]]'
+result=$(drive choose true "$root" "$((${#text_names[@]} + 1))" | pool_names)
+check 'with image support, the image picks join the pool' '[[ "$result" == "$text_pool $image_pool " ]]'
+escapes=0
+for ((run = 0; run < 12; run++)); do
+	result=$(env -u IMAGE_CAPABLE XDG_CACHE_HOME="$work/cache" PATH="$work/stub:$PATH" "$root/bin/fun_intro") || ((escapes++))
+	[[ -n "$result" && "$result" != *$'\033_G'* && "$result" != *$'\033P'* ]] || ((escapes++))
+done
+check 'random intros succeed and never send image escapes without IMAGE_CAPABLE' '((escapes == 0))'
 
-actual=$(IMAGE_CAPABLE=false fun_intro --cache-path)
-assert_eq "$actual" "$INCAP" "--cache-path → image_incapable when IMAGE_CAPABLE=false"
+# --- mandelbash memo ---
+memo_dir="$work/cache/dotfiles/fun_intro"
+expected_mandel="$work/mandel.expected"
+bash "$root/bin/mandelbash" >"$expected_mandel"
+intro --pick=mandelbash >"$work/mandel.1"
+intro --pick=mandelbash >"$work/mandel.2"
+mapfile -t memo_files < <(find "$memo_dir" -type f)
+check 'mandelbash output is the script'"'"'s output, first and memoized' \
+	'cmp -s "$expected_mandel" "$work/mandel.1" && cmp -s "$expected_mandel" "$work/mandel.2"'
+check 'the memo is one file keyed by the script hash, with no temporary leftovers' \
+	'[[ ${#memo_files[@]} == 1 && "${memo_files[0]##*/}" =~ ^mandelbash\.[0-9a-f]{16}$ ]]'
+printf 'MEMO-MARKER\n' >"${memo_files[0]}"
+result=$(intro --pick=mandelbash)
+check 'a memoized render is replayed without running the script' '[[ "$result" == MEMO-MARKER ]]'
 
-actual=$(unset IMAGE_CAPABLE; fun_intro --cache-path)
-assert_eq "$actual" "$INCAP" "--cache-path → image_incapable when IMAGE_CAPABLE unset (fail-safe)"
+printf '#!/bin/sh\nprintf "ok\\n"\n' >"$work/ok.sh"
+printf '#!/bin/sh\nprintf "partial"\nexit 3\n' >"$work/bad.sh"
+chmod +x "$work/ok.sh" "$work/bad.sh"
+drive mandel "$work" >"$work/mandel.out"
+cat >"$work/mandel.want" <<'WANT'
+render 1
+render 1
+render 2
+nil mandelbash failed with status 3
+runs=3 files=2
+WANT
+printf 'real failure: nil mandelbash failed with status 3\nunwritable cache: ok\n' >>"$work/mandel.want"
+check 'the memo renders once per script version and never stores a failed render' \
+	'cmp -s "$work/mandel.want" "$work/mandel.out"' || diff "$work/mandel.want" "$work/mandel.out" >&2
+check 'a failed real render leaves no cache file behind' '[[ ! -e "$work/bad-cache" || -z "$(find "$work/bad-cache" -type f)" ]]'
 
-# ─── --pick=<name> runs a specific named tool ──────────────────────────────
-echo "==> --pick=<name>"
-# `echo` with no args produces a single LF; $(...) strips it → "".
-out=$(fun_intro --pick=echo 2>/dev/null)
-assert_eq "$out" "" "--pick=echo invokes echo (empty stdout)"
-
-# ─── --regenerate-cache --pick=<text-name>: BOTH buckets, hardlinked ───────
-echo "==> --regenerate-cache with text pick"
-rm -rf "$CACHE_DIR"
-# Use a known text-only entry from the pool. fortune is universal; fall back if absent.
-if command -v fortune >/dev/null 2>&1; then
-	text_pick="fortune"
-elif command -v mandelbash >/dev/null 2>&1; then
-	text_pick="mandelbash"
+if ((fails == 0)); then
+	printf 'All %s fun_intro checks passed.\n' "$tests"
 else
-	text_pick=""
-fi
-if [ -n "$text_pick" ]; then
-	fun_intro --regenerate-cache --pick="$text_pick" 2>/dev/null
-	rc=$?
-	assert_eq "$rc" "0" "--regenerate-cache --pick=$text_pick exits 0"
-	assert_true '[ -f "$CAP" ]' "image_capable bucket created on text pick"
-	assert_true '[ -f "$INCAP" ]' "image_incapable bucket created on text pick"
-	cap_inode=$(inode_of "$CAP")
-	incap_inode=$(inode_of "$INCAP")
-	assert_eq "$cap_inode" "$incap_inode" "buckets share an inode after text pick (hardlink)"
-else
-	echo "(skipped: no text-pick tool on PATH)" >&2
-fi
-
-# ─── --regenerate-cache --pick=<image-name>: only image_capable updated ────
-echo "==> --regenerate-cache with image pick"
-if [ -n "$text_pick" ] && command -v inthebeginning >/dev/null 2>&1; then
-	before_incap_inode=$(inode_of "$INCAP")
-	before_incap_sha=$(shasum -a 256 "$INCAP" | awk '{print $1}')
-
-	fun_intro --regenerate-cache --pick=inthebeginning 2>/dev/null
-	rc=$?
-	assert_eq "$rc" "0" "--regenerate-cache --pick=inthebeginning exits 0"
-
-	after_incap_inode=$(inode_of "$INCAP")
-	after_incap_sha=$(shasum -a 256 "$INCAP" | awk '{print $1}')
-	assert_eq "$after_incap_inode" "$before_incap_inode" "image_incapable inode unchanged after image pick"
-	assert_eq "$after_incap_sha" "$before_incap_sha" "image_incapable content unchanged after image pick"
-
-	new_cap_inode=$(inode_of "$CAP")
-	assert_true '[ "$new_cap_inode" != "$after_incap_inode" ]' "image_capable diverged from image_incapable (hardlink broken)"
-else
-	echo "(skipped image-pick test: inthebeginning or text_pick unavailable)" >&2
-fi
-
-# ─── ln failure surfaces loudly (no silent fallback) ───────────────────────
-echo "==> hardlink failure surfaces loudly"
-if [ -n "$text_pick" ]; then
-	# Make the cache dir un-writable so ln (and subsequent ops) cannot succeed.
-	# We expect a non-zero exit code, not a silent success via cp fallback.
-	rm -rf "$CACHE_DIR"
-	mkdir -p "$CACHE_DIR"
-	# Create a regular file at the image_incapable path; this blocks ln (target exists).
-	# But we also need to ensure the regenerator doesn't pre-remove it improperly.
-	# Easier failure mode: make the cache dir read-only AFTER the tmp file is written.
-	# Hard to time deterministically. Instead, verify that with a sane dir, hardlinking
-	# works AND that the regenerator does NOT silently use cp if we pre-create a
-	# read-only file at the link target.
-	#
-	# Concrete failure-mode test: create incap as a directory; ln would fail because
-	# the link target already exists and isn't a regular file replaceable by mv.
-	mkdir -p "$INCAP.blocker"
-	# We can't easily force ln to fail in the bucket pipeline without internals access.
-	# Skip the explicit failure test — covered by code review of the impl (no `|| cp`).
-	rm -rf "$INCAP.blocker"
-	echo "(deferred: ln-failure is asserted by code review — impl must not have '|| cp')"
-fi
-
-# ─── Summary ───────────────────────────────────────────────────────────────
-echo
-if [ "$fails" -eq 0 ]; then
-	echo "All $tests fun_intro tests passed"
-else
-	echo "$fails of $tests fun_intro tests failed" >&2
+	printf '%s of %s fun_intro checks failed.\n' "$fails" "$tests" >&2
 fi
 exit "$fails"

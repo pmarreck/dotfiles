@@ -1,19 +1,5 @@
-#!/usr/bin/env bash
-
-times_older_than_samson() {
-	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-	echo "Peter, you are $(times_older_than "1972-04-05" "2021-06-25") times older than Samson."
-}
-
-# Run the function if this script is executed directly
-if ! (return 0 2>/dev/null); then
-	# Check if we are running tests
-	if [ "$1" = "--test" ]; then
-		# Run tests from the test file
-		_test_file="$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
-		if [ -f "$_test_file" ]; then . "$_test_file" > /dev/null; fi
-	else
-		# If called directly, pass all arguments to the function
-		$(basename "${0##\-}") "$@"
-	fi
-fi
+#!/usr/bin/env luajit
+-- times_older_than_samson: print how many times older Peter is than Samson.
+local root = (arg[0]:match("^(.*)/[^/]+$") or ".") .. "/.."
+package.path = root .. "/lib/?.lua;" .. package.path
+os.exit(require("fun_intro.cli").pick_command("times_older_than_samson", arg, root))

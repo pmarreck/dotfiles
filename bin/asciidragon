@@ -1,40 +1,5 @@
-#!/usr/bin/env bash
-
-asciidragon() {
-	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-	# first store the escape code for the ANSI color
-	local esc=$(printf '\033')
-	# set foreground text color to green
-	echo -e "${esc}[0;32m"
-	# print the dragon
-	# uncomment the sed to preface and suffix runs of # with a background ansi mode of green
-	cat <<'EOD' | trim_leading_heredoc_whitespace #| sed -E "s/(#+)/${esc}[42m\1${esc}[49m/g"
-												___====-_  _-====___
-									_--~~~#####//      \\#####~~~--_
-							 _-~##########// (    ) \\##########~-_
-							-############//  :\^^/:  \\############-
-						_~############//   (@::@)   \\############~_
-					 ~#############((     \\//     ))#############~
-					-###############\\    (^^)    //###############-
-				 -#################\\  / "" \  //#################-
-				-###################\\/      \//###################-
-			 _#/:##########/\######(   /\   )######/\##########:\#_
-			 :/ :#/\#/\#/\/  \#/\##\  :  :  /##/\#/  \/\#/\#/\#: \:
-			 "  :/  V  V  "   V  \#\: :  : :/#/  V   "  V  V  \:  "
-					"   "  "      "   \ : :  : : /   "      "  "   "
-EOD
-	echo -e "${esc}[0m"
-}
-
-# Run the function if this script is executed directly
-if ! (return 0 2>/dev/null); then
-	# Check if we are running tests
-	if [ "$1" = "--test" ]; then
-		# Run tests from the test file
-		_test_file="$HOME/dotfiles/bin/test/$(basename "${0##\-}")_test"
-		if [ -f "$_test_file" ]; then . "$_test_file" > /dev/null; fi
-	else
-		# If called directly, pass all arguments to the function
-		$(basename "${0##\-}") "$@"
-	fi
-fi
+#!/usr/bin/env luajit
+-- asciidragon: print a green ASCII-art dragon.
+local root = (arg[0]:match("^(.*)/[^/]+$") or ".") .. "/.."
+package.path = root .. "/lib/?.lua;" .. package.path
+os.exit(require("fun_intro.cli").pick_command("asciidragon", arg, root))

@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC2016  # Stub expressions expand in the generated script.
 
 # Test the warhammer_quote function
 test_warhammer_quote() {
@@ -59,48 +58,10 @@ test_warhammer_quote() {
 		(( fails++ ))
 	fi
 	
-	# Test 4: The random selector receives one inclusive range and both endpoints work
-	(( tests++ ))
-	echo "Testing deterministic random range endpoints..."
-
-	local tmpdir quotes_file quote_count expected_range first_quote last_quote first_output last_output
-	local -a quotes
-	tmpdir=$(mktemp -d "${TMPDIR:?}/warhammer-quote-test.XXXXXX")
-	quotes_file="$HOME/dotfiles/bin/data/warhammer_quotes.txt"
-	mapfile -t quotes < "$quotes_file"
-	quote_count=${#quotes[@]}
-	expected_range="1-$quote_count"
-	first_quote=${quotes[0]}
-	last_quote=${quotes[quote_count - 1]}
-
-	printf '%s\n' \
-		"#!$(type -P bash)" \
-		'printf '\''%s\n'\'' "$*" >> "${WARHAMMER_RANDOM_ARGS:?}"' \
-		'[[ "$#" -eq 1 && "$1" == "${WARHAMMER_EXPECTED_RANGE:?}" ]] || exit 64' \
-		'printf '\''%s\n'\'' "${WARHAMMER_PICK:?}"' \
-		> "$tmpdir/random"
-	chmod +x "$tmpdir/random"
-
-	first_output=$(PATH="$tmpdir:$PATH" WARHAMMER_RANDOM_ARGS="$tmpdir/args" \
-		WARHAMMER_EXPECTED_RANGE="$expected_range" WARHAMMER_PICK=1 \
-		warhammer_quote 2>/dev/null)
-	last_output=$(PATH="$tmpdir:$PATH" WARHAMMER_RANDOM_ARGS="$tmpdir/args" \
-		WARHAMMER_EXPECTED_RANGE="$expected_range" WARHAMMER_PICK="$quote_count" \
-		warhammer_quote 2>/dev/null)
-	local observed_args
-	observed_args=$(<"$tmpdir/args")
-
-	if [[ "$first_output" == "$first_quote!" && "$last_output" == "$last_quote!" &&
-		"$observed_args" == "$expected_range"$'\n'"$expected_range" ]]; then
-		echo "✓ Deterministic endpoint test passed"
-	else
-		echo "✗ Deterministic endpoint test failed" >&2
-		echo "  Random args: '$observed_args' (expected two '$expected_range' calls)" >&2
-		echo "  First output: '$first_output'" >&2
-		echo "  Last output: '$last_output'" >&2
-		(( fails++ ))
-	fi
-	rm -rf "$tmpdir"
+	# The random range (exactly 1..N non-blank quotes, both ends reachable) is
+	# checked against an independent grep oracle in fun_intro_text_test, which
+	# forces the LuaJIT random source directly; the command no longer runs the
+	# external `random` program this test used to stub.
 	
 	# Final results
 	if [ $fails -gt 0 ]; then
