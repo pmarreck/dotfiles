@@ -50,12 +50,17 @@ ADAPTER
 } >"${adapter_bin}/nix"
 chmod +x "${adapter_bin}/nix"
 
-# mandelbash tees into /tmp/m<pid> and never removes it; exec keeps the PID
-# known so the leftover can be cleaned up.
+# mandelbash tees into /tmp/m<pid> and must remove it afterward; exec keeps
+# the PID known so that can be checked.
 expected="$(bash -c 'echo $$; exec "$1"' _ "${bin_dir}/mandelbash"; echo x)"
 orig_pid="${expected%%$'\n'*}"
-rm -f "/tmp/m${orig_pid}"
 expected="${expected#*$'\n'}"
+if [[ ! -e "/tmp/m${orig_pid}" ]]; then
+	pass "mandelbash removes its /tmp/m<pid> tee file"
+else
+	rm -f "/tmp/m${orig_pid}"
+	fail "mandelbash left /tmp/m${orig_pid} behind"
+fi
 
 cold="$(PATH="${adapter_bin}:$PATH" JUMPSCRIPT_CACHE="${cache}" JUMPSCRIPT_ROC="${roc_bin}" "${bin_dir}/mandelroc" 2>"${cache}/cold.err"; echo x)"
 cold_root_requests=$(wc -l <"$root_log")

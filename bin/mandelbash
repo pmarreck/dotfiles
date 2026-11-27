@@ -8,7 +8,7 @@ mandelbash() {
 	$(($s*$j)) -le 1073741824 ] ; do s=$(($r*$r$p)) j=$(($i*$i$p)) t=$(($s-$j+$R)) ;
 	i=$(((($r*$i)$p-1)+$I)) r=$t;done;if [ $B -ge 32 ];then $e\ ;else #---::BruXy::-
 	$e"\E[01;$(((B+3)%8+30))m${S[$((C++%4))]}"; fi;R=$((R+512));done;#----:::(c):::-
-	$e "\E[m\E(B\r\n";I=$((I+1311)); done|tee $t;head -n 12 $t | tac #-----:2 O 1 O:-
+	$e "\E[m\E(B\r\n";I=$((I+1311)); done|tee $t;head -n 12 $t | tac;rm -f $t #----:2 O 1 O:-
 }
 
 # Run the function if this script is executed directly
