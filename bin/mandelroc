@@ -77,7 +77,7 @@ render = |{}| {
 			}
 			$re = $re + 512
 		}
-		$line = Str.concat($line, "${esc}[m${esc}(\r\n")
+		$line = Str.concat($line, "${esc}[m${esc}(B\r\n")
 		$out = Str.concat($out, $line)
 		if row < rows {
 			$mirror = Str.concat($line, $mirror)
