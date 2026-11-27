@@ -252,7 +252,7 @@ _nas_do_darwin() {
 	fi
 	# Default: imperative + open
 	_nas_run "$dry" sudo mkdir -p "$NAS_MAC_MOUNT"
-	_nas_run "$dry" sudo mount -t nfs -o "$NFS_OPTS_MAC" "$NAS_HOST:$NAS_NFS_PATH" "$NAS_MAC_MOUNT"
+	_nas_run "$dry" sudo mount -t nfs -o "$NFS_OPTS_MAC" "$NAS_HOST:$NAS_NFS_PATH" "$NAS_MAC_MOUNT" || return $?
 	_nas_run "$dry" open "$NAS_MAC_MOUNT"
 }
 
@@ -304,7 +304,7 @@ _nas_do_linux() {
 		return 1
 	fi
 	_nas_run "$dry" sudo mkdir -p "$NAS_LINUX_MOUNT"
-	_nas_run "$dry" sudo mount -t nfs -o "$NFS_OPTS_LINUX" "$NAS_HOST:$NAS_NFS_PATH" "$NAS_LINUX_MOUNT"
+	_nas_run "$dry" sudo mount -t nfs -o "$NFS_OPTS_LINUX" "$NAS_HOST:$NAS_NFS_PATH" "$NAS_LINUX_MOUNT" || return $?
 	if command -v xdg-open >/dev/null 2>&1; then
 		_nas_run "$dry" xdg-open "$NAS_LINUX_MOUNT"
 	fi
@@ -339,7 +339,7 @@ _nas_do_nixos() {
 		return 1
 	fi
 	_nas_run "$dry" sudo mkdir -p "$NAS_LINUX_MOUNT"
-	_nas_run "$dry" sudo mount -t nfs -o "$NFS_OPTS_LINUX" "$NAS_HOST:$NAS_NFS_PATH" "$NAS_LINUX_MOUNT"
+	_nas_run "$dry" sudo mount -t nfs -o "$NFS_OPTS_LINUX" "$NAS_HOST:$NAS_NFS_PATH" "$NAS_LINUX_MOUNT" || return $?
 	if command -v xdg-open >/dev/null 2>&1; then
 		_nas_run "$dry" xdg-open "$NAS_LINUX_MOUNT"
 	fi

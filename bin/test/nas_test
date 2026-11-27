@@ -175,6 +175,32 @@ assert_rc "$rc" "1" "linux imperative mount exits 1 when mount.nfs missing"
 assert_contains "$out" "nfs-common"      "linux abort names the package to install"
 assert_not_contains "$out" "sudo mount"  "linux abort happens BEFORE attempting the real mount"
 
+# A mount failure must remain the command's result, and opening the target
+# must not hide it. The adapter records requested effects without running sudo.
+echo "==> failed mount propagates on every platform"
+simulate_failed_mount() (
+	local platform="$1" opened=0 status=0
+	_nas_have_mount_nfs() { return 0; }
+	_nas_run() {
+		if [ "${3:-}" = "mount" ]; then return 43; fi
+		if [ "${2:-}" = "open" ] || [ "${2:-}" = "xdg-open" ]; then opened=1; fi
+		return 0
+	}
+	xdg-open() { return 0; }
+	case "$platform" in
+		darwin) _nas_do_darwin 0 0 0 0 >/dev/null 2>&1 ;;
+		linux) _nas_do_linux 0 0 0 0 >/dev/null 2>&1 ;;
+		nixos) _nas_do_nixos 0 0 0 0 >/dev/null 2>&1 ;;
+	esac
+	status=$?
+	printf '%s %s\n' "$status" "$opened"
+)
+for platform in darwin linux nixos; do
+	read -r status opened < <(simulate_failed_mount "$platform")
+	assert_rc "$status" "43" "$platform preserves the mount failure status"
+	assert_eq "$opened" "0" "$platform does not open after a failed mount"
+done
+
 # Helper present (override=1) + dry-run: preflight is satisfied, proceeds to DRY mount.
 out=$(NAS_PLATFORM_OVERRIDE=nixos NAS_MOUNT_NFS_OVERRIDE=1 "$NAS_SCRIPT" --dry-run 2>&1)
 rc=$?

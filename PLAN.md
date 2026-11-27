@@ -2,6 +2,11 @@
 
 Open work is listed in priority order. Completed history is in `docs/PLAN_LOG.md`; background for migrated legacy items is in `docs/plan_context/legacy-open-work.md`.
 
+## NAS mount failure reporting (2026-10-26)
+
+- [x] Fix `nas` returning success after a failed NFS mount: every OS branch (macOS, Linux, NixOS) keeps the mount's failure status and never treats the later optional file-manager open as success; six assertions failed before the fix and pass afterward (done 2026-10-26 EDT in another checkout; re-applied onto the startup rewrite 2026-11-27).
+- [x] Restore a green repository-wide gate before committing the NAS fix, without excluding tests: the earlier 6 isolated failures (executable-names, fun_intro, launchd-keep-disabled, lsregister-prune-dead, mandelroc, terminal_config) are gone and the full ./test passes with the fix on top of the startup rewrite (done 2026-11-27 15:20 EST).
+
 ## Completed: no system Python; NFC file names (2026-11-09)
 
 
@@ -26,6 +31,4 @@ Open work is listed in priority order. Completed history is in `docs/PLAN_LOG.md
 ## Current
 
 - [x] Make the staged 500-line source-file gate a strong nonblocking advisory only for the owner-approved `pmarreck/validate` repository, retaining hard enforcement everywhere else and proving the exception against spoofed repository identities in an isolated real-index/commit test; future entries require separate explicit owner approval in dotfiles (done 2026-11-26 10:41 EST; commit 66204dd).
-- [x] Admit only contained tracked relative Nix `path:` inputs and matching root-parent lock nodes in the staged dependency gate, preserving absolute, traversal, untracked, malformed-parent, and symlink-escape rejection (done 2026-11-25 23:37 EST; commit 60a3867).
-- [x] Audit existing macOS ARM64 and Windows native-runner job controls for Difz and report verified runtime, memory, descendant-termination, write-confinement, and host/architecture capabilities without launching jobs or changing live state; Linux is proven bounded, while macOS ARM64 and Windows AMD64 lack verified per-job envelopes and no Windows ARM64 runner was found (done 2026-11-25 23:37 EST; commit 60a3867).
 - [ ] Await Mechatron Prime's owned `capture`/`strace -f` child-pipe deadlock regression and placement decision; do not rerun or modify the shared helper without delegation.
