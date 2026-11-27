@@ -186,6 +186,7 @@ annotate=[
 	bin/test/fun_intro_cache_test = Deterministic cache regeneration, ANSI byte fidelity, timeout, and startup bypass checks
 	bin/test/fun_intro_test = tests for capability-bucketed fun_intro cache (image_capable/image_incapable, hardlink invariant)
 	bin/test/get-all-git-stati_test = CLI coverage for root scoping, repeated/spaced roots, help, and status output.
+	bin/test/git-budget-launcher_test = Two git launcher copies on PATH reach the real Git instead of exec'ing each other forever; no real Git reports cleanly
 	bin/test/git-conflict-marker-gate_test = Real Git index and hook integration regressions
 	bin/test/git-dependency-portability-gate_test = Disposable Git repositories covering staged parsers, path boundaries, exceptions and real commits.
 	bin/test/git-remote-drift-hook_test = Deterministic classifier and integration tests for remote drift hook

@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+# The git launcher runs "the first other git on PATH". When a second copy of
+# the launcher precedes the real Git (another checkout's bin on PATH, or a
+# test fixture home), each copy used to pick the other and the two exec'd
+# each other forever. Every copy must reach the real Git.
+
+set -u
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+work=$(mktemp -d "${TMPDIR:-/tmp}/git-budget-launcher_test.XXXXXX") || exit 1
+trap 'command rm -rf -- "$work"' EXIT
+
+# The first <name> on PATH that is not a dotfiles wrapper of the same name.
+real_tool() {
+	local dir candidate
+	local -a path_dirs
+	IFS=: read -r -a path_dirs <<<"$PATH"
+	for dir in "${path_dirs[@]}"; do
+		candidate="${dir:-.}/$1"
+		[[ -f "$candidate" && -x "$candidate" ]] || continue
+		[[ "$candidate" -ef "$repo_root/bin/$1" || "$candidate" -ef "$HOME/dotfiles/bin/$1" ]] && continue
+		printf '%s\n' "$candidate"
+		return 0
+	done
+	return 1
+}
+real_git=$(real_tool git) || { printf 'FAIL: no git other than the launcher is on PATH\n' >&2; exit 1; }
+timeout_bin=$(real_tool timeout || real_tool gtimeout) || { printf 'FAIL: no timeout on PATH\n' >&2; exit 1; }
+# The launcher and budget runner need only bash, luajit, and dirname from PATH. A
+# private directory keeps any system git (NixOS keeps git beside luajit; macOS
+# has a /usr/bin shim) out of the no-Git case.
+mkdir -p "$work/tools"
+for tool in bash luajit dirname; do
+	tool_path=$(command -v "$tool") || { printf 'FAIL: %s is not on PATH\n' "$tool" >&2; exit 1; }
+	ln -s "$tool_path" "$work/tools/$tool"
+done
+tools="$work/tools"
+expected=$("$real_git" --version)
+
+# Two independent copies of the published layout: bin/git -> src/launcher.
+for copy in first second; do
+	mkdir -p "$work/$copy/bin/src"
+	cp "$repo_root/bin/src/git-budget-launcher" "$work/$copy/bin/src/"
+	cp "$repo_root/bin/git-repository-budget" "$work/$copy/bin/"
+	ln -s src/git-budget-launcher "$work/$copy/bin/git"
+done
+mkdir -p "$work/real"
+ln -s "$real_git" "$work/real/git"
+path="$work/first/bin:$work/second/bin:$work/real:$tools"
+
+tests=0
+fails=0
+pass() { printf 'PASS: %s\n' "$1"; }
+fail() { printf 'FAIL: %s\n' "$1" >&2; ((fails++)) || :; }
+
+((tests++))
+out=$(PATH="$path" "$timeout_bin" --kill-after=2 10 "$work/first/bin/git" --version 2>&1)
+status=$?
+if ((status == 0)) && [[ "$out" == "$expected" ]]; then
+	pass 'two launcher copies on PATH still reach the real Git'
+else
+	fail "two launcher copies did not reach the real Git (status $status): $out"
+fi
+
+((tests++))
+out=$(PATH="$work/first/bin:$work/real:$tools" "$timeout_bin" --kill-after=2 10 "$work/first/bin/git" --version 2>&1)
+status=$?
+if ((status == 0)) && [[ "$out" == "$expected" ]]; then
+	pass 'a single launcher still runs the real Git'
+else
+	fail "a single launcher failed (status $status): $out"
+fi
+
+((tests++))
+out=$(PATH="$work/first/bin:$work/second/bin:$tools" "$timeout_bin" --kill-after=2 10 "$work/first/bin/git" --version 2>&1)
+status=$?
+if ((status == 127)) && [[ "$out" == *"underlying Git executable not found"* ]]; then
+	pass 'launcher copies with no real Git report it instead of looping'
+else
+	fail "launchers without a real Git: status $status: $out"
+fi
+
+if ((fails == 0)); then
+	printf 'All %s git launcher checks passed.\n' "$tests"
+else
+	printf '%s of %s git launcher checks failed.\n' "$fails" "$tests" >&2
+fi
+exit "$fails"

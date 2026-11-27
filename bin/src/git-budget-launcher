@@ -4,13 +4,22 @@ set -u
 here=$(cd -P -- "$(dirname "${BASH_SOURCE[0]}")" && pwd) || exit 2
 # During development this launcher lives in bin/src; bin/git is the published copy.
 if [[ ${here##*/} == src ]]; then here=${here%/src}; fi
+# Another copy of this launcher earlier on PATH (a second checkout's bin, a test
+# fixture home) would look like the real Git, and the two copies would run each
+# other forever. Each launcher therefore records itself in an inherited list,
+# and no launcher ever selects one already on it.
+export DOTFILES_GIT_LAUNCHERS="${DOTFILES_GIT_LAUNCHERS:+$DOTFILES_GIT_LAUNCHERS:}$here/git"
+IFS=: read -r -a launchers <<< "$DOTFILES_GIT_LAUNCHERS"
 real=''
 IFS=: read -r -a directories <<< "$PATH"
 for directory in "${directories[@]}"; do
 	candidate="${directory:-.}/git"
-	if [[ -f $candidate && -x $candidate && ! $candidate -ef ${BASH_SOURCE[0]} && ! $candidate -ef $here/git ]]; then
-		real=$candidate; break
-	fi
+	[[ -f $candidate && -x $candidate && ! $candidate -ef ${BASH_SOURCE[0]} ]] || continue
+	for launcher in "${launchers[@]}"; do
+		[[ $candidate -ef $launcher ]] && continue 2
+	done
+	real=$candidate
+	break
 done
 if [[ -z $real ]]; then printf 'Repository budget: underlying Git executable not found.\n' >&2; exit 127; fi
 exec "$here/git-repository-budget" --run "$real" "$@"
