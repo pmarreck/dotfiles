@@ -76,6 +76,13 @@ __edit_test_capture_editor() {
 	__edit_test_editor_argc=$#
 	__edit_test_editor_args=("$@")
 }
+# Keep this boundary hermetic. With no desktop to recover, choose_editor takes
+# its terminal path, where micro is the recording stub. A real display or the
+# real systemd user manager would launch the person's actual editor.
+unset DISPLAY WAYLAND_DISPLAY SSH_CONNECTION SSH_TTY
+uname() { printf 'Linux\n'; }
+systemctl() { return 1; }
+micro() { __edit_test_capture_editor "$@"; }
 EDITOR=__edit_test_capture_editor
 VISUAL=""
 

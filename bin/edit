@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+
+# edit [PATH...] — open paths in Zed where its window can reach you, otherwise
+# in micro (see choose_editor). With no arguments it opens the current
+# directory, and a bare command name opens that command's file on PATH.
+#
+# Interactive Bash defines an `edit` function (bin/src/edit.bash) that takes
+# precedence and can also open shell functions at their definitions. This
+# executable serves everything else: scripts, agents, other shells.
+
+case "${1-}" in
+	-h | --help)
+		printf '%s\n' 'Usage: edit [PATH...]' \
+			'Open paths in Zed (zeditor or zed) when a GUI is reachable, otherwise in micro.' \
+			'No arguments opens the current directory; a bare command name opens its file on PATH.'
+		exit 0 ;;
+	--about)
+		printf '%s\n' 'edit — open files in Zed, or micro without a GUI (Bash)'
+		exit 0 ;;
+esac
+
+# shellcheck source=choose_editor
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/choose_editor"
+
+if (($# == 0)); then
+	set -- .
+elif (($# == 1)) && [[ ! -e $1 && $1 != */* ]]; then
+	# A command name, not a path: open the file it runs, if it is one.
+	if target=$(command -v -- "$1" 2>/dev/null) && [[ -f $target ]]; then set -- "$target"; fi
+fi
+choose_editor "$@"

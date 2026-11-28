@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+# shellcheck disable=SC1091,SC2016,SC2030,SC2031,SC2329 # Fakes expand later; each case scopes PATH and its stubs to a subshell.
+# choose_editor_test — choose_editor opens Zed wherever its window reaches the
+# person at the keyboard, otherwise micro, passing every argument through as
+# one argv element; the `edit` executable resolves its arguments first.
+#
+# Every editor here is a recording fake on a private PATH, and uname and the
+# systemd user manager are stubbed, so no real editor or desktop takes part.
+set -u
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)
+work=$(mktemp -d "${TMPDIR:-/tmp}/choose-editor.XXXXXXXX") || exit 1
+trap 'command rm -rf -- "$work"' EXIT
+log="$work/editor.log"
+tools="$work/tools"
+mkdir -p "$tools"
+for tool in readlink realpath dirname; do
+	real=$(type -P "$tool") || { printf 'FAIL %s is required\n' "$tool" >&2; exit 1; }
+	ln -s "$real" "$tools/$tool"
+done
+
+# fake DIR NAME: an executable that logs its name, DISPLAY and arguments.
+fake() {
+	mkdir -p "$1"
+	printf '#!%s\n{ printf "%%s" "%s"; printf "|%%s" "DISPLAY=${DISPLAY-}" "$@"; printf "\\n"; } >> %q\n' \
+		"$BASH" "$2" "$log" > "$1/$2"
+	chmod +x "$1/$2"
+}
+
+failures=0 tests=0
+expect() { # LABEL EXPECTED-LOG-LINE
+	tests=$((tests+1))
+	local got; got=$(cat "$log" 2>/dev/null)
+	if [[ "$got" == "$2" ]]; then printf 'ok - %s\n' "$1"; else
+		printf 'FAIL %s\n  expected: %s\n  actual:   %s\n' "$1" "$2" "$got" >&2; failures=$((failures+1))
+	fi
+}
+
+# run OS DESKTOP_ENV EDITORS... -- [VAR=VALUE...] -- CHOOSE_EDITOR_ARGS...
+# Runs choose_editor in a clean subshell with only the named fake editors.
+run() (
+	local os=$1 desktop=$2; shift 2
+	local dir="$work/case" editors=() vars=()
+	command rm -rf -- "$dir"; : > "$log"
+	while [[ $1 != -- ]]; do editors+=("$1"); shift; done; shift
+	while [[ $1 != -- ]]; do vars+=("$1"); shift; done; shift
+	for e in "${editors[@]}"; do
+		case $e in sbin/*) fake "$dir/sbin" "${e#sbin/}" ;; *) fake "$dir/bin" "$e" ;; esac
+	done
+	unset DISPLAY WAYLAND_DISPLAY SSH_CONNECTION SSH_TTY EDITOR VISUAL
+	PATH="$dir/bin:$dir/sbin:$tools" # already exported
+	for v in "${vars[@]}"; do export "${v?}"; done
+	uname() { printf '%s\n' "$os"; }
+	systemctl() { [[ -n $desktop ]] || return 1; printf '%s\n' "$desktop"; }
+	# shellcheck source=../choose_editor
+	. "$root/bin/choose_editor"
+	choose_editor "$@"
+)
+
+run Linux '' zeditor micro -- DISPLAY=:1 -- 'a b.txt' c
+expect 'Linux with a display opens zeditor, one argv element per argument' 'zeditor|DISPLAY=:1|a b.txt|c'
+run Linux '' zeditor micro -- WAYLAND_DISPLAY=wayland-1 -- --wait f
+expect 'Wayland alone counts as a display; --wait reaches Zed' 'zeditor|DISPLAY=|--wait|f'
+run Linux '' sbin/zed micro -- DISPLAY=:1 -- f
+expect 'a zed in sbin is the ZFS daemon, so micro opens instead' 'micro|DISPLAY=:1|f'
+run Linux '' zed micro -- DISPLAY=:1 -- f
+expect 'the Zed editor installed as zed opens when zeditor is absent' 'zed|DISPLAY=:1|f'
+run Linux '' zeditor micro -- DISPLAY=:1 SSH_CONNECTION=remote -- f
+expect 'over SSH the display belongs elsewhere: micro' 'micro|DISPLAY=:1|f'
+run Linux $'DISPLAY=:9\nUNRELATED=x' zeditor micro -- -- f
+expect 'a display recovered from the desktop session reaches Zed' 'zeditor|DISPLAY=:9|f'
+run Linux '' zeditor micro -- -- f
+expect 'no display and no desktop session: micro' 'micro|DISPLAY=|f'
+run Linux '' zeditor micro -- -- --wait f
+expect '--wait is not passed to micro, which always blocks' 'micro|DISPLAY=|f'
+run Darwin '' zed micro -- -- f
+expect 'a local macOS session opens Zed without DISPLAY' 'zed|DISPLAY=|f'
+run Darwin '' zed micro -- SSH_TTY=/dev/ttys001 -- f
+expect 'macOS over SSH opens micro' 'micro|DISPLAY=|f'
+run Linux '' myed -- DISPLAY=:1 EDITOR=myed -- f
+expect 'without Zed or micro, EDITOR opens' 'myed|DISPLAY=:1|f'
+run Linux '' nano -- DISPLAY=:1 EDITOR=choose_editor -- f
+expect 'EDITOR naming choose_editor itself falls back to nano, not a loop' 'nano|DISPLAY=:1|f'
+
+# The edit executable: no arguments opens ".", a command name opens its file.
+edit_run() (
+	local dir="$work/case"
+	command rm -rf -- "$dir"; : > "$log"
+	fake "$dir/bin" micro
+	printf '#!%s\n' "$BASH" > "$dir/bin/sample-command"; chmod +x "$dir/bin/sample-command"
+	unset DISPLAY WAYLAND_DISPLAY SSH_CONNECTION SSH_TTY EDITOR VISUAL
+	PATH="$dir/bin:$tools" # already exported
+	export SSH_CONNECTION=remote
+	cd "$work" && "$BASH" "$root/bin/edit" "$@"
+)
+edit_run
+expect 'edit with no arguments opens the current directory' 'micro|DISPLAY=|.'
+edit_run sample-command
+expect 'edit with a command name opens that command'"'"'s file' "micro|DISPLAY=|$work/case/bin/sample-command"
+edit_run 'new file.txt'
+expect 'edit with a new path opens that path unchanged' 'micro|DISPLAY=|new file.txt'
+
+# git commits use the same policy, blocking until the file is closed in Zed.
+tests=$((tests+1))
+if [[ "$(git config -f "$root/.gitconfig" core.editor)" == 'choose_editor --wait' ]]; then
+	printf 'ok - git core.editor is choose_editor --wait\n'
+else
+	printf 'FAIL git core.editor is not choose_editor --wait\n' >&2; failures=$((failures+1))
+fi
+
+if ((failures)); then printf '%d/%d choose_editor checks failed\n' "$failures" "$tests" >&2; exit 1; fi
+printf 'All %d choose_editor checks passed\n' "$tests"

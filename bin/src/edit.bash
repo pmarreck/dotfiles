@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 
 read -ra GREP_QUIET_ARRAY <<< "${GREP_QUIET:-grep -q}" # rehydrate exported string (arrays aren't exportable)
+# shellcheck source=desktop_display.bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/desktop_display.bash"
 
 # Resolve the first argument as a path/function/script, while forwarding path
 # arguments to the editor without changing their count, contents, or order.
@@ -11,14 +13,7 @@ edit() {
 	if [[ -n "${VISUAL:-}" && -z "${SSH_CONNECTION:-}" &&
 		-z "${DISPLAY:-}" && -z "${WAYLAND_DISPLAY:-}" ]] && [[ "$(uname -s)" == Linux ]]; then
 		local -x DISPLAY="${DISPLAY-}" WAYLAND_DISPLAY="${WAYLAND_DISPLAY-}"
-		local desktop_env line
-		desktop_env="$(systemctl --user show-environment 2>/dev/null)" || desktop_env=""
-		while IFS= read -r line; do
-			case "$line" in
-				DISPLAY=*) DISPLAY="${line#DISPLAY=}" ;;
-				WAYLAND_DISPLAY=*) WAYLAND_DISPLAY="${line#WAYLAND_DISPLAY=}" ;;
-			esac
-		done <<< "$desktop_env"
+		recover_desktop_display
 	fi
 	if [ $# -eq 0 ]; then
 		set -- "."
@@ -34,7 +29,8 @@ edit() {
 		EDIT=1 "$1"
 	# if the file is an executable script, edit it
 	elif contains "$(executables --scripts)" "$1"; then
-		local full_path=$(which "$1")
+		local full_path
+		full_path=$(command -v -- "$1")
 		# search for presence of "unset EDIT" in file to assume it uses my pattern of firing up an editor for that file or function if EDIT is set and it is run
 		if "${GREP_QUIET_ARRAY[@]}" "unset EDIT" "$full_path"; then
 			EDIT=1 "$1"

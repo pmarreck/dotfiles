@@ -1,17 +1,53 @@
 #!/usr/bin/env bash
 
-# Select the configured interactive or fallback editor while preserving every
-# caller argument as a distinct argv element, including paths containing spaces.
+# choose_editor [--wait] PATH... — open paths in Zed wherever its window can
+# reach the person at the keyboard, otherwise in micro. --wait makes Zed block
+# until the files are closed, for callers such as git's core.editor; micro
+# always blocks. Every argument is passed through as one argv element.
+
+# shellcheck source=src/desktop_display.bash
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/src/desktop_display.bash"
+
+# Zed's command: `zeditor` (its NixOS name, where a bare `zed` is the ZFS event
+# daemon), else `zed` when it does not resolve into an sbin/ directory. Resolve
+# symlinks first so a Nix profile link to the ZFS daemon is still recognized.
+_choose_editor_zed() {
+	local path real
+	if path=$(command -v zeditor 2>/dev/null); then printf '%s\n' "$path"; return 0; fi
+	path=$(command -v zed 2>/dev/null) || return 1
+	real=$(readlink -f "$path" 2>/dev/null || realpath "$path" 2>/dev/null || printf '%s' "$path")
+	case "$real" in */sbin/zed) return 1 ;; esac
+	printf '%s\n' "$path"
+}
+
+# A GUI window is useful only on the screen in front of the user: never over
+# SSH, always in a local macOS session, and on Linux when a display is set or
+# recoverable from the desktop session (WSLg sets one too).
+_choose_editor_gui() {
+	[[ -z "${SSH_CONNECTION:-}" && -z "${SSH_TTY:-}" ]] || return 1
+	case "$(uname -s)" in
+		Darwin) return 0 ;;
+		Linux)
+			recover_desktop_display
+			[[ -n "${DISPLAY:-}" ]] && export DISPLAY
+			[[ -n "${WAYLAND_DISPLAY:-}" ]] && export WAYLAND_DISPLAY
+			[[ -n "${DISPLAY:-}" || -n "${WAYLAND_DISPLAY:-}" ]]
+			;;
+		*) return 1 ;;
+	esac
+}
+
 choose_editor() {
-	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "$BASH_SOURCE" && return
-	if [[ -n "$VISUAL" && -t 1 ]]; then
-		# If VISUAL is set and the terminal is interactive
-		$VISUAL "$@"
-	elif [[ -n "$EDITOR" ]]; then
-		# Otherwise, fall back to EDITOR if it's set
+	[ -n "${EDIT:-}" ] && unset EDIT && edit_function "${FUNCNAME[0]}" "${BASH_SOURCE[0]}" && return
+	local wait=() zed
+	if [ "${1-}" = --wait ]; then wait=(--wait); shift; fi
+	if _choose_editor_gui && zed=$(_choose_editor_zed); then
+		"$zed" "${wait[@]}" "$@"
+	elif command -v micro >/dev/null 2>&1; then
+		micro "$@"
+	elif [[ -n "${EDITOR:-}" && "${EDITOR}" != choose_editor* ]]; then
 		$EDITOR "$@"
 	else
-		# Fallback to a sensible default, like vi or nano
 		nano "$@"
 	fi
 }

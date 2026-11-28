@@ -8,7 +8,8 @@
 	precomposeUnicode = true
 	#pager = delta --tabs=2
 	pager = hunk pager
-	editor = code --wait
+	# Zed (blocking until the file is closed) where a GUI is reachable, else micro.
+	editor = choose_editor --wait
 [interactive]
 	#difffilter = delta --tabs=2
 	difffilter = hunk pager
