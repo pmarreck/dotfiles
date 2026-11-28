@@ -383,6 +383,3 @@ export DRANDOM_CONTEXT=$$
 # if command -v warp-history &> /dev/null; then
 # 	warp-history --shell bash
 # fi
-
-# peon-ping quick controls
-[ -f ~/.claude/hooks/peon-ping/completions.bash ] && source ~/.claude/hooks/peon-ping/completions.bash

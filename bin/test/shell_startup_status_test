@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# shell_startup_status_test — a fresh interactive shell must finish startup with
+# status 0, so its first prompt does not report an error the user never caused.
+#
+# The prompt shows the status of the last command that ran, and for a
+# non-login interactive shell that is the last command in .bashrc. A trailing
+# `[ -f optional-file ] && source optional-file` returns 1 wherever the file is
+# absent, which only shows on hosts without it. So run startup in a minimal
+# HOME that links the tracked startup files and nothing optional, the way a
+# fresh host looks, and check all three ways a user gets an interactive shell.
+#
+# Direct run:  bin/test/shell_startup_status_test
+# Exit code  = number of failed cases.
+
+set -u
+
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)
+bash_bin="${BASH:-}"; [ -x "$bash_bin" ] || bash_bin=$(command -v bash)
+me=$(id -un)
+work=$(mktemp -d "${TMPDIR:-/tmp}/shell-startup-status.XXXXXXXX") || exit 1
+trap 'command rm -rf -- "$work"' EXIT
+
+home="$work/home"
+mkdir -p "$home" "$work/cache" "$work/config" "$work/state" "$work/data"
+ln -s "$root" "$home/dotfiles"
+ln -s dotfiles/bin "$home/bin"
+for file in .bashrc .bash_profile .profile .pathconfig .envconfig .shellenv; do
+	[ -e "$root/$file" ] && ln -s "dotfiles/$file" "$home/$file"
+done
+
+# The probe's first command records the status startup left behind.
+# shellcheck disable=SC2016 # The child shell expands this probe.
+probe='s=$?; printf "startup_status=%s\n" "$s"'
+# The nested shell is named by absolute path: a sandbox's login PATH lacks bash.
+nested=$(printf '%q -i -c %q' "$bash_bin" "$probe")
+
+# Interactive Bash needs the terminal's foreground process group; see
+# shell_startup_test for why timeout runs in the foreground here.
+startup() {
+	(cd "$home" && timeout --foreground --kill-after=5 30 env -i \
+		HOME="$home" USER="$me" LOGNAME="$me" TERM=xterm SHELL="$bash_bin" \
+		PATH="/run/current-system/sw/bin:/usr/bin:/bin" \
+		XDG_CACHE_HOME="$work/cache" XDG_CONFIG_HOME="$work/config" \
+		XDG_STATE_HOME="$work/state" XDG_DATA_HOME="$work/data" \
+		"$bash_bin" "$@" 2>/dev/null)
+}
+
+fails=0
+check() { # <label> <bash args...>
+	local label=$1 out status
+	shift
+	out=$(startup "$@")
+	status=$(printf '%s\n' "$out" | sed -n 's/^startup_status=//p' | tail -n 1)
+	if [ "$status" = 0 ]; then
+		printf '✓ %s\n' "$label"
+	else
+		printf '✗ %s: startup left status [%s], expected 0\n' "$label" "${status:-<none>}" >&2
+		fails=$((fails + 1))
+	fi
+}
+
+echo "# interactive startup leaves status 0 in a minimal HOME"
+check "non-login interactive (bash -i)" -i -c "$probe"
+check "login interactive (bash -l -i)" -l -i -c "$probe"
+check "nested interactive (bash inside a login shell)" -l -i -c "$nested"
+
+if [ "$fails" -eq 0 ]; then echo "all interactive startups leave status 0"; fi
+exit "$fails"
