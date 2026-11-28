@@ -189,5 +189,20 @@ check test -z "$output"
 output=$(git init --bare -q "$work/global-bare" 2>&1); rc=$?
 check test "$rc" -eq 0
 check test -z "$output"
+# The gate runs on every commit, and `rm` may move files to the Trash, so it uses no temporary files.
+cd "$repo" || exit 1
+mkdir -p "$work/rm-bin" "$work/gate-tmp"
+printf '#!%s\nprintf "%%s\\n" "$*" >> %q\n' "$bash_path" "$work/rm-calls" > "$work/rm-bin/rm"
+chmod +x "$work/rm-bin/rm"
+: > "$work/rm-calls"
+stage "$conflict"
+output=$(PATH="$work/rm-bin:$PATH" TMPDIR="$work/gate-tmp" "$gate" 2>&1); rc=$?
+check test "$rc" -eq 1
+check test "${output#*sample:1:}" != "$output"
+stage clean
+output=$(PATH="$work/rm-bin:$PATH" TMPDIR="$work/gate-tmp" "$gate" 2>&1); rc=$?
+check test "$rc" -eq 0
+check test "$(cat "$work/rm-calls")" = ''
+check test "$(ls -A "$work/gate-tmp")" = ''
 printf '%s checks, %s failures\n' "$tests" "$failures"
 test "$failures" -eq 0

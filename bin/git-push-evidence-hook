@@ -5,18 +5,19 @@ root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P) || exit 2
 delegate=${1:?Expected delegate path (empty is permitted)}
 shift
 umask 077
-work=$(mktemp -d "${TMPDIR:-/tmp}/push-evidence-hook.XXXXXXXX") || exit 2
-trap 'command rm -rf -- "$work"' EXIT
-cat > "$work/input" || exit 2
+# Every push runs this, and `rm` may move files to the Trash, so the input stays in memory.
+# The sentinel keeps the trailing newline that command substitution would drop.
+input=$(cat && printf x) || exit 2
+input=${input%x}
 repository=$(git rev-parse --absolute-git-dir) || exit 2
-digest=$(git hash-object "$work/input") || exit 2
+digest=$(printf '%s' "$input" | git hash-object --stdin) || exit 2
 identity="$repository:$digest"
 if [[ ${REPO_PUSH_EVIDENCE_CHECKED:-} != "$identity" ]]; then
-	"$root/bin/git-push-evidence" < "$work/input" || exit "$?"
+	"$root/bin/git-push-evidence" < <(printf '%s' "$input") || exit "$?"
 	export REPO_PUSH_EVIDENCE_CHECKED="$identity"
 fi
 if [[ -n $delegate && -x $delegate && ! -d $delegate ]]; then
-	"$delegate" "$@" < "$work/input"
+	"$delegate" "$@" < <(printf '%s' "$input")
 	exit "$?"
 fi
 exit 0

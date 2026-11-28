@@ -95,6 +95,16 @@ check test "$(cat "$repo/.git/delegate-input")" = "$first_input"
 check test "$(git --git-dir="$work/remote.git" rev-parse refs/heads/release)" = "$first"
 output=$(DELEGATE_STATUS=19 git -C "$repo" push "$work/remote.git" "$first:refs/heads/other" 2>&1); rc=$?
 check test "$rc" != 0
+# The hook runs on every push and `rm` may move files to the Trash, so its input stays in memory.
+mkdir -p "$work/rm-bin" "$work/hook-tmp"
+printf '#!%s\nprintf "%%s\\n" "$*" >> %q\n' "$BASH" "$work/rm-calls" > "$work/rm-bin/rm"
+chmod +x "$work/rm-bin/rm"
+: > "$work/rm-calls"
+output=$(PATH="$work/rm-bin:$PATH" TMPDIR="$work/hook-tmp" git -C "$repo" push "$work/remote.git" "$first:refs/heads/memory" 2>&1); rc=$?
+check test "$rc" = 0
+check grep -q ' refs/heads/memory ' "$repo/.git/delegate-input"
+check test "$(cat "$work/rm-calls")" = ''
+check test "$(ls -A "$work/hook-tmp")" = ''
 # Automatic manifest discovery selects this host, not every remote CI platform.
 command rm "$repo/.push-checks"
 mkdir "$repo/.mechatron-prime"

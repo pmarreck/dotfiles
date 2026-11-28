@@ -7,28 +7,21 @@ if [[ ${ALLOW_GIT_CONFLICT_MARKERS:-} == 1 ]]; then
 fi
 root=$(git rev-parse --show-toplevel) || exit 2
 cd "$root" || exit 2
-work=$(mktemp -d "${TMPDIR:-/tmp}/git-conflict-marker-gate.XXXXXXXX") || exit 2
-paths="$work/paths"
-matches="$work/matches"
-trap 'command rm -rf -- "$work"' EXIT
-git diff --cached --name-only --diff-filter=ACMRT -z -- > "$paths" || exit 2
+# This runs on every commit and `rm` may move files to the Trash, so Git's output is read
+# through process substitution, not temporary files. Each producer ends with an empty record
+# followed by its exit status; Git never prints an empty path, so the sentinel is unambiguous.
 pattern='^((<{7,}|>{7,}|\|{7,})([[:space:]].*)?|={7,}[[:space:]]*)$'
 found=0
 scan() {
 	# Git supplies NUL-framed paths and line numbers; newlines in paths stay safe.
-	git --literal-pathspecs -c color.grep=false grep --cached -I -n -z -E -e "$pattern" -- "$@" > "$matches"
-	case $? in
-		0) ;;
-		1) ;;
-		*) printf 'ERROR: could not inspect staged files; commit refused.\n' >&2; exit 2 ;;
-	esac
 	# Classify ordered marker triples per file, so headings and fragments pass.
-	local path line marker previous='' state=0
+	local path line marker previous='' state=0 status=''
 	local opening_line='' opening_text='' separator_line='' separator_text=''
 	local opening='^<{7,}([[:space:]].*)?$'
 	local separator='^={7,}[[:space:]]*$'
 	local closing='^>{7,}([[:space:]].*)?$'
 	while IFS= read -r -d '' path && IFS= read -r -d '' line && IFS= read -r marker; do
+		if [[ -z $path ]]; then status=$marker; break; fi
 		if [[ "$path" != "$previous" ]]; then state=0; previous=$path; fi
 		if [[ "$marker" =~ $opening ]]; then
 			state=1; opening_line=$line; opening_text=$marker
@@ -44,13 +37,19 @@ scan() {
 			fi
 			state=0
 		fi
-	done < "$matches"
+	done < <(git --literal-pathspecs -c color.grep=false grep --cached -I -n -z -E -e "$pattern" -- "$@"; printf '\0\0%s\n' "$?")
+	case $status in
+		0 | 1) ;;
+		*) printf 'ERROR: could not inspect staged files; commit refused.\n' >&2; exit 2 ;;
+	esac
 }
-batch=()
+batch=() listed=''
 while IFS= read -r -d '' path; do
+	if [[ -z $path ]]; then IFS= read -r -d '' listed; break; fi
 	batch+=("$path")
 	if (( ${#batch[@]} == 100 )); then scan "${batch[@]}"; batch=(); fi
-done < "$paths"
+done < <(git diff --cached --name-only --diff-filter=ACMRT -z --; printf '\0%s\0' "$?")
+[[ $listed == 0 ]] || { printf 'ERROR: could not list staged files; commit refused.\n' >&2; exit 2; }
 if (( ${#batch[@]} )); then scan "${batch[@]}"; fi
 if (( found )); then
 	printf '\nERROR: staged text contains complete Git merge-conflict blocks (file:line above).\nResolve them and stage the fix. For intentional fixtures only, explicitly use:\n  ALLOW_GIT_CONFLICT_MARKERS=1 git commit ...\n' >&2
