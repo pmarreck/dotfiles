@@ -64,7 +64,12 @@ case "$1 $2" in
 		[[ -e $S/ignore-typing ]] || "${0%/herdr}/screen-for" "$(cat "$S/backend")" "$4" >"$S/screen" ;;
 	"pane send-keys")
 		printf '%s\n' "$4" >>"$S/keys"
-		[[ -e $S/no-exit ]] || kill "$(cat "$S/agent.pid")" ;;
+		if [[ $4 == esc ]]; then "${0%/herdr}/screen-for" claude '' >"$S/screen"
+		elif [[ -e $S/bg-dialog ]]; then
+			# Claude's background-work question; the next enter confirms "Exit and stop tasks".
+			command rm -f -- "$S/bg-dialog"
+			printf '  Background work is running\n  The following will stop when you exit:\n  shell · Wait for the loop\n  ❯ 1. Exit and stop tasks\n    2. Move to background and exit\n    3. Stay\n' >"$S/screen"
+		elif [[ ! -e $S/no-exit ]]; then kill "$(cat "$S/agent.pid")"; fi ;;
 	*) echo "fake herdr: unexpected $*" >&2; exit 64 ;;
 esac
 SH
@@ -115,7 +120,7 @@ chmod +x "$T/bin/herdr" "$T/bin/hc" "$T/bin/screen-for"
 # setup BACKEND STATUS RECORDED_SESSION ARGV_JSON [OPEN_FILE]: a fresh fake agent in pane p1.
 setup() {
 	local backend=$1 status=$2 recorded=$3 argv=$4 open=${5:-} pid
-	command rm -f -- "$S"/typed "$S"/keys "$S"/hc-run "$S"/hc-label "$S"/app-calls "$S"/app-fail "$S"/ignore-typing "$S"/no-exit "$MOVE_LOG"
+	command rm -f -- "$S"/bg-dialog "$S"/typed "$S"/keys "$S"/hc-run "$S"/hc-label "$S"/app-calls "$S"/app-fail "$S"/ignore-typing "$S"/no-exit "$MOVE_LOG"
 	echo '[]' >"$S/spaces.json"
 	mkdir -p "$T/proj-cli"
 	echo '{"result":{"workspaces":[{"workspace_id":"W","label":"proj-ws"},{"workspace_id":"E","label":"empty-ws"}]}}' >"$S/workspaces.json"
@@ -328,6 +333,23 @@ run --wait 5 p1
 wait "$flipper"
 check test "$rc" -eq 0
 check test "$(cat "$S/typed")" = /exit
+
+# 20. Claude asks before stopping background work. --stop-background logs the jobs and
+#     confirms; without it the dialog is canceled and the agent left running.
+setup claude idle S1 '["/x/claude"]'
+touch "$S/bg-dialog"
+run --stop-background p1
+check test "$rc" -eq 0
+check test "$(tr '\n' ' ' <"$S/keys")" = 'enter enter '
+check test "$(jq -r 'select(.step == "stop-background") | .jobs' "$MOVE_LOG")" = 'shell · Wait for the loop'
+setup claude idle S1 '["/x/claude"]'
+touch "$S/bg-dialog"
+run p1
+check test "$rc" -eq 1
+check test "$(tr '\n' ' ' <"$S/keys")" = 'enter esc '
+check grep -q 'background work running (shell · Wait for the loop;)' <<<"$err"
+check test ! -e "$S/hc-run"
+check agent_alive
 
 printf '%s checks, %s failures\n' "$tests" "$failures"
 test "$failures" -eq 0

@@ -31,6 +31,10 @@ exits it at a verified empty prompt, then resumes the same native conversation w
   --workspace W With --app: recreate a workspace that has no live agent as a space.
   --wait SECS   Wait up to SECS for a busy agent to become idle at an empty prompt
                 instead of refusing it.
+  --stop-background
+                When Claude asks whether to stop its background work on exit, log the
+                listed jobs and choose "Exit and stop tasks". Without it, the dialog is
+                canceled and that agent is left running.
   --handoff     Allow the pane running this command (an agent moving itself). Start
                 it detached, e.g. `setsid -f herdr-move-to-core --handoff --wait 900
                 PANE`, then end the turn: it acts once the agent is idle.
@@ -319,8 +323,22 @@ move_one() { # pane
 		say "$pane: typed '$cmd' but the composer shows '$typed'; left for you to inspect"; return 1
 	fi
 	"$HERDR" pane send-keys "$pane" enter >/dev/null || { say "$pane: could not press enter"; return 1; }
-	local waited=0
+	local waited=0 answered=0 shown jobs
 	while alive "$pid" "$start"; do
+		# Claude asks before stopping background work; answer only its known dialog.
+		shown=$("$HERDR" pane read "$pane" --source visible 2>/dev/null)
+		if ((!answered)) && grep -q 'Background work is running' <<<"$shown" && grep -q '❯ 1\. Exit and stop tasks' <<<"$shown"; then
+			jobs=$(sed -n '/will stop when you exit:/,/1\. Exit and stop tasks/p' <<<"$shown" | sed '1d;$d' | sed 's/^ *//' | grep -v '^$')
+			if ((STOP_BACKGROUND)); then
+				log_event --arg step stop-background --arg pane "$pane" --argjson pid "$pid" --arg jobs "$jobs"
+				"$HERDR" pane send-keys "$pane" enter >/dev/null; answered=1
+			else
+				"$HERDR" pane send-keys "$pane" esc >/dev/null
+				log_event --arg step background-kept --arg pane "$pane" --arg jobs "$jobs"
+				say "$pane: $backend has background work running ($(tr '\n' ';' <<<"$jobs")); left running. Rerun with --stop-background to stop it."
+				return 1
+			fi
+		fi
 		if awk -v w="$waited" -v t="$EXIT_TIMEOUT" 'BEGIN { exit !(w >= t) }'; then
 			log_event --arg step exit-timeout --arg pane "$pane" --argjson pid "$pid"
 			say "$pane: $backend (pid $pid) did not exit within ${EXIT_TIMEOUT}s; nothing started"; return 1
@@ -351,13 +369,14 @@ move_one() { # pane
 	printf 'moved %s (%s %s) to herdr-core %s as %s\n' "$pane" "$backend" "$session" "$address" "$name"
 }
 
-DRY_RUN=0 APP_MODE=0 HANDOFF=0 WAIT=0 SESSION_OVERRIDE='' NAME_OVERRIDE=''
+DRY_RUN=0 APP_MODE=0 HANDOFF=0 WAIT=0 STOP_BACKGROUND=0 SESSION_OVERRIDE='' NAME_OVERRIDE=''
 panes=() workspaces=()
 while (($#)); do
 	case $1 in
 		--dry-run) DRY_RUN=1 ;;
 		--app) APP_MODE=1 ;;
 		--handoff) HANDOFF=1 ;;
+		--stop-background) STOP_BACKGROUND=1 ;;
 		--wait) WAIT=${2:-}; shift; [[ $WAIT =~ ^[0-9]+([.][0-9]+)?$ ]] || { say "--wait needs seconds"; exit 2; } ;;
 		--workspace) workspaces+=("${2:-}"); shift ;;
 		--session) SESSION_OVERRIDE=${2:-}; shift ;;
