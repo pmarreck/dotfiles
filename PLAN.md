@@ -14,7 +14,6 @@ Open work is listed in priority order. Completed history is in `docs/PLAN_LOG.md
 
 ## Host configuration drift coverage (2026-11-28)
 
-- [x] Push dotfiles, fast-forward the Framework, Mac and WSL host, install the repo-awareness hooks and the fetch schedule on every host, and verify the warning and a live fetch on each (done 2026-11-28 01:41 EST; dotfiles bc219aa, machine configs 3d32674 names the WSL host's checkout).
 - [x] Read host-config-fetch logs by syslog identifier: journald dropped the unit tag from the report line a short-lived child printed (done 2026-11-28 02:05 EST; commit 6f2f139).
 
 ## Dotfiles cleanup (owner request 2026-11-28)
@@ -28,6 +27,7 @@ Open work is listed in priority order. Completed history is in `docs/PLAN_LOG.md
 - [ ] Delete .gitconfig.old-possibly-useful once the owner confirms, porting whatever they want kept.
 - [x] Make `edit` open Zed (zeditor or zed) with its file arguments wherever a GUI is reachable, else micro: choose_editor applies that policy, a new edit executable serves non-interactive callers, and git's core.editor is choose_editor --wait; VISUAL is unchanged, see recommendation 6 (done 2026-11-28 02:05 EST; commit 2f8fa3e).
 - [x] Make VISUAL wait too (owner approved recommendation 6): VISUAL is choose_editor --wait outside SSH and unset over SSH, so crontab -e, sudoedit and Bash's Ctrl-X Ctrl-E read the file after Zed closes it (done 2026-11-28 09:23 EST; commit 58eceeb).
+- [x] Detect assistant shells by the parent process name alone, codex included: matching "claude" in $0 and $_ (paths) skipped the prompt hooks whenever a home or temporary directory path contained the word (owner request; done 2026-11-28 09:34 EST; commit 2902192).
 - [x] Write the general-improvement recommendations the owner asked for: docs/dotfiles-recommendations.md, 15 entries with intent, better method and gain (done 2026-11-28 02:05 EST; commit ef86777).
 - [ ] Owner decision: which entries in docs/dotfiles-recommendations.md to adopt; 6 was adopted 2026-11-28, and no other entry is started until chosen.
 
