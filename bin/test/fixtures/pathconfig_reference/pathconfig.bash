@@ -96,7 +96,6 @@ PATH_ADDITIONS=(
 	"$HOME/.local/bin"
 	"$HOME/Scripts"
 	"$HOME/.cargo/bin"
-	"$HOME/.cache/lm-studio/bin"
 	"$HOME/.npm-global/bin"
 	# mise shims: Node only (see ~/.config/mise/config.toml). Shims, not `mise activate`, so
 	# non-interactive shells get node too and PATH is never rewritten per directory.
@@ -105,7 +104,7 @@ PATH_ADDITIONS=(
 	"$HOME/.local/share/pnpm/bin"
 )
 
-# macOS Nix: prefer Nix over system and Homebrew
+# macOS Nix: prefer Nix over system
 if [[ "$OSTYPE" == "darwin"* ]]; then
 	PATH_ADDITIONS+=(
 		"/nix/var/nix/profiles/default/bin"

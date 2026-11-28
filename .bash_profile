@@ -1,32 +1,27 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2001
 
-# This file should only source .bashrc,
-# and contain commands only applicable to interactive shells.
-# In my current config, this is usually the file that loads first (FYI).
+# Login shells read this file: every macOS terminal tab, and on Linux usually
+# only a console or SSH login (a terminal tab there is a non-login shell that
+# reads only .bashrc). So it sources .bashrc, which holds everything every
+# interactive shell needs, and keeps here only what belongs to a login.
 # export DEBUG_SHELLCONFIG=true
 # export DEBUG_PATHCONFIG=true
 
-# Require at least Bash 4.2
-if [[ $BASH_VERSION =~ ^([0-9]+)\.([0-9]+) ]]; then
-	if (( BASH_REMATCH[1] > 4 || ( BASH_REMATCH[1] == 4 && BASH_REMATCH[2] >= 2 ) )); then
-		: # echo "Bash version is greater than or equal to 4.2"
-	else
-		echo "Warning: Bash version less than 4.2 detected. Expect incompatible behavior." >&2
-	fi
-else
-	echo "Warning: Couldn't parse Bash version: $BASH_VERSION" >&2
-fi
+# .bashrc checks the Bash version; it is sourced below on every path.
 
-# since .bash_profile is usually only included for non-login shells
-# (note: OS X Terminal ALWAYS runs as a login shell but still ALWAYS includes this file, but it's nonstandard)
-# set LOGIN_SHELL and INTERACTIVE_SHELL here but only if it wasn't already set
+# Record what kind of shell this is; .bashrc recomputes the same two flags.
 shopt -q login_shell && LOGIN_SHELL=true || LOGIN_SHELL=false
 [[ $- == *i* ]] && INTERACTIVE_SHELL=true || INTERACTIVE_SHELL=false
 
 . "$HOME/dotfiles/bin/src/append_dotfile_progress.sh"
 
-[ "${DEBUG_SHELLCONFIG+set}" = "set" ] && echo "Entering $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")" || $INTERACTIVE_SHELL && $LOGIN_SHELL && append_dotfile_progress "bp"
+# Debug mode lists each startup file; otherwise login shells show progress.
+if [ -n "${DEBUG_SHELLCONFIG+set}" ]; then
+	echo "Entering ${BASH_SOURCE[0]/#"$HOME"/"~"}"
+elif $INTERACTIVE_SHELL && $LOGIN_SHELL; then
+	append_dotfile_progress "bp"
+fi
 [ "${DEBUG_PATHCONFIG+set}" = "set" ] && echo "$PATH"
 
 # subtle shell characteristics indication, but only if interactive
@@ -39,17 +34,12 @@ if $INTERACTIVE_SHELL; then
 	fi
 fi
 
-# if the function is not already defined, define it. use posix syntax for portability
-# shellcheck disable=SC1090
-
 # Pull in path configuration
-. $HOME/.pathconfig
-# tmux helpers
-. "$HOME/dotfiles/bin/src/session.bash"
-
-# Awk-ward! (see note below about "using the right awk"...)
-[ -z "${AWK+x}" ] && \
-	export AWK=$(command -v frawk || command -v gawk || command -v awk)
+# shellcheck disable=SC1090
+. "$HOME/.pathconfig"
+# .bashrc defines everything every interactive shell shares (the tmux session
+# helper, AWK, ...): a Linux terminal tab is not a login shell and never reads
+# this file, while every macOS tab is.
 
 # Warp terminal seems to have nonstandard behavior and non-gnu sed breaks things
 # so we are using this workaround:
@@ -70,9 +60,9 @@ else
 	done
 fi
 # Warn if no GNU sed found
-if [ -z ${SED+x} ]; then
+if [ -z "${SED+x}" ]; then
 	echo "Warning from .bash_profile: No GNU sed found in PATH. This may result in problems. Using system's default sed." >&2
-	export SED=`which sed`
+	SED=$(command -v sed); export SED
 fi
 
 # enable timing debugging
@@ -106,10 +96,6 @@ fi
 truthy DEBUG_SHELLCONFIG && echo "Exiting $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")"
 truthy DEBUG_PATHCONFIG && echo "$PATH" || :
 
-
-# Added by LM Studio CLI (lms)
-# export PATH="$PATH:/Users/pmarreck/.cache/lm-studio/bin"
-# End of LM Studio CLI section
 # oMLX: CLI shim path begin
 # (moved to declared_additions in lib/shell_startup/path_plan.lua; markers kept so the installer sees its block)
 # case ":$PATH:" in

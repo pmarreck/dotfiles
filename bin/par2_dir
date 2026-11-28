@@ -795,7 +795,7 @@ Environment Variables:
 Dependencies:
 par2, of course (the Nix package I used is par2cmdline-turbo).
 The GNU (not BSD which is the Mac default!) versions of stat, touch and sed
-are currently required. You can install these via homebrew or your distro's
+are currently required. You can install these via Nix or your distro's
 package manager (although in the case of Linux, these are likely the default).
 It is assumed that these tools are available in the PATH via gstat, gtouch
 and sed. (On Nix[OS]/nix-darwin, the coreutils-prefixed package provides this,

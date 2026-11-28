@@ -187,7 +187,7 @@ for _, repo in ipairs(baseline.repos) do
 end
 
 local chosen, deferred = maintenance.select_due(candidates, max_fetches)
--- GNU timeout is gtimeout under nix-darwin or Homebrew but plain timeout from Nix
+-- GNU timeout is gtimeout under nix-darwin but plain timeout from Nix
 -- coreutils and on Linux, so take whichever this PATH provides (as providers.lua does).
 local discovered_timeout, has_timeout = runtime.run_command("command -v gtimeout || command -v timeout")
 local timeout = has_timeout and runtime.trim(discovered_timeout) or "timeout"

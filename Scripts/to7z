@@ -62,7 +62,6 @@ checkForResourceFork() {
 }
 
 checkTools() {
-  if [ -n "$(/usr/bin/env which brew)" ]; then has_brew=true; else has_brew=false; fi
   if [ -n "$(/usr/bin/env which ditto)" ]; then has_ditto=true; else has_ditto=false; fi
   if [ -n "$(/usr/bin/env which unzip)" ]; then has_unzip=true; else has_unzip=false; fi
   if [ -n "$(/usr/bin/env which unrar)" ]; then has_unrar=true; else has_unrar=false; fi
@@ -70,12 +69,7 @@ checkTools() {
   if [ -n "$(/usr/bin/env which dialog)" ]; then has_dialog=true; else has_dialog=false; fi
 
   if [ "$has_unrar" = "false" ]; then
-    echo "You don't have the 'unrar' tool installed."
-    if [ "$has_brew" = "true" ]; then
-      brew install unrar
-    else
-      echo "On OS X, try installing Homebrew from http://mxcl.github.com/homebrew/ to get it."
-    fi
+    echo "You don't have the 'unrar' tool installed. Add it with Nix (nixpkgs#unrar) or your package manager."
   fi
   if [ "$has_ditto" = "false" -a "$has_unzip" = "false" ]; then
     echo "You have neither the 'unzip' nor 'ditto' tools installed."
@@ -83,14 +77,9 @@ checkTools() {
     exit -1
   fi
   if [ "$has_pv" = "false" ]; then
-    echo "You don't have the 'pv' pipe viewer tool installed."
-    if [ "$has_brew" = "true" ]; then
-      brew install pv
-    else
-      echo "On OS X, try installing Homebrew from http://mxcl.github.com/homebrew/ to get it."
-      echo "I don't yet support output that is not pipe-viewed to show progress. Exiting..."
-      exit -1
-    fi
+    echo "You don't have the 'pv' pipe viewer tool installed. Add it with Nix (nixpkgs#pv) or your package manager."
+    echo "I don't yet support output that is not pipe-viewed to show progress. Exiting..."
+    exit -1
   fi
 }
 
@@ -154,7 +143,7 @@ do
             echo "('unrar' does not support progress indication, unfortunately.)"
             unrar x "$tmp/$infile" "$unpackdir/" >/dev/null
           else
-            echo "You don't seem to have 'unrar' available in your PATH, so I cannot process $infile. On OS X, try installing it with Homebrew."
+            echo "You don't seem to have 'unrar' available in your PATH, so I cannot process $infile. Add it with Nix (nixpkgs#unrar) or your package manager."
             will_compress=false
           fi
           check_errs $?

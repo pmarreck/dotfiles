@@ -150,7 +150,7 @@ check_dependencies() {
 
 	# Determine which stat command to use
 	if silence command -v gstat; then
-		# Use GNU stat from coreutils if available (macOS with homebrew/nix)
+		# Use GNU stat from coreutils if available (macOS with Nix)
 		STAT="gstat"
 	elif silence stat --version; then
 		# Use GNU stat if available (Linux)
@@ -163,7 +163,7 @@ check_dependencies() {
 
 	# Determine which date command to use
 	if silence command -v gdate; then
-		# Use GNU date from coreutils if available (macOS with homebrew/nix)
+		# Use GNU date from coreutils if available (macOS with Nix)
 		DATE="gdate"
 	elif silence date --version; then
 		# Use GNU date if available (Linux)
@@ -176,7 +176,7 @@ check_dependencies() {
 
 	# Determine which numfmt command to use
 	if silence command -v gnumfmt; then
-		# Use GNU numfmt from coreutils if available (macOS with homebrew/nix)
+		# Use GNU numfmt from coreutils if available (macOS with Nix)
 		NUMFMT="gnumfmt"
 	elif silence numfmt --version; then
 		# Use GNU numfmt if available (Linux)
@@ -191,8 +191,7 @@ check_dependencies() {
 		err "Missing required dependencies: ${missing_deps[*]}"
 		if [[ " ${missing_deps[*]} " =~ " GNU stat (gstat) " || " ${missing_deps[*]} " =~ " GNU date (gdate) " ]]; then
 			echo -e "${ORANGE}  This script requires GNU versions of stat and date.${RESET}" >&2
-			echo -e "${ORANGE}  On macOS, install them with: brew install coreutils${RESET}" >&2
-			echo -e "${ORANGE}  Or with Nix/nix-darwin: nix-shell -p coreutils-prefixed (or add to global flake.nix)${RESET}" >&2
+			echo -e "${ORANGE}  On macOS, add them with Nix/nix-darwin: nix-shell -p coreutils-prefixed (or add to global flake.nix)${RESET}" >&2
 		fi
 		return 1
 	fi

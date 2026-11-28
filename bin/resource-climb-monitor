@@ -3,7 +3,7 @@
 # that wedges the whole machine (Watchman runaway, issue facebook/watchman#1306).
 #
 # Samples cheap kernel counters on an interval, logs a timestamped TSV, and
-# fires a native macOS desktop notification (osascript — no homebrew) the FIRST
+# fires a native macOS desktop notification (osascript, no extra dependencies) the FIRST
 # time any metric crosses a WARN or ALARM threshold (state-tracked, no spam).
 #
 # Tracks the metrics that actually matter for THIS failure:

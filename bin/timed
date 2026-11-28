@@ -762,7 +762,7 @@ timed_main() {
 		if [[ $SHOW_RESOURCES -eq 1 ]]; then
 				# Check for GNU time command (avoid shell builtin)
 				if command -v gtime >/dev/null 2>&1; then
-						# gtime is typically GNU time on macOS when installed via homebrew
+						# gtime is GNU time under its prefixed name, as on macOS
 						gnu_time_cmd=(gtime)
 				elif [[ -x /usr/bin/time ]] && /usr/bin/time -f "" true 2>/dev/null; then
 						# System time command is GNU time

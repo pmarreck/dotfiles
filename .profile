@@ -1,7 +1,11 @@
 #!/bin/sh
+# shellcheck disable=SC1091 # Sources resolve through $HOME at run time.
 
-# .profile must remain POSIX-compliant, use shellcheck to verify
-# There is currently 1 exception to this rule: the use of ${BASH_SOURCE[0]} for debugging
+# .profile must remain POSIX: any login shell may read it, not just Bash (sh -l,
+# dash, a display manager's /bin/sh). Every Bash-only line sits behind an
+# `in_bash` check, which keeps it from running elsewhere; dash still parses an
+# array expansion it never executes. bin/test/profile_posix_test runs this file
+# under dash. Verify edits with `shellcheck -s sh .profile` as well.
 
 # Keep long bc results, including binary output, on one line.
 export BC_LINE_LENGTH=0
@@ -10,10 +14,21 @@ export BC_LINE_LENGTH=0
 # functions, and aliases; an executable subprocess cannot observe that state.
 . "$HOME/dotfiles/bin/src/defined_helpers.sh"
 
+# Name this file for debug output: Bash knows its sourced path, sh does not.
+_profile_name() {
+	if in_bash; then
+		# shellcheck disable=SC3028,SC3054 # Bash-only, reached only under Bash.
+		printf '%s\n' "${BASH_SOURCE[0]}" | ${SED:-sed} "s|^$HOME|~|"
+	else
+		# shellcheck disable=SC2088 # A literal ~ for display.
+		printf '%s\n' '~/.profile'
+	fi
+}
+
 func_defined truthy || . "$HOME/dotfiles/bin/src/truthy.sh"
 func_defined append_dotfile_progress || . "$HOME/dotfiles/bin/src/append_dotfile_progress.sh"
 if truthy DEBUG_SHELLCONFIG; then
-	echo "Entering $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")"
+	echo "Entering $(_profile_name)"
 elif ${INTERACTIVE_SHELL:-false} && ${LOGIN_SHELL:-false}; then
 	append_dotfile_progress "prof"
 fi
@@ -126,35 +141,27 @@ fi
 # Pull in path configuration — but only if .bash_profile or .bashrc hasn't
 # already done so upstream in this source chain. (Historically defensive against
 # macOS mangling, but mangling happens at login time, before this re-source.)
-# BASH_SOURCE check is bash-only; non-bash sh has empty BASH_SOURCE so the
-# fallback fires normally. Catches both login chain (.bash_profile upstream)
-# and standalone bash interactive (.bashrc upstream).
-case " ${BASH_SOURCE[*]:-} " in
-	*"/.bash_profile "*|*"/.bashrc "*) ;;  # parent already sourced .pathconfig
-	*) . $HOME/.pathconfig ;;
-esac
-# [ -n "$DEBUG_SHELLCONFIG" ] && echo "sourced .pathconfig"
+# .pathconfig and the function wrappers below are Bash. The BASH_SOURCE call
+# stack shows whether .bash_profile or .bashrc already sourced .pathconfig
+# upstream in this chain (the login chain, or a standalone interactive Bash).
+if in_bash; then
+	# shellcheck disable=SC3028,SC3054 # Bash-only, reached only under Bash.
+	case " ${BASH_SOURCE[*]:-} " in
+		*"/.bash_profile "*|*"/.bashrc "*) ;;  # parent already sourced .pathconfig
+		*) . "$HOME/.pathconfig" ;;
+	esac
 
-# codex function/wrapper
-. $HOME/dotfiles/bin/src/codex.bash
-
-# claude function/wrapper
-. $HOME/dotfiles/bin/src/claude.bash
-
-# Antigravity CLI function/wrapper
-in_bash && . "$HOME/dotfiles/bin/src/agy.bash"
-
-# capture function/wrapper
-. $HOME/dotfiles/bin/src/capture.bash
-
-# shadows function (only in bash)
-in_bash && . "$HOME/dotfiles/bin/src/shadows.bash"
-
-# universal stdout/stderr/returncode capturing
-. $HOME/dotfiles/bin/src/capture.bash
-
-# resolve function for expanding aliases and resolved paths recursively
-. $HOME/dotfiles/bin/src/resolve.bash
+	# Function wrappers for agent CLIs
+	. "$HOME/dotfiles/bin/src/codex.bash"
+	. "$HOME/dotfiles/bin/src/claude.bash"
+	. "$HOME/dotfiles/bin/src/agy.bash"     # Antigravity CLI
+	# Universal stdout/stderr/return-code capture
+	. "$HOME/dotfiles/bin/src/capture.bash"
+	# shadows: report PATH entries that shadow one another
+	. "$HOME/dotfiles/bin/src/shadows.bash"
+	# resolve: expand aliases and resolved paths recursively
+	. "$HOME/dotfiles/bin/src/resolve.bash"
+fi
 
 # The startup engine (.pathconfig) computed the terminal graphics facts:
 # SIXEL_ENV (the Sixel verdict), SIXEL_CAPABLE, KITTY_CAPABLE, and
@@ -170,9 +177,6 @@ if ${INTERACTIVE_SHELL:-false} && [ -t 0 ] && [ -t 1 ] && [ -z "${SHELL_STARTUP_
 	"${_SHELL_STARTUP_LUAJIT:-luajit}" "$HOME/dotfiles/bin/fun_intro"
 fi
 
-[ -n "$DEBUG_SHELLCONFIG" ] && echo "Exiting $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")"
-[ -n "$DEBUG_PATHCONFIG" ] && echo $PATH || :
-
-# Added by LM Studio CLI (lms)
-# export PATH="$PATH:/Users/pmarreck/.cache/lm-studio/bin"
-# End of LM Studio CLI section
+[ -n "${DEBUG_SHELLCONFIG:-}" ] && echo "Exiting $(_profile_name)"
+unset -f _profile_name
+[ -n "${DEBUG_PATHCONFIG:-}" ] && echo "$PATH" || :

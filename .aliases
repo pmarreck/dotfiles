@@ -20,7 +20,6 @@ alias files='find \!:1 -type f -print'      # files x => list files in x
 # the following doesn't seem to work, and should be a function anyway, even if aliases can take arguments
 # alias line='sed -n '\''\!:1 p'\'' \!:2'    # line 5 file => show line 5 of file
 # alias l='ls -lGaph'
-# brew install exa
 alias _ldefault='eza --long --hyperlink --header --all --icons --git --sort'
 alias l='_ldefault name'
 alias le='l -@'
@@ -177,7 +176,6 @@ alias fetch='git fetch' # --all --prune'
 alias fetchall='git fetch --all --prune'
 
 # lines of code counter
-# brew install tokei
 needs tokei "please install tokei"
 alias loc='tokei'
 
@@ -186,9 +184,6 @@ alias procs=list-procs
 alias gcai=git_commit_ai
 alias gcail=git_commit_ai_local_omlx
 alias git_commit_ai_local=git_commit_ai_local_omlx
-
-# homebrew utils
-# alias bubu='brew update && brew upgrade'
 
 alias d=show # "view" goes to vim, "s" usually launches a search or server, so "d" (for "define") is a good alias for show IMHO
 

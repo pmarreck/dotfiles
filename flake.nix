@@ -69,6 +69,7 @@
           libjxl       # cjxl, djxl
           ffmpeg       # ffmpeg, ffprobe
           tokei        # fleet-status local primary-language fallback
+          dash         # a strict POSIX shell for profile_posix_test (bash --posix accepts arrays)
         ]) ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.procps ]
           ++ [
             glob.packages.${system}.default

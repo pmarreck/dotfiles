@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# shellcheck disable=SC2016 # The single-quoted -c scripts expand inside the child shells.
+# profile_posix_test — .profile must run under a strict POSIX shell, because any
+# login shell may read it (sh -l, dash, a display manager's /bin/sh). Its
+# Bash-only lines must be gated so dash never executes them, while Bash still
+# gets every function wrapper they define.
+#
+# `bash --posix` accepts arrays such as ${BASH_SOURCE[0]}, so only a real POSIX
+# shell can catch a regression; dash is declared in the flake's suiteTools.
+set -u
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)
+dash_bin=$(command -v dash) || { printf 'FAIL dash is required (flake suiteTools)\n' >&2; exit 1; }
+work=$(mktemp -d "${TMPDIR:-/tmp}/profile-posix.XXXXXXXX") || exit 1
+trap 'command rm -rf -- "$work"' EXIT
+
+home="$work/home"
+mkdir -p "$home"
+ln -s "$root" "$home/dotfiles"
+ln -s dotfiles/bin "$home/bin"
+for file in .profile .pathconfig .bashrc .bash_profile .envconfig .shellenv; do
+	[ -e "$root/$file" ] && ln -s "dotfiles/$file" "$home/$file"
+done
+
+failures=0 tests=0
+check() { tests=$((tests+1)); if "$@"; then return; fi; printf 'FAIL %s\n' "$*" >&2; failures=$((failures+1)); }
+contains() { case $1 in *"$2"*) return 0 ;; esac; return 1; }
+clean_env() { env -i HOME="$home" PATH="$PATH" XDG_CACHE_HOME="$work/cache" XDG_STATE_HOME="$work/state" "$@"; }
+
+# dash parses the whole file, including array syntax in branches it never runs.
+check "$dash_bin" -n "$root/.profile"
+
+# dash runs it to the end: status 0 and nothing at all on stderr.
+out=$(clean_env "$dash_bin" -c '. "$HOME/.profile"; echo "status=$?"' 2> "$work/dash.err")
+check contains "$out" 'status=0'
+if [ -s "$work/dash.err" ]; then
+	printf 'FAIL dash wrote to stderr:\n' >&2; sed 's/^/  /' "$work/dash.err" >&2
+	failures=$((failures+1))
+fi
+tests=$((tests+1))
+
+# Debug output names the file in both shells without Bash arrays under dash.
+out=$(clean_env DEBUG_SHELLCONFIG=1 "$dash_bin" -c '. "$HOME/.profile"' 2>&1)
+check contains "$out" 'Entering ~/.profile'
+check contains "$out" 'Exiting ~/.profile'
+
+# Bash still receives the gated function wrappers.
+out=$(clean_env bash -c '. "$HOME/.profile" > /dev/null 2>&1; echo "status=$?"; for f in codex claude agy capture shadows resolve; do printf "%s=%s\n" "$f" "$(type -t "$f")"; done')
+check contains "$out" 'status=0'
+for name in codex claude agy capture shadows resolve; do
+	check contains "$out" "$name=function"
+done
+
+if ((failures)); then printf '%d/%d .profile POSIX checks failed\n' "$failures" "$tests" >&2; exit 1; fi
+printf 'All %d .profile POSIX checks passed\n' "$tests"

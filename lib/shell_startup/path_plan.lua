@@ -4,6 +4,10 @@
 -- The result is rebuilt from scratch on every call, which keeps re-sourcing
 -- idempotent: PATH = foreign injections, then declared additions (last
 -- declared first), then the pristine base, deduplicated and filtered.
+--
+-- docs/shell-startup-path.md explains why each rule exists: the incidents
+-- behind foreign-entry preservation, the deny-list, the exclusions and the
+-- platform bootstrap.
 local M = {}
 
 -- Platform directories a project may publish under bin/. Only the current
@@ -37,7 +41,6 @@ function M.declared_additions(home, code, ostype)
 		home .. "/.local/bin",
 		home .. "/Scripts",
 		home .. "/.cargo/bin",
-		home .. "/.cache/lm-studio/bin",
 		home .. "/.npm-global/bin",
 		-- mise shims for Node only. Shims rather than `mise activate`, so
 		-- non-interactive shells get node too and PATH never changes per
@@ -46,7 +49,7 @@ function M.declared_additions(home, code, ostype)
 		home .. "/.local/share/pnpm/bin",
 	}
 	if ostype:sub(1, 6) == "darwin" then
-		-- macOS Nix: prefer Nix over the system and Homebrew.
+		-- macOS Nix: prefer Nix over the system.
 		additions[#additions + 1] = "/nix/var/nix/profiles/default/bin"
 		additions[#additions + 1] = home .. "/.nix-profile/bin"
 		additions[#additions + 1] = "/run/current-system/sw/bin"

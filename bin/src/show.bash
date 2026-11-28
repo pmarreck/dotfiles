@@ -420,10 +420,7 @@ show() {
 	
 	# Restore positional parameters
 	set -- "${args[@]}"
-	# on macOS, you need gnu-sed from homebrew or equivalent, which is installed as "gsed"
-	# I set PLATFORM elsewhere in my env config
-	# [ "$PLATFORM" = "mac" ] && local -r sed="gsed" || local -r sed="sed"
-	# screw homebrew, all in on nix now; this is always gnused; YMMV
+	# sed is always GNU sed here: Nix supplies it on every platform.
 	local batless=false
 	needs bat "please install bat to view some file listings or function definitions with syntax highlighting; using less instead" || batless=true
 	local bat_opts="${BAT_OPTS:-"--tabs 0"}" # I removed -P to enable pagination

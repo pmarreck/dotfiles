@@ -111,6 +111,10 @@ unset _llm_parent_command
 # `code <partial>` jumps to a ~/Code project by fuzzy name (needs cd → must be sourced)
 . "$HOME/dotfiles/bin/src/code.bash"
 
+# tmux new-or-rejoin helper. Here rather than in .bash_profile, so non-login
+# shells (Linux terminal tabs, tmux panes) get it as every macOS tab does.
+. "$HOME/dotfiles/bin/src/session.bash"
+
 # Set SED env var - with Nix, sed is already GNU sed
 if [ -z ${SED+x} ]; then
 	if [[ "$(sed --version 2>/dev/null | head -1)" =~ .*GNU.* ]]; then
@@ -125,7 +129,12 @@ fi
 [ -z "${AWK+x}" ] && \
 	export AWK=$(command -v frawk || command -v gawk || command -v awk)
 
-[ "${DEBUG_SHELLCONFIG+set}" = "set" ] && echo "Entering $(echo "${BASH_SOURCE[0]}" | $SED "s|^$HOME|~|")" || $INTERACTIVE_SHELL && $LOGIN_SHELL && append_dotfile_progress "rc"
+# Debug mode lists each startup file; otherwise login shells show progress.
+if [ -n "${DEBUG_SHELLCONFIG+set}" ]; then
+	echo "Entering ${BASH_SOURCE[0]/#"$HOME"/"~"}"
+elif $INTERACTIVE_SHELL && $LOGIN_SHELL; then
+	append_dotfile_progress "rc"
+fi
 [ "${DEBUG_PATHCONFIG+set}" = "set" ] && echo "$PATH"
 
 # direnv output cannot be muted due to bug in version 2.36.0
@@ -143,8 +152,7 @@ fi
 # User configuration
 # export MANPATH="/usr/local/man:$MANPATH"
 
-# You may need to manually set your language environment
-export LANG=en_US.UTF-8
+# The locale (LANG, LANGUAGE, LC_CTYPE) is set in .envconfig.
 
 # Preferred editor with logic for local and remote sessions
 unset VISUAL EDITOR
@@ -155,10 +163,10 @@ unset VISUAL EDITOR
 		needs micro "please install the micro editor; defaulting to nano for EDITOR" && export EDITOR='micro' || export EDITOR='nano'
 		# Detect the Zed editor while avoiding the ZFS Event Daemon (also named
 		# `zed`, present on NixOS-with-zfs and on Linux/macOS systems where ZFS
-		# userspace is installed via brew, nix-darwin, etc.). The discriminator
+		# userspace is installed, e.g. through nix-darwin). The discriminator
 		# that's universal across both OSes and all install vectors: ZFS zed is
 		# a daemon and installs to `sbin/`; the Zed editor is a user binary in
-		# `bin/`. Resolve symlinks (Nix profile → store path, brew opt → cellar)
+		# `bin/`. Resolve symlinks (Nix profile → store path)
 		# before pattern-matching so we catch nix-darwin's zfs install too.
 		_zed_is_editor() {
 			local p
@@ -234,9 +242,6 @@ case $OS in
 		;;
 esac
 
-if [ "$AWK" = "" ]; then
-	export AWK=$(command -v frawk || command -v gawk || command -v awk)
-fi
 # echo "AWK in .bashrc:258 is: $AWK"
 # using the right awk is a PITA on macOS vs. Linux so let's ensure GNU Awk everywhere
 # Only an awk named plain "awk" on macOS can be BSD awk, so only that one is
@@ -374,10 +379,6 @@ set +H
 
 # consistent deterministic randomization in subshells
 export DRANDOM_CONTEXT=$$
-
-# Added by LM Studio CLI (lms)
-# export PATH="$PATH:/Users/pmarreck/.cache/lm-studio/bin"
-# End of LM Studio CLI section
 
 # Append Warp and McFly history to shell history
 # if command -v warp-history &> /dev/null; then

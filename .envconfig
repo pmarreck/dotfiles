@@ -14,8 +14,8 @@ elif ${INTERACTIVE_SHELL:-false} && ${LOGIN_SHELL:-false} && command -v append_d
 fi
 [ -n "${DEBUG_PATHCONFIG:-}" ] && echo "$PATH"
 
-# Moved from .envrc to avoid direnv
-. "${HOME}/dotfiles/bin/src/truthy.sh"
+# Moved from .envrc to avoid direnv. .bashrc normally defined truthy already.
+declare -F truthy >/dev/null || . "${HOME}/dotfiles/bin/src/truthy.sh"
 
 # Reuse the macOS GUI login's SSH agent in remote shells, preserving forwarding.
 . "$HOME/dotfiles/bin/src/macos_ssh_agent_env.bash"
@@ -45,7 +45,9 @@ export XDG_CACHE_HOME="$HOME/.cache"
 . "$HOME/dotfiles/bin/src/devcache_env.bash"
 configure_devcache_env
 
-# SSL cert config validation
+# SSL cert config validation, used only when SSL_CERT_DIR or SSL_CERT_FILE is
+# unset or invalid. Each later match overrides an earlier one, so the Nix
+# default profile's certificates win over the system's when both exist.
 if [ ! -d "$SSL_CERT_DIR" ]; then
   if [ -d /etc/ssl/certs ]; then
     export SSL_CERT_DIR=/etc/ssl/certs
@@ -80,7 +82,6 @@ if [ -n "$SSL_CERT_FILE" ]; then
   export GIT_SSL_CAINFO=$SSL_CERT_FILE
 fi
 
-# note that with ssl support on mac you may need to add "--with-ssl=$(brew --prefix openssl)" to the following:
 KERL_CONFIGURE_OPTIONS="--disable-parallel-configure --disable-debug --disable-silent-rules --without-javac --enable-shared-zlib --enable-dynamic-ssl-lib --enable-sctp --enable-threads --enable-kernel-poll --enable-wx"
 [ "$OS" = macos ] && KERL_CONFIGURE_OPTIONS="$KERL_CONFIGURE_OPTIONS --enable-darwin-64bit"
 export KERL_CONFIGURE_OPTIONS
@@ -104,41 +105,15 @@ case "${PERL5OPT:-}" in
 	*) export PERL5OPT="${PERL5OPT:+$PERL5OPT }-Mutf8" ;;
 esac
 
-# canonical gcc tweaks for OS X's homebrew gcc; Linux shouldn't need these
-# if [ "$PLATFORM" = "mac" ]; then
-	# needs brew
-	# brew_prefix=$(brew --prefix)
-	# Homebrew LLVM and compiler toolchain config
-	# export LDFLAGS="-L/opt/homebrew/opt/llvm/lib -Wl,-rpath,/opt/homebrew/opt/llvm/lib"
-	# export CPPFLAGS="-I/opt/homebrew/opt/llvm/include"
-	# Experimental "Plan 9 from User Space" PATH config
-	# export PLAN9=/usr/local/plan9
-	# export PATH=$PATH:$PLAN9/bin
-	# gcc_ver="11"
-	# brew_prefix_bin=$brew_prefix/bin
-	# export CC=$brew_prefix_bin/gcc-$gcc_ver
-	# export GCC=$CC
-	# export CXX=$brew_prefix_bin/g++-$gcc_ver
-	# export CPP=$brew_prefix_bin/cpp-$gcc_ver
-	# export LD=$brew_prefix_bin/gcc-$gcc_ver
-	# alias c++=$brew_prefix_bin/c++-$gcc_ver
-	# alias g++=$brew_prefix_bin/g++-$gcc_ver
-	# alias gcc=$brew_prefix_bin/gcc-$gcc_ver
-	# alias cpp=$brew_prefix_bin/cpp-$gcc_ver
-	# alias ld=$brew_prefix_bin/gcc-$gcc_ver
-	# alias cc=$brew_prefix_bin/gcc-$gcc_ver
-	# alias clang=$brew_prefix_bin/clang-$gcc_ver
-	# alias clang++=$brew_prefix_bin/clang++-$gcc_ver
-	# alias gcov=$brew_prefix_bin/gcov-$gcc_ver
-	# alias gcov-dump=$brew_prefix_bin/gcov-dump-$gcc_ver
-	# alias gcov-tool=$brew_prefix_bin/gcov-tool-$gcc_ver
-# fi
+# Experimental "Plan 9 from User Space" PATH config
+# export PLAN9=/usr/local/plan9
+# export PATH=$PATH:$PLAN9/bin
 
 # stop checking for unix mail, OS X!
 unset MAILCHECK
 
-# Node.js
-export NODE_PATH=/usr/local/lib/node
+# Node.js (mise supplies node itself; NODE_PATH pointed at a retired
+# /usr/local/lib/node and is no longer set)
 export PNPM_HOME="$HOME/.local/share/pnpm"
 
 # ANSI color escape-code constants
@@ -276,7 +251,7 @@ export OLLAMA_KEEP_ALIVE="-1"  # keep models loaded indefinitely (no auto-unload
 export OLLAMA_DEFAULT_MODEL=${OLLAMA_DEFAULT_MODEL:-granite3.3:latest}
 # erlang/elixir config- 2 million process limit
 # (# of schedulers is automatic to # of CPU logical cores, but can be forced with +S arg)
-export ERL_FLAGS="+P 2000000";
+export ERL_FLAGS="+P 2000000"
 
 # Set up a few character set globals in ENV for the password generator functions
 export CHARSET_LOWER="abcdefghijklmnopqrstuvwxyz"

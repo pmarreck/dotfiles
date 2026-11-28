@@ -138,7 +138,7 @@ elif stat -f %z /dev/null >/dev/null 2>&1; then
 	STAT_CMD="stat -f %z"
 else
 	echo "Error: Cannot find a compatible 'stat' command to determine file size." >&2
-	echo "Please install GNU coreutils ('brew install coreutils' on macOS)." >&2
+	echo "Please install GNU coreutils (on macOS, through Nix or nix-darwin)." >&2
 	exit 4 # dependency error
 fi
 
