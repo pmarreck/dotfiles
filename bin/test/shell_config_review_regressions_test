@@ -43,7 +43,9 @@ require_literal .aliases "alias log='script -a ~/Terminal.log; source ~/.bash_pr
 require_literal .aliases "needs timeout 2>/dev/null || { needs uutils-timeout \"please install uutils-coreutils\" && alias timeout='uutils-timeout'; }" "timeout fallback alias is grouped"
 
 reject_literal .bashrc '"claude\|llm\|assistant"' "parent-agent detection has no fixed-string alternation"
-require_literal .bashrc '=~ (claude|llm|assistant)' "parent-agent detection uses Bash regular-expression alternation"
+require_literal .bashrc '=~ (claude|codex|llm|assistant)' "parent-agent detection uses Bash regular-expression alternation"
+reject_literal .bashrc '[[ "$0" == *"claude"* ]]' "parent-agent detection ignores the shell's own path"
+reject_literal .bashrc '[[ "${_:-}" == *"claude"* ]]' "parent-agent detection ignores the path in \$_"
 reject_literal .bashrc 'uname -a | rev' "architecture flags do not parse uname prose"
 require_literal .bashrc 'ARCHFLAGS="-arch $(uname -m)"' "macOS architecture flags use uname -m"
 require_literal .bashrc '[ "$OS" = macos ]' "architecture flags are macOS-gated"

@@ -197,28 +197,38 @@ run_quadrant 'non-login interactive' -i
 run_quadrant 'login interactive' -l -i
 
 # The LLM-assistant check in .bashrc reads the parent's name from the engine.
-# A parent named claude must turn complex setup off; any other must not.
+# A parent named claude or codex must turn complex setup off; any other must
+# not, even when paths contain "claude", as a temporary or home directory's
+# path can. The last case starts the shell through such a path (its $0) with
+# such a home directory (so $_ holds one after startup sources a file).
 # shellcheck disable=SC2016 # Expanded by the parent shell.
 parent_script='"$1" -i -c "$2"; :'
 # shellcheck disable=SC2016 # Expanded by the started shell.
 llm_probe='printf "skip=%s\n" "${SKIP_COMPLEX_SHELL_SETUP:-unset}"'
-for parent in claude parentshell; do
+mkdir -p "$work/claude-named" || exit 1
+ln -sf "$bash_bin" "$work/claude-named/bash"
+ln -sfn "$HOME" "$work/claude-home" # a symlink: removing $work never follows it
+parent_case() { # <parent name> <wanted skip> <shell path> <home> <label>
+	local parent=$1 want=$2 shell=$3 home=$4 label=$5 out
 	ln -sf "$bash_bin" "$work/$parent"
 	: >"$log"
 	out=$(timeout --foreground --kill-after=5 20 env -i \
-		HOME="$HOME" USER="$me" LOGNAME="$me" TERM=xterm SHELL="$bash_bin" XDG_CACHE_HOME="$work/cache" \
+		HOME="$home" USER="$me" LOGNAME="$me" TERM=xterm SHELL="$bash_bin" XDG_CACHE_HOME="$work/cache" \
 		PATH="$stub_dir:$base_path" ORIG_PATH="$base_path" \
 		__NIXOS_SET_ENVIRONMENT_DONE=1 __NIX_DARWIN_SET_ENVIRONMENT_DONE=1 SHELL_STARTUP_BENCHMARK=1 \
-		BUDGET_LOG="$log" "$work/$parent" -c "$parent_script" "$parent" "$bash_bin" "$llm_probe" 2>/dev/null)
-	want='unset'
-	[[ $parent == claude ]] && want=true
+		BUDGET_LOG="$log" "$work/$parent" -c "$parent_script" "$parent" "$shell" "$llm_probe" 2>/dev/null)
 	((tests++))
 	if [[ "$out" == *"skip=$want"* ]] && ! grep -q '^ps ' "$log"; then
-		pass "a parent named $parent leaves SKIP_COMPLEX_SHELL_SETUP $want, without running ps"
+		pass "$label leaves SKIP_COMPLEX_SHELL_SETUP $want, without running ps"
 	else
-		fail "a parent named $parent: wanted skip=$want with no ps; got: ${out:-nothing}; log: $(tr '\n' ';' <"$log")"
+		fail "$label: wanted skip=$want with no ps; got: ${out:-nothing}; log: $(tr '\n' ';' <"$log")"
 	fi
-done
+}
+parent_case claude true "$bash_bin" "$HOME" 'a parent named claude'
+parent_case codex true "$bash_bin" "$HOME" 'a parent named codex'
+parent_case parentshell unset "$bash_bin" "$HOME" 'a parent named parentshell'
+parent_case parentshell unset "$work/claude-named/bash" "$work/claude-home" \
+	'a parent named parentshell, with "claude" in the shell and home paths'
 
 if ((fails == 0)); then
 	printf 'All %s startup exec-budget checks passed.\n' "$tests"

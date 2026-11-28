@@ -76,7 +76,9 @@ read -ra GREP_QUIET_ARRAY <<< "$GREP_QUIET"
 shopt -q login_shell && LOGIN_SHELL=true || LOGIN_SHELL=false
 [[ $- == *i* ]] && INTERACTIVE_SHELL=true || INTERACTIVE_SHELL=false
 
-# Detect if being run by Claude CLI or other LLM assistants and skip complex setup
+# Skip complex setup in a shell started by an LLM coding assistant (Claude
+# Code, Codex, ...). Only the parent process's name decides: $0 and $_ hold
+# paths, and a home or temporary directory can contain "claude" by accident.
 # The startup engine (.pathconfig) already named the parent process; ps is
 # only the fallback for a shell that reached this file without it.
 _llm_parent_command=''
@@ -85,10 +87,8 @@ if [[ -n "${SHELL_STARTUP_PARENT_COMMAND+set}" ]]; then
 elif [[ -n "${PPID:-}" ]]; then
 	_llm_parent_command=$(ps -p "${PPID}" -o comm= 2>/dev/null)
 fi
-if [[ "$_llm_parent_command" =~ (claude|llm|assistant) ]]; then
-		export SKIP_COMPLEX_SHELL_SETUP=true
-elif [[ "$0" == *"claude"* ]] || [[ "${_:-}" == *"claude"* ]]; then
-		export SKIP_COMPLEX_SHELL_SETUP=true
+if [[ "$_llm_parent_command" =~ (claude|codex|llm|assistant) ]]; then
+	export SKIP_COMPLEX_SHELL_SETUP=true
 fi
 unset _llm_parent_command
 
