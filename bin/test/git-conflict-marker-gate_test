@@ -204,5 +204,21 @@ output=$(PATH="$work/rm-bin:$PATH" TMPDIR="$work/gate-tmp" "$gate" 2>&1); rc=$?
 check test "$rc" -eq 0
 check test "$(cat "$work/rm-calls")" = ''
 check test "$(ls -A "$work/gate-tmp")" = ''
+# A staged blob Git cannot read makes git grep report "no match", so the gate must check
+# that every staged blob exists before trusting the scan.
+stage "$conflict"
+missing_blob=$(git rev-parse :sample)
+mv -- ".git/objects/${missing_blob:0:2}/${missing_blob:2}" "$work/missing-blob"
+run_gate
+check test "$rc" -eq 2
+check test "${output#*"staged blob $missing_blob cannot be read; commit refused"}" != "$output"
+mv -- "$work/missing-blob" ".git/objects/${missing_blob:0:2}/${missing_blob:2}"
+# A submodule entry names a commit in another repository; it is not a missing blob.
+stage clean
+git update-index --add --cacheinfo "160000,$(printf '%040d' 1),vendored-submodule"
+run_gate
+check test "$rc" -eq 0
+git rm -q --cached vendored-submodule
+
 printf '%s checks, %s failures\n' "$tests" "$failures"
 test "$failures" -eq 0

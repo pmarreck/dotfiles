@@ -43,14 +43,36 @@ scan() {
 		*) printf 'ERROR: could not inspect staged files; commit refused.\n' >&2; exit 2 ;;
 	esac
 }
+# git grep reports "no match" for a staged blob it cannot read (a damaged or incomplete
+# object store), which would pass text nobody inspected. Every staged blob must exist.
+# A submodule entry (mode 160000) names a commit in another repository and is skipped.
+check_blobs() {
+	local record mode rest reply listed='' checked=''
+	local -a objects=()
+	while IFS= read -r -d '' record; do
+		if [[ -z $record ]]; then IFS= read -r -d '' listed; break; fi
+		mode=${record%% *} rest=${record#* }
+		[[ $mode == 160000 ]] || objects+=("${rest%% *}")
+	done < <(git --literal-pathspecs ls-files --stage -z -- "$@"; printf '\0%s\0' "$?")
+	[[ $listed == 0 ]] || { printf 'ERROR: could not list staged blobs; commit refused.\n' >&2; exit 2; }
+	(( ${#objects[@]} )) || return 0
+	while IFS= read -r reply; do
+		if [[ -z $reply ]]; then IFS= read -r checked; break; fi
+		if [[ $reply == *' missing' ]]; then
+			printf 'ERROR: staged blob %s cannot be read; commit refused.\n' "${reply%% *}" >&2
+			exit 2
+		fi
+	done < <(printf '%s\n' "${objects[@]}" | git cat-file --batch-check; printf '\n%s\n' "$?")
+	[[ $checked == 0 ]] || { printf 'ERROR: could not check staged blobs; commit refused.\n' >&2; exit 2; }
+}
 batch=() listed=''
 while IFS= read -r -d '' path; do
 	if [[ -z $path ]]; then IFS= read -r -d '' listed; break; fi
 	batch+=("$path")
-	if (( ${#batch[@]} == 100 )); then scan "${batch[@]}"; batch=(); fi
+	if (( ${#batch[@]} == 100 )); then check_blobs "${batch[@]}"; scan "${batch[@]}"; batch=(); fi
 done < <(git diff --cached --name-only --diff-filter=ACMRT -z --; printf '\0%s\0' "$?")
 [[ $listed == 0 ]] || { printf 'ERROR: could not list staged files; commit refused.\n' >&2; exit 2; }
-if (( ${#batch[@]} )); then scan "${batch[@]}"; fi
+if (( ${#batch[@]} )); then check_blobs "${batch[@]}"; scan "${batch[@]}"; fi
 if (( found )); then
 	printf '\nERROR: staged text contains complete Git merge-conflict blocks (file:line above).\nResolve them and stage the fix. For intentional fixtures only, explicitly use:\n  ALLOW_GIT_CONFLICT_MARKERS=1 git commit ...\n' >&2
 	exit 1
