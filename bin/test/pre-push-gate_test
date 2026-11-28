@@ -25,6 +25,8 @@ host_log="$WORK/host-evidence-argv"
 {
 	printf '#!%s\n' "$BASH"
 	# shellcheck disable=SC2016 # Generated adapter expands this at runtime.
+	printf 'if [ "${1:-}" = --evidence-commit ]; then printf "%%s\\n" "${EVIDENCE_BASE:-$2}"; exit 0; fi\n'
+	# shellcheck disable=SC2016 # Generated adapter expands this at runtime.
 	printf 'cat > "$PUSH_EVIDENCE_LOG"\n'
 	# shellcheck disable=SC2016 # Generated adapter expands this at runtime.
 	printf 'exit "${PUSH_EVIDENCE_STATUS:-0}"\n'
@@ -92,6 +94,16 @@ if [ "$rc" = 0 ] && [ ! -e "$_marker" ] \
 	ok "changed tips verify both cached evidence classes without running tests"
 else
 	bad "changed tips did not verify the exact cached evidence set" "exit=$rc"
+fi
+
+((tests++))
+rm -f "$_marker" "$push_log" "$host_log"
+_base=3333333333333333333333333333333333333333
+rc=$(EVIDENCE_BASE="$_base" _hook_gate "$_diff" "$_same")
+if [ "$rc" = 0 ] && [ "$(cat "$host_log")" = "--verify $hook_root $_base" ]; then
+	ok "a documentation-only tip verifies host evidence for its last code commit"
+else
+	bad "host evidence ignored the documentation-only evidence commit" "exit=$rc" "$(cat "$host_log" 2>/dev/null)"
 fi
 
 # ── Legacy explicit-check mode delegates to the one complete entry point ─────

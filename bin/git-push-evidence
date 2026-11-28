@@ -10,10 +10,13 @@ local function trim(s) return (s or ''):gsub('[\r\n]+$','') end
 local function git(args) return capture('git '..args) end
 local function fail(s) io.stderr:write('Push evidence: '..s..'\n'); os.exit(1) end
 if arg[1]=='--help' or arg[1]=='-h' then
-	print([[git-push-evidence [--check REV | --prepare REV]
+	print([[git-push-evidence [--check REV | --prepare REV | --evidence-commit REV]
 Default: inspect git pre-push ref updates on stdin; never run tests.
 --check: query already-realized checks for REV (also never runs tests).
 --prepare: explicitly build the required checks for immutable REV.
+--evidence-commit: print the commit whose evidence covers REV: REV itself, or the last code commit
+when every commit since it changes only documentation (Markdown and similar). Such a tip reuses
+that commit's evidence, and the push says so.
 Checks: git config --add pushEvidence.check checks.SYSTEM.NAME;
 otherwise committed .push-checks, then checks from .mechatron-prime/targets.
 No declaration or no successful cached outputs means refusal.
@@ -23,7 +26,7 @@ a pushed tip with no flake.nix is then exempt, and the exemption is printed.]])
 	os.exit(0)
 end
 local prepare=arg[1]=='--prepare'
-if #arg>0 and not ((prepare or arg[1]=='--check') and #arg==2) then fail('invalid arguments; use --help') end
+if #arg>0 and not ((prepare or arg[1]=='--check' or arg[1]=='--evidence-commit') and #arg==2) then fail('invalid arguments; use --help') end
 local revisions={}
 if #arg>0 then revisions[1]=arg[2]
 else
@@ -79,6 +82,37 @@ local function not_notes(sha)
 	end
 	return found
 end
+-- Documentation does not change what the checks build or test, so a tip whose commits since the last code change
+-- touch only documentation reuses that commit's evidence (owner 2026-11-27). CI still tests the pushed tip. Text
+-- that tests may read as fixtures (.txt, .json) is not documentation here; a rename is a deletion plus an addition.
+local doc_extensions={md=true,markdown=true,mdx=true,rst=true,adoc=true,asciidoc=true,org=true}
+local doc_names={LICENSE=true,COPYING=true,NOTICE=true,AUTHORS=true}
+local function documentation_only(parent,commit)
+	local changed,crc=git('diff --no-renames --name-only -z '..quote(parent)..' '..quote(commit)..' --')
+	if crc~=0 then fail('cannot compare '..commit..' with its parent') end
+	for path in changed:gmatch('([^%z]+)') do
+		local name=path:match('([^/]+)$'); local extension=name:match('%.([^.]+)$')
+		if not (doc_names[name] or (extension and doc_extensions[extension:lower()])) then return false end
+	end
+	return true
+end
+-- The most recent first-parent ancestor (or the commit itself) whose own change is not documentation-only.
+local function evidence_commit(sha)
+	local current=sha
+	for _=1,200 do
+		local parent,prc=git('rev-parse --verify --quiet '..quote(current..'^1'))
+		if prc~=0 then break end
+		parent=trim(parent)
+		if not documentation_only(parent,current) then break end
+		current=parent
+	end
+	return current
+end
+if arg[1]=='--evidence-commit' then
+	local sha,src=git('rev-parse --verify --end-of-options '..quote(arg[2]..'^{commit}'))
+	if src~=0 then fail('revision does not resolve to a commit: '..arg[2]) end
+	print(evidence_commit(trim(sha))); os.exit(0)
+end
 local installables,seen,exempt={},{},0
 for _,revision in ipairs(revisions) do
 	local sha,src=git('rev-parse --verify --end-of-options '..quote(revision..'^{commit}'))
@@ -97,6 +131,12 @@ for _,revision in ipairs(revisions) do
 		seen[sha]=true; exempt=exempt+1
 	elseif not seen[sha] then
 		seen[sha]=true
+		local base=evidence_commit(sha)
+		if base~=sha then
+			io.stderr:write('Push evidence: '..sha:sub(1,12)..' changes only documentation since '..base:sub(1,12)..
+				"; verifying that commit's checks. CI still tests the pushed commit.\n")
+			sha=base
+		end
 		if not blob(sha,'flake.nix') then fail(sha..' has no flake.nix; declare reproducible test checks first') end
 		local declaration,manifest
 		if status==0 then declaration=configured

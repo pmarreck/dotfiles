@@ -184,5 +184,54 @@ printf '{ outputs = _: {}; }\n' > "$notes/flake.nix"
 git -C "$notes" add flake.nix
 git -C "$notes" commit -qm flake > "$work/commit.log" 2>&1 || exit 1
 notes_gate --check HEAD; check test "$rc" != 0
+# Documentation does not change what checks build or test: a tip whose commits since the last code change touch
+# only documentation reuses that commit's evidence, says so, and runs nothing. Anything else needs its own.
+docs="$work/docs"
+git init -q "$docs"
+git -C "$docs" config core.hooksPath /dev/null
+git -C "$docs" config user.name Test
+git -C "$docs" config user.email test@example.invalid
+printf '{ outputs = _: {}; }\n' > "$docs/flake.nix"
+printf '%s\n' "$EVIDENCE_CHECK" > "$docs/.push-checks"
+printf 'code\n' > "$docs/main.lua"
+printf '# Readme\n' > "$docs/README.md"
+git -C "$docs" add . && git -C "$docs" commit -qm code > "$work/commit.log" 2>&1 || exit 1
+coded=$(git -C "$docs" rev-parse HEAD)
+export EVIDENCE_FIRST="$coded"
+docs_gate() { output=$(cd "$docs" && "$root/bin/git-push-evidence" "$@" 2>&1); rc=$?; }
+docs_commit() { git -C "$docs" add -A && git -C "$docs" commit -qm "$1" > "$work/commit.log" 2>&1 || exit 1; }
+printf 'More prose.\n' >> "$docs/README.md"
+mkdir -p "$docs/docs" && printf 'Guide\n=====\n' > "$docs/docs/guide.rst" && docs_commit prose
+printf 'License text\n' > "$docs/LICENSE" && docs_commit license
+git -C "$docs" commit --allow-empty -qm empty > "$work/commit.log" 2>&1 || exit 1
+printf -- '- [ ] next\n' > "$docs/PLAN.md" && docs_commit plan
+documented=$(git -C "$docs" rev-parse HEAD)
+: > "$EVIDENCE_CALLS"
+docs_gate --check "$documented"; check test "$rc" = 0
+check test "${output#*"${documented:0:12} changes only documentation since ${coded:0:12}"}" != "$output"
+check rg -q -- "rev=$coded" "$EVIDENCE_CALLS"
+check test "$(rg -c -- "rev=$documented" "$EVIDENCE_CALLS")" = ''
+check test "$(rg -c '^build$' "$EVIDENCE_CALLS")" = ''
+output=$(printf 'refs/heads/main %s refs/heads/main %s\n' "$documented" "$zero" | (cd "$docs" && "$root/bin/git-push-evidence") 2>&1); rc=$?
+check test "$rc" = 0
+# --evidence-commit names the commit whose evidence covers a tip, for other evidence classes to reuse.
+docs_gate --evidence-commit "$documented"; check test "$rc:$output" = "0:$coded"
+docs_gate --evidence-commit "$coded"; check test "$rc:$output" = "0:$coded"
+# A code change after documentation needs its own evidence, and so does documentation on top of it.
+printf 'more code\n' >> "$docs/main.lua" && docs_commit code2
+docs_gate --check HEAD; check test "$rc" != 0
+printf 'Prose after code.\n' >> "$docs/README.md" && docs_commit prose2
+docs_gate --check HEAD; check test "$rc" != 0
+# A mixed commit, a code file renamed to a documentation name, and a .txt file (tests may read such files as
+# fixtures) are not documentation-only.
+git -C "$docs" checkout -q --detach "$coded"
+printf 'x\n' >> "$docs/README.md" && printf 'y\n' >> "$docs/main.lua" && docs_commit mixed
+docs_gate --check HEAD; check test "$rc" != 0
+git -C "$docs" checkout -q --detach "$coded"
+git -C "$docs" mv main.lua main.md && docs_commit rename
+docs_gate --check HEAD; check test "$rc" != 0
+git -C "$docs" checkout -q --detach "$coded"
+printf 'expected output\n' > "$docs/expected.txt" && docs_commit fixture
+docs_gate --check HEAD; check test "$rc" != 0
 printf '%s checks, %s failures\n' "$checks" "$failures"
 test "$failures" = 0

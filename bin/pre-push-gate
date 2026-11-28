@@ -58,5 +58,8 @@ printf '%s\n' "$updates" | "$repo_root/bin/git-push-evidence" || exit "$?"
 while read -r _local_ref local_sha _remote_ref remote_sha; do
 	case "$local_sha" in *[!0]*) ;; *) continue ;; esac
 	[[ "$local_sha" != "$remote_sha" ]] || continue
-	"$repo_root/bin/dotfiles-host-evidence" --verify "$repo_root" "$local_sha" || exit "$?"
+	# A tip that changes only documentation since its last code commit reuses
+	# that commit's evidence, as git-push-evidence does for the Nix checks.
+	evidence_sha=$("$repo_root/bin/git-push-evidence" --evidence-commit "$local_sha" </dev/null) || exit "$?"
+	"$repo_root/bin/dotfiles-host-evidence" --verify "$repo_root" "$evidence_sha" || exit "$?"
 done <<<"$updates"
