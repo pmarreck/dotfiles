@@ -25,6 +25,40 @@ commits are never blocked by drift. Missing upstreams produce **unknown**, not
 zero. Incoming counts reflect cached remote-tracking refs; fetching remains a
 separate operation.
 
+## Host configuration repositories
+
+Some repositories configure the machine itself rather than a project: a NixOS
+flake checkout, or a dotconfig repository that may hold a nix-darwin flake.
+Agents rarely work inside them, so the per-repository checkpoint above never
+sees their drift, and unpushed commits there can sit on one disk for weeks where
+the other hosts cannot pull them. The hook therefore also reports drift in this
+host's configuration repositories, whatever the session's working directory,
+even outside any repository.
+
+They are found mechanically: the Git checkout containing `/etc/nixos` (followed
+through a symlink into a subdirectory) and `$XDG_CONFIG_HOME` (default
+`~/.config`) when that directory is itself a repository's top level, not merely
+inside one. A host that rebuilds from a checkout neither path reveals lists it
+in `REPO_AWARENESS_HOST_REPOS`, colon-separated. `REPO_AWARENESS_NIXOS_DIR`
+replaces `/etc/nixos`, for tests.
+
+A repository is reported when it has any unintegrated remote commits, or
+unpushed commits whose oldest is at least `REPO_AWARENESS_HOST_AGE` seconds old
+(default one day) or that number at least `REPO_AWARENESS_HOST_AHEAD` (default
+10). A fresh local commit during ordinary work is not drift. The report names
+each repository, its counts and the age of its oldest unpushed commit, and asks
+for a privacy check before pushing. Repositories without an upstream are
+skipped. Drift is measured at most every ten minutes while absent, a warning
+repeats at most every `REPO_AWARENESS_HOST_INTERVAL` seconds (default four
+hours) while drift persists, and compaction forces the next event to repeat it.
+Host state is per session, separate from repository state, under the same state
+directory.
+
+```sh
+repo-awareness --host          # print the report, if anything is drifting
+repo-awareness --host --json   # {"count": N, "repos": [...]}
+```
+
 ## Configuration
 
 ```sh

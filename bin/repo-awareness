@@ -35,19 +35,99 @@ end
 local function trim(s) return s and s:gsub('[\r\n]+$', '') end
 local function read(path) local f=io.open(path,'rb'); if not f then return nil end; local s=f:read('*a'); f:close(); return s end
 local function git(root, args) return run('git -C '..quote(root)..' '..args) end
-local mode, repo, harness = 'hook', '.', 'claude'
+local mode, repo, harness, host_only = 'hook', '.', 'claude', false
 local i=1
 while i<=#arg do
 	local a=arg[i]
 	if a=='--json' then mode='json'
 	elseif a=='--commit' then mode='commit'
+	elseif a=='--host' then host_only=true
 	elseif a=='--repo' or a=='--harness' then
 		i=i+1; if not arg[i] then error('missing '..a..' value') end
 		if a=='--repo' then repo=arg[i] else harness=arg[i] end
 	elseif a=='--help' then
-		print('repo-awareness [--json | --commit] [--repo PATH] [--harness codex|claude|grok|gemini]\nHook mode reads event JSON. Counts use cached upstream refs, never fetch.'); os.exit(0)
+		print('repo-awareness [--json | --commit] [--repo PATH] [--harness codex|claude|grok|gemini]\n'
+			..'repo-awareness --host [--json]   report drift in this host\'s configuration repositories\n'
+			..'Hook mode reads event JSON. Counts use cached upstream refs, never fetch.'); os.exit(0)
 	else error('unknown argument: '..a) end
 	i=i+1
+end
+local function env_count(name, default)
+	local n=tonumber(os.getenv(name)); if n and n>=1 and n==math.floor(n) then return n end
+	return default
+end
+-- Host configuration repositories configure this machine, not a project.
+-- Agents seldom work inside them, so the per-repository checkpoint never sees
+-- their drift, and unpushed commits there live on one disk where the other
+-- hosts cannot pull them. Find them mechanically: the checkout behind
+-- /etc/nixos (NixOS hosts keep or link their flake there) and the XDG config
+-- directory when it is a repository itself (it can hold a nix-darwin flake).
+-- REPO_AWARENESS_HOST_REPOS (colon-separated) adds checkouts neither reveals,
+-- such as a flake a host rebuilds from its home directory.
+local function host_repos()
+	local seen,list={},{}
+	local function add(path,whole)
+		if not path or path=='' then return end
+		local top=trim(git(path,'rev-parse --show-toplevel'))
+		if not top or top=='/' then return end
+		-- A config directory that merely sits inside some other repository is not one.
+		if whole and trim(git(path,'rev-parse --show-prefix'))~='' then return end
+		if not seen[top] then seen[top]=true; list[#list+1]=top end
+	end
+	add(os.getenv('REPO_AWARENESS_NIXOS_DIR') or '/etc/nixos')
+	local config=os.getenv('XDG_CONFIG_HOME')
+	if not config or config=='' then config=(os.getenv('HOME') or '')..'/.config' end
+	add(config,true)
+	for path in (os.getenv('REPO_AWARENESS_HOST_REPOS') or ''):gmatch('[^:]+') do add(path) end
+	return list
+end
+-- Report unintegrated remote commits at once, and unpushed commits once the
+-- oldest is a day old or they pile up; a short-lived local commit is normal.
+local host_age=env_count('REPO_AWARENESS_HOST_AGE',86400)
+local host_ahead=env_count('REPO_AWARENESS_HOST_AHEAD',10)
+local host_interval=env_count('REPO_AWARENESS_HOST_INTERVAL',14400)
+local function host_drift(now)
+	local found={}
+	for _,top in ipairs(host_repos()) do
+		local upstream=trim(git(top,"rev-parse --abbrev-ref --symbolic-full-name '@{u}'"))
+		local b,a
+		if upstream then b,a=(git(top,'rev-list --left-right --count '..quote(upstream..'...HEAD')) or ''):match('(%d+)%s+(%d+)') end
+		local behind,ahead=tonumber(b),tonumber(a)
+		if behind and ahead then
+			local oldest
+			if ahead>0 then
+				for t in (git(top,'log --format=%ct '..quote(upstream..'..HEAD')) or ''):gmatch('%d+') do
+					t=tonumber(t); if not oldest or t<oldest then oldest=t end
+				end
+			end
+			local age=oldest and math.max(0,now-oldest) or 0
+			if behind>0 or (ahead>0 and (age>=host_age or ahead>=host_ahead)) then
+				found[#found+1]={root=top,upstream=upstream,ahead=ahead,behind=behind,
+					oldest_unpushed=oldest,age_days=math.floor(age/86400)}
+			end
+		end
+	end
+	return found
+end
+local function host_message(found)
+	local parts={}
+	for _,r in ipairs(found) do
+		local s=string.format('%s is %d ahead and %d behind %s',r.root,r.ahead,r.behind,r.upstream)
+		if r.oldest_unpushed then
+			s=s..string.format(' (oldest unpushed commit %s, %d days old)',os.date('%Y-%m-%d',r.oldest_unpushed),r.age_days)
+		end
+		parts[#parts+1]=s
+	end
+	return 'Host configuration drift: '..table.concat(parts,'; ')..'. These repositories configure this machine.'
+		..' Unpushed commits exist only on this disk, where other hosts cannot pull them; unintegrated remote commits are'
+		..' changes this host lacks. Check unpushed commits for private details, then push them or tell the owner;'
+		..' integrate remote commits without discarding local work. Counts use cached upstream refs; no fetch was performed.'
+end
+if host_only then
+	local found=host_drift(tonumber(os.getenv('REPO_AWARENESS_NOW')) or os.time())
+	if mode=='json' then print(assert(json.encode({count=#found,repos=found})))
+	elseif #found>0 then print(host_message(found)) end
+	os.exit(0)
 end
 -- Grok imports Claude settings. Its prompt hooks discard context, so imported
 -- adapters must obey the host's event contract too, sharing one debounce key.
@@ -57,9 +137,10 @@ if mode=='hook' then
 	input=json.decode(io.read('*a') or '') or {}
 	repo=input.cwd or input.current_working_directory or input.workspace_dir or input.workspaceRoot or os.getenv('PWD') or '.'
 end
-local root=trim(git(repo,'rev-parse --show-toplevel')); if not root then os.exit(0) end
+-- Outside a repository the hook still reports host configuration drift.
+local root=trim(git(repo,'rev-parse --show-toplevel')); if not root and mode~='hook' then os.exit(0) end
 local function setting(env, key, default)
-	local v=os.getenv(env) or trim(git(root,'config --get '..key))
+	local v=os.getenv(env) or (root and trim(git(root,'config --get '..key)))
 	local n=tonumber(v); if n and n>=1 and n==math.floor(n) then return n end
 	return default
 end
@@ -135,38 +216,70 @@ local event=input.hook_event_name or input.hookEventName or input.event or 'Post
 local session=input.session_id or input.sessionId or input.thread_id or input.threadId or input.conversation_id or os.getenv('GROK_SESSION_ID') or 'default'
 local directory=(os.getenv('XDG_STATE_HOME') or ((os.getenv('HOME') or '.')..'/.local/state'))..'/repo-awareness'
 if not run('mkdir -p '..quote(directory)) then os.exit(0) end
-local key=trim(run('printf %s '..quote(session..'\n'..root)..' | git hash-object --stdin')); if not key then os.exit(0) end
-local path=directory..'/'..key
-local fd=ffi.C.open(path..'.lock',2+(jit.os=='OSX' and 512 or 64),ffi.cast('int',384))
-if fd<0 then os.exit(0) end
-if ffi.C.flock(fd,2+4)~=0 then ffi.C.close(fd); os.exit(0) end
-local state=json.decode(read(path) or '') or {}
 local now=tonumber(os.getenv('REPO_AWARENESS_NOW')) or os.time()
-local function save()
-	local temp=path..'.'..tostring(ffi.C.getpid()); local f=io.open(temp,'wb')
-	if f then f:write(assert(json.encode(state))); f:close(); os.rename(temp,path) end
-end
 local marker=event=='PreCompact' or event=='PostCompact' or event=='PreCompress'
-if marker then state.compacted=true; save(); ffi.C.close(fd); os.exit(0) end
-local force=(event=='SessionStart' and input.source=='compact') or state.compacted
+local compact_start=event=='SessionStart' and input.source=='compact'
 -- Grok drops prompt-hook context. Never consume its pending notification there.
-if harness=='grok' and event~='PostToolUse' and event~='PreToolUse' then ffi.C.close(fd); os.exit(0) end
-local deadline=math.min((state.dirty_at or math.huge)+interval,(state.drift_at or math.huge)+3600)
-if not force and now<deadline and state.sample and now-(state.sample_at or 0)<30 and now>=(state.sample_at or 0) then ffi.C.close(fd); os.exit(0) end
-local s=collect(); state.sample=s; state.sample_at=now
-local function due(name,active,seconds)
-	if not active then state[name]=nil; return false end
-	if not state[name] or now-state[name]>=seconds or now<state[name] then return true end
-	return false
+local grok_prompt=harness=='grok' and event~='PostToolUse' and event~='PreToolUse'
+-- One locked JSON state file per session and subject (a repository root, or the host).
+local function open_state(subject)
+	local key=trim(run('printf %s '..quote(session..'\n'..subject)..' | git hash-object --stdin')); if not key then return nil end
+	local path=directory..'/'..key
+	local fd=ffi.C.open(path..'.lock',2+(jit.os=='OSX' and 512 or 64),ffi.cast('int',384))
+	if fd<0 then return nil end
+	if ffi.C.flock(fd,2+4)~=0 then ffi.C.close(fd); return nil end
+	local state=json.decode(read(path) or '') or {}
+	local function save()
+		local temp=path..'.'..tostring(ffi.C.getpid()); local f=io.open(temp,'wb')
+		if f then f:write(assert(json.encode(state))); f:close(); os.rename(temp,path) end
+	end
+	return state,save,function() ffi.C.close(fd) end
 end
-local drift=(s.ahead or 0)>1 or (s.behind or 0)>0
-local dirty_due=due('dirty_at',s.pending_lines>=threshold,interval)
-local drift_due=due('drift_at',drift,3600)
-local emit=force or dirty_due or drift_due
-if emit then
-	if s.pending_lines>=threshold then state.dirty_at=now end
-	if drift then state.drift_at=now end
-	state.compacted=nil
+local function repository_context()
+	if not root then return nil end
+	local state,save,close=open_state(root); if not state then return nil end
+	if marker then state.compacted=true; save(); close(); return nil end
+	local force=compact_start or state.compacted
+	if grok_prompt then close(); return nil end
+	local deadline=math.min((state.dirty_at or math.huge)+interval,(state.drift_at or math.huge)+3600)
+	if not force and now<deadline and state.sample and now-(state.sample_at or 0)<30 and now>=(state.sample_at or 0) then close(); return nil end
+	local s=collect(); state.sample=s; state.sample_at=now
+	local function due(name,active,seconds)
+		if not active then state[name]=nil; return false end
+		if not state[name] or now-state[name]>=seconds or now<state[name] then return true end
+		return false
+	end
+	local drift=(s.ahead or 0)>1 or (s.behind or 0)>0
+	local dirty_due=due('dirty_at',s.pending_lines>=threshold,interval)
+	local drift_due=due('drift_at',drift,3600)
+	local emit=force or dirty_due or drift_due
+	if emit then
+		if s.pending_lines>=threshold then state.dirty_at=now end
+		if drift then state.drift_at=now end
+		state.compacted=nil
+	end
+	save(); close()
+	if emit then return message(s) end
 end
-save(); ffi.C.close(fd)
-if emit then print(assert(json.encode({hookSpecificOutput={hookEventName=event,additionalContext=message(s)}}))) end
+-- Measure host drift at most every ten minutes while it is absent and repeat a
+-- warning at most every host_interval while it persists; compaction forces both.
+local function host_context()
+	local state,save,close=open_state('#host-configuration'); if not state then return nil end
+	if marker then state.compacted=true; save(); close(); return nil end
+	if grok_prompt then close(); return nil end
+	local force=compact_start or state.compacted
+	local wait=state.warned_at and host_interval or 600
+	local checked=state.checked_at
+	if not force and checked and now>=checked and now-checked<wait then close(); return nil end
+	local found=host_drift(now); state.checked_at=now; state.compacted=nil
+	local text
+	if #found==0 then state.warned_at=nil else text=host_message(found); state.warned_at=now end
+	save(); close()
+	return text
+end
+local context={}
+context[#context+1]=repository_context()
+context[#context+1]=host_context()
+if #context>0 then
+	print(assert(json.encode({hookSpecificOutput={hookEventName=event,additionalContext=table.concat(context,'\n')}})))
+end

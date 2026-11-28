@@ -1,0 +1,134 @@
+#!/usr/bin/env bash
+# repo-awareness host configuration drift: discovery, thresholds and hook debounce.
+set -u
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)
+work=$(mktemp -d "${TMPDIR:-/tmp}/repo-awareness-host.XXXXXXXX") || exit 1
+trap 'command rm -rf -- "$work"' EXIT
+export HOME="$work/home" XDG_STATE_HOME="$work/state" GIT_CONFIG_NOSYSTEM=1
+export GIT_AUTHOR_NAME=Test GIT_AUTHOR_EMAIL=test@example.invalid GIT_COMMITTER_NAME=Test GIT_COMMITTER_EMAIL=test@example.invalid
+unset REPO_AWARENESS_HOST_REPOS REPO_AWARENESS_HOST_AGE REPO_AWARENESS_HOST_AHEAD REPO_AWARENESS_HOST_INTERVAL
+mkdir -p "$HOME" "$work/plain"
+now=2000000000
+day=86400
+
+# commit DIR [git commit args]: a git wrapper on PATH may print a checkpoint after
+# commits, so keep the output in a log and show it only on failure.
+commit() {
+	local dir=$1; shift
+	git -C "$dir" commit -q --allow-empty "$@" > "$work/commit.log" 2>&1 || { cat "$work/commit.log" >&2; return 1; }
+}
+# new_repo DIR: one commit, tracking a cached origin/main at that commit.
+new_repo() {
+	git init -q "$1" && git -C "$1" config core.hooksPath /dev/null || return 1
+	git -C "$1" config remote.origin.url "$1.remote"
+	git -C "$1" config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
+	GIT_COMMITTER_DATE="@$((now - 30 * day))" commit "$1" -m initial || return 1
+	git -C "$1" update-ref refs/remotes/origin/main HEAD
+	local branch; branch=$(git -C "$1" branch --show-current)
+	git -C "$1" config "branch.$branch.remote" origin
+	git -C "$1" config "branch.$branch.merge" refs/heads/main
+}
+# commit_at DIR AGE_SECONDS [COUNT]: local commits made AGE_SECONDS before now.
+commit_at() {
+	local n
+	for ((n = 0; n < ${3:-1}; n++)); do
+		GIT_COMMITTER_DATE="@$((now - $2))" commit "$1" -m "local $n" || return 1
+	done
+}
+
+# Framework layout: /etc/nixos is a symlink into a subdirectory of the checkout.
+new_repo "$work/nixos-configs" || exit 1
+mkdir -p "$work/nixos-configs/host"
+ln -s "$work/nixos-configs/host" "$work/etc-nixos"
+export REPO_AWARENESS_NIXOS_DIR="$work/etc-nixos"
+# A dotconfig-style XDG config directory that is its own, in-sync repository.
+new_repo "$work/config" || exit 1
+export XDG_CONFIG_HOME="$work/config"
+
+failures=0 tests=0
+check() { tests=$((tests+1)); if "$@"; then return; fi; printf 'FAIL %s\n' "$*" >&2; failures=$((failures+1)); }
+report() { REPO_AWARENESS_NOW=$now "$root/bin/repo-awareness" --host --json; }
+hook() { # TIME EVENT [SOURCE [HARNESS [CWD]]]
+	printf '{"cwd":"%s","session_id":"one","hook_event_name":"%s","source":"%s"}' "${5:-$work/plain}" "$2" "${3:-}" |
+		REPO_AWARENESS_NOW="$1" "$root/bin/repo-awareness" --harness "${4:-codex}" |
+		jq -r '.hookSpecificOutput.additionalContext // empty'
+}
+nixos=$(cd "$work/nixos-configs" && pwd -P)
+config=$(cd "$work/config" && pwd -P)
+
+# In sync everywhere: nothing to report, and a non-repository cwd stays silent.
+check test "$(report | jq -r .count)" = 0
+check test "$(hook $now UserPromptSubmit)" = ''
+
+# One fresh unpushed commit is normal work in progress.
+commit_at "$work/nixos-configs" 3600
+check test "$(report | jq -r .count)" = 0
+# Once the oldest unpushed commit is a day old, report it by checkout root.
+commit_at "$work/nixos-configs" $((3 * day))
+data=$(report)
+check test "$(jq -r .count <<< "$data")" = 1
+check test "$(jq -r '.repos[0].root' <<< "$data")" = "$nixos"
+check test "$(jq -r '.repos[0].ahead' <<< "$data")" = 2
+check test "$(jq -r '.repos[0].behind' <<< "$data")" = 0
+check test "$(jq -r '.repos[0].age_days' <<< "$data")" = 3
+check test "$(jq -r '.repos[0].upstream' <<< "$data")" = origin/main
+text=$(REPO_AWARENESS_NOW=$now "$root/bin/repo-awareness" --host)
+check test "${text#*"$nixos is 2 ahead and 0 behind origin/main"}" != "$text"
+check test "${text#*"days old"}" != "$text"
+check test "${text#*"private details"}" != "$text"
+
+# Unintegrated remote commits are reported at once.
+commit "$work/config" -m remote || exit 1
+git -C "$work/config" update-ref refs/remotes/origin/main HEAD
+git -C "$work/config" reset -q --hard HEAD~1
+data=$(report)
+check test "$(jq -r .count <<< "$data")" = 2
+check test "$(jq -r --arg r "$config" '.repos[] | select(.root == $r) | .behind' <<< "$data")" = 1
+
+# A config directory inside some other repository is not a host repository.
+new_repo "$work/homerepo" || exit 1
+mkdir -p "$work/homerepo/dotconfig"
+commit_at "$work/homerepo" $((5 * day))
+check test "$(XDG_CONFIG_HOME="$work/homerepo/dotconfig" report | jq -r .count)" = 1
+# REPO_AWARENESS_HOST_REPOS adds checkouts the standard paths do not reveal.
+check test "$(REPO_AWARENESS_HOST_REPOS="$work/homerepo:$work/missing" report | jq -r .count)" = 3
+# Many fresh unpushed commits are reported before they age.
+new_repo "$work/burst" || exit 1
+commit_at "$work/burst" 60 3
+check test "$(REPO_AWARENESS_HOST_REPOS="$work/burst" REPO_AWARENESS_HOST_AHEAD=3 report | jq -r .count)" = 3
+check test "$(REPO_AWARENESS_HOST_REPOS="$work/burst" REPO_AWARENESS_HOST_AHEAD=4 report | jq -r .count)" = 2
+# No discoverable repositories at all.
+check test "$(REPO_AWARENESS_NIXOS_DIR="$work/missing" XDG_CONFIG_HOME="$work/plain" report | jq -r .count)" = 0
+
+# Hook delivery outside any repository: warn once, then at most every interval.
+# The silent check above measured at now, so the next measurement is due 600 s on.
+base=$((now + 600))
+first=$(hook $base UserPromptSubmit)
+check test "${first#*Host configuration drift}" != "$first"
+check test "${first#*"$nixos is 2 ahead"}" != "$first"
+check test "$(hook $((base + 60)) PostToolUse)" = ''
+check test "$(hook $((base + 14399)) PostToolUse)" = ''
+check test -n "$(hook $((base + 14400)) PostToolUse)"
+# Compaction forces the next event to repeat the warning.
+check test "$(hook $((base + 14401)) PreCompact)" = ''
+check test -n "$(hook $((base + 14402)) SessionStart compact)"
+check test "$(hook $((base + 14403)) PostToolUse)" = ''
+# Grok drops prompt-hook context, so its prompt events must not consume a warning.
+check test "$(hook $((base + 30000)) UserPromptSubmit '' grok)" = ''
+check test -n "$(hook $((base + 30001)) PostToolUse '' grok)"
+# Once drift is gone the hook falls silent, and new drift surfaces within ten minutes.
+git -C "$work/nixos-configs" update-ref refs/remotes/origin/main HEAD
+git -C "$work/config" update-ref refs/remotes/origin/main HEAD
+check test "$(hook $((base + 50000)) PostToolUse)" = ''
+commit_at "$work/nixos-configs" $((2 * day))
+check test "$(hook $((base + 50599)) PostToolUse)" = ''
+check test -n "$(hook $((base + 50600)) PostToolUse)"
+
+# Inside a clean project repository, host drift still arrives without a checkpoint.
+new_repo "$work/project" || exit 1
+inside=$(hook $((base + 80000)) PostToolUse '' codex "$work/project")
+check test "${inside#*Host configuration drift}" != "$inside"
+check test "${inside#*Git checkpoint}" = "$inside"
+
+if (( failures )); then printf '%d/%d repo-awareness host checks failed\n' "$failures" "$tests" >&2; exit 1; fi
+printf 'All %d repo-awareness host checks passed\n' "$tests"

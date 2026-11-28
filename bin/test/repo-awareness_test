@@ -4,6 +4,10 @@ root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)
 work=$(mktemp -d "${TMPDIR:-/tmp}/repo-awareness.XXXXXXXX") || exit 1
 trap 'command rm -rf -- "$work"' EXIT
 export HOME="$work/home" XDG_STATE_HOME="$work/state" GIT_CONFIG_NOSYSTEM=1
+# Keep this machine's own configuration repositories out of the hook's host
+# drift report; repo-awareness-host_test covers that report with fixtures.
+export REPO_AWARENESS_NIXOS_DIR="$work/no-nixos" XDG_CONFIG_HOME="$work/home/.config"
+unset REPO_AWARENESS_HOST_REPOS
 mkdir -p "$HOME" "$work/repo"
 git -C "$work/repo" init -q
 git -C "$work/repo" config user.name Test
