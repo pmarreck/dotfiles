@@ -1,9 +1,31 @@
 #!/usr/bin/env luajit
 -- Shared Git measurements and policy; harness adapters only select events/output.
-local json = require('cjson.safe')
+local function quote(s) return "'" .. s:gsub("'", "'\\''") .. "'" end
+-- Hooks inherit the session's PATH, and a project's Nix shell can put a LuaJIT without lua-cjson first. Rerun once
+-- under a LuaJIT that has it; stdin is still unread. LUAJIT_CJSON_CANDIDATES (colon-separated) replaces the list.
+local has_json, json = pcall(require, 'cjson.safe')
+if not has_json then
+	local home, user = os.getenv('HOME') or '', os.getenv('USER') or ''
+	local candidates = os.getenv('LUAJIT_CJSON_CANDIDATES') or table.concat({'/run/current-system/sw/bin/luajit',
+		'/etc/profiles/per-user/'..user..'/bin/luajit', home..'/.nix-profile/bin/luajit',
+		home..'/.local/state/nix/profile/bin/luajit'}, ':')
+	local function ok(r) return r == 0 or r == true end
+	if not os.getenv('LUAJIT_CJSON_REEXEC') then
+		for candidate in candidates:gmatch('[^:]+') do
+			if ok(os.execute(quote(candidate)..[[ -e "require('cjson.safe')" </dev/null >/dev/null 2>&1]])) then
+				local command = 'LUAJIT_CJSON_REEXEC=1 exec '..quote(candidate)..' '..quote(arg[0])
+				for k = 1, #arg do command = command..' '..quote(arg[k]) end
+				local r, _, code = os.execute(command)
+				if type(r) == 'number' then code = r % 256 == 0 and math.floor(r / 256) or 1 end
+				os.exit(code or (r == true and 0 or 1))
+			end
+		end
+	end
+	io.stderr:write('repo-awareness: no LuaJIT with lua-cjson found on PATH or in '..candidates..'\n')
+	os.exit(1)
+end
 local ffi = require('ffi')
 ffi.cdef[[int open(const char*, int, ...); int close(int); int flock(int,int); int getpid(void);]]
-local function quote(s) return "'" .. s:gsub("'", "'\\''") .. "'" end
 local function run(s)
 	-- Lua 5.1 popen:close is not a portable child-exit-status interface.
 	local p = io.popen('('..s..') 2>/dev/null; printf "\\0%s" "$?"', 'r'); if not p then return nil end

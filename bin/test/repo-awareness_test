@@ -96,5 +96,26 @@ output=$(cd "$work/repo" && "$root/.global-githooks/post-commit" 2>&1); status=$
 check test "$status" = 0
 check test "${output#*Git checkpoint:}" != "$output"
 check test "$(cat "$work/repo/.git/awareness-delegated")" = delegated
+# A project's Nix shell can put a LuaJIT without lua-cjson first on PATH, and global hooks inherit it. The hook
+# then reruns once under a LuaJIT that has cjson, with stdin intact, and fails visibly when none does.
+real=$(command -v luajit)
+mkdir -p "$work/nocjson" "$work/liar"
+printf '#!%s\nexec %q -e "package.path=[[]] package.cpath=[[]]" "$@"\n' "$BASH" "$real" > "$work/nocjson/luajit"
+printf '#!%s\n[ "$1" = -e ] && exec %q "$@"\nexec %q "$@"\n' "$BASH" "$real" "$work/nocjson/luajit" > "$work/liar/luajit"
+chmod +x "$work/nocjson/luajit" "$work/liar/luajit"
+bare() { "$work/nocjson/luajit" "$root/bin/repo-awareness" "$@"; }
+event='{"cwd":"'"$work/repo"'","session_id":"SESSION","hook_event_name":"SessionStart","source":"compact"}'
+direct=$(cd "$work" && sed 's/SESSION/direct/' <<< "$event" | REPO_AWARENESS_NOW=9000 "$root/bin/repo-awareness" --harness claude | jq -S .)
+check test -n "$direct"
+fallback=$(cd "$work" && sed 's/SESSION/fallback/' <<< "$event" | REPO_AWARENESS_NOW=9000 LUAJIT_CJSON_CANDIDATES="/nonexistent/luajit:$real" bare --harness claude | jq -S .)
+check test "$fallback" = "$direct"
+check test "$(LUAJIT_CJSON_CANDIDATES="$real" bare --json --repo "$work/repo" | jq -S .)" = "$(snapshot | jq -S .)"
+output=$(LUAJIT_CJSON_CANDIDATES="$work/nocjson/luajit" bare --json --repo "$work/repo" 2>"$work/bare.err"); status=$?
+check test "$status" = 1
+check test -z "$output"
+check grep -q 'no LuaJIT with lua-cjson' "$work/bare.err"
+# A candidate that passes the probe but still lacks cjson must not rerun forever.
+LUAJIT_CJSON_CANDIDATES="$work/liar/luajit" timeout 20 "$work/nocjson/luajit" "$root/bin/repo-awareness" --json --repo "$work/repo" >/dev/null 2>&1; status=$?
+check test "$status" = 1
 printf '%s checks, %s failures\n' "$tests" "$failures"
 test "$failures" -eq 0
