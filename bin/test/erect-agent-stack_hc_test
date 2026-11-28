@@ -1,0 +1,125 @@
+#!/usr/bin/env bash
+# erect-agent-stack's herdr-core path against fake hc and herdr-app commands: reuse a
+# live agent, launch into the Herdr app space or with `hc run --no-parent`, and keep the
+# shared rules (saved exact IDs, no guessing, dry runs that write nothing).
+set -u
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+tool="$root/bin/erect-agent-stack"
+T="$(mktemp -d "${TMPDIR:-/tmp}/erect-hc-test.XXXXXX")" || exit 1
+trap 'command rm -rf -- "$T"' EXIT
+bash_path=$(command -v bash)
+tests=0 failures=0
+check() { tests=$((tests + 1)); "$@" && return; printf 'FAIL: %s\n' "$*" >&2; failures=$((failures + 1)); }
+
+project="$T/a project"
+mkdir -p "$project" "$T/bin" "$T/other"
+project=$(cd "$project" && pwd -P)
+unset HERDR_ENV HC_TERMINAL_ID HC_SCOPE ERECT_BACKEND
+export HC_TERMINAL_SOCKET=/run/fake/hc.sock ERECT_STATE_DIR="$T/state"
+export ERECT_HC="$T/bin/hc" ERECT_HERDR_APP="$T/bin/herdr-app" ERECT_HERDR="$T/bin/no-herdr"
+
+# Fake hc: ls from a fixture; run and label recorded. Fake app: ls from a fixture (absent
+# file = no window); do recorded, answering like herdr-app.
+{ printf '#!%s\n' "$bash_path"; cat <<'SH'
+S=${0%/bin/hc}
+case $1 in
+	ls) cat "$S/ls.json" ;;
+	run) shift; printf 'run %s\n' "$*" >>"$S/calls"; echo '{"address":"t40","state":"live"}' ;;
+	label) shift; printf 'label %s\n' "$*" >>"$S/calls" ;;
+	*) exit 99 ;;
+esac
+SH
+} >"$T/bin/hc"
+{ printf '#!%s\n' "$bash_path"; cat <<'SH'
+S=${0%/bin/herdr-app}
+case $1 in
+	ls) [[ -e $S/app.json ]] || { echo 'no Herdr window' >&2; exit 1; }; cat "$S/app.json" ;;
+	do) printf 'do %s %s\n' "$2" "$3" >>"$S/calls"
+		case $2 in
+			space.new) echo '{"space":"spNEW","tab":"tb1","terminal":"t41"}' ;;
+			tab.new) echo '{"space":"spX","tab":"tb2","terminal":"t42"}' ;;
+		esac ;;
+	*) exit 99 ;;
+esac
+SH
+} >"$T/bin/herdr-app"
+chmod +x "$T/bin/hc" "$T/bin/herdr-app"
+
+terminals() { jq -cn --argjson t "$1" '{terminals:$t}' >"$T/ls.json"; }
+reset() { : >"$T/calls"; command rm -rf -- "$T/state" "$T/app.json"; terminals '[]'; }
+run() { out=$("$tool" "$@" 2>"$T/err"); rc=$?; err=$(cat "$T/err"); }
+hash=$(printf '%s' "$project" | sha256sum); hash=${hash%% *}
+record="$T/state/$hash.json"
+save_record() { mkdir -p "$T/state"; jq -n --arg cwd "$project" '{schema:"erect-agent-stack/v2",cwd:$cwd,agent:"claude",session_id:"S1",requested_session_id:"S1",observed_session_id:"S1",verified_session_id:"S1",pane:null,workspace:null,name:"a-project",launch_mode:"resume",status:"verified"}' >"$record"; }
+
+# 1. A live agent in the project is reused untouched (a shell there is not an agent).
+reset
+terminals "$(jq -cn --arg p "$project" '[{address:"t5",state:"live",agent:"claude-code",status:"idle",cwd:$p},{address:"t6",state:"live",agent:"bash",cwd:$p}]')"
+run --json "$project"
+check test "$rc" -eq 0
+check test "$(jq -r '.outcome + " " + .backend + " " + .pane + " " + .agent' <<<"$out")" = 'joined-running herdr-core t5 claude'
+check test ! -s "$T/calls"
+
+# 2. Two live agents in one project are ambiguous; a blocked one is never relaunched.
+reset
+terminals "$(jq -cn --arg p "$project" '[{address:"t5",state:"live",agent:"claude-code",status:"idle",cwd:$p},{address:"t7",state:"live",agent:"codex",status:"idle",cwd:$p}]')"
+run "$project"
+check test "$rc" -eq 69
+reset
+terminals "$(jq -cn --arg p "$project" '[{address:"t5",state:"live",agent:"claude-code",status:"blocked",cwd:$p}]')"
+run "$project"
+check test "$rc" -eq 69
+check test ! -s "$T/calls"
+
+# 3. No live agent and no saved identity: refuse to guess.
+reset
+run "$project"
+check test "$rc" -eq 69
+check grep -q 'no saved launch identity' <<<"$err"
+check test ! -s "$T/calls"
+
+# 4. A saved exact ID resumes into a new app space with AI and CLI tabs, labeled.
+reset; save_record; echo '{"spaces":[]}' >"$T/app.json"
+run --json "$project"
+check test "$rc" -eq 0
+check test "$(sed -n 1p "$T/calls")" = "do space.new $(jq -cn --arg d "$project" '{name:"a project", tab:"AI", folder:$d, argv:["claude","--dangerously-skip-permissions","--name","a-project","--resume","S1"], focus:false}')"
+check test "$(sed -n 2p "$T/calls")" = "do tab.new $(jq -cn --arg d "$project" '{space:"spNEW", name:"CLI", folder:$d, focus:false}')"
+check test "$(sed -n 3p "$T/calls")" = 'label t41 project=a project backend=claude session=S1'
+check test "$(jq -r '.outcome + " " + .pane + " " + .session_id' <<<"$out")" = 'created t41 S1'
+check jq -e '.requested_session_id == "S1" and .pane == "t41" and .workspace == "spNEW" and .status == "unconfirmed"' "$record" >/dev/null
+
+# 5. The project's existing space (matched by folder) gets a new AI tab instead.
+reset; save_record
+jq -cn --arg d "$project" '{spaces:[{id:"spX", name:"a project", folder:$d}]}' >"$T/app.json"
+run "$project"
+check test "$rc" -eq 0
+check grep -q '^do tab.new {"space":"spX","name":"AI"' "$T/calls"
+check test "$(grep -c 'space.new' "$T/calls")" -eq 0
+
+# 6. Without an app window, `hc run --no-parent` starts it in the project folder.
+reset; save_record
+run --fresh --agent codex "$project"
+check test "$rc" -eq 0
+check test "$(sed -n 1p "$T/calls")" = "run --json --bg --no-parent --name a-project --cwd $project -- codex --dangerously-bypass-approvals-and-sandbox"
+check test "$(sed -n 2p "$T/calls")" = 'label t40 project=a project backend=codex'
+
+# 7. --checker marks the new agent's environment; --dry-run writes and starts nothing.
+reset
+run --fresh --checker "$project"
+check grep -q -- '-- env MFIC_ROLE=checker claude --dangerously-skip-permissions' "$T/calls"
+reset
+run --dry-run --fresh "$project"
+check test "$rc" -eq 0
+check grep -q '^dry-run: planned-created' <<<"$out"
+check test ! -s "$T/calls"
+check test ! -e "$T/state"
+
+# 8. Outside both the Herdr TUI and herdr-core the tool refuses; ERECT_BACKEND=hc opts in.
+reset; save_record
+HC_TERMINAL_SOCKET='' run "$project"
+check test "$rc" -eq 78
+HC_TERMINAL_SOCKET='' ERECT_BACKEND=hc run --dry-run "$project"
+check test "$rc" -eq 0
+
+printf '%s checks, %s failures\n' "$tests" "$failures"
+test "$failures" -eq 0

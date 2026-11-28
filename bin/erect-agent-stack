@@ -6,7 +6,10 @@ _eas_help() {
  cat <<'EOF'
 usage: erect-agent-stack [OPTIONS] PROJECT
 Create/reuse a Herdr workspace and unrestricted agent at PROJECT (or ~/Code/NAME).
-Requires the intended Herdr session (HERDR_ENV=1), jq and coreutils on PATH.
+Requires the intended Herdr session (HERDR_ENV=1), or a herdr-core terminal
+(HC_TERMINAL_SOCKET; ERECT_BACKEND=hc elsewhere), plus jq and coreutils on PATH.
+Under herdr-core the agent starts in the project's Herdr app space when a window is
+open (else `hc run --no-parent`); herdr-core reports no native session ID.
 New workspaces receive AI and CLI tabs; existing custom tabs are preserved.
 
   --latest-context   Read native stores and print the most recently saved backend.
@@ -64,6 +67,113 @@ _eas_record_json() {
     pane:(if $pane=="" then null else $pane end),
     workspace:(if $workspace=="" then null else $workspace end),
     name:(if $name=="" then null else $name end),launch_mode:$mode,status:$status}'
+}
+# The launch to make when no agent is live: the saved exact ID by default, else the
+# operator's explicit --fresh, --continue or --resume. Uses and sets the caller's locals.
+_eas_choose_launch() {
+ if [ -z "$agent" ]; then
+  if [ -n "$saved" ]; then agent="$(printf '%s' "$saved" | jq -r '.agent')"; else agent=claude; fi
+ fi
+ [ "$mode" = auto ] || return 0
+ if [ -n "$saved" ]; then
+  backend="$(printf '%s' "$saved" | jq -r '.agent')"
+  [ "$backend" = "$agent" ] || { _eas_error 'backend changed; specify --fresh or --resume explicitly'; return 64; }
+  resume_id="$(printf '%s' "$saved" | jq -r 'if .schema=="erect-agent-stack/v2" then .verified_session_id // .requested_session_id // empty else .session_id // empty end')"
+  [ -n "$resume_id" ] || { _eas_error 'saved launch has no exact ID; choose --resume ID, --continue or --fresh'; return 69; }
+  mode=resume
+ else
+  _eas_error 'no saved launch identity; choose --fresh, --continue, or --agent KIND --resume ID'
+  return 69
+ fi
+}
+# Each backend's unrestricted launch arguments for the chosen mode, into the caller's args.
+_eas_agent_args() {
+ case "$agent" in
+  claude) args=(--dangerously-skip-permissions --name "$name")
+   [ "$mode" = resume ] && args+=(--resume "$resume_id")
+   [ "$mode" = continue ] && args+=(--continue) ;;
+  codex) args=(--dangerously-bypass-approvals-and-sandbox)
+   [ "$mode" = resume ] && args=(resume "$resume_id" "${args[@]}")
+   [ "$mode" = continue ] && args=(resume --last "${args[@]}") ;;
+  grok) args=(--always-approve --permission-mode bypassPermissions --sandbox off)
+   [ "$mode" = resume ] && args+=(--resume "$resume_id")
+   [ "$mode" = continue ] && args+=(--resume) ;;
+  gemini) args=(--yolo)
+   [ "$mode" = resume ] && args+=(--resume "$resume_id")
+   [ "$mode" = continue ] && args+=(--resume latest) ;;
+ esac
+ return 0
+}
+_eas_hc() { "${ERECT_HC:-hc}" "$@"; }
+_eas_app() { "${ERECT_HERDR_APP:-herdr-app}" "$@"; }
+# herdr-core reports an agent by program; map it to this tool's backend names.
+_eas_hc_kind() { case "$1" in claude-code|claude) echo claude ;; codex) echo codex ;; grok) echo grok ;; gemini|gemini-cli) echo gemini ;; esac; }
+# herdr-core path: reuse the project's live agent, else launch it in the project's Herdr
+# app space (a new one with AI and CLI tabs, or a new AI tab in an existing one), or with
+# `hc run --no-parent` when no app window is open. Uses and sets the caller's locals.
+_eas_hc_launch() {
+ local listing address status kind spaces space resp folder_dir
+ listing="$(_eas_hc ls --json)" || { _eas_error 'herdr-core is not answering (hc ls)'; return 69; }
+ matches='[]'
+ while IFS= read -r candidate; do
+  folder_dir="$(printf '%s' "$candidate" | jq -r '.cwd // empty')"
+  if [ -d "$folder_dir" ] && [ "$(cd "$folder_dir" && pwd -P)" = "$dir" ]; then
+   matches="$(printf '%s' "$matches" | jq --argjson a "$candidate" '.+[$a]')" || return 69
+  fi
+ done < <(printf '%s' "$listing" | jq -c '.terminals[]? | select(.state=="live") | select(.agent!=null and (.agent|IN("bash","zsh","sh","fish","dash","nu")|not))')
+ count="$(printf '%s' "$matches" | jq length)"
+ [ "$count" -le 1 ] || { _eas_error 'multiple live herdr-core agents match this directory; inspect them explicitly'; return 69; }
+ if [ "$count" = 1 ]; then
+  address="$(printf '%s' "$matches" | jq -r '.[0].address')"
+  status="$(printf '%s' "$matches" | jq -r '.[0].status // "unknown"')"
+  kind="$(_eas_hc_kind "$(printf '%s' "$matches" | jq -r '.[0].agent')")"
+  case "$status" in idle|done|working) ;; *) _eas_error "existing agent $address is $status; inspect it, do not relaunch"; return 69 ;; esac
+  agent="${kind:-${agent:-unknown}}" pane="$address" outcome=joined-running
+ else
+  _eas_choose_launch || return $?
+  _eas_agent_args
+  local -a argv=("$agent" "${args[@]}")
+  [ "$checker" = 0 ] || argv=(env MFIC_ROLE=checker "${argv[@]}")
+  outcome=created
+  # The project's existing space (matched by folder), so a relaunch joins it.
+  spaces="$(_eas_app ls 2>/dev/null)" || spaces=''
+  space="$(printf '%s' "$spaces" | jq -r --arg d "$dir" '[.spaces[]? | select(.folder==$d)][0].id // empty' 2>/dev/null)"
+  if [ "$dry" = 0 ]; then
+   [ "$mode" = resume ] && requested_id="$resume_id"
+   record="$(_eas_record_json "$dir" "$agent" "$requested_id" "" "" "" "" "$name" "$mode" starting)" || return 74
+   _eas_write_record || return 74
+   if [ -n "$spaces" ] && [ -n "$space" ]; then
+    resp="$(_eas_app do tab.new "$(jq -cn --arg s "$space" --arg d "$dir" --argjson focus "$([ "$focus" = 1 ] && echo true || echo false)" --args '{space:$s, name:"AI", folder:$d, argv:$ARGS.positional, focus:$focus}' -- "${argv[@]}")")"
+   elif [ -n "$spaces" ]; then
+    resp="$(_eas_app do space.new "$(jq -cn --arg n "$(basename "$dir")" --arg d "$dir" --argjson focus "$([ "$focus" = 1 ] && echo true || echo false)" --args '{name:$n, tab:"AI", folder:$d, argv:$ARGS.positional, focus:$focus}' -- "${argv[@]}")")"
+    space="$(printf '%s' "$resp" | jq -r '.space // empty' 2>/dev/null)"
+    [ -z "$space" ] || _eas_app do tab.new "$(jq -cn --arg s "$space" --arg d "$dir" '{space:$s, name:"CLI", folder:$d, focus:false}')" >/dev/null || :
+   else
+    resp="$(_eas_hc run --json --bg --no-parent --name "$name" --cwd "$dir" -- "${argv[@]}")"
+   fi
+   address="$(printf '%s' "$resp" | jq -r '.terminal // .address // empty' 2>/dev/null)"
+   if [ -z "$address" ]; then
+    record="$(_eas_record_json "$dir" "$agent" "$requested_id" "" "" "" "$space" "$name" "$mode" unconfirmed)" || return 74
+    _eas_write_record || return 74
+    _eas_error "herdr-core did not report a terminal for the launch: $resp"; return 69
+   fi
+   _eas_hc label "$address" "project=$(basename "$dir")" "backend=$agent" ${requested_id:+"session=$requested_id"} >/dev/null || :
+   pane="$address" workspace="$space"
+  fi
+ fi
+ if [ "$dry" = 0 ]; then
+  # herdr-core reports no native session ID; a resume records the requested one.
+  record="$(_eas_record_json "$dir" "$agent" "$requested_id" "" "" "$pane" "$workspace" "$name" "$mode" "$([ "$outcome" = joined-running ] && echo observed || echo unconfirmed)")" || return 74
+  [ "$outcome" = joined-running ] && [ -n "$saved" ] || _eas_write_record || return 74
+  [ -z "$note" ] || _eas_error "herdr-core has no notification API; the inbox note $note is the delivery"
+ else outcome="planned-$outcome"
+ fi
+ if [ "$json" = 1 ]; then
+  jq -n --arg outcome "$outcome" --arg cwd "$dir" --arg agent "$agent" --arg pane "$pane" --arg workspace "$workspace" --arg state_file "$state_file" --arg id "$requested_id" --arg mode "$mode" --argjson dry_run "$([ "$dry" = 1 ] && printf true || printf false)" '{outcome:$outcome,backend:"herdr-core",cwd:$cwd,agent:$agent,pane:$pane,workspace:$workspace,state_file:$state_file,session_id:$id,mode:$mode,dry_run:$dry_run}'
+ else
+  [ "$dry" = 0 ] || printf 'dry-run: '
+  printf '%s: %s @ %s (%s, %s)\n' "$outcome" "$name" "$dir" "$agent" "${pane:-new herdr-core terminal}"
+ fi
 }
 # A subshell contains the lock trap, umask and per-call state even when sourced.
 erect-agent-stack() (
@@ -126,8 +236,15 @@ erect-agent-stack() (
  else
   resume_id=""
  fi
- [ "${HERDR_ENV:-}" = 1 ] || { _eas_error 'run inside the intended Herdr session'; return 78; }
- if ! command -v "${ERECT_HERDR:-herdr}" >/dev/null || ! command -v jq >/dev/null || ! command -v sha256sum >/dev/null; then
+ # The Herdr TUI inside its session; herdr-core inside one of its terminals or on request.
+ local hc_mode=0
+ if [ "${HERDR_ENV:-}" != 1 ]; then
+  if [ -n "${HC_TERMINAL_SOCKET:-}" ] || [ "${ERECT_BACKEND:-}" = hc ]; then hc_mode=1
+  else _eas_error 'run inside the intended Herdr session or a herdr-core terminal'; return 78; fi
+ fi
+ if [ "$hc_mode" = 1 ]; then
+  command -v "${ERECT_HC:-hc}" >/dev/null && command -v jq >/dev/null && command -v sha256sum >/dev/null || { _eas_error 'requires hc, jq and sha256sum'; return 78; }
+ elif ! command -v "${ERECT_HERDR:-herdr}" >/dev/null || ! command -v jq >/dev/null || ! command -v sha256sum >/dev/null; then
   _eas_error 'requires herdr, jq and sha256sum'; return 78
  fi
  hash="$(printf '%s' "$dir" | sha256sum)" || return 78
@@ -174,6 +291,7 @@ erect-agent-stack() (
    automatic_name=0
   fi
  fi
+ if [ "$hc_mode" = 1 ]; then _eas_hc_launch; return $?; fi
  agents="$(_eas_herdr agent list)" || return 69
  printf '%s' "$agents" | jq -e '.result.agents|type=="array" and all(.[]; (.cwd|type=="string") and (.agent|type=="string") and (.pane_id|type=="string") and (.workspace_id|type=="string"))' >/dev/null || { _eas_error 'invalid agent-list response'; return 69; }
  # Herdr cwd can be a symlink spelling; canonicalize each candidate locally.
@@ -199,21 +317,7 @@ erect-agent-stack() (
   esac
   outcome=joined-running
  else
-  if [ -z "$agent" ]; then
-   if [ -n "$saved" ]; then agent="$(printf '%s' "$saved" | jq -r '.agent')"; else agent=claude; fi
-  fi
-  if [ "$mode" = auto ]; then
-   if [ -n "$saved" ]; then
-    backend="$(printf '%s' "$saved" | jq -r '.agent')"
-    [ "$backend" = "$agent" ] || { _eas_error 'backend changed; specify --fresh or --resume explicitly'; return 64; }
-    resume_id="$(printf '%s' "$saved" | jq -r 'if .schema=="erect-agent-stack/v2" then .verified_session_id // .requested_session_id // empty else .session_id // empty end')"
-    [ -n "$resume_id" ] || { _eas_error 'saved launch has no exact ID; choose --resume ID, --continue or --fresh'; return 69; }
-    mode=resume
-   else
-    _eas_error 'no saved launch identity; choose --fresh, --continue, or --agent KIND --resume ID'
-    return 69
-   fi
-  fi
+  _eas_choose_launch || return $?
   workspaces="$(_eas_herdr workspace list)" || return 69
   printf '%s' "$workspaces" | jq -e '.result.workspaces|type=="array"' >/dev/null || return 69
   matches='[]'
@@ -276,20 +380,7 @@ erect-agent-stack() (
   else
    outcome=created
   fi
-  case "$agent" in
-   claude) args=(--dangerously-skip-permissions --name "$name")
-    [ "$mode" = resume ] && args+=(--resume "$resume_id")
-    [ "$mode" = continue ] && args+=(--continue) ;;
-   codex) args=(--dangerously-bypass-approvals-and-sandbox)
-    [ "$mode" = resume ] && args=(resume "$resume_id" "${args[@]}")
-    [ "$mode" = continue ] && args=(resume --last "${args[@]}") ;;
-   grok) args=(--always-approve --permission-mode bypassPermissions --sandbox off)
-    [ "$mode" = resume ] && args+=(--resume "$resume_id")
-    [ "$mode" = continue ] && args+=(--resume) ;;
-   gemini) args=(--yolo)
-    [ "$mode" = resume ] && args+=(--resume "$resume_id")
-    [ "$mode" = continue ] && args+=(--resume latest) ;;
-  esac
+  _eas_agent_args
   if [ "$dry" = 0 ]; then
    if [ -z "$pane" ]; then
     create_args=(workspace create --cwd "$dir" --label "$name" --no-focus)

@@ -8,6 +8,8 @@ tmp="$(mktemp -d "${TMPDIR:-/tmp}/erect-herdr-test.XXXXXX")"
 trap 'rm -rf -- "$tmp"' EXIT
 export EAS_FIXTURE="$tmp" EAS_PROJECT="$tmp/a project"
 export ERECT_STATE_DIR="$tmp/state" HERDR_ENV=1
+# These cover the Herdr TUI path; never reach a caller's herdr-core server.
+unset HC_TERMINAL_SOCKET HC_TERMINAL_ID HC_SCOPE ERECT_BACKEND
 export ERECT_HERDR="$root/bin/test/fixtures/erect-agent-stack/herdr"
 mkdir -p "$EAS_PROJECT"
 tool="$root/bin/erect-agent-stack"
