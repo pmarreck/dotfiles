@@ -23,9 +23,10 @@ if [[ $hook != reference-transaction ]]; then
 	exit 0
 fi
 umask 077
-work=$(mktemp -d "${TMPDIR:-/tmp}/git-reference-budget.XXXXXXXX") || exit 2
-trap 'command rm -rf -- "$work"' EXIT
-cat > "$work/input" || exit 2
-"$root/bin/git-repository-budget" --reference "$@" < "$work/input" || exit "$?"
-if [[ -x $target && ! -d $target ]]; then GIT_REPOSITORY_BUDGET_CHECKED_PARENT=$$ "$target" "$@" < "$work/input"; exit "$?"; fi
+# Every ref update runs this, and `rm` may move files to the Trash, so the input stays in memory.
+# The sentinel keeps the trailing newline that command substitution would drop.
+input=$(cat && printf x) || exit 2
+input=${input%x}
+"$root/bin/git-repository-budget" --reference "$@" < <(printf '%s' "$input") || exit "$?"
+if [[ -x $target && ! -d $target ]]; then GIT_REPOSITORY_BUDGET_CHECKED_PARENT=$$ "$target" "$@" < <(printf '%s' "$input"); exit "$?"; fi
 exit 0

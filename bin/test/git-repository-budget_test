@@ -81,6 +81,16 @@ chmod +x "$work/repo/custom-hooks/reference-transaction"
 "$real_git" -C "$work/repo" config core.hooksPath custom-hooks
 run branch custom-five; check test "$rc" -eq 0
 check test -s "$work/repo/ref-events"
+# The reference hook runs on every ref update and `rm` may move files to the Trash, so the
+# dispatcher keeps its input in memory: no `rm` call, nothing left in TMPDIR, same payload.
+mkdir -p "$work/rm-bin" "$work/hook-tmp"
+printf '#!%s\nprintf "%%s\\n" "$*" >> %q\n' "$(command -v bash)" "$work/rm-calls" > "$work/rm-bin/rm"
+chmod +x "$work/rm-bin/rm"
+: > "$work/rm-calls"; : > "$work/repo/ref-payload"
+PATH="$work/rm-bin:$PATH" TMPDIR="$work/hook-tmp" run branch -f custom-five HEAD; check test "$rc" -eq 0
+check grep -q ' refs/heads/custom-five$' "$work/repo/ref-payload"
+check test "$(cat "$work/rm-calls")" = ''
+check test "$(ls -A "$work/hook-tmp")" = ''
 printf '#!%s\ngit config --get core.hooksPath > observed-hooks\ngit config --get sample.fixture > observed-config\n' "$(command -v bash)" > "$work/repo/custom-hooks/pre-commit"
 chmod +x "$work/repo/custom-hooks/pre-commit"
 run -c sample.fixture=retained commit -qm configuration --allow-empty; check test "$rc" -eq 0
