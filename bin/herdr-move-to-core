@@ -63,6 +63,11 @@ start_identity() { [[ -r /proc/$1/stat ]] && awk '{sub(/^.*\) /, ""); print $20}
 
 alive() { [[ $(start_identity "$1") == "$2" && -n $2 ]]; }
 
+# Wall-clock deadlines, so a wait lasts as long as asked however long each poll takes.
+now() { if [[ -n ${EPOCHREALTIME:-} ]]; then printf '%s\n' "${EPOCHREALTIME/,/.}"; else date +%s; fi; }
+deadline() { awk -v n="$(now)" -v s="$1" 'BEGIN { printf "%.6f\n", n + s }'; }
+past() { awk -v n="$(now)" -v d="$1" 'BEGIN { exit !(n >= d) }'; }
+
 exit_command() {
 	case $1 in
 		codex) echo /quit ;;
@@ -287,7 +292,8 @@ move_one() { # pane
 	# its own turn to end); the checks below then confirm it again before typing.
 	local first second verdict
 	if [[ $WAIT != 0 ]]; then
-		local waited_idle=0
+		local idle_by
+		idle_by=$(deadline "$WAIT")
 		while :; do
 			status=$("$HERDR" agent list 2>/dev/null | jq -r --arg p "$pane" '.result.agents[] | select(.pane_id == $p) | .agent_status')
 			if [[ $status == idle || $status == done ]]; then
@@ -295,10 +301,10 @@ move_one() { # pane
 				verdict=$(composer "$backend" <<<"$second")
 				[[ -n $first && $first == "$second" && ${verdict%%$'\t'*} == empty ]] && break
 			fi
-			if awk -v w="$waited_idle" -v t="$WAIT" 'BEGIN { exit !(w >= t) }'; then
+			if past "$idle_by"; then
 				say "$pane: agent did not become idle at an empty prompt within ${WAIT}s; skipped"; return 1
 			fi
-			sleep "$POLL"; waited_idle=$(awk -v w="$waited_idle" -v p="$POLL" 'BEGIN { print w + p * 2 }')
+			sleep "$POLL"
 		done
 	fi
 	# Two identical ANSI snapshots with an empty composer, then type the exit command.
@@ -323,7 +329,8 @@ move_one() { # pane
 		say "$pane: typed '$cmd' but the composer shows '$typed'; left for you to inspect"; return 1
 	fi
 	"$HERDR" pane send-keys "$pane" enter >/dev/null || { say "$pane: could not press enter"; return 1; }
-	local waited=0 answered=0 shown jobs
+	local exit_by answered=0 shown jobs
+	exit_by=$(deadline "$EXIT_TIMEOUT")
 	while alive "$pid" "$start"; do
 		# Claude asks before stopping background work; answer only its known dialog.
 		shown=$("$HERDR" pane read "$pane" --source visible 2>/dev/null)
@@ -339,11 +346,11 @@ move_one() { # pane
 				return 1
 			fi
 		fi
-		if awk -v w="$waited" -v t="$EXIT_TIMEOUT" 'BEGIN { exit !(w >= t) }'; then
+		if past "$exit_by"; then
 			log_event --arg step exit-timeout --arg pane "$pane" --argjson pid "$pid"
 			say "$pane: $backend (pid $pid) did not exit within ${EXIT_TIMEOUT}s; nothing started"; return 1
 		fi
-		sleep "$POLL"; waited=$(awk -v w="$waited" -v p="$POLL" 'BEGIN { print w + p }')
+		sleep "$POLL"
 	done
 	log_event --arg step exited --arg pane "$pane" --argjson pid "$pid"
 

@@ -324,6 +324,15 @@ check test "$rc" -eq 0
 check test "$(cat "$S/typed")" = /exit
 run --wait soon p1
 check test "$rc" -eq 2
+# The wait is wall-clock: a busy agent is given the full time asked for, not fewer
+# polls than it takes (a 0.2 s poll must still wait 2 s), and no more than that plus slack.
+setup claude working S1 '["/x/claude"]'
+wait_start=${EPOCHREALTIME/[.,]/}
+MOVE_POLL=0.2 run --wait 2 p1
+wait_ms=$(((${EPOCHREALTIME/[.,]/} - wait_start) / 1000))
+check test "$rc" -eq 1
+check test "$wait_ms" -ge 2000
+check test "$wait_ms" -lt 5000
 # An idle agent with a draft in its prompt (a person typing) is waited for, not abandoned.
 setup claude idle S1 '["/x/claude"]'
 "$T/bin/screen-for" claude 'typing...' >"$S/screen"
