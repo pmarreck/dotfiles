@@ -92,7 +92,9 @@ _eas_agent_args() {
   claude) args=(--dangerously-skip-permissions --name "$name")
    [ "$mode" = resume ] && args+=(--resume "$resume_id")
    [ "$mode" = continue ] && args+=(--continue) ;;
-  codex) args=(--dangerously-bypass-approvals-and-sandbox)
+  # --no-daemon: a shared Codex app-server would give later sessions the first terminal's
+  # identity (its HERDR_PANE_ID / herdr-core terminal) and stop with it.
+  codex) args=(--dangerously-bypass-approvals-and-sandbox --no-daemon)
    [ "$mode" = resume ] && args=(resume "$resume_id" "${args[@]}")
    [ "$mode" = continue ] && args=(resume --last "${args[@]}") ;;
   grok) args=(--always-approve --permission-mode bypassPermissions --sandbox off)
@@ -108,6 +110,38 @@ _eas_hc() { "${ERECT_HC:-hc}" "$@"; }
 _eas_app() { "${ERECT_HERDR_APP:-herdr-app}" "$@"; }
 # herdr-core reports an agent by program; map it to this tool's backend names.
 _eas_hc_kind() { case "$1" in claude-code|claude) echo claude ;; codex) echo codex ;; grok) echo grok ;; gemini|gemini-cli) echo gemini ;; esac; }
+# One project, one live agent across both servers: a launch on one server while the
+# project's agent runs on the other would resume a second copy of the same conversation
+# (two writers in one repository and one transcript). Each check uses the caller's $dir.
+_eas_same_dir() { [ -d "$1" ] && [ "$(cd "$1" && pwd -P)" = "$dir" ]; }
+# From the TUI: refuse if herdr-core has a live agent here. herdr-core's holder keeps
+# agents alive while its server is down, so an unanswered hc cannot prove absence.
+_eas_refuse_if_live_in_hc() {
+ command -v "${ERECT_HC:-hc}" >/dev/null 2>&1 || return 0
+ local listing candidate
+ listing="$(_eas_hc ls --json 2>/dev/null)" || { _eas_error "cannot check herdr-core for a live agent in $dir (hc ls failed); refusing to launch a possible second copy"; return 69; }
+ while IFS= read -r candidate; do
+  if _eas_same_dir "$(printf '%s' "$candidate" | jq -r '.cwd // empty')"; then
+   _eas_error "this project's agent is live in herdr-core ($(printf '%s' "$candidate" | jq -r '.address')); use it from the Herdr app instead of launching a second copy here"
+   return 69
+  fi
+ done < <(printf '%s' "$listing" | jq -c '.terminals[]? | select(.state=="live") | select(.agent!=null and (.agent|IN("bash","zsh","sh","fish","dash","nu")|not))' 2>/dev/null)
+ return 0
+}
+# From herdr-core: refuse if the TUI server has a live agent here. A TUI server that
+# does not answer is not running and holds no agents.
+_eas_refuse_if_live_in_tui() {
+ command -v "${ERECT_HERDR:-herdr}" >/dev/null 2>&1 || return 0
+ local agents candidate
+ agents="$(_eas_herdr agent list 2>/dev/null)" || return 0
+ while IFS= read -r candidate; do
+  if _eas_same_dir "$(printf '%s' "$candidate" | jq -r '.cwd // empty')"; then
+   _eas_error "this project's agent is live in the Herdr TUI ($(printf '%s' "$candidate" | jq -r '.pane_id // "unknown pane"')); move it with herdr-move-to-core instead of launching a second copy"
+   return 69
+  fi
+ done < <(printf '%s' "$agents" | jq -c '.result.agents[]?' 2>/dev/null)
+ return 0
+}
 # herdr-core path: reuse the project's live agent, else launch it in the project's Herdr
 # app space (a new one with AI and CLI tabs, or a new AI tab in an existing one), or with
 # `hc run --no-parent` when no app window is open. Uses and sets the caller's locals.
@@ -130,6 +164,7 @@ _eas_hc_launch() {
   case "$status" in idle|done|working) ;; *) _eas_error "existing agent $address is $status; inspect it, do not relaunch"; return 69 ;; esac
   agent="${kind:-${agent:-unknown}}" pane="$address" outcome=joined-running
  else
+  _eas_refuse_if_live_in_tui || return $?
   _eas_choose_launch || return $?
   _eas_agent_args
   local -a argv=("$agent" "${args[@]}")
@@ -149,7 +184,14 @@ _eas_hc_launch() {
     space="$(printf '%s' "$resp" | jq -r '.space // empty' 2>/dev/null)"
     [ -z "$space" ] || _eas_app do tab.new "$(jq -cn --arg s "$space" --arg d "$dir" '{space:$s, name:"CLI", folder:$d, focus:false}')" >/dev/null || :
    else
-    resp="$(_eas_hc run --json --bg --no-parent --name "$name" --cwd "$dir" -- "${argv[@]}")"
+    # No app window: herdr.space/herdr.tab labels with fresh ids make the app adopt the
+    # terminal as a new space when it next opens (unlabeled terminals never show there);
+    # --keep matches how the app keeps its own terminals.
+    local sid tid
+    sid="sp$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+    tid="tb$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+    resp="$(_eas_hc run --json --bg --no-parent --keep --label "herdr.space=$sid" --label "herdr.tab=$tid" --name "$name" --cwd "$dir" -- "${argv[@]}")"
+    space="$sid"
    fi
    address="$(printf '%s' "$resp" | jq -r '.terminal // .address // empty' 2>/dev/null)"
    if [ -z "$address" ]; then
@@ -317,6 +359,7 @@ erect-agent-stack() (
   esac
   outcome=joined-running
  else
+  _eas_refuse_if_live_in_hc || return $?
   _eas_choose_launch || return $?
   workspaces="$(_eas_herdr workspace list)" || return 69
   printf '%s' "$workspaces" | jq -e '.result.workspaces|type=="array"' >/dev/null || return 69

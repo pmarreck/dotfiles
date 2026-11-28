@@ -130,7 +130,9 @@ resume_argv() { # backend id argv...
 	case $backend in
 		claude | grok) out+=(--resume "$id") ;;
 		agy) out+=("--conversation=$id") ;;
-		codex) out=("${out[0]}" resume "$id" "${out[@]:1}") ;;
+		codex) out=("${out[0]}" resume "$id" "${out[@]:1}")
+			# A shared Codex app-server would give this session another terminal's identity.
+			[[ " ${out[*]} " == *" --no-daemon "* ]] || out+=(--no-daemon) ;;
 	esac
 	printf '%s\0' "${out[@]}"
 }

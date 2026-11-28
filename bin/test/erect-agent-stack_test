@@ -11,6 +11,10 @@ export ERECT_STATE_DIR="$tmp/state" HERDR_ENV=1
 # These cover the Herdr TUI path; never reach a caller's herdr-core server.
 unset HC_TERMINAL_SOCKET HC_TERMINAL_ID HC_SCOPE ERECT_BACKEND
 export ERECT_HERDR="$root/bin/test/fixtures/erect-agent-stack/herdr"
+# A fake hc (never the live herdr-core server): lists $tmp/hc.json, fails while $tmp/hc.fail exists.
+export ERECT_HC="$tmp/hc"
+printf '#!%s\n[ -e "%s/hc.fail" ] && exit 1\n[ "$1 $2" = "ls --json" ] && cat "%s/hc.json"\n' "$(command -v bash)" "$tmp" "$tmp" > "$ERECT_HC"
+chmod +x "$ERECT_HC"
 mkdir -p "$EAS_PROJECT"
 tool="$root/bin/erect-agent-stack"
 fails=0
@@ -21,6 +25,8 @@ reset_fixture() {
  jq -n --arg cwd "$EAS_PROJECT" '{result:{panes:[{pane_id:"wOLD:p9",workspace_id:"wOLD",cwd:$cwd}]}}' > "$tmp/panes.json"
  printf '{"result":{"process_info":{"shell_pid":10,"foreground_process_group_id":10,"foreground_processes":[{"pid":10,"name":"bash"}]}}}\n' > "$tmp/process.json"
  : > "$tmp/calls"
+ printf '{"terminals":[]}\n' > "$tmp/hc.json"
+ rm -f -- "$tmp/hc.fail"
 }
 run() { "$tool" "$@" > "$tmp/out" 2> "$tmp/err"; status=$?; }
 calls_are_readonly() { jq -se 'all(.[]; .[1] == "list" or .[1] == "get" or .[1] == "process-info")' "$tmp/calls" >/dev/null; }
@@ -63,7 +69,7 @@ check test "$status" = 0
 check called 'workspace create'
 check called 'agent start'
 check jq -se 'any(.[]; .[0:2]==["workspace","create"] and index("--no-focus")!=null)' "$tmp/calls"
-check jq -se 'any(.[]; .[0:2]==["agent","start"] and index("wNEW:p7")!=null and index("--dangerously-bypass-approvals-and-sandbox")!=null)' "$tmp/calls"
+check jq -se 'any(.[]; .[0:2]==["agent","start"] and index("wNEW:p7")!=null and index("--dangerously-bypass-approvals-and-sandbox")!=null and index("--no-daemon")!=null)' "$tmp/calls"
 check grep -q created "$tmp/out"
 check test -d "$ERECT_STATE_DIR"
 initial_hash="$(printf '%s' "$EAS_PROJECT" | sha256sum)"
@@ -282,6 +288,34 @@ check test "$status" = 0
 check grep -Fq 'joined-running: p-blip-legacy @' "$tmp/out"
 check jq -e '.name=="p-blip-legacy" and .requested_session_id==null and .observed_session_id=="kept-id" and .verified_session_id=="kept-id" and .session_id=="kept-id" and .status=="verified"' "$ERECT_STATE_DIR/$project_hash.json"
 check calls_are_readonly
+
+# A project whose agent already runs in herdr-core is never launched again from the TUI:
+# that would resume a second copy of the same conversation.
+reset_fixture
+jq -n --arg cwd "$EAS_PROJECT" '{terminals:[{address:"t9",state:"live",agent:"claude-code",status:"idle",cwd:$cwd}]}' > "$tmp/hc.json"
+run --fresh --agent codex --no-attach "$EAS_PROJECT"
+check test "$status" = 69
+check grep -q 'live in herdr-core (t9)' "$tmp/err"
+check calls_are_readonly
+run --dry-run --fresh "$EAS_PROJECT"
+check test "$status" = 69
+# A shell there is not an agent, and a finished terminal is not live.
+reset_fixture
+jq -n --arg cwd "$EAS_PROJECT" '{terminals:[{address:"t8",state:"live",agent:"bash",cwd:$cwd},{address:"t7",state:"finished",agent:"codex",cwd:$cwd}]}' > "$tmp/hc.json"
+run --dry-run --fresh "$EAS_PROJECT"
+check test "$status" = 0
+# herdr-core that cannot answer may still hold the agent: refuse.
+reset_fixture
+: > "$tmp/hc.fail"
+run --fresh --agent codex --no-attach "$EAS_PROJECT"
+check test "$status" = 69
+check grep -q 'cannot check herdr-core' "$tmp/err"
+check calls_are_readonly
+# A machine without herdr-core launches as before.
+reset_fixture
+ERECT_HC="$tmp/no-such-hc" run --fresh --agent codex --no-attach "$EAS_PROJECT"
+check test "$status" = 0
+check called 'agent start'
 
 bash -c 'source "$1"; erect-agent-stack --help' _ "$tool" > "$tmp/sourced" 2> "$tmp/source.err"
 check test "$?" = 0

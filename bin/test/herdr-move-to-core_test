@@ -208,7 +208,7 @@ check test "$rc" -eq 1
 check grep -q 'pass --session ID' <<<"$err"
 check test ! -e "$S/typed"
 run --dry-run --session C1 p1
-check test "$(jq -r '.new_argv | join(" ")' <<<"$out")" = '/x/codex resume C1 --dangerously-bypass-approvals-and-sandbox'
+check test "$(jq -r '.new_argv | join(" ")' <<<"$out")" = '/x/codex resume C1 --dangerously-bypass-approvals-and-sandbox --no-daemon'
 setup codex idle '' '["/x/codex"]'
 run --session C1 p1
 check test "$(cat "$S/typed")" = /quit

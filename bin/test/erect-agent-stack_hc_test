@@ -43,10 +43,17 @@ case $1 in
 esac
 SH
 } >"$T/bin/herdr-app"
-chmod +x "$T/bin/hc" "$T/bin/herdr-app"
+# Fake Herdr TUI: lists $T/tui.json; fails (no server) while $T/tui.fail exists.
+{ printf '#!%s\n' "$bash_path"; cat <<'SH'
+S=${0%/bin/tui-herdr}
+[[ -e $S/tui.fail ]] && exit 1
+[[ "$1 $2" == "agent list" ]] && cat "$S/tui.json"
+SH
+} >"$T/bin/tui-herdr"
+chmod +x "$T/bin/hc" "$T/bin/herdr-app" "$T/bin/tui-herdr"
 
 terminals() { jq -cn --argjson t "$1" '{terminals:$t}' >"$T/ls.json"; }
-reset() { : >"$T/calls"; command rm -rf -- "$T/state" "$T/app.json"; terminals '[]'; }
+reset() { : >"$T/calls"; command rm -rf -- "$T/state" "$T/app.json" "$T/tui.json" "$T/tui.fail"; terminals '[]'; }
 run() { out=$("$tool" "$@" 2>"$T/err"); rc=$?; err=$(cat "$T/err"); }
 hash=$(printf '%s' "$project" | sha256sum); hash=${hash%% *}
 record="$T/state/$hash.json"
@@ -100,7 +107,8 @@ check test "$(grep -c 'space.new' "$T/calls")" -eq 0
 reset; save_record
 run --fresh --agent codex "$project"
 check test "$rc" -eq 0
-check test "$(sed -n 1p "$T/calls")" = "run --json --bg --no-parent --name a-project --cwd $project -- codex --dangerously-bypass-approvals-and-sandbox"
+# Fresh space and tab ids (sp/tb + 32 hex) make the app adopt it; normalize them to compare.
+check test "$(sed -n 1p "$T/calls" | sed -E 's/herdr\.space=sp[0-9a-f]{32}/herdr.space=SP/; s/herdr\.tab=tb[0-9a-f]{32}/herdr.tab=TB/')" = "run --json --bg --no-parent --keep --label herdr.space=SP --label herdr.tab=TB --name a-project --cwd $project -- codex --dangerously-bypass-approvals-and-sandbox --no-daemon"
 check test "$(sed -n 2p "$T/calls")" = 'label t40 project=a project backend=codex'
 
 # 7. --checker marks the new agent's environment; --dry-run writes and starts nothing.
@@ -120,6 +128,19 @@ HC_TERMINAL_SOCKET='' run "$project"
 check test "$rc" -eq 78
 HC_TERMINAL_SOCKET='' ERECT_BACKEND=hc run --dry-run "$project"
 check test "$rc" -eq 0
+
+# 9. A project whose agent still runs in the Herdr TUI is not launched again in herdr-core.
+reset; save_record; echo '{"spaces":[]}' >"$T/app.json"
+jq -n --arg p "$project" '{result:{agents:[{cwd:$p,pane_id:"w1:p1",agent:"codex"}]}}' >"$T/tui.json"
+ERECT_HERDR="$T/bin/tui-herdr" run "$project"
+check test "$rc" -eq 69
+check grep -q 'live in the Herdr TUI (w1:p1)' <<<"$err"
+check test ! -s "$T/calls"
+# A TUI server that does not answer holds no agents, so the launch proceeds.
+reset; save_record; echo '{"spaces":[]}' >"$T/app.json"; : >"$T/tui.fail"
+ERECT_HERDR="$T/bin/tui-herdr" run "$project"
+check test "$rc" -eq 0
+check grep -q '^do space.new' "$T/calls"
 
 printf '%s checks, %s failures\n' "$tests" "$failures"
 test "$failures" -eq 0
