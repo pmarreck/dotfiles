@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+# tmpdir-advisory-hook: a PreToolUse advisory for agents (Claude Code, Codex).
+#
+# On these machines $TMPDIR and /tmp are RAM: files there vanish at reboot or cleanup,
+# and `rm` deletes them outright. Agents lost work by keeping reusable scripts there.
+# Temporary scripts are still legitimate, so this never blocks. It adds context when:
+#   - code is written into the temp directory (Write/Edit, or a shell redirect, tee,
+#     cp, mv or install whose target is a script there), and
+#   - a command runs or reads a script in the temp directory that was last changed
+#     more than an hour ago (TMPDIR_ADVISORY_AGE seconds), which means it is being reused.
+# "Code" is a known code extension or a #! first line. Reads hook JSON on stdin.
+set -u
+
+AGE=${TMPDIR_ADVISORY_AGE:-3600}
+NOW=${TMPDIR_ADVISORY_NOW:-$(date +%s)}
+input=$(cat)
+
+event=$(jq -r '.hook_event_name // "PreToolUse"' <<<"$input" 2>/dev/null) || exit 0
+tool=$(jq -r '.tool_name // ""' <<<"$input")
+
+# The temp roots, as written and as resolved (TMPDIR may be a symlink).
+roots=()
+for r in "${TMPDIR:-/tmp}" /tmp; do
+	r=${r%/}
+	[[ -n $r ]] || continue
+	roots+=("$r")
+	real=$(cd "$r" 2>/dev/null && pwd -P) && [[ $real != "$r" ]] && roots+=("$real")
+done
+
+in_temp() { # path
+	local r
+	for r in "${roots[@]}"; do [[ $1 == "$r"/* ]] && return 0; done
+	return 1
+}
+
+code_ext='sh|bash|zsh|fish|lua|py|rb|pl|js|mjs|cjs|ts|zig|rs|go|c|h|cc|cpp|hpp|nix|awk|sed|jq|el|ex|exs|java|kt|swift|ps1|mk|tcl'
+is_code_name() { [[ ${1##*/} =~ \.($code_ext)$ || ${1##*/} == Makefile ]]; }
+is_code_file() { # existing file
+	is_code_name "$1" && return 0
+	[[ -f $1 && -r $1 ]] && [[ $(head -c 2 "$1" 2>/dev/null) == '#!' ]]
+}
+
+notes=()
+case $tool in
+	Write | Edit | MultiEdit | NotebookEdit)
+		path=$(jq -r '.tool_input.file_path // .tool_input.notebook_path // ""' <<<"$input")
+		content=$(jq -r '.tool_input.content // ""' <<<"$input")
+		if [[ -n $path ]] && in_temp "$path" && { is_code_name "$path" || [[ $content == '#!'* ]] || is_code_file "$path"; }; then
+			notes+=("$path is in the temp directory, which is RAM here: it vanishes at reboot or cleanup, and rm deletes it outright. Fine for a throwaway; if anything may run or read it again, write it into its project instead (tracked, or listed in .gitignore).")
+		fi
+		;;
+	apply_patch | ApplyPatch)
+		# Codex edits files through a patch whose headers name each file.
+		while IFS= read -r path; do
+			in_temp "$path" && is_code_name "$path" &&
+				notes+=("$path is in the temp directory, which is RAM here: it vanishes at reboot or cleanup, and rm deletes it outright. Fine for a throwaway; if anything may run or read it again, write it into its project instead (tracked, or listed in .gitignore).")
+		done < <(jq -r '[.tool_input | .. | strings] | join("\n")' <<<"$input" | sed -nE 's/^\*\*\* (Add|Update) File: //p')
+		;;
+	Bash | Shell | shell | exec_command)
+		# Claude passes a command string; Codex may pass an argv array.
+		cmd=$(jq -r '.tool_input.command // .tool_input.cmd // "" | if type == "array" then join(" ") else . end' <<<"$input")
+		# Expand the temp variable spellings agents use, then look at every temp path.
+		expanded=${cmd//'${TMPDIR}'/${TMPDIR:-/tmp}}
+		expanded=${expanded//'$TMPDIR'/${TMPDIR:-/tmp}}
+		written=() reused=()
+		while IFS= read -r path; do
+			[[ -n $path ]] && in_temp "$path" || continue
+			if [[ -f $path ]] && is_code_file "$path"; then
+				mtime=$(stat -c %Y "$path" 2>/dev/null || stat -f %m "$path" 2>/dev/null) || continue
+				((NOW - mtime > AGE)) && reused+=("$path ($(((NOW - mtime) / 3600))h old)")
+			fi
+		done < <(grep -oE '(/[^[:space:]"'"'"'|;&<>()]+)' <<<"$expanded" | sort -u)
+		while IFS= read -r path; do
+			path=${path##*[[:space:]]}
+			path=${path#[\"\']}; path=${path%[\"\']}
+			[[ -n $path ]] && in_temp "$path" && is_code_name "$path" && written+=("$path")
+		done < <(grep -oE '(>>?|\btee( -a)?|\bcp( -[a-zA-Z]+)*( [^[:space:];|&]+)+|\bmv( -[a-zA-Z]+)*( [^[:space:];|&]+)+|\binstall( -[a-zA-Z]+)*( [^[:space:];|&]+)+)[[:space:]]*["'"'"']?/[^[:space:]"'"'"'|;&<>()]+' <<<"$expanded")
+		((${#written[@]})) && notes+=("this writes code into the temp directory (${written[*]}), which is RAM here: it vanishes at reboot or cleanup. Fine for a throwaway; if it will be run again, put it in its project instead (tracked, or listed in .gitignore).")
+		((${#reused[@]})) && notes+=("this reuses a script from the temp directory that is over an hour old: ${reused[*]}. Temp files vanish at reboot or cleanup. A script you keep using belongs in its project: move it there (tracked, or listed in .gitignore) and run it from there.")
+		;;
+esac
+
+((${#notes[@]})) || exit 0
+message="TMPDIR advisory: ${notes[*]}"
+jq -cn --arg e "$event" --arg m "$message" '{hookSpecificOutput: {hookEventName: $e, additionalContext: $m}}'

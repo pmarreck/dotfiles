@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# tmpdir-advisory-hook: advises on code written into the temp directory and on reused
+# (over an hour old) temp scripts, and stays silent otherwise. It never blocks.
+set -u
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+hook="$root/bin/tmpdir-advisory-hook"
+T=$(mktemp -d "${TMPDIR:-/tmp}/tmpdir-advisory-test.XXXXXX") || exit 1
+trap 'command rm -rf -- "$T"' EXIT
+tests=0 failures=0
+check() { tests=$((tests + 1)); "$@" && return; printf 'FAIL: %s\n' "$*" >&2; failures=$((failures + 1)); }
+
+# The test's own directory stands in for the temp root. The hook only compares path
+# prefixes outside it, so the project path need not exist (and nothing is created there).
+export TMPDIR="$T/tmp" TMPDIR_ADVISORY_NOW=2000000000
+mkdir -p "$TMPDIR"
+project=/nonexistent-project-for-tmpdir-advisory-test
+
+hook_json() { out=$("$hook"); rc=$?; }
+write() { hook_json <<<"$(jq -cn --arg t "$1" --arg p "$2" --arg c "${3:-}" '{hook_event_name:"PreToolUse", tool_name:$t, tool_input:{file_path:$p, content:$c}}')"; }
+bash_cmd() { hook_json <<<"$(jq -cn --arg c "$1" '{hook_event_name:"PreToolUse", tool_name:"Bash", tool_input:{command:$c}}')"; }
+advises() { [[ $rc -eq 0 ]] && jq -e --arg w "$1" '.hookSpecificOutput.hookEventName == "PreToolUse" and (.hookSpecificOutput.additionalContext | contains($w))' <<<"$out" >/dev/null; }
+silent() { [[ $rc -eq 0 && -z $out ]]; }
+# Set a file's mtime to SECONDS before the fixed clock, with GNU or BSD date and touch.
+aged() {
+	local when=$((TMPDIR_ADVISORY_NOW - $2)) stamp
+	stamp=$(TZ=UTC date -d "@$when" +%Y%m%d%H%M.%S 2>/dev/null || TZ=UTC date -r "$when" +%Y%m%d%H%M.%S)
+	TZ=UTC touch -t "$stamp" "$1"
+}
+
+# Writing code into the temp directory: by extension, or by a #! first line.
+write Write "$TMPDIR/helper.sh" 'echo hi'
+check advises 'helper.sh is in the temp directory'
+write Write "$TMPDIR/runner" $'#!/usr/bin/env bash\necho hi'
+check advises 'runner is in the temp directory'
+write Edit "$TMPDIR/fix.lua"
+check advises 'fix.lua is in the temp directory'
+# Not code, or not in the temp directory: silent.
+write Write "$TMPDIR/notes.md" 'just notes'
+check silent
+write Write "$project/helper.sh" 'echo hi'
+check silent
+
+# A shell command writing a script into the temp directory, in the spellings agents use.
+bash_cmd "cat > $TMPDIR/gen.sh <<'EOF'"
+check advises 'writes code into the temp directory'
+bash_cmd 'printf x | tee "$TMPDIR/out.py"'
+check advises "$TMPDIR/out.py"
+bash_cmd 'cp scripts/run.lua ${TMPDIR}/run.lua'
+check advises "$TMPDIR/run.lua"
+bash_cmd "echo hi > $TMPDIR/log.txt"
+check silent
+
+# Reusing a temp script over an hour old warns; a fresh one does not; nor does old data.
+printf '#!/bin/sh\necho old\n' >"$TMPDIR/old-tool"; aged "$TMPDIR/old-tool" 7300
+printf 'echo fresh\n' >"$TMPDIR/fresh.sh"; aged "$TMPDIR/fresh.sh" 600
+printf 'data\n' >"$TMPDIR/old.csv"; aged "$TMPDIR/old.csv" 9000
+bash_cmd "bash $TMPDIR/old-tool --flag"
+check advises 'reuses a script from the temp directory that is over an hour old'
+check advises 'old-tool (2h old)'
+bash_cmd 'luajit "$TMPDIR/fresh.sh"'
+check silent
+bash_cmd "sort $TMPDIR/old.csv"
+check silent
+printf 'print(1)\n' >"$TMPDIR/old.lua"; aged "$TMPDIR/old.lua" 3700
+bash_cmd 'luajit $TMPDIR/old.lua'
+check advises 'old.lua (1h old)'
+
+# Codex: its shell tool may pass an argv array, and apply_patch names files in headers.
+hook_json <<<"$(jq -cn --arg c "luajit $TMPDIR/old.lua" '{hook_event_name:"PreToolUse", tool_name:"shell", tool_input:{command:["bash","-lc",$c]}}')"
+check advises 'old.lua (1h old)'
+hook_json <<<"$(jq -cn --arg p "*** Begin Patch
+*** Add File: $TMPDIR/patched.py
++print(1)
+*** End Patch" '{hook_event_name:"PreToolUse", tool_name:"apply_patch", tool_input:{input:$p}}')"
+check advises 'patched.py is in the temp directory'
+hook_json <<<"$(jq -cn --arg p "*** Begin Patch
+*** Add File: $project/kept.py
++print(1)
+*** End Patch" '{hook_event_name:"PreToolUse", tool_name:"apply_patch", tool_input:{input:$p}}')"
+check silent
+
+# Unrelated tools and empty input are silent, and the hook always exits 0.
+hook_json <<<'{"tool_name":"Read","tool_input":{"file_path":"/tmp/x.sh"}}'
+check silent
+hook_json <<<''
+check test "$rc" -eq 0
+
+printf '%s checks, %s failures\n' "$tests" "$failures"
+test "$failures" -eq 0
