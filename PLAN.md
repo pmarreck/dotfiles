@@ -14,7 +14,6 @@ Open work is listed in priority order. Completed history is in `docs/PLAN_LOG.md
 
 ## Host configuration drift coverage (2026-11-28)
 
-- [x] Read host-config-fetch logs by syslog identifier: journald dropped the unit tag from the report line a short-lived child printed (done 2026-11-28 02:05 EST; commit 6f2f139).
 
 ## Dotfiles cleanup (owner request 2026-11-28)
 
@@ -23,7 +22,7 @@ Open work is listed in priority order. Completed history is in `docs/PLAN_LOG.md
 - [x] Delete every LM Studio and Homebrew remnant from the startup files, commented-out ones included, plus install hints in scripts and two Homebrew helper scripts (done 2026-11-28 02:05 EST; commit ef86777).
 - [x] Sanity-check .envconfig: NODE_PATH removed, truthy sourced only when missing, the duplicate LANG removed from .bashrc, certificate fallback order documented; macOS TMPDIR left for the owner as recommendation 9 (context: docs/plan_context/dotfiles-cleanup.md; done 2026-11-28 02:05 EST; commit ef86777).
 - [x] Preserve .pathconfig's lost rationale: docs/shell-startup-path.md, linked from path_plan.lua and .pathconfig, with a staged proposal to retire .pathconfig later; nothing removed (done 2026-11-28 02:05 EST; commit ef86777).
-- [ ] Merge the dotfiles-cleanup branch into master, push, and fast-forward every host; it passes all 256 test files on Linux, macOS and WSL, and waits only for the owner's go-ahead to push.
+- [x] Merge the dotfiles-cleanup branch into master, push, and fast-forward every host: all 256 test files passed on Linux, macOS and WSL, and fresh shells on the Framework, Mac and WSL host set VISUAL to choose_editor --wait locally and leave it unset over SSH (owner approved; done 2026-11-28 09:35 EST; pushed 00e24b7).
 - [ ] Delete .gitconfig.old-possibly-useful once the owner confirms, porting whatever they want kept.
 - [x] Make `edit` open Zed (zeditor or zed) with its file arguments wherever a GUI is reachable, else micro: choose_editor applies that policy, a new edit executable serves non-interactive callers, and git's core.editor is choose_editor --wait; VISUAL is unchanged, see recommendation 6 (done 2026-11-28 02:05 EST; commit 2f8fa3e).
 - [x] Make VISUAL wait too (owner approved recommendation 6): VISUAL is choose_editor --wait outside SSH and unset over SSH, so crontab -e, sudoedit and Bash's Ctrl-X Ctrl-E read the file after Zed closes it (done 2026-11-28 09:23 EST; commit 58eceeb).
