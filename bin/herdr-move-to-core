@@ -10,6 +10,7 @@ set -u
 
 HERDR=${MOVE_HERDR:-herdr}
 HC=${MOVE_HC:-hc}
+HERDR_APP=${MOVE_HERDR_APP:-herdr-app}
 LLMSEND_SCRIPTS=${LLMSEND_SCRIPTS:-$HOME/Code/llmsend/skills/llmsend/scripts}
 LOG=${MOVE_LOG:-${XDG_STATE_HOME:-$HOME/.local/state}/herdr-migration/log.jsonl}
 EXIT_TIMEOUT=${MOVE_EXIT_TIMEOUT:-30}
@@ -17,11 +18,22 @@ POLL=${MOVE_POLL:-0.5}
 
 usage() {
 	cat <<'EOF'
-Usage: herdr-move-to-core [--dry-run] [--session ID] [--name NAME] PANE_ID...
+Usage: herdr-move-to-core [--app] [--dry-run] [--session ID] [--name NAME] PANE_ID...
+       herdr-move-to-core --app [--dry-run] --workspace WORKSPACE_ID...
 
 Moves each Herdr TUI pane's agent (claude, codex, grok or agy) into herdr-core:
 exits it at a verified empty prompt, then resumes the same native conversation with
 `hc run --bg --no-parent`. Panes are handled in order; a refusal skips that pane.
+
+  --app         Recreate the pane's whole Herdr workspace as a Herdr app space with
+                the same name and tabs: the agent's tab resumes the agent, every other
+                tab is a shell in its folder. Needs an open Herdr window.
+  --workspace W With --app: recreate a workspace that has no live agent as a space.
+  --wait SECS   Wait up to SECS for a busy agent to become idle at an empty prompt
+                instead of refusing it.
+  --handoff     Allow the pane running this command (an agent moving itself). Start
+                it detached, e.g. `setsid -f herdr-move-to-core --handoff --wait 900
+                PANE`, then end the turn: it acts once the agent is idle.
 
   --dry-run     Inspect and print the plan; type nothing, start nothing.
   --session ID  The native session ID, for one pane whose ID has no stronger
@@ -129,20 +141,83 @@ hc_name() {
 	printf '%s' "${n:0:32}"
 }
 
+# The workspace's tabs in order, each with its first pane's folder: [{tab, label, cwd}].
+workspace_tabs() { # workspace
+	local tabs panes
+	tabs=$("$HERDR" tab list --workspace "$1" 2>/dev/null) || return 1
+	panes=$("$HERDR" pane list --workspace "$1" 2>/dev/null) || return 1
+	jq -c --argjson panes "$panes" '[.result.tabs[] | . as $t | {tab: .tab_id, label: (.label // ""),
+		cwd: ([$panes.result.panes[] | select(.tab_id == $t.tab_id) | (.cwd // .foreground_cwd)][0] // "")}]' <<<"$tabs"
+}
+
+workspace_label() {
+	"$HERDR" workspace list 2>/dev/null | jq -r --arg w "$1" '.result.workspaces[] | select(.workspace_id == $w) | .label // ""'
+}
+
+space_exists() {
+	"$HERDR_APP" ls 2>/dev/null | jq -e --arg n "$1" '[.spaces[]? | select(.name == $n)] | length > 0' >/dev/null
+}
+
+# Recreate a Herdr TUI workspace as a Herdr app space with its name and tabs, in order.
+# The tab AGENT_TAB starts ARGV (the resumed agent); every other tab is a shell in its
+# folder. Prints the agent's terminal address (empty without one).
+recreate_space() { # name tabs-json agent-tab argv...
+	local name=$1 tabs=$2 agent_tab=$3; shift 3
+	local -a argv=("$@")
+	local count i tab label cwd args resp space='' terminal='' agent_terminal=''
+	count=$(jq length <<<"$tabs")
+	for ((i = 0; i < count; i++)); do
+		tab=$(jq -r ".[$i].tab" <<<"$tabs"); label=$(jq -r ".[$i].label" <<<"$tabs"); cwd=$(jq -r ".[$i].cwd" <<<"$tabs")
+		[[ -d $cwd ]] || cwd=$HOME
+		if [[ $tab == "$agent_tab" ]]; then
+			args=$(jq -cn --arg tab "$label" --arg folder "$cwd" --args '{tab:$tab, folder:$folder, argv:$ARGS.positional, focus:false}' -- "${argv[@]}")
+		else
+			args=$(jq -cn --arg tab "$label" --arg folder "$cwd" '{tab:$tab, folder:$folder, focus:false}')
+		fi
+		if [[ -z $space ]]; then
+			resp=$("$HERDR_APP" do space.new "$(jq -c --arg s "$name" '{name:$s} + .' <<<"$args")" 2>&1)
+			space=$(jq -r '.space // empty' <<<"$resp" 2>/dev/null)
+			[[ -n $space ]] || { say "space.new failed for '$name': $resp"; return 1; }
+		else
+			resp=$("$HERDR_APP" do tab.new "$(jq -c --arg s "$space" '{space:$s, name:.tab} + (. | del(.tab))' <<<"$args")" 2>&1)
+		fi
+		terminal=$(jq -r '.terminal // empty' <<<"$resp" 2>/dev/null)
+		[[ -n $terminal ]] || { say "could not create tab '$label' in space '$name': $resp"; return 1; }
+		[[ $tab == "$agent_tab" ]] && agent_terminal=$terminal
+	done
+	printf '%s\n' "$agent_terminal"
+}
+
+# An agentless workspace becomes a space of shells, so open work keeps its place.
+move_workspace() { # workspace
+	local w=$1 label tabs
+	"$HERDR" agent list 2>/dev/null | jq -e --arg w "$w" '[.result.agents[] | select(.workspace_id == $w)] | length == 0' >/dev/null ||
+		{ say "$w: workspace has a live agent; move its pane instead"; return 1; }
+	label=$(workspace_label "$w")
+	[[ -n $label ]] || { say "$w: no such workspace"; return 1; }
+	tabs=$(workspace_tabs "$w") && [[ $(jq length <<<"$tabs") -gt 0 ]] || { say "$w: cannot read its tabs"; return 1; }
+	space_exists "$label" && { say "$w: a space named '$label' already exists; skipped"; return 1; }
+	jq -cn --arg w "$w" --arg name "$label" --argjson tabs "$tabs" '{workspace:$w, space:$name, tabs:$tabs}'
+	((DRY_RUN)) && return 0
+	recreate_space "$label" "$tabs" '' >/dev/null || return 1
+	log_event --arg step space-created --arg workspace "$w" --arg space "$label" --argjson tabs "$tabs"
+	printf 'recreated workspace %s as space %s\n' "$w" "$label"
+}
+
 move_one() { # pane
 	local pane=$1 agents entry backend status cwd hname recorded pid start
 	local -a argv=() fds=() newargv=()
 	agents=$("$HERDR" agent list 2>/dev/null) || { say "$pane: cannot list Herdr agents"; return 1; }
 	entry=$(jq -c --arg p "$pane" '.result.agents[] | select(.pane_id == $p)' <<<"$agents")
 	[[ -n $entry ]] || { say "$pane: no agent in that pane"; return 1; }
-	[[ $pane != "${HERDR_PANE_ID:-}" ]] || { say "$pane: refusing to move the pane running this command"; return 1; }
+	[[ $pane != "${HERDR_PANE_ID:-}" ]] || ((HANDOFF)) || { say "$pane: refusing to move the pane running this command"; return 1; }
 	backend=$(jq -r '.agent // ""' <<<"$entry")
 	status=$(jq -r '.agent_status // ""' <<<"$entry")
 	cwd=$(jq -r '.cwd // ""' <<<"$entry")
 	hname=$(jq -r '.name // ""' <<<"$entry")
 	recorded=$(jq -r --arg b "$backend" 'if .agent_session.agent == $b then .agent_session.value // "" else "" end' <<<"$entry")
 	[[ -n $(exit_command "$backend") ]] || { say "$pane: unsupported backend '$backend'"; return 1; }
-	[[ $status == idle || $status == done ]] || { say "$pane: agent is $status, not idle; skipped"; return 1; }
+	[[ $status == idle || $status == done ]] || [[ $WAIT != 0 ]] || { say "$pane: agent is $status, not idle; skipped"; return 1; }
 	[[ -d $cwd ]] || { say "$pane: working directory '$cwd' is missing"; return 1; }
 
 	local info procs
@@ -172,13 +247,24 @@ move_one() { # pane
 	else say "$pane: no exact session ID for this $backend agent; pass --session ID"; return 1; fi
 	[[ $session =~ ^[A-Za-z0-9_-]+$ ]] || { say "$pane: invalid session ID '$session'"; return 1; }
 
+	local wid wlabel='' tabs='[]' agent_tab
+	wid=$(jq -r '.workspace_id // ""' <<<"$entry")
+	agent_tab=$(jq -r '.tab_id // ""' <<<"$entry")
+	if ((APP_MODE)); then
+		wlabel=$(workspace_label "$wid")
+		[[ -n $wlabel ]] || { say "$pane: cannot find its workspace '$wid'"; return 1; }
+		tabs=$(workspace_tabs "$wid") || { say "$pane: cannot read the workspace's tabs"; return 1; }
+		jq -e --arg t "$agent_tab" 'any(.[]; .tab == $t)' <<<"$tabs" >/dev/null || { say "$pane: its tab is not in the workspace"; return 1; }
+		space_exists "$wlabel" && { say "$pane: a space named '$wlabel' already exists; skipped"; return 1; }
+	fi
+
 	local name live
 	name=$(hc_name "${NAME_OVERRIDE:-${hname:-${cwd##*/}}}")
 	live=$("$HC" ls --json 2>/dev/null) || { say "herdr-core is not answering (hc ls)"; return 1; }
 	if jq -e --arg s "$session" '[(.terminals // .)[]? | select(.labels.session == $s)] | length > 0' <<<"$live" >/dev/null; then
 		say "$pane: session $session already runs under herdr-core; skipped"; return 1
 	fi
-	if jq -e --arg n "$name" '[(.terminals // .)[]? | select(.name == $n)] | length > 0' <<<"$live" >/dev/null; then
+	if ((!APP_MODE)) && jq -e --arg n "$name" '[(.terminals // .)[]? | select(.name == $n)] | length > 0' <<<"$live" >/dev/null; then
 		say "$pane: herdr-core already has a terminal named '$name'; pass --name"; return 1
 	fi
 	mapfile -d '' -t newargv < <(resume_argv "$backend" "$session" "${argv[@]}")
@@ -186,13 +272,32 @@ move_one() { # pane
 	local plan
 	plan=$(jq -cn --arg pane "$pane" --arg backend "$backend" --arg session "$session" --arg from "$from" \
 		--arg weak "$weak" --arg cwd "$cwd" --arg name "$name" --argjson pid "$pid" --arg start "$start" \
+		--arg space "$wlabel" --argjson tabs "$tabs" \
 		--args '{pane:$pane, backend:$backend, session:$session, evidence:$from, argv_session:$weak,
-			cwd:$cwd, name:$name, pid:$pid, start:$start, new_argv:$ARGS.positional}' -- "${newargv[@]}")
+			cwd:$cwd, name:$name, pid:$pid, start:$start, new_argv:$ARGS.positional}
+			+ (if $space != "" then {space:$space, tabs:$tabs} else {} end)' -- "${newargv[@]}")
 	printf '%s\n' "$plan"
 	((DRY_RUN)) && return 0
 
-	# Two identical ANSI snapshots with an empty composer, then type the exit command.
+	# With --wait, poll until the agent is idle at an empty prompt (a self-handoff waits for
+	# its own turn to end); the checks below then confirm it again before typing.
 	local first second verdict
+	if [[ $WAIT != 0 ]]; then
+		local waited_idle=0
+		while :; do
+			status=$("$HERDR" agent list 2>/dev/null | jq -r --arg p "$pane" '.result.agents[] | select(.pane_id == $p) | .agent_status')
+			if [[ $status == idle || $status == done ]]; then
+				first=$(screen "$pane"); sleep "$POLL"; second=$(screen "$pane")
+				verdict=$(composer "$backend" <<<"$second")
+				[[ -n $first && $first == "$second" && ${verdict%%$'\t'*} == empty ]] && break
+			fi
+			if awk -v w="$waited_idle" -v t="$WAIT" 'BEGIN { exit !(w >= t) }'; then
+				say "$pane: agent did not become idle at an empty prompt within ${WAIT}s; skipped"; return 1
+			fi
+			sleep "$POLL"; waited_idle=$(awk -v w="$waited_idle" -v p="$POLL" 'BEGIN { print w + p * 2 }')
+		done
+	fi
+	# Two identical ANSI snapshots with an empty composer, then type the exit command.
 	first=$(screen "$pane"); sleep "$POLL"; second=$(screen "$pane")
 	verdict=$(composer "$backend" <<<"$second")
 	[[ -n $first && $first == "$second" && ${verdict%%$'\t'*} == empty ]] || {
@@ -225,22 +330,36 @@ move_one() { # pane
 	log_event --arg step exited --arg pane "$pane" --argjson pid "$pid"
 
 	local started address
-	started=$("$HC" run --json --bg --no-parent --name "$name" --cwd "$cwd" --label "project=${cwd##*/}" \
-		--label "backend=$backend" --label "session=$session" --label migrated-from=herdr-tui -- "${newargv[@]}" 2>&1)
-	address=$(jq -r '.address // empty' <<<"$started" 2>/dev/null)
-	if [[ -z $address ]]; then
-		log_event --arg step start-failed --arg pane "$pane" --arg output "$started"
-		say "$pane: hc run failed: $started"; return 1
+	if ((APP_MODE)); then
+		# The app starts the agent in its space; labels then identify it to scripts.
+		address=$(recreate_space "$wlabel" "$tabs" "$agent_tab" "${newargv[@]}") && [[ -n $address ]] || {
+			log_event --arg step start-failed --arg pane "$pane" --arg output "space $wlabel"
+			say "$pane: could not recreate space '$wlabel'; the agent is not running, resume: ${newargv[*]}"; return 1; }
+		"$HC" label "$address" "project=${cwd##*/}" "backend=$backend" "session=$session" migrated-from=herdr-tui >/dev/null ||
+			say "$pane: started $address but could not label it"
+		name=$wlabel
+	else
+		started=$("$HC" run --json --bg --no-parent --name "$name" --cwd "$cwd" --label "project=${cwd##*/}" \
+			--label "backend=$backend" --label "session=$session" --label migrated-from=herdr-tui -- "${newargv[@]}" 2>&1)
+		address=$(jq -r '.address // empty' <<<"$started" 2>/dev/null)
+		if [[ -z $address ]]; then
+			log_event --arg step start-failed --arg pane "$pane" --arg output "$started"
+			say "$pane: hc run failed: $started"; return 1
+		fi
 	fi
 	log_event --arg step started --arg pane "$pane" --arg address "$address" --arg name "$name" --arg session "$session"
 	printf 'moved %s (%s %s) to herdr-core %s as %s\n' "$pane" "$backend" "$session" "$address" "$name"
 }
 
-DRY_RUN=0 SESSION_OVERRIDE='' NAME_OVERRIDE=''
-panes=()
+DRY_RUN=0 APP_MODE=0 HANDOFF=0 WAIT=0 SESSION_OVERRIDE='' NAME_OVERRIDE=''
+panes=() workspaces=()
 while (($#)); do
 	case $1 in
 		--dry-run) DRY_RUN=1 ;;
+		--app) APP_MODE=1 ;;
+		--handoff) HANDOFF=1 ;;
+		--wait) WAIT=${2:-}; shift; [[ $WAIT =~ ^[0-9]+([.][0-9]+)?$ ]] || { say "--wait needs seconds"; exit 2; } ;;
+		--workspace) workspaces+=("${2:-}"); shift ;;
 		--session) SESSION_OVERRIDE=${2:-}; shift ;;
 		--name) NAME_OVERRIDE=${2:-}; shift ;;
 		-h | --help) usage; exit 0 ;;
@@ -249,10 +368,12 @@ while (($#)); do
 	esac
 	shift
 done
-((${#panes[@]})) || { usage >&2; exit 2; }
+((${#panes[@]} + ${#workspaces[@]})) || { usage >&2; exit 2; }
+((${#workspaces[@]} == 0 || APP_MODE)) || { say "--workspace needs --app"; exit 2; }
 if [[ -n $SESSION_OVERRIDE$NAME_OVERRIDE ]] && ((${#panes[@]} > 1)); then
 	say "--session and --name apply to one pane at a time"; exit 2
 fi
 failed=0
 for pane in "${panes[@]}"; do move_one "$pane" || failed=1; done
+for w in "${workspaces[@]}"; do move_workspace "$w" || failed=1; done
 exit "$failed"

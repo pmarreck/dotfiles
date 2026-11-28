@@ -26,6 +26,7 @@ fi
 export HOME="$T/home" MOVE_LOG="$T/log.jsonl" MOVE_POLL=0.05 MOVE_EXIT_TIMEOUT=5
 # herdr-move-to-core_llmsend_test reruns this suite with llmsend's real composer reader.
 export MOVE_HERDR="$T/bin/herdr" MOVE_HC="$T/bin/hc" LLMSEND_SCRIPTS="${MOVE_TEST_LLMSEND:-$T/llmsend}"
+export MOVE_HERDR_APP="$T/bin/herdr-app"
 unset HERDR_PANE_ID
 S="$T/state"
 mkdir -p "$T/bin" "$T/llmsend" "$S" "$HOME" "$T/proj"
@@ -54,6 +55,9 @@ S=${0%/bin/herdr}/state
 case "$1 $2" in
 	"agent list") cat "$S/agents.json" ;;
 	"pane process-info") cat "$S/process.json" ;;
+	"workspace list") cat "$S/workspaces.json" ;;
+	"tab list") cat "$S/tabs-$4.json" ;;
+	"pane list") cat "$S/panes-$4.json" ;;
 	"pane read") cat "$S/screen" ;;
 	"pane send-text")
 		printf '%s\n' "$4" >>"$S/typed"
@@ -70,10 +74,32 @@ S=${0%/bin/hc}/state
 case $1 in
 	ls) cat "$S/hc-ls.json" ;;
 	run) shift; printf '%s\0' "$@" >"$S/hc-run"; echo '{"address":"t9","state":"live"}' ;;
+	label) shift; printf '%s\n' "$*" >>"$S/hc-label" ;;
 	*) echo "fake hc: unexpected $*" >&2; exit 64 ;;
 esac
 SH
 } >"$T/bin/hc"
+# Fake Herdr app: space.new and tab.new are recorded as JSON lines and answer with new
+# addresses; ls reports the spaces made so far. app-fail makes space.new fail.
+{ printf '#!%s\n' "$bash_path"; cat <<'SH'
+S=${0%/bin/herdr-app}/state
+case $1 in
+	ls) jq -c '{spaces: [.[] | {name: .}]}' "$S/spaces.json" ;;
+	do)
+		printf '%s %s\n' "$2" "$3" >>"$S/app-calls"
+		n=$(wc -l <"$S/app-calls" | tr -d ' ')
+		case $2 in
+			space.new)
+				[[ -e $S/app-fail ]] && { echo '{"error":"no window"}'; exit 1; }
+				jq --arg n "$(jq -r .name <<<"$3")" '. + [$n]' "$S/spaces.json" >"$S/spaces.tmp" && mv "$S/spaces.tmp" "$S/spaces.json"
+				echo "{\"space\":\"sp1\",\"tab\":\"tb$n\",\"terminal\":\"t$n\"}" ;;
+			tab.new) echo "{\"space\":\"sp1\",\"tab\":\"tb$n\",\"terminal\":\"t$n\"}" ;;
+		esac ;;
+esac
+SH
+} >"$T/bin/herdr-app"
+chmod +x "$T/bin/herdr-app"
+
 # Composer screens in each backend's real layout, which llmsend's reader checks: Claude's
 # between rules, Grok's in a box, Codex's on a colored background above its footer.
 { printf '#!%s\n' "$bash_path"; cat <<'SH'
@@ -89,7 +115,14 @@ chmod +x "$T/bin/herdr" "$T/bin/hc" "$T/bin/screen-for"
 # setup BACKEND STATUS RECORDED_SESSION ARGV_JSON [OPEN_FILE]: a fresh fake agent in pane p1.
 setup() {
 	local backend=$1 status=$2 recorded=$3 argv=$4 open=${5:-} pid
-	command rm -f -- "$S"/typed "$S"/keys "$S"/hc-run "$S"/ignore-typing "$S"/no-exit "$MOVE_LOG"
+	command rm -f -- "$S"/typed "$S"/keys "$S"/hc-run "$S"/hc-label "$S"/app-calls "$S"/app-fail "$S"/ignore-typing "$S"/no-exit "$MOVE_LOG"
+	echo '[]' >"$S/spaces.json"
+	mkdir -p "$T/proj-cli"
+	echo '{"result":{"workspaces":[{"workspace_id":"W","label":"proj-ws"},{"workspace_id":"E","label":"empty-ws"}]}}' >"$S/workspaces.json"
+	echo '{"result":{"tabs":[{"tab_id":"W:t1","label":"AI"},{"tab_id":"W:t2","label":"CLI"}]}}' >"$S/tabs-W.json"
+	jq -cn --arg a "$T/proj" --arg b "$T/proj-cli" '{result:{panes:[{pane_id:"p1",tab_id:"W:t1",cwd:$a},{pane_id:"p3",tab_id:"W:t2",cwd:$b}]}}' >"$S/panes-W.json"
+	echo '{"result":{"tabs":[{"tab_id":"E:t1","label":"AI"},{"tab_id":"E:t2","label":"3"}]}}' >"$S/tabs-E.json"
+	jq -cn --arg a "$T/proj" '{result:{panes:[{pane_id:"e1",tab_id:"E:t1",cwd:$a},{pane_id:"e2",tab_id:"E:t2",cwd:"/no/such/dir"}]}}' >"$S/panes-E.json"
 	if [[ -n $open ]]; then
 		mkdir -p "${open%/*}"; : >"$open"
 		bash -c 'exec 7>>"$1"; exec sleep 600' _ "$open" &
@@ -100,7 +133,7 @@ setup() {
 	local session=null
 	[[ -n $recorded ]] && session=$(jq -cn --arg b "$backend" --arg v "$recorded" '{agent:$b, value:$v}')
 	jq -cn --arg b "$backend" --arg st "$status" --arg cwd "$T/proj" --argjson s "$session" \
-		'{result:{agents:[{pane_id:"p1", agent:$b, agent_status:$st, cwd:$cwd, name:"proj", agent_session:$s},
+		'{result:{agents:[{pane_id:"p1", workspace_id:"W", tab_id:"W:t1", agent:$b, agent_status:$st, cwd:$cwd, name:"proj", agent_session:$s},
 			{pane_id:"p2", agent:"claude", agent_status:"idle", cwd:$cwd, name:"other"}]}}' >"$S/agents.json"
 	jq -cn --argjson pid "$pid" --argjson argv "$argv" \
 		'{result:{process_info:{foreground_processes:[{pid:$pid, argv:$argv}, {pid:1, argv:["/x/mcp-server"]}]}}}' >"$S/process.json"
@@ -219,6 +252,82 @@ check test "$rc" -eq 1
 check grep -q 'p9: no agent in that pane' <<<"$err"
 run --session X p1 p2
 check test "$rc" -eq 2
+
+# 15. --app: the workspace becomes a space with its name and tabs in order. The agent's tab
+#     resumes it (no hc run, no parent); the other tab is a shell in its own folder; the
+#     agent's terminal gets the session labels.
+setup claude idle S1 '["/x/claude","--resume","S1"]'
+run --app p1
+check test "$rc" -eq 0
+check test "$(sed -n 1p "$S/app-calls")" = "space.new $(jq -cn --arg f "$T/proj" '{name:"proj-ws", tab:"AI", folder:$f, argv:["/x/claude","--resume","S1"], focus:false}')"
+check test "$(sed -n 2p "$S/app-calls")" = "tab.new $(jq -cn --arg f "$T/proj-cli" '{space:"sp1", name:"CLI", folder:$f, focus:false}')"
+check test "$(cat "$S/hc-label")" = 't1 project=proj backend=claude session=S1 migrated-from=herdr-tui'
+check test ! -e "$S/hc-run"
+check test "$(cat "$S/typed")" = /exit
+check grep -q 'moved p1 (claude S1) to herdr-core t1 as proj-ws' <<<"$out"
+
+# 16. --app refuses a workspace whose space already exists, before typing anything.
+setup claude idle S1 '["/x/claude"]'
+echo '["proj-ws"]' >"$S/spaces.json"
+run --app p1
+check test "$rc" -eq 1
+check grep -q "a space named 'proj-ws' already exists" <<<"$err"
+check test ! -e "$S/typed"
+
+# 17. The space cannot be made after the agent exited: say how to resume it by hand.
+setup claude idle S1 '["/x/claude"]'
+touch "$S/app-fail"
+run --app p1
+check test "$rc" -eq 1
+check grep -q 'the agent is not running, resume: /x/claude --resume S1' <<<"$err"
+check test "$(jq -r .step "$MOVE_LOG" | tail -n 1)" = start-failed
+
+# 18. --workspace: an agentless workspace becomes a space of shells; a missing folder falls
+#     back to home. One with a live agent is refused, and --workspace needs --app.
+setup claude idle S1 '["/x/claude"]'
+run --app --workspace E
+check test "$rc" -eq 0
+check test "$(sed -n 1p "$S/app-calls")" = "space.new $(jq -cn --arg f "$T/proj" '{name:"empty-ws", tab:"AI", folder:$f, focus:false}')"
+check test "$(sed -n 2p "$S/app-calls")" = "tab.new $(jq -cn --arg f "$HOME" '{space:"sp1", name:"3", folder:$f, focus:false}')"
+check test ! -e "$S/typed"
+run --app --workspace E
+check test "$rc" -eq 1
+check grep -q "a space named 'empty-ws' already exists" <<<"$err"
+run --app --workspace W
+check test "$rc" -eq 1
+check grep -q 'workspace has a live agent' <<<"$err"
+run --workspace E
+check test "$rc" -eq 2
+
+# 19. --wait: a busy agent is moved once it turns idle; one that stays busy is refused
+#     after the wait, untouched. --handoff alone permits the caller's own pane.
+setup claude working S1 '["/x/claude"]'
+( sleep 0.4; jq '.result.agents[0].agent_status = "idle"' "$S/agents.json" >"$S/agents.tmp" && mv "$S/agents.tmp" "$S/agents.json" ) &
+flipper=$!
+run --wait 5 p1
+wait "$flipper"
+check test "$rc" -eq 0
+check test "$(cat "$S/typed")" = /exit
+setup claude working S1 '["/x/claude"]'
+run --wait 0.3 p1
+check test "$rc" -eq 1
+check grep -q 'did not become idle at an empty prompt within 0.3s' <<<"$err"
+check test ! -e "$S/typed"
+setup claude idle S1 '["/x/claude"]'
+HERDR_PANE_ID=p1 run --handoff p1
+check test "$rc" -eq 0
+check test "$(cat "$S/typed")" = /exit
+run --wait soon p1
+check test "$rc" -eq 2
+# An idle agent with a draft in its prompt (a person typing) is waited for, not abandoned.
+setup claude idle S1 '["/x/claude"]'
+"$T/bin/screen-for" claude 'typing...' >"$S/screen"
+( sleep 0.4; "$T/bin/screen-for" claude '' >"$S/screen" ) &
+flipper=$!
+run --wait 5 p1
+wait "$flipper"
+check test "$rc" -eq 0
+check test "$(cat "$S/typed")" = /exit
 
 printf '%s checks, %s failures\n' "$tests" "$failures"
 test "$failures" -eq 0
