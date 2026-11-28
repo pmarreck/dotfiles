@@ -6,5 +6,8 @@ Documentation=file:%h/dotfiles/docs/repository-awareness.md
 Type=oneshot
 Environment=PATH=%h/bin:%h/dotfiles/bin:/run/current-system/sw/bin:/etc/profiles/per-user/%u/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=%h/dotfiles/bin/host-config-fetch
+# journald can lose the unit tag on a line from a child that has already exited,
+# so read the log by identifier: journalctl --user -t host-config-fetch
+SyslogIdentifier=host-config-fetch
 Nice=10
 TimeoutStartSec=15min

@@ -61,7 +61,7 @@ install_linux() {
 	"$systemctl" --user daemon-reload || return 1
 	"$systemctl" --user enable --now host-config-fetch.timer || return 1
 	if ((run_now)); then "$systemctl" --user start host-config-fetch.service || return 1; fi
-	printf 'Enabled host-config-fetch.timer (daily); logs: journalctl --user -u host-config-fetch\n'
+	printf 'Enabled host-config-fetch.timer (daily); logs: journalctl --user -t host-config-fetch\n'
 }
 
 xml_escape() {

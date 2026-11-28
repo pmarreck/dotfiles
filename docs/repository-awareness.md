@@ -83,7 +83,8 @@ configuration, as Thelio does for fleet maintenance.
 ```sh
 install-host-config-fetch --run-now
 host-config-fetch --dry-run    # list what it would fetch
-journalctl --user -u host-config-fetch     # Linux log
+journalctl --user -t host-config-fetch     # Linux log, by identifier: journald can
+                                           # drop the unit tag from a child's last line
 ```
 
 ## Configuration

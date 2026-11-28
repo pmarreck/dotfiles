@@ -41,6 +41,8 @@ check test "$(cat "$units/host-config-fetch.timer")" = '[Timer]'
 # The committed timer is daily and catches up after downtime.
 check grep -qx 'Persistent=true' "$root/systemd/user/host-config-fetch.timer"
 check grep -qx 'ExecStart=%h/dotfiles/bin/host-config-fetch' "$root/systemd/user/host-config-fetch.service"
+# Logs are read by identifier, which every line carries even without a unit tag.
+check grep -qx 'SyslogIdentifier=host-config-fetch' "$root/systemd/user/host-config-fetch.service"
 
 # macOS: write the LaunchAgent, then reload it in the user's GUI domain.
 agents="$work/agents"
