@@ -83,16 +83,29 @@ local function not_notes(sha)
 	return found
 end
 -- Documentation does not change what the checks build or test, so a tip whose commits since the last code change
--- touch only documentation reuses that commit's evidence (owner 2026-11-27). CI still tests the pushed tip. Text
--- that tests may read as fixtures (.txt, .json) is not documentation here; a rename is a deletion plus an addition.
+-- touch only documentation reuses that commit's evidence (owner 2026-11-27). CI still tests the pushed tip. A .txt
+-- file is documentation unless its path names tests, fixtures, data or examples, where tests read such files; a
+-- rename is a deletion plus an addition.
 local doc_extensions={md=true,markdown=true,mdx=true,rst=true,adoc=true,asciidoc=true,org=true}
-local doc_names={LICENSE=true,COPYING=true,NOTICE=true,AUTHORS=true}
+local doc_names={README=true,CHANGELOG=true,CONTRIBUTING=true,LICENSE=true,COPYING=true,NOTICE=true,AUTHORS=true}
+local function is_documentation(path)
+	local name=path:match('([^/]+)$'); local extension=name:match('%.([^.]+)$')
+	if not extension then return doc_names[name:upper()]==true end
+	extension=extension:lower()
+	if extension=='txt' then
+		local lower=path:lower()
+		for _,word in ipairs({'test','fixture','data','example'}) do
+			if lower:find(word,1,true) then return false end
+		end
+		return true
+	end
+	return doc_extensions[extension]==true
+end
 local function documentation_only(parent,commit)
 	local changed,crc=git('diff --no-renames --name-only -z '..quote(parent)..' '..quote(commit)..' --')
 	if crc~=0 then fail('cannot compare '..commit..' with its parent') end
 	for path in changed:gmatch('([^%z]+)') do
-		local name=path:match('([^/]+)$'); local extension=name:match('%.([^.]+)$')
-		if not (doc_names[name] or (extension and doc_extensions[extension:lower()])) then return false end
+		if not is_documentation(path) then return false end
 	end
 	return true
 end
