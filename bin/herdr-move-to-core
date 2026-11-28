@@ -1,0 +1,258 @@
+#!/usr/bin/env bash
+# Move live coding agents from the Herdr TUI server to herdr-core (hc), one pane at a time.
+#
+# A running process cannot change terminal owners, so each agent is exited at a verified
+# empty prompt and resumed under hc by its exact native session ID. The new terminal gets
+# --no-parent so it outlives whatever started it. Every step is logged before it acts, and
+# any doubt (a draft, a working agent, conflicting session evidence, an exit that does not
+# happen) stops that pane without killing anything.
+set -u
+
+HERDR=${MOVE_HERDR:-herdr}
+HC=${MOVE_HC:-hc}
+LLMSEND_SCRIPTS=${LLMSEND_SCRIPTS:-$HOME/Code/llmsend/skills/llmsend/scripts}
+LOG=${MOVE_LOG:-${XDG_STATE_HOME:-$HOME/.local/state}/herdr-migration/log.jsonl}
+EXIT_TIMEOUT=${MOVE_EXIT_TIMEOUT:-30}
+POLL=${MOVE_POLL:-0.5}
+
+usage() {
+	cat <<'EOF'
+Usage: herdr-move-to-core [--dry-run] [--session ID] [--name NAME] PANE_ID...
+
+Moves each Herdr TUI pane's agent (claude, codex, grok or agy) into herdr-core:
+exits it at a verified empty prompt, then resumes the same native conversation with
+`hc run --bg --no-parent`. Panes are handled in order; a refusal skips that pane.
+
+  --dry-run     Inspect and print the plan; type nothing, start nothing.
+  --session ID  The native session ID, for one pane whose ID has no stronger
+                evidence (Codex records none). Conflicting evidence still refuses.
+  --name NAME   The herdr-core terminal name, for one pane (default: the Herdr
+                agent name, else the project directory's basename).
+
+Exit status: 0 when every pane moved (or would, with --dry-run), 1 when any pane
+was refused or failed, 2 for usage errors. Log: $XDG_STATE_HOME/herdr-migration/log.jsonl
+EOF
+}
+
+say() { printf 'herdr-move-to-core: %s\n' "$*" >&2; }
+
+log_event() { # JSON object on stdin-free args: jq expression args
+	mkdir -p "${LOG%/*}" && chmod 700 "${LOG%/*}" 2>/dev/null
+	jq -cn --arg when "$(date -Iseconds)" "$@" '$ARGS.named + {when: $when}' >>"$LOG"
+	chmod 600 "$LOG" 2>/dev/null
+}
+
+# The process start time from /proc, so a reused PID is never mistaken for the agent.
+start_identity() { [[ -r /proc/$1/stat ]] && awk '{sub(/^.*\) /, ""); print $20}' "/proc/$1/stat"; }
+
+alive() { [[ $(start_identity "$1") == "$2" && -n $2 ]]; }
+
+exit_command() {
+	case $1 in
+		codex) echo /quit ;;
+		claude | grok | agy) echo /exit ;;
+	esac
+}
+
+# The session file or lock each backend holds open names its conversation exactly.
+fd_session() { # backend pid
+	local link id=''
+	for link in /proc/"$2"/fd/*; do
+		link=$(readlink "$link" 2>/dev/null) || continue
+		case $1:$link in
+			grok:"$HOME"/.grok/sessions/*/events.jsonl) id=${link%/events.jsonl}; id=${id##*/} ;;
+			agy:"$HOME"/.gemini/antigravity-cli/presence/*.lock) id=${link##*/}; id=${id%.lock} ;;
+			claude:"$HOME"/.claude/projects/*.jsonl) id=${link##*/}; id=${id%.jsonl} ;;
+			codex:"$HOME"/.codex/sessions/*rollout-*.jsonl) id=${link%.jsonl}; id=${id: -36} ;;
+			*) continue ;;
+		esac
+		printf '%s\n' "$id"
+	done | sort -u
+}
+
+# The session ID written in the original command line, if any (weakest evidence).
+argv_session() { # backend argv...
+	local backend=$1; shift
+	local -a a=("$@")
+	local i
+	for ((i = 1; i < ${#a[@]}; i++)); do
+		case $backend:${a[i]} in
+			claude:--resume | claude:-r | grok:--resume | grok:-r | agy:--conversation | agy:--resume | agy:-r)
+				[[ ${a[i + 1]:-} && ${a[i + 1]} != -* ]] && { echo "${a[i + 1]}"; return; } ;;
+			agy:--conversation=* | agy:--resume=* | claude:--resume=* | grok:--resume=*) echo "${a[i]#*=}"; return ;;
+			codex:resume) [[ ${a[i + 1]:-} && ${a[i + 1]} != -* ]] && { echo "${a[i + 1]}"; return; } ;;
+		esac
+	done
+}
+
+# The original command line without its session selection, plus an exact resume of ID.
+resume_argv() { # backend id argv...
+	local backend=$1 id=$2; shift 2
+	local -a a=("$@") out=("$1")
+	local i takes_value
+	for ((i = 1; i < ${#a[@]}; i++)); do
+		takes_value=0
+		case $backend:${a[i]} in
+			claude:-c | claude:--continue | claude:--fork-session | grok:-c | grok:--continue | grok:--fork-session | agy:-c | agy:--continue) continue ;;
+			claude:--resume | claude:-r | grok:--resume | grok:-r | agy:--conversation | agy:--resume | agy:-r) takes_value=1 ;;
+			claude:--session-id) i=$((i + 1)); continue ;;
+			agy:--conversation=* | agy:--resume=* | claude:--resume=* | grok:--resume=*) continue ;;
+			codex:resume) takes_value=1 ;;
+			codex:--last) continue ;;
+		esac
+		if ((takes_value)); then
+			[[ ${a[i + 1]:-} && ${a[i + 1]} != -* ]] && i=$((i + 1))
+			continue
+		fi
+		out+=("${a[i]}")
+	done
+	case $backend in
+		claude | grok) out+=(--resume "$id") ;;
+		agy) out+=("--conversation=$id") ;;
+		codex) out=("${out[0]}" resume "$id" "${out[@]:1}") ;;
+	esac
+	printf '%s\0' "${out[@]}"
+}
+
+# llmsend's tested composer reader: empty, draft or unknown, from an ANSI screen.
+composer() { # backend; screen on stdin (so the program comes from a file descriptor)
+	luajit <(printf '%s' "package.path = arg[1] .. '/?.lua;' .. package.path
+local c = require('herdr_wake').composer(arg[2], io.read('*a'))
+io.write(c.kind, '\t', ((c.text or ''):gsub('[\t\n]', ' ')), '\n')") "$LLMSEND_SCRIPTS" "$1"
+}
+
+screen() { "$HERDR" pane read "$1" --source visible --ansi 2>/dev/null; }
+
+hc_name() {
+	local n
+	n=$(printf '%s' "$1" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9_-' '-')
+	printf '%s' "${n:0:32}"
+}
+
+move_one() { # pane
+	local pane=$1 agents entry backend status cwd hname recorded pid start
+	local -a argv=() fds=() newargv=()
+	agents=$("$HERDR" agent list 2>/dev/null) || { say "$pane: cannot list Herdr agents"; return 1; }
+	entry=$(jq -c --arg p "$pane" '.result.agents[] | select(.pane_id == $p)' <<<"$agents")
+	[[ -n $entry ]] || { say "$pane: no agent in that pane"; return 1; }
+	[[ $pane != "${HERDR_PANE_ID:-}" ]] || { say "$pane: refusing to move the pane running this command"; return 1; }
+	backend=$(jq -r '.agent // ""' <<<"$entry")
+	status=$(jq -r '.agent_status // ""' <<<"$entry")
+	cwd=$(jq -r '.cwd // ""' <<<"$entry")
+	hname=$(jq -r '.name // ""' <<<"$entry")
+	recorded=$(jq -r --arg b "$backend" 'if .agent_session.agent == $b then .agent_session.value // "" else "" end' <<<"$entry")
+	[[ -n $(exit_command "$backend") ]] || { say "$pane: unsupported backend '$backend'"; return 1; }
+	[[ $status == idle || $status == done ]] || { say "$pane: agent is $status, not idle; skipped"; return 1; }
+	[[ -d $cwd ]] || { say "$pane: working directory '$cwd' is missing"; return 1; }
+
+	local info procs
+	info=$("$HERDR" pane process-info --pane "$pane" 2>/dev/null) || { say "$pane: no process information"; return 1; }
+	procs=$(jq -c --arg b "$backend" '[.result.process_info.foreground_processes[] | select((.argv[0] // "") | split("/") | last == $b)]' <<<"$info")
+	[[ $(jq length <<<"$procs") == 1 ]] || { say "$pane: expected exactly one '$backend' process"; return 1; }
+	pid=$(jq -r '.[0].pid' <<<"$procs")
+	mapfile -t argv < <(jq -r '.[0].argv[]' <<<"$procs")
+	start=$(start_identity "$pid")
+	[[ -n $start ]] || { say "$pane: process $pid is not readable"; return 1; }
+
+	# Session evidence, strongest first: the open session file, Herdr's record, then argv.
+	mapfile -t fds < <(fd_session "$backend" "$pid")
+	((${#fds[@]} <= 1)) || { say "$pane: the process holds several sessions open (${fds[*]}); skipped"; return 1; }
+	local strong=${fds[0]:-} from=fd
+	if [[ -n $recorded ]]; then
+		if [[ -z $strong ]]; then strong=$recorded from=herdr
+		elif [[ $strong != "$recorded" ]]; then say "$pane: open session $strong but Herdr recorded $recorded; skipped"; return 1; fi
+	fi
+	local weak session
+	weak=$(argv_session "$backend" "${argv[@]}")
+	if [[ -n $strong ]]; then
+		[[ -z $SESSION_OVERRIDE || $SESSION_OVERRIDE == "$strong" ]] || { say "$pane: --session $SESSION_OVERRIDE conflicts with $from evidence $strong"; return 1; }
+		session=$strong
+	elif [[ -n $SESSION_OVERRIDE ]]; then session=$SESSION_OVERRIDE from=override
+	elif [[ -n $weak ]]; then session=$weak from=argv
+	else say "$pane: no exact session ID for this $backend agent; pass --session ID"; return 1; fi
+	[[ $session =~ ^[A-Za-z0-9_-]+$ ]] || { say "$pane: invalid session ID '$session'"; return 1; }
+
+	local name live
+	name=$(hc_name "${NAME_OVERRIDE:-${hname:-${cwd##*/}}}")
+	live=$("$HC" ls --json 2>/dev/null) || { say "herdr-core is not answering (hc ls)"; return 1; }
+	if jq -e --arg s "$session" '[(.terminals // .)[]? | select(.labels.session == $s)] | length > 0' <<<"$live" >/dev/null; then
+		say "$pane: session $session already runs under herdr-core; skipped"; return 1
+	fi
+	if jq -e --arg n "$name" '[(.terminals // .)[]? | select(.name == $n)] | length > 0' <<<"$live" >/dev/null; then
+		say "$pane: herdr-core already has a terminal named '$name'; pass --name"; return 1
+	fi
+	mapfile -d '' -t newargv < <(resume_argv "$backend" "$session" "${argv[@]}")
+
+	local plan
+	plan=$(jq -cn --arg pane "$pane" --arg backend "$backend" --arg session "$session" --arg from "$from" \
+		--arg weak "$weak" --arg cwd "$cwd" --arg name "$name" --argjson pid "$pid" --arg start "$start" \
+		--args '{pane:$pane, backend:$backend, session:$session, evidence:$from, argv_session:$weak,
+			cwd:$cwd, name:$name, pid:$pid, start:$start, new_argv:$ARGS.positional}' -- "${newargv[@]}")
+	printf '%s\n' "$plan"
+	((DRY_RUN)) && return 0
+
+	# Two identical ANSI snapshots with an empty composer, then type the exit command.
+	local first second verdict
+	first=$(screen "$pane"); sleep "$POLL"; second=$(screen "$pane")
+	verdict=$(composer "$backend" <<<"$second")
+	[[ -n $first && $first == "$second" && ${verdict%%$'\t'*} == empty ]] || {
+		say "$pane: prompt is not a stable empty composer (${verdict%%$'\t'*}); skipped"; return 1; }
+	status=$("$HERDR" agent list 2>/dev/null | jq -r --arg p "$pane" '.result.agents[] | select(.pane_id == $p) | .agent_status')
+	[[ $status == idle || $status == done ]] || { say "$pane: agent became $status; skipped"; return 1; }
+	local cmd
+	cmd=$(exit_command "$backend")
+	log_event --arg step exiting --argjson plan "$plan" --argjson argv "$(jq -cn '$ARGS.positional' --args -- "${argv[@]}")"
+	"$HERDR" pane send-text "$pane" "$cmd" >/dev/null || { say "$pane: could not type the exit command"; return 1; }
+	local i typed=''
+	for ((i = 0; i < 6; i++)); do
+		sleep "$POLL"
+		typed=$(screen "$pane" | composer "$backend")
+		[[ $typed == "draft"$'\t'"$cmd" ]] && break
+	done
+	if [[ $typed != "draft"$'\t'"$cmd" ]]; then
+		log_event --arg step aborted --arg pane "$pane" --arg reason "typed command not confirmed: $typed"
+		say "$pane: typed '$cmd' but the composer shows '$typed'; left for you to inspect"; return 1
+	fi
+	"$HERDR" pane send-keys "$pane" enter >/dev/null || { say "$pane: could not press enter"; return 1; }
+	local waited=0
+	while alive "$pid" "$start"; do
+		if awk -v w="$waited" -v t="$EXIT_TIMEOUT" 'BEGIN { exit !(w >= t) }'; then
+			log_event --arg step exit-timeout --arg pane "$pane" --argjson pid "$pid"
+			say "$pane: $backend (pid $pid) did not exit within ${EXIT_TIMEOUT}s; nothing started"; return 1
+		fi
+		sleep "$POLL"; waited=$(awk -v w="$waited" -v p="$POLL" 'BEGIN { print w + p }')
+	done
+	log_event --arg step exited --arg pane "$pane" --argjson pid "$pid"
+
+	local started address
+	started=$("$HC" run --json --bg --no-parent --name "$name" --cwd "$cwd" --label "project=${cwd##*/}" \
+		--label "backend=$backend" --label "session=$session" --label migrated-from=herdr-tui -- "${newargv[@]}" 2>&1)
+	address=$(jq -r '.address // empty' <<<"$started" 2>/dev/null)
+	if [[ -z $address ]]; then
+		log_event --arg step start-failed --arg pane "$pane" --arg output "$started"
+		say "$pane: hc run failed: $started"; return 1
+	fi
+	log_event --arg step started --arg pane "$pane" --arg address "$address" --arg name "$name" --arg session "$session"
+	printf 'moved %s (%s %s) to herdr-core %s as %s\n' "$pane" "$backend" "$session" "$address" "$name"
+}
+
+DRY_RUN=0 SESSION_OVERRIDE='' NAME_OVERRIDE=''
+panes=()
+while (($#)); do
+	case $1 in
+		--dry-run) DRY_RUN=1 ;;
+		--session) SESSION_OVERRIDE=${2:-}; shift ;;
+		--name) NAME_OVERRIDE=${2:-}; shift ;;
+		-h | --help) usage; exit 0 ;;
+		-*) say "unknown option $1"; usage >&2; exit 2 ;;
+		*) panes+=("$1") ;;
+	esac
+	shift
+done
+((${#panes[@]})) || { usage >&2; exit 2; }
+if [[ -n $SESSION_OVERRIDE$NAME_OVERRIDE ]] && ((${#panes[@]} > 1)); then
+	say "--session and --name apply to one pane at a time"; exit 2
+fi
+failed=0
+for pane in "${panes[@]}"; do move_one "$pane" || failed=1; done
+exit "$failed"

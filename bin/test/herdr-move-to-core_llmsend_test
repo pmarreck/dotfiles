@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Rerun herdr-move-to-core_test with llmsend's real composer reader instead of the stub, so
+# the script's reading of empty prompts, drafts and typed commands matches the module it
+# relies on in production. Needs the sibling llmsend checkout, so it is not hermetic.
+set -u
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+llmsend="${LLMSEND_SCRIPTS:-$HOME/Code/llmsend/skills/llmsend/scripts}"
+if [[ ! -r $llmsend/herdr_wake.lua ]]; then
+	printf 'FAIL: llmsend composer module not found at %s\n' "$llmsend" >&2
+	exit 1
+fi
+MOVE_TEST_LLMSEND="$llmsend" exec bash "$root/bin/test/herdr-move-to-core_test"

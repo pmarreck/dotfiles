@@ -1,0 +1,224 @@
+#!/usr/bin/env bash
+# herdr-move-to-core against fake herdr and hc commands, a stub composer module and real
+# child processes standing in for agents, so exits, start identities and open session
+# files are real while no Herdr server, herdr-core or agent is touched.
+set -u
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+script="$root/bin/herdr-move-to-core"
+# The Nix sandbox has no /usr/bin/env, so generated fakes name this bash directly.
+bash_path=$(command -v bash)
+T=$(mktemp -d "${TMPDIR:-/tmp}/herdr-move-test.XXXXXX") || exit 1
+fakes=()
+cleanup() { local p; for p in "${fakes[@]}"; do kill "$p" 2>/dev/null; done; command rm -rf -- "$T"; }
+trap cleanup EXIT
+tests=0 failures=0
+check() { tests=$((tests + 1)); "$@" && return; printf 'FAIL: %s\n' "$*" >&2; failures=$((failures + 1)); }
+
+if [[ ! -r /proc/self/stat ]]; then
+	# Without /proc (macOS) the tool cannot prove a process's identity, so it must refuse.
+	mkdir -p "$T/bin"
+	printf '#!/bin/sh\necho "{\\"result\\":{\\"agents\\":[]}}"\n' >"$T/bin/herdr"; chmod +x "$T/bin/herdr"
+	MOVE_HERDR="$T/bin/herdr" "$script" p1 >/dev/null 2>&1
+	check test $? -eq 1
+	printf '%s checks, %s failures\n' "$tests" "$failures"; test "$failures" -eq 0; exit
+fi
+
+export HOME="$T/home" MOVE_LOG="$T/log.jsonl" MOVE_POLL=0.05 MOVE_EXIT_TIMEOUT=5
+# herdr-move-to-core_llmsend_test reruns this suite with llmsend's real composer reader.
+export MOVE_HERDR="$T/bin/herdr" MOVE_HC="$T/bin/hc" LLMSEND_SCRIPTS="${MOVE_TEST_LLMSEND:-$T/llmsend}"
+unset HERDR_PANE_ID
+S="$T/state"
+mkdir -p "$T/bin" "$T/llmsend" "$S" "$HOME" "$T/proj"
+
+# Stub composer: the last line holding a prompt marker (❯ or ›) is the composer; the rest of
+# it, up to a box edge, is the draft.
+cat >"$T/llmsend/herdr_wake.lua" <<'LUA'
+local M = {}
+function M.composer(agent, screen)
+	local found
+	for line in (screen:gsub('\27%[[%d;:]*m', '') .. '\n'):gmatch('(.-)\n') do
+		-- A multibyte box edge cannot be made optional with ?, so strip it separately.
+		local rest = line:match('^[%s│]*❯(.*)$') or line:match('^%s*›(.*)$')
+		if rest then found = rest:gsub('│%s*$', '') end
+	end
+	if not found then return { kind = 'unknown' } end
+	found = found:gsub('\194\160', ' '):gsub('^%s+', ''):gsub('%s+$', '')
+	return found == '' and { kind = 'empty', text = '' } or { kind = 'draft', text = found }
+end
+return M
+LUA
+
+# Fake herdr: answers from files in $S; typing updates the screen; enter ends the agent.
+{ printf '#!%s\n' "$bash_path"; cat <<'SH'
+S=${0%/bin/herdr}/state
+case "$1 $2" in
+	"agent list") cat "$S/agents.json" ;;
+	"pane process-info") cat "$S/process.json" ;;
+	"pane read") cat "$S/screen" ;;
+	"pane send-text")
+		printf '%s\n' "$4" >>"$S/typed"
+		[[ -e $S/ignore-typing ]] || "${0%/herdr}/screen-for" "$(cat "$S/backend")" "$4" >"$S/screen" ;;
+	"pane send-keys")
+		printf '%s\n' "$4" >>"$S/keys"
+		[[ -e $S/no-exit ]] || kill "$(cat "$S/agent.pid")" ;;
+	*) echo "fake herdr: unexpected $*" >&2; exit 64 ;;
+esac
+SH
+} >"$T/bin/herdr"
+{ printf '#!%s\n' "$bash_path"; cat <<'SH'
+S=${0%/bin/hc}/state
+case $1 in
+	ls) cat "$S/hc-ls.json" ;;
+	run) shift; printf '%s\0' "$@" >"$S/hc-run"; echo '{"address":"t9","state":"live"}' ;;
+	*) echo "fake hc: unexpected $*" >&2; exit 64 ;;
+esac
+SH
+} >"$T/bin/hc"
+# Composer screens in each backend's real layout, which llmsend's reader checks: Claude's
+# between rules, Grok's in a box, Codex's on a colored background above its footer.
+{ printf '#!%s\n' "$bash_path"; cat <<'SH'
+bg=$'\e[48;2;47;64;79m' off=$'\e[0m'
+case $1 in
+	claude | agy) printf 'output\n──────\n❯ %s\n──────\n  status line\n' "$2" ;;
+	grok) printf 'output\n╭──────────╮\n│ ❯ %-8s │\n╰──────────╯\n' "$2" ;;
+	codex) printf 'output\n%s› %s%s\n%s  %s\n  model · Context 53%% left\n  ← for agents · ? for shortcuts\n' "$bg" "$2" "$off" "$bg" "$off" ;;
+esac
+SH
+} >"$T/bin/screen-for"
+chmod +x "$T/bin/herdr" "$T/bin/hc" "$T/bin/screen-for"
+# setup BACKEND STATUS RECORDED_SESSION ARGV_JSON [OPEN_FILE]: a fresh fake agent in pane p1.
+setup() {
+	local backend=$1 status=$2 recorded=$3 argv=$4 open=${5:-} pid
+	command rm -f -- "$S"/typed "$S"/keys "$S"/hc-run "$S"/ignore-typing "$S"/no-exit "$MOVE_LOG"
+	if [[ -n $open ]]; then
+		mkdir -p "${open%/*}"; : >"$open"
+		bash -c 'exec 7>>"$1"; exec sleep 600' _ "$open" &
+	else
+		sleep 600 &
+	fi
+	pid=$!; fakes+=("$pid"); echo "$pid" >"$S/agent.pid"
+	local session=null
+	[[ -n $recorded ]] && session=$(jq -cn --arg b "$backend" --arg v "$recorded" '{agent:$b, value:$v}')
+	jq -cn --arg b "$backend" --arg st "$status" --arg cwd "$T/proj" --argjson s "$session" \
+		'{result:{agents:[{pane_id:"p1", agent:$b, agent_status:$st, cwd:$cwd, name:"proj", agent_session:$s},
+			{pane_id:"p2", agent:"claude", agent_status:"idle", cwd:$cwd, name:"other"}]}}' >"$S/agents.json"
+	jq -cn --argjson pid "$pid" --argjson argv "$argv" \
+		'{result:{process_info:{foreground_processes:[{pid:$pid, argv:$argv}, {pid:1, argv:["/x/mcp-server"]}]}}}' >"$S/process.json"
+	echo "$backend" >"$S/backend"
+	"$T/bin/screen-for" "$backend" '' >"$S/screen"
+	echo '{"terminals":[]}' >"$S/hc-ls.json"
+}
+run() { out=$("$script" "$@" 2>"$T/err"); rc=$?; err=$(cat "$T/err"); }
+hc_args() { [[ -e $S/hc-run ]] && tr '\0' ' ' <"$S/hc-run"; }
+agent_alive() { kill -0 "$(cat "$S/agent.pid")" 2>/dev/null; }
+
+# 1. A Claude agent at an empty prompt: /exit, then resume the recorded session under hc,
+#    keeping its other flags, with --no-parent and labels; every step logged.
+setup claude idle S1 '["/x/claude","--resume","S1","--model","opus"]'
+run p1
+check test "$rc" -eq 0
+check test "$(cat "$S/typed")" = /exit
+check test "$(cat "$S/keys")" = enter
+check test "$(hc_args)" = "--json --bg --no-parent --name proj --cwd $T/proj --label project=proj --label backend=claude --label session=S1 --label migrated-from=herdr-tui -- /x/claude --model opus --resume S1 "
+check test "$(jq -r .step "$MOVE_LOG" | tr '\n' ' ')" = 'exiting exited started '
+check grep -q 'moved p1 (claude S1) to herdr-core t9 as proj' <<<"$out"
+
+# 2. --dry-run prints the plan and touches nothing.
+setup claude idle S1 '["/x/claude","--resume","S1"]'
+run --dry-run p1
+check test "$rc" -eq 0
+check test "$(jq -r '.session + " " + .evidence + " " + (.new_argv | join(" "))' <<<"$out")" = 'S1 herdr /x/claude --resume S1'
+check test ! -e "$S/typed"
+check test ! -e "$S/hc-run"
+check agent_alive
+
+# 3-5. A working agent, a human draft, and the caller's own pane are refused untouched.
+setup claude working S1 '["/x/claude"]'
+run p1
+check test "$rc" -eq 1
+check grep -q 'working, not idle' <<<"$err"
+check test ! -e "$S/typed"
+setup claude idle S1 '["/x/claude"]'
+"$T/bin/screen-for" claude 'half-written thought' >"$S/screen"
+run p1
+check test "$rc" -eq 1
+check grep -q 'not a stable empty composer (draft)' <<<"$err"
+check test ! -e "$S/typed"
+setup claude idle S1 '["/x/claude"]'
+HERDR_PANE_ID=p1 run p1
+check test "$rc" -eq 1
+check grep -q 'refusing to move the pane running this command' <<<"$err"
+
+# 6. Grok's open session file names the session; the bare command gains --resume.
+setup grok idle '' '["/x/grok"]' "$HOME/.grok/sessions/enc/G1/events.jsonl"
+run p1
+check test "$rc" -eq 0
+check test "$(hc_args | sed 's/.* -- //')" = '/x/grok --resume G1 '
+check test "$(cat "$S/typed")" = /exit
+
+# 7. The open session file and Herdr's record disagree: refuse.
+setup grok idle G2 '["/x/grok"]' "$HOME/.grok/sessions/enc/G1/events.jsonl"
+run p1
+check test "$rc" -eq 1
+check grep -q 'open session G1 but Herdr recorded G2' <<<"$err"
+check test ! -e "$S/typed"
+
+# 8. Codex records no session: refuse without --session; with it, `resume ID` keeps flags.
+setup codex idle '' '["/x/codex","resume","--dangerously-bypass-approvals-and-sandbox"]'
+run p1
+check test "$rc" -eq 1
+check grep -q 'pass --session ID' <<<"$err"
+check test ! -e "$S/typed"
+run --dry-run --session C1 p1
+check test "$(jq -r '.new_argv | join(" ")' <<<"$out")" = '/x/codex resume C1 --dangerously-bypass-approvals-and-sandbox'
+setup codex idle '' '["/x/codex"]'
+run --session C1 p1
+check test "$(cat "$S/typed")" = /quit
+
+# 9. --session cannot override stronger evidence.
+setup claude idle S1 '["/x/claude"]'
+run --dry-run --session S9 p1
+check test "$rc" -eq 1
+check grep -q 'conflicts with herdr evidence S1' <<<"$err"
+
+# 10. The agent does not exit: nothing starts and the process is left alone.
+setup claude idle S1 '["/x/claude"]'
+touch "$S/no-exit"
+MOVE_EXIT_TIMEOUT=0.3 run p1
+check test "$rc" -eq 1
+check grep -q 'did not exit' <<<"$err"
+check test ! -e "$S/hc-run"
+check agent_alive
+
+# 11. The typed command never shows in the composer: no enter, left for a human.
+setup claude idle S1 '["/x/claude"]'
+touch "$S/ignore-typing"
+run p1
+check test "$rc" -eq 1
+check test ! -e "$S/keys"
+check test ! -e "$S/hc-run"
+check test "$(jq -r .step "$MOVE_LOG" | tail -n 1)" = aborted
+
+# 12-13. A session already under hc, or a taken name, is refused before anything is typed.
+setup claude idle S1 '["/x/claude"]'
+echo '{"terminals":[{"name":"elsewhere","labels":{"session":"S1"}}]}' >"$S/hc-ls.json"
+run p1
+check test "$rc" -eq 1
+check grep -q 'already runs under herdr-core' <<<"$err"
+setup claude idle S1 '["/x/claude"]'
+echo '{"terminals":[{"name":"proj","labels":{}}]}' >"$S/hc-ls.json"
+run p1
+check test "$rc" -eq 1
+check grep -q "already has a terminal named 'proj'" <<<"$err"
+check test ! -e "$S/typed"
+
+# 14. Several panes: a refusal skips one pane, the run reports failure, usage errors exit 2.
+setup claude idle S1 '["/x/claude"]'
+run --dry-run p1 p9
+check test "$rc" -eq 1
+check grep -q 'p9: no agent in that pane' <<<"$err"
+run --session X p1 p2
+check test "$rc" -eq 2
+
+printf '%s checks, %s failures\n' "$tests" "$failures"
+test "$failures" -eq 0

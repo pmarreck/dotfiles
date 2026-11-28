@@ -36,3 +36,8 @@ pathconfig_foreign_nix_e2e_test
 # block-attribution validates the installed global Claude hook, which is owned
 # outside this repository and intentionally absent from the sandbox fixture.
 block-attribution_test
+
+
+# ── Requires a sibling repository under ~/Code ──────────────────────────────
+# Runs herdr-move-to-core_test against llmsend's real composer reader.
+herdr-move-to-core_llmsend_test
