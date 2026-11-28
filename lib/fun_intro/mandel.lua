@@ -17,21 +17,25 @@ function M.fnv1a64(data)
 	return bit.tohex(hash, 16)
 end
 
+-- The render is cached in one file whose first line names the script version
+-- it came from (FNV-1a of the script's text). A new version overwrites it, so
+-- renders of old versions never pile up.
 -- `fs` provides read(path), ensure_dir(dir), write_atomic(path, data), and
 -- run(path) returning output, exit status. Returns the output (cached or
 -- fresh) or nil, message. An unwritable cache still returns fresh output.
 function M.output(script_path, cache_dir, fs)
 	local script = fs.read(script_path)
 	if not script then return nil, "mandelbash not found at " .. script_path end
-	local cache_path = cache_dir .. "/mandelbash." .. M.fnv1a64(script)
+	local cache_path = cache_dir .. "/mandelbash"
+	local stamp = "# mandelbash " .. M.fnv1a64(script) .. "\n"
 	local cached = fs.read(cache_path)
-	if cached and #cached > 0 then return cached end
+	if cached and #cached > #stamp and cached:sub(1, #stamp) == stamp then return cached:sub(#stamp + 1) end
 
 	local output, status = fs.run(script_path)
 	if status ~= 0 or not output or #output == 0 then
 		return nil, "mandelbash failed with status " .. tostring(status)
 	end
-	if fs.ensure_dir(cache_dir) then fs.write_atomic(cache_path, output) end
+	if fs.ensure_dir(cache_dir) then fs.write_atomic(cache_path, stamp .. output) end
 	return output
 end
 

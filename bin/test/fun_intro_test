@@ -94,11 +94,16 @@ intro --pick=mandelbash >"$work/mandel.2"
 mapfile -t memo_files < <(find "$memo_dir" -type f)
 check 'mandelbash output is the script'"'"'s output, first and memoized' \
 	'cmp -s "$expected_mandel" "$work/mandel.1" && cmp -s "$expected_mandel" "$work/mandel.2"'
-check 'the memo is one file keyed by the script hash, with no temporary leftovers' \
-	'[[ ${#memo_files[@]} == 1 && "${memo_files[0]##*/}" =~ ^mandelbash\.[0-9a-f]{16}$ ]]'
-printf 'MEMO-MARKER\n' >"${memo_files[0]}"
+memo_stamp=$(head -n 1 "${memo_files[0]}" 2>/dev/null)
+check 'the memo is one file stamped with the script hash, with no temporary leftovers' \
+	'[[ ${#memo_files[@]} == 1 && "${memo_files[0]##*/}" == mandelbash && "$memo_stamp" =~ ^#\ mandelbash\ [0-9a-f]{16}$ ]]'
+printf '%s\nMEMO-MARKER\n' "$memo_stamp" >"${memo_files[0]}"
 result=$(intro --pick=mandelbash)
 check 'a memoized render is replayed without running the script' '[[ "$result" == MEMO-MARKER ]]'
+printf '# mandelbash 0000000000000000\nSTALE-MARKER\n' >"${memo_files[0]}"
+intro --pick=mandelbash >"$work/mandel.3"
+check 'a render of another script version is replaced, not replayed' \
+	'cmp -s "$expected_mandel" "$work/mandel.3" && [[ "$(head -n 1 "${memo_files[0]}")" == "$memo_stamp" ]]'
 
 printf '#!/bin/sh\nprintf "ok\\n"\n' >"$work/ok.sh"
 printf '#!/bin/sh\nprintf "partial"\nexit 3\n' >"$work/bad.sh"
@@ -109,7 +114,7 @@ render 1
 render 1
 render 2
 nil mandelbash failed with status 3
-runs=3 files=2
+runs=3 files=1
 WANT
 printf 'real failure: nil mandelbash failed with status 3\nunwritable cache: ok\n' >>"$work/mandel.want"
 check 'the memo renders once per script version and never stores a failed render' \
