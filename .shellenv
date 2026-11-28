@@ -69,21 +69,13 @@ case "$OS" in
 esac
 
 # --- preferred editors (scripts & git read $EDITOR / $VISUAL) ---
+# Same policy as .bashrc: VISUAL makes Zed block until the file is closed,
+# because tools read the file back when the editor command exits; choose_editor
+# falls back to micro without a reachable GUI. Unset over SSH (no local GUI).
 unset VISUAL EDITOR
-if [[ -n "${SSH_CONNECTION:-}" ]]; then
-	needs micro "please install the micro editor; defaulting to nano" && export EDITOR='micro' || export EDITOR='nano'
-	unset VISUAL  # signals "no GUI context" to downstream tooling
-else
-	needs micro "please install the micro editor; defaulting to nano for EDITOR" && export EDITOR='micro' || export EDITOR='nano'
-	if needs zeditor; then
-		export VISUAL='zeditor'   # NixOS: the real Zed editor; bare `zed` is the ZFS Event Daemon
-	elif needs zed "please install the Zed text editor"; then
-		export VISUAL='zed'       # macOS: the Zed CLI is `zed`
-	elif needs code "please install the VSCode editor and commandline access for it"; then
-		export VISUAL='code'
-	else
-		export VISUAL="$EDITOR"
-	fi
+needs micro "please install the micro editor; defaulting to nano" && export EDITOR='micro' || export EDITOR='nano'
+if [[ -z "${SSH_CONNECTION:-}" ]]; then
+	export VISUAL='choose_editor --wait'
 fi
 
 # Keep pnpm's mutable state in its XDG-style user directory.

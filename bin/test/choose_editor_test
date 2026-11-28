@@ -99,6 +99,32 @@ expect 'edit with a command name opens that command'"'"'s file' "micro|DISPLAY=|
 edit_run 'new file.txt'
 expect 'edit with a new path opens that path unchanged' 'micro|DISPLAY=|new file.txt'
 
+# Outside SSH, startup sets VISUAL to `choose_editor --wait` (shell_startup_test
+# checks the real startup files). Tools run VISUAL as a shell command and read
+# the file back as soon as it exits, so the choose_editor program must hand
+# --wait to Zed whichever way the tool appends the file name.
+visual_run() ( # crontab|git FILE
+	local dir="$work/case"
+	command rm -rf -- "$dir"; : > "$log"
+	fake "$dir/bin" zeditor; fake "$dir/bin" micro
+	printf '#!%s\nexec %q %q "$@"\n' "$BASH" "$BASH" "$root/bin/choose_editor" > "$dir/bin/choose_editor"
+	printf '#!%s\nprintf "Linux\\n"\n' "$BASH" > "$dir/bin/uname"
+	chmod +x "$dir/bin/choose_editor" "$dir/bin/uname"
+	ln -s "$(type -P basename)" "$dir/bin/basename"
+	unset DISPLAY WAYLAND_DISPLAY SSH_CONNECTION SSH_TTY EDITOR
+	PATH="$dir/bin:$tools" # already exported
+	export DISPLAY=:1 VISUAL='choose_editor --wait'
+	cd "$work" || exit 1
+	case $1 in
+		crontab) "$BASH" -c "$VISUAL $2" ;;                 # cronie: sh -c "EDITOR FILE"
+		git) "$BASH" -c "$VISUAL \"\$@\"" "$VISUAL" "$2" ;; # git, fc: sh -c 'EDITOR "$@"' EDITOR FILE
+	esac
+)
+visual_run crontab crontab.tmp
+expect 'VISUAL run the way crontab -e runs it hands --wait to Zed' 'zeditor|DISPLAY=:1|--wait|crontab.tmp'
+visual_run git 'COMMIT EDITMSG.txt'
+expect 'VISUAL run the way git runs an editor hands --wait to Zed' 'zeditor|DISPLAY=:1|--wait|COMMIT EDITMSG.txt'
+
 # git commits use the same policy, blocking until the file is closed in Zed.
 tests=$((tests+1))
 if [[ "$(git config -f "$root/.gitconfig" core.editor)" == 'choose_editor --wait' ]]; then

@@ -42,7 +42,7 @@ esac
 
 # One-line probe emitting the env facts we assert on.
 # shellcheck disable=SC2016 # The pristine child shell expands this probe.
-PROBE='printf "needs=%s editor=%s node=%s nodesrc=%s npm=%s hasbin=%s pnpm=%s rehash=%s os=%s arch=%s platform=%s pf=%s wsl=%s\n" "$(command -v needs >/dev/null 2>&1 && echo ok || echo MISSING)" "${EDITOR:-UNSET}" "$(command -v node >/dev/null 2>&1 && echo ok || echo MISSING)" "$(case "$(command -v node 2>/dev/null)" in */mise/shims/node) echo mise ;; "") echo none ;; *) echo other ;; esac)" "$(command -v npm >/dev/null 2>&1 && echo ok || echo MISSING)" "$(case ":$PATH:" in *":$HOME/bin:"*) echo yes ;; *) echo no ;; esac)" "$(command -v pnpm >/dev/null 2>&1 && echo ok || echo MISSING)" "$(type -t rehash 2>/dev/null || echo MISSING)" "${OS:-UNSET}" "${ARCH:-UNSET}" "${PLATFORM:-UNSET}" "${PF:-UNSET}" "${WSL:-UNSET}"'
+PROBE='printf "needs=%s editor=%s node=%s nodesrc=%s npm=%s hasbin=%s pnpm=%s rehash=%s os=%s arch=%s platform=%s pf=%s wsl=%s visual=%s\n" "$(command -v needs >/dev/null 2>&1 && echo ok || echo MISSING)" "${EDITOR:-UNSET}" "$(command -v node >/dev/null 2>&1 && echo ok || echo MISSING)" "$(case "$(command -v node 2>/dev/null)" in */mise/shims/node) echo mise ;; "") echo none ;; *) echo other ;; esac)" "$(command -v npm >/dev/null 2>&1 && echo ok || echo MISSING)" "$(case ":$PATH:" in *":$HOME/bin:"*) echo yes ;; *) echo no ;; esac)" "$(command -v pnpm >/dev/null 2>&1 && echo ok || echo MISSING)" "$(type -t rehash 2>/dev/null || echo MISSING)" "${OS:-UNSET}" "${ARCH:-UNSET}" "${PLATFORM:-UNSET}" "${PF:-UNSET}" "${WSL:-UNSET}" "${VISUAL:-UNSET}"'
 
 fails=0
 
@@ -64,13 +64,18 @@ clean_run() {
 		"$BASH_BIN" "$@" -c "$PROBE" 2>/dev/null
 }
 
-check() { # <label> <probe-output> <expected-rehash-kind>
+# VISUAL must make Zed wait: tools such as crontab -e read the file back as
+# soon as the editor command exits. Over SSH it stays unset (no local GUI).
+WAITING_VISUAL='choose_editor --wait'
+
+check() { # <label> <probe-output> <expected-rehash-kind> <expected-VISUAL>
 	local label="$1" out="$2"
-	local expected_rehash=$3
+	local expected_rehash=$3 expected_visual=$4
 	if [[ "$out" == *"needs=ok"* && "$out" == *"hasbin=yes"* && "$out" != *"editor=UNSET"* && \
 		"$out" == *"node=ok"* && "$out" == *"nodesrc=mise"* && "$out" == *"npm=ok"* && \
 		"$out" == *"os=$HOST_OS"* && "$out" == *"arch=$HOST_ARCH"* && \
 		"$out" == *"platform=$HOST_PF"* && "$out" == *"pf=$HOST_PF"* && "$out" == *"wsl=$HOST_WSL"* && \
+		"$out" == *" visual=$expected_visual" && \
 		( "$expected_rehash" == "any" || "$out" == *"rehash=$expected_rehash"* ) ]]; then
 		echo "✓ $label  [$out]"
 	else
@@ -83,15 +88,19 @@ echo "# shell startup quadrants — env bucket presence"
 
 # login interactive: .bash_profile -> (.shellenv) -> .bashrc
 check "login interactive      (bash -li)" \
-	"$(clean_run -- -l -i)" function
+	"$(clean_run -- -l -i)" function "$WAITING_VISUAL"
 
 # non-login interactive: .bashrc only (this is the tmux-pane case)
 check "non-login interactive  (bash -i, ~tmux)" \
-	"$(clean_run -- -i)" function
+	"$(clean_run -- -i)" function "$WAITING_VISUAL"
+
+# interactive over SSH: no local GUI, so tools fall back to EDITOR
+check "SSH interactive        (bash -i, SSH_CONNECTION)" \
+	"$(clean_run 'SSH_CONNECTION=192.0.2.1 50000 192.0.2.2 22' -- -i)" function UNSET
 
 # non-interactive: $BASH_ENV -> .shellenv (ssh-cmd / script case)
 check "non-interactive        (BASH_ENV, ~ssh cmd)" \
-	"$(clean_run "BASH_ENV=$SHELLENV" --)" any
+	"$(clean_run "BASH_ENV=$SHELLENV" --)" any "$WAITING_VISUAL"
 
 if (( fails )); then
 	echo "$fails quadrant(s) missing the env bucket" >&2

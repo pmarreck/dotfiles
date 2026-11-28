@@ -50,12 +50,12 @@ older findings, several of which have since been fixed.
 
 ## Editors
 
-6. **Make VISUAL block.** Intent: tools open your editor. `VISUAL=zeditor`
-   returns immediately, so tools that wait for the editor to exit (`crontab
-   -e`, `sudoedit`, Bash's `fc`) see an unchanged file. Instead, set
-   `VISUAL='choose_editor --wait'` (or `zeditor --wait`) and keep
-   `EDITOR=micro`. Gain: every tool follows the same Zed-or-micro policy git
-   now uses, and waits correctly.
+6. **Make VISUAL block.** (Adopted 2026-11-28.) Intent: tools open your
+   editor. `VISUAL=zeditor` returned immediately, so tools that wait for the
+   editor to exit (`crontab -e`, `sudoedit`, Bash's `fc`) saw an unchanged
+   file. `VISUAL` is now `choose_editor --wait` outside SSH, and `EDITOR`
+   stays micro. Gain: every tool follows the same Zed-or-micro policy git
+   uses, and waits correctly.
 
 7. **Avoid the `code` name collision.** Intent: `code <name>` jumps to a
    project. VS Code's CLI is also `code`, and git's editor was `code --wait`,

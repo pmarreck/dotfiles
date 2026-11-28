@@ -3,8 +3,8 @@
 # code — jump to a project under $CODE (~/Code) by partial, case-insensitive name.
 #
 #   code zed          cd into the first ~/Code dir matching *zed* (case-insensitive)
-#   code zed --edit   open that dir in your editor instead (via `edit`, which picks
-#                     $VISUAL on an interactive terminal else $EDITOR)
+#   code zed --edit   open that dir in your editor instead (via `edit`: Zed where
+#                     a GUI is reachable, else micro)
 #
 # Resolve direct child directories in byte order with a literal,
 # case-insensitive query. Must be sourced to change the caller's directory.

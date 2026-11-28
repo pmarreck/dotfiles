@@ -154,39 +154,18 @@ fi
 
 # The locale (LANG, LANGUAGE, LC_CTYPE) is set in .envconfig.
 
-# Preferred editor with logic for local and remote sessions
+# Preferred editors. EDITOR is a terminal editor, which always blocks. Most
+# tools (crontab -e, sudoedit, less's v, Bash's Ctrl-X Ctrl-E) prefer VISUAL
+# and read the file back as soon as the editor command exits, so VISUAL is
+# `choose_editor --wait`: Zed where its window can reach you, blocking until
+# the file is closed, otherwise micro. choose_editor also tells the Zed editor
+# from the ZFS event daemon, which is named zed too. Over SSH VISUAL stays
+# unset, which tells tools there is no local GUI.
 unset VISUAL EDITOR
-	if [[ -n $SSH_CONNECTION ]]; then
-		needs micro "please install the micro editor; defaulting to nano" && export EDITOR='micro' || export EDITOR='nano'
-		unset VISUAL # note: this indicates to other tooling later on that we are not in a GUI context
-	else
-		needs micro "please install the micro editor; defaulting to nano for EDITOR" && export EDITOR='micro' || export EDITOR='nano'
-		# Detect the Zed editor while avoiding the ZFS Event Daemon (also named
-		# `zed`, present on NixOS-with-zfs and on Linux/macOS systems where ZFS
-		# userspace is installed, e.g. through nix-darwin). The discriminator
-		# that's universal across both OSes and all install vectors: ZFS zed is
-		# a daemon and installs to `sbin/`; the Zed editor is a user binary in
-		# `bin/`. Resolve symlinks (Nix profile → store path)
-		# before pattern-matching so we catch nix-darwin's zfs install too.
-		_zed_is_editor() {
-			local p
-			p=$(command -v zed 2>/dev/null) || return 1
-			p=$(readlink -f "$p" 2>/dev/null || realpath "$p" 2>/dev/null || printf '%s' "$p")
-			case "$p" in
-				*/sbin/zed) return 1 ;;
-			esac
-			return 0
-		}
-		if command -v zeditor >/dev/null 2>&1; then
-			export VISUAL='zeditor' # NixOS: editor is `zeditor`; bare `zed` is the ZFS daemon
-		elif _zed_is_editor; then
-			export VISUAL='zed'     # macOS / non-Nix Linux: editor is `zed` (and not the ZFS daemon)
-		else
-			echo "Zed editor (zeditor/zed) not found — using \$EDITOR ($EDITOR) when a GUI editor is requested" >&2
-			export VISUAL="$EDITOR"
-		fi
-		unset -f _zed_is_editor
-	fi
+needs micro "please install the micro editor; defaulting to nano" && export EDITOR='micro' || export EDITOR='nano'
+if [[ -z ${SSH_CONNECTION:-} ]]; then
+	export VISUAL='choose_editor --wait'
+fi
 
 # Compilation flags used by macOS native-extension builds.
 if [ "$OS" = macos ]; then
