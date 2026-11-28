@@ -1,0 +1,144 @@
+#!/usr/bin/env bash
+# install-host-config-fetch — schedule host-config-fetch daily on Linux
+# (systemd user timer) or macOS (launchd LaunchAgent).
+#
+# Linux links the committed units from systemd/user, like
+# install-fleet-status-timer, and never replaces a foreign unit. macOS writes a
+# LaunchAgent whose paths point at this checkout; an existing agent with the
+# same label but different content is kept as a timestamped backup first.
+
+set -u
+
+usage() {
+	cat <<'EOF'
+Usage: install-host-config-fetch [--run-now]
+
+Schedule host-config-fetch to run daily: a systemd user timer on Linux, a
+launchd LaunchAgent on macOS. Repeated installation is a no-op.
+
+  --run-now   Also run one fetch immediately through the scheduler.
+  -h, --help  Show this help.
+  --about     Print a one-line description.
+EOF
+}
+
+run_now=0
+case "${1:-}" in
+	--run-now) run_now=1 ;;
+	-h | --help) usage; exit 0 ;;
+	--about) printf '%s\n' 'install-host-config-fetch — schedule the daily host configuration fetch (systemd or launchd)'; exit 0 ;;
+	"") ;;
+	*) printf 'Error: unknown option: %s\n' "$1" >&2; usage >&2; exit 2 ;;
+esac
+
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+repo_root=$(dirname "$script_dir")
+label=dotfiles.host-config-fetch
+
+install_linux() {
+	local source_dir="$repo_root/systemd/user"
+	local unit_dir="${HOST_CONFIG_FETCH_SYSTEMD_USER_DIR:-$HOME/.config/systemd/user}"
+	local systemctl="${HOST_CONFIG_FETCH_SYSTEMCTL:-systemctl}"
+	command -v "$systemctl" >/dev/null 2>&1 || { printf 'Error: systemctl is unavailable: %s\n' "$systemctl" >&2; return 1; }
+	mkdir -p "$unit_dir" || return 1
+	local name source destination current
+	for name in host-config-fetch.service host-config-fetch.timer; do
+		source="$source_dir/$name"
+		destination="$unit_dir/$name"
+		[[ -f $source ]] || { printf 'Error: committed unit is missing: %s\n' "$source" >&2; return 1; }
+		if [[ -L $destination ]]; then
+			current=$(readlink "$destination")
+			[[ $current == "$source" ]] && continue
+			printf 'Error: refusing to replace non-matching symlink: %s -> %s\n' "$destination" "$current" >&2
+			return 1
+		fi
+		if [[ -e $destination ]]; then
+			printf 'Error: refusing to overwrite existing unit file: %s\n' "$destination" >&2
+			return 1
+		fi
+		ln -s "$source" "$destination" || return 1
+	done
+	"$systemctl" --user daemon-reload || return 1
+	"$systemctl" --user enable --now host-config-fetch.timer || return 1
+	if ((run_now)); then "$systemctl" --user start host-config-fetch.service || return 1; fi
+	printf 'Enabled host-config-fetch.timer (daily); logs: journalctl --user -u host-config-fetch\n'
+}
+
+xml_escape() {
+	local s=$1
+	s=${s//&/&amp;}; s=${s//</&lt;}; s=${s//>/&gt;}
+	printf '%s' "$s"
+}
+
+install_macos() {
+	local agent_dir="${HOST_CONFIG_FETCH_LAUNCHD_DIR:-$HOME/Library/LaunchAgents}"
+	local launchctl="${HOST_CONFIG_FETCH_LAUNCHCTL:-launchctl}"
+	local log="${HOST_CONFIG_FETCH_LOG:-$HOME/Library/Logs/host-config-fetch.log}"
+	local user path_value
+	user=$(id -un) || return 1
+	path_value="$HOME/bin:$repo_root/bin:/run/current-system/sw/bin:/etc/profiles/per-user/$user/bin:/usr/local/bin:/usr/bin:/bin"
+	local plist="$agent_dir/$label.plist" temp backup
+	command -v "$launchctl" >/dev/null 2>&1 || { printf 'Error: launchctl is unavailable: %s\n' "$launchctl" >&2; return 1; }
+	mkdir -p "$agent_dir" "$(dirname "$log")" || return 1
+	temp=$(mktemp "$plist.new.XXXXXX") || return 1
+	cat > "$temp" <<EOF || return 1
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Written by dotfiles install-host-config-fetch; rerun it rather than editing. -->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>$label</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>$(xml_escape "$repo_root/bin/host-config-fetch")</string>
+	</array>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>$(xml_escape "$path_value")</string>
+	</dict>
+	<key>StartCalendarInterval</key>
+	<dict>
+		<key>Hour</key>
+		<integer>3</integer>
+		<key>Minute</key>
+		<integer>45</integer>
+	</dict>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>Nice</key>
+	<integer>10</integer>
+	<key>LowPriorityIO</key>
+	<true/>
+	<key>StandardOutPath</key>
+	<string>$(xml_escape "$log")</string>
+	<key>StandardErrorPath</key>
+	<string>$(xml_escape "$log")</string>
+</dict>
+</plist>
+EOF
+	if [[ -e $plist ]] && cmp -s "$temp" "$plist"; then
+		mv -f -- "$temp" "$plist" || return 1
+	else
+		if [[ -e $plist ]]; then
+			backup="$plist.before-$(date +%Y%m%dT%H%M%S)"
+			cp -p -- "$plist" "$backup" || return 1
+			printf 'Kept the previous agent as %s\n' "$backup"
+		fi
+		mv -f -- "$temp" "$plist" || return 1
+	fi
+	local domain
+	domain="gui/$(id -u)" || return 1
+	# Reload so launchd reads the current file; a missing job is not an error.
+	"$launchctl" bootout "$domain/$label" >/dev/null 2>&1 || true
+	"$launchctl" bootstrap "$domain" "$plist" || return 1
+	if ((run_now)); then "$launchctl" kickstart "$domain/$label" || return 1; fi
+	printf 'Loaded LaunchAgent %s (daily, and at login); log: %s\n' "$label" "$log"
+}
+
+case "${HOST_CONFIG_FETCH_PLATFORM:-$(uname -s)}" in
+	Linux) install_linux ;;
+	Darwin) install_macos ;;
+	*) printf 'Error: unsupported platform: %s (Linux and macOS only)\n' "${HOST_CONFIG_FETCH_PLATFORM:-$(uname -s)}" >&2; exit 1 ;;
+esac

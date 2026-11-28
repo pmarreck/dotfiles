@@ -56,6 +56,9 @@ hook() { # TIME EVENT [SOURCE [HARNESS [CWD]]]
 nixos=$(cd "$work/nixos-configs" && pwd -P)
 config=$(cd "$work/config" && pwd -P)
 
+# --host-repos lists each discovered checkout's top level, NixOS first.
+check test "$("$root/bin/repo-awareness" --host-repos)" = "$nixos"$'\n'"$config"
+
 # In sync everywhere: nothing to report, and a non-repository cwd stays silent.
 check test "$(report | jq -r .count)" = 0
 check test "$(hook $now UserPromptSubmit)" = ''

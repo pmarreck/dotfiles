@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# install-host-config-fetch: systemd units on Linux, a LaunchAgent on macOS,
+# idempotent reinstalls, and no clobbering of foreign files.
+set -u
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)
+work=$(mktemp -d "${TMPDIR:-/tmp}/install-host-config-fetch.XXXXXXXX") || exit 1
+trap 'command rm -rf -- "$work"' EXIT
+export HOME="$work/home"
+mkdir -p "$HOME" "$work/bin"
+installer="$root/bin/install-host-config-fetch"
+
+failures=0 tests=0
+check() { tests=$((tests+1)); if "$@"; then return; fi; printf 'FAIL %s\n' "$*" >&2; failures=$((failures+1)); }
+
+# Fake service managers record their arguments. Name this Bash by absolute
+# path: a Nix build sandbox has no /usr/bin/env.
+for tool in systemctl launchctl; do
+	printf '#!%s\nprintf "%%s\\n" "$*" >> %q\n' "$BASH" "$work/$tool.calls" > "$work/bin/$tool"
+	chmod +x "$work/bin/$tool"
+done
+
+# Linux: link both committed units, reload, enable the timer.
+units="$work/units"
+# shellcheck disable=SC2120 # check passes arguments through
+linux() { HOST_CONFIG_FETCH_PLATFORM=Linux HOST_CONFIG_FETCH_SYSTEMD_USER_DIR="$units" HOST_CONFIG_FETCH_SYSTEMCTL="$work/bin/systemctl" "$installer" "$@"; }
+check linux
+check test "$(readlink "$units/host-config-fetch.service")" = "$root/systemd/user/host-config-fetch.service"
+check test "$(readlink "$units/host-config-fetch.timer")" = "$root/systemd/user/host-config-fetch.timer"
+check grep -qx -- '--user daemon-reload' "$work/systemctl.calls"
+check grep -qx -- '--user enable --now host-config-fetch.timer' "$work/systemctl.calls"
+check test "$(grep -c 'start host-config-fetch.service' "$work/systemctl.calls")" = 0
+# Reinstalling is a no-op apart from the reload; --run-now starts one fetch.
+check linux --run-now
+check grep -qx -- '--user start host-config-fetch.service' "$work/systemctl.calls"
+# A foreign unit is never replaced.
+mv "$units/host-config-fetch.timer" "$units/host-config-fetch.timer.mine"
+printf '[Timer]\n' > "$units/host-config-fetch.timer"
+# shellcheck disable=SC2119
+linux > /dev/null 2>&1; check test $? = 1
+check test "$(cat "$units/host-config-fetch.timer")" = '[Timer]'
+# The committed timer is daily and catches up after downtime.
+check grep -qx 'Persistent=true' "$root/systemd/user/host-config-fetch.timer"
+check grep -qx 'ExecStart=%h/dotfiles/bin/host-config-fetch' "$root/systemd/user/host-config-fetch.service"
+
+# macOS: write the LaunchAgent, then reload it in the user's GUI domain.
+agents="$work/agents"
+macos() { HOST_CONFIG_FETCH_PLATFORM=Darwin HOST_CONFIG_FETCH_LAUNCHD_DIR="$agents" HOST_CONFIG_FETCH_LAUNCHCTL="$work/bin/launchctl" HOST_CONFIG_FETCH_LOG="$work/logs/fetch.log" "$installer" "$@"; }
+plist="$agents/dotfiles.host-config-fetch.plist"
+check macos
+check test -f "$plist"
+check grep -q "<string>$root/bin/host-config-fetch</string>" "$plist"
+check grep -q '<key>StartCalendarInterval</key>' "$plist"
+check grep -q '<key>RunAtLoad</key>' "$plist"
+check grep -q "<string>$work/logs/fetch.log</string>" "$plist"
+check grep -qx "bootstrap gui/$(id -u) $plist" "$work/launchctl.calls"
+if command -v plutil > /dev/null 2>&1; then check plutil -lint -s "$plist"; fi
+# An identical reinstall keeps no backup; a changed agent is backed up first.
+check macos
+check test "$(find "$agents" -name '*.before-*' | wc -l | tr -d ' ')" = 0
+printf 'old\n' > "$plist"
+check macos
+check test "$(find "$agents" -name '*.before-*' | wc -l | tr -d ' ')" = 1
+check grep -q '<key>Label</key>' "$plist"
+check macos --run-now
+check grep -qx "kickstart gui/$(id -u)/dotfiles.host-config-fetch" "$work/launchctl.calls"
+
+# Other platforms and options are refused.
+HOST_CONFIG_FETCH_PLATFORM=Plan9 "$installer" > /dev/null 2>&1; check test $? = 1
+"$installer" --bogus > /dev/null 2>&1; check test $? = 2
+
+if ((failures)); then printf '%d/%d install-host-config-fetch checks failed\n' "$failures" "$tests" >&2; exit 1; fi
+printf 'All %d install-host-config-fetch checks passed\n' "$tests"

@@ -35,19 +35,21 @@ end
 local function trim(s) return s and s:gsub('[\r\n]+$', '') end
 local function read(path) local f=io.open(path,'rb'); if not f then return nil end; local s=f:read('*a'); f:close(); return s end
 local function git(root, args) return run('git -C '..quote(root)..' '..args) end
-local mode, repo, harness, host_only = 'hook', '.', 'claude', false
+local mode, repo, harness, host_only, list_hosts = 'hook', '.', 'claude', false, false
 local i=1
 while i<=#arg do
 	local a=arg[i]
 	if a=='--json' then mode='json'
 	elseif a=='--commit' then mode='commit'
 	elseif a=='--host' then host_only=true
+	elseif a=='--host-repos' then list_hosts=true
 	elseif a=='--repo' or a=='--harness' then
 		i=i+1; if not arg[i] then error('missing '..a..' value') end
 		if a=='--repo' then repo=arg[i] else harness=arg[i] end
 	elseif a=='--help' then
 		print('repo-awareness [--json | --commit] [--repo PATH] [--harness codex|claude|grok|gemini]\n'
 			..'repo-awareness --host [--json]   report drift in this host\'s configuration repositories\n'
+			..'repo-awareness --host-repos      list those repositories, one top-level path per line\n'
 			..'Hook mode reads event JSON. Counts use cached upstream refs, never fetch.'); os.exit(0)
 	else error('unknown argument: '..a) end
 	i=i+1
@@ -122,6 +124,10 @@ local function host_message(found)
 		..' Unpushed commits exist only on this disk, where other hosts cannot pull them; unintegrated remote commits are'
 		..' changes this host lacks. Check unpushed commits for private details, then push them or tell the owner;'
 		..' integrate remote commits without discarding local work. Counts use cached upstream refs; no fetch was performed.'
+end
+if list_hosts then
+	for _,top in ipairs(host_repos()) do print(top) end
+	os.exit(0)
 end
 if host_only then
 	local found=host_drift(tonumber(os.getenv('REPO_AWARENESS_NOW')) or os.time())

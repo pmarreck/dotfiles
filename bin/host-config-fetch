@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+# host-config-fetch — refresh the remote-tracking refs of this host's
+# configuration repositories, so repo-awareness can see commits this host lacks.
+#
+# repo-awareness never fetches (a hook must stay fast and offline), and the
+# fleet maintenance job only covers ~/Code. Without a fetch, "behind" counts for
+# a NixOS flake or dotconfig checkout stay frozen at the last manual pull. This
+# command only runs `git fetch` in each repository repo-awareness discovers; it
+# never merges, rebases or changes a working tree. Run it daily from a timer
+# (see install-host-config-fetch).
+
+set -u
+
+usage() {
+	cat <<'EOF'
+Usage: host-config-fetch [--dry-run] [--timeout SECONDS]
+
+Fetch each host configuration repository that `repo-awareness --host-repos`
+lists, then print the drift report. Fetches never prompt for credentials.
+
+  --dry-run          List the repositories without fetching.
+  --timeout SECONDS  Per-repository deadline (default 120).
+  -h, --help         Show this help.
+  --about            Print a one-line description.
+
+Exit status: 0 when every fetch succeeded, otherwise the number of failed
+fetches (at most 125).
+EOF
+}
+
+dry_run=0
+limit=120
+while (($#)); do
+	case $1 in
+		--dry-run) dry_run=1 ;;
+		--timeout)
+			if [[ ${2-} =~ ^[1-9][0-9]{0,4}$ ]]; then limit=$2; shift; else
+				printf 'host-config-fetch: --timeout needs whole seconds (1-99999)\n' >&2; exit 2
+			fi ;;
+		-h | --help) usage; exit 0 ;;
+		--about) printf '%s\n' 'host-config-fetch — fetch this host'"'"'s configuration repositories (Bash)'; exit 0 ;;
+		*) printf 'host-config-fetch: unknown option: %s\n' "$1" >&2; usage >&2; exit 2 ;;
+	esac
+	shift
+done
+
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+awareness="$here/repo-awareness"
+listing=$("$awareness" --host-repos) || { printf 'host-config-fetch: repo-awareness --host-repos failed\n' >&2; exit 1; }
+repos=()
+while IFS= read -r repo; do [[ -n $repo ]] && repos+=("$repo"); done <<< "$listing"
+
+if ((${#repos[@]} == 0)); then
+	printf 'host-config-fetch: no host configuration repositories found\n'
+	exit 0
+fi
+
+if ((dry_run)); then
+	printf '%s\n' "${repos[@]}"
+	exit 0
+fi
+
+timeout_bin=$(type -P gtimeout || type -P timeout) || timeout_bin=''
+# A timer has no terminal: refuse credential prompts instead of hanging on them.
+export GIT_TERMINAL_PROMPT=0
+export GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -o BatchMode=yes}"
+
+failures=0
+for repo in "${repos[@]}"; do
+	if [[ -n $timeout_bin ]]; then
+		"$timeout_bin" -k 10 "$limit" git -C "$repo" fetch --quiet
+	else
+		git -C "$repo" fetch --quiet
+	fi
+	status=$?
+	if ((status == 0)); then
+		printf 'fetched %s\n' "$repo"
+	else
+		printf 'host-config-fetch: fetch failed in %s (status %d)\n' "$repo" "$status" >&2
+		failures=$((failures + 1))
+	fi
+done
+
+"$awareness" --host || true
+((failures > 125)) && failures=125
+exit "$failures"

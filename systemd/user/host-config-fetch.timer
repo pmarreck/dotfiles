@@ -1,0 +1,12 @@
+[Unit]
+Description=Fetch host configuration repositories daily
+
+[Timer]
+OnCalendar=*-*-* 03:45:00
+RandomizedDelaySec=30m
+# Hosts that are off or asleep overnight catch up at the next start.
+Persistent=true
+Unit=host-config-fetch.service
+
+[Install]
+WantedBy=timers.target

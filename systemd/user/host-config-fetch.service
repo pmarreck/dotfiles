@@ -1,0 +1,10 @@
+[Unit]
+Description=Fetch this host's configuration repositories
+Documentation=file:%h/dotfiles/docs/repository-awareness.md
+
+[Service]
+Type=oneshot
+Environment=PATH=%h/bin:%h/dotfiles/bin:/run/current-system/sw/bin:/etc/profiles/per-user/%u/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/dotfiles/bin/host-config-fetch
+Nice=10
+TimeoutStartSec=15min

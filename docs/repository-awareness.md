@@ -57,6 +57,33 @@ directory.
 ```sh
 repo-awareness --host          # print the report, if anything is drifting
 repo-awareness --host --json   # {"count": N, "repos": [...]}
+repo-awareness --host-repos    # list the discovered checkouts
+```
+
+### Keeping incoming counts current
+
+The hook never fetches, and the nightly fleet maintenance only covers `~/Code`,
+so without help a host configuration checkout's "behind" count stays frozen at
+its last manual pull. `host-config-fetch` runs `git fetch` in each repository
+`repo-awareness --host-repos` lists. It never merges, rebases or touches a
+working tree, refuses credential prompts (`GIT_TERMINAL_PROMPT=0`, SSH
+`BatchMode`), bounds each fetch with a timeout, keeps going past a failed fetch,
+then prints the drift report. Its exit status counts failed fetches.
+
+`install-host-config-fetch` schedules it daily on every supported host: on Linux
+it links the committed `systemd/user/host-config-fetch.{service,timer}` units and
+enables the timer, which catches up after downtime (`Persistent=true`); on macOS
+it writes the `dotfiles.host-config-fetch` LaunchAgent (daily at 03:45 and at
+login), logging to `~/Library/Logs/host-config-fetch.log`. Reinstalling is a
+no-op, a foreign Linux unit is never replaced, and a changed LaunchAgent is kept
+as a timestamped backup. `--run-now` also runs one fetch through the scheduler.
+A NixOS or nix-darwin host can instead declare the same job in its system
+configuration, as Thelio does for fleet maintenance.
+
+```sh
+install-host-config-fetch --run-now
+host-config-fetch --dry-run    # list what it would fetch
+journalctl --user -u host-config-fetch     # Linux log
 ```
 
 ## Configuration

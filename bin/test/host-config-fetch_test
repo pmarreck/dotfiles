@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# host-config-fetch: fetch discovered host repositories, never touch their
+# working trees, keep going past a failed fetch, and report the result.
+set -u
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)
+work=$(mktemp -d "${TMPDIR:-/tmp}/host-config-fetch.XXXXXXXX") || exit 1
+trap 'command rm -rf -- "$work"' EXIT
+export HOME="$work/home" XDG_STATE_HOME="$work/state" GIT_CONFIG_NOSYSTEM=1
+export GIT_AUTHOR_NAME=Test GIT_AUTHOR_EMAIL=test@example.invalid GIT_COMMITTER_NAME=Test GIT_COMMITTER_EMAIL=test@example.invalid
+unset REPO_AWARENESS_HOST_REPOS
+mkdir -p "$HOME" "$work/plain"
+export XDG_CONFIG_HOME="$work/plain" REPO_AWARENESS_NIXOS_DIR="$work/missing"
+
+failures=0 tests=0
+check() { tests=$((tests+1)); if "$@"; then return; fi; printf 'FAIL %s\n' "$*" >&2; failures=$((failures+1)); }
+quiet() { "$@" > "$work/git.log" 2>&1 || { cat "$work/git.log" >&2; return 1; }; }
+fetcher() { "$root/bin/host-config-fetch" "$@"; }
+
+# A remote, a host checkout cloned from it, and a second clone that pushes.
+quiet git init -q --bare "$work/remote.git" || exit 1
+quiet git clone -q "$work/remote.git" "$work/seed" || exit 1
+# The push-evidence gate a git wrapper may apply exempts fixtures with no code.
+quiet git -C "$work/seed" config pushEvidence.noCode 'test fixture with no code' || exit 1
+quiet git -C "$work/seed" commit -q --allow-empty -m initial || exit 1
+quiet git -C "$work/seed" push -q origin HEAD:main || exit 1
+quiet git -C "$work/remote.git" symbolic-ref HEAD refs/heads/main || exit 1
+quiet git clone -q "$work/remote.git" "$work/host" || exit 1
+quiet git -C "$work/host" config core.hooksPath /dev/null || exit 1
+host=$(cd "$work/host" && pwd -P)
+behind() { git -C "$work/host" rev-list --count 'HEAD..@{u}'; }
+
+# No repositories: a clean no-op.
+out=$(fetcher); status=$?
+check test "$status" = 0
+check test "${out#*no host configuration repositories}" != "$out"
+
+export REPO_AWARENESS_HOST_REPOS="$work/host"
+quiet git -C "$work/seed" commit -q --allow-empty -m upstream || exit 1
+quiet git -C "$work/seed" push -q origin HEAD:main || exit 1
+head_before=$(git -C "$work/host" rev-parse HEAD)
+
+# --dry-run lists without fetching.
+check test "$(fetcher --dry-run)" = "$host"
+check test "$(behind)" = 0
+
+# A real run updates the remote-tracking ref and reports the new drift.
+out=$(fetcher 2>&1); status=$?
+check test "$status" = 0
+check test "${out#*"fetched $host"}" != "$out"
+check test "$(behind)" = 1
+check test "${out#*"$host is 0 ahead and 1 behind"}" != "$out"
+# The working tree and branch never move.
+check test "$(git -C "$work/host" rev-parse HEAD)" = "$head_before"
+check test -z "$(git -C "$work/host" status --porcelain)"
+
+# A failing fetch is reported and counted, and the others still run.
+quiet git clone -q "$work/remote.git" "$work/broken" || exit 1
+quiet git -C "$work/broken" remote set-url origin "$work/no-such-remote.git" || exit 1
+broken=$(cd "$work/broken" && pwd -P)
+quiet git -C "$work/seed" commit -q --allow-empty -m again || exit 1
+quiet git -C "$work/seed" push -q origin HEAD:main || exit 1
+export REPO_AWARENESS_HOST_REPOS="$work/broken:$work/host"
+out=$(fetcher 2>&1); status=$?
+check test "$status" = 1
+check test "${out#*"fetch failed in $broken"}" != "$out"
+check test "${out#*"fetched $host"}" != "$out"
+check test "$(behind)" = 2
+
+# Option validation.
+fetcher --timeout 0 > /dev/null 2>&1; check test $? = 2
+fetcher --bogus > /dev/null 2>&1; check test $? = 2
+check test -n "$(fetcher --help)"
+
+if ((failures)); then printf '%d/%d host-config-fetch checks failed\n' "$failures" "$tests" >&2; exit 1; fi
+printf 'All %d host-config-fetch checks passed\n' "$tests"
